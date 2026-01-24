@@ -124,6 +124,21 @@ $env:GARDEN_VERSION = $version
 $env:BUILD_NUMBER = $revision
 $env:CARGO_BUILD_NUMBER = $revision  # For Rust build.rs
 
+# Force rebuild of binaries to pick up new BUILD_NUMBER
+# Cargo's incremental cache doesn't detect CARGO_BUILD_NUMBER changes,
+# so we need to clean the final artifacts to force recompilation with new version
+Write-Host "Cleaning build artifacts to ensure version update..." -ForegroundColor DarkGray
+$targetDirs = @(
+    (Join-Path $WORKSPACE_ROOT "target\fast-release"),
+    (Join-Path $WORKSPACE_ROOT "target\release"),
+    (Join-Path $WORKSPACE_ROOT "target\debug")
+)
+foreach ($targetDir in $targetDirs) {
+    if (Test-Path $targetDir) {
+        Get-ChildItem $targetDir -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Update Cargo.toml files with version
 Write-Host "Updating Cargo.toml files with version $major.$minor..." -ForegroundColor DarkGray
 $cargoFiles = @(

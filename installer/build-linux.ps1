@@ -239,16 +239,24 @@ if ($UseDocker) {
             Write-Host ""
         }
         
+        # Clean build artifacts to force version update
+        # (Cargo cache doesn't detect CARGO_BUILD_NUMBER changes)
+        Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
+        docker exec $containerName sh -c "rm -f /build/target/*/garden-* /build/target/*/build/garden-*" 2>$null | Out-Null
+        
         # Execute build in the persistent container with build number
         docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER $containerName $buildArgs
         
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
         
-        # Copy binaries from target to dist/linux/
-        $srcDir = Join-Path (Join-Path $WORKSPACE_ROOT "target") $buildProfile
-        Copy-Item "$srcDir\garden-lantern" "$LINUX_DIR\garden-lantern" -Force
-        Copy-Item "$srcDir\garden-moss" "$LINUX_DIR\garden-moss" -Force
-        Copy-Item "$srcDir\garden-rake" "$LINUX_DIR\garden-rake" -Force
+        # Copy binaries from Docker container to dist/linux/
+        # Use docker cp because volume mount may not reflect changes immediately on Windows
+        Write-Host "  → Copying binaries from container..." -ForegroundColor DarkGray
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-lantern" "$LINUX_DIR\garden-lantern"
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-moss" "$LINUX_DIR\garden-moss"
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-rake" "$LINUX_DIR\garden-rake"
+        
+        if ($LASTEXITCODE -ne 0) { throw "Failed to copy binaries from container" }
         
         Write-Host "  ✓ Linux binaries built`n" -ForegroundColor Green
         

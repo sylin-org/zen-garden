@@ -8,10 +8,12 @@
 //! - Event broadcasting
 //! - Hardware capabilities cache
 //! - Console printer
+//! - mDNS handle for resolution announcements
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::DockerManager;
+use crate::mdns::MdnsHandle;
 use crate::templates::TemplateLoader;
 use crate::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
@@ -125,6 +127,10 @@ pub struct AppState {
 
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+
+    /// mDNS handle for re-registration on resolution changes (Linux only)
+    /// Used when IP/MAC changes to update mDNS service advertisement
+    pub mdns_handle: Option<Arc<MdnsHandle>>,
 }
 
 impl AppState {
@@ -227,5 +233,49 @@ impl AppState {
     /// Get snapshot of services (read-only)
     pub async fn get_services(&self) -> Vec<ServiceInfo> {
         self.registry.read().await.clone()
+    }
+
+    /// Announce resolution change (IP/MAC changed)
+    ///
+    /// Called when the means to resolve this stone changes (IP address, MAC address).
+    /// This is different from service changes - resolution changes require:
+    /// 1. Update self_entry with new endpoint and MAC
+    /// 2. Re-register mDNS service (updates TXT records and triggers re-announcement)
+    /// 3. Send UDP chirp with updated topology entry
+    ///
+    /// For service-only changes (no resolution change), use `sync_self_services()` instead.
+    pub async fn announce_resolution_change(&self, new_ip: &str) {
+        let new_endpoint = format!("http://{}:{}", new_ip, self.api_port);
+
+        tracing::info!(
+            endpoint = %new_endpoint,
+            "Announcing resolution change (IP/MAC)"
+        );
+
+        // Get fresh MAC address (may have changed with network)
+        let (_, new_mac) = crate::infra::network::get_local_ip_and_mac();
+
+        // Update self_entry with new endpoint and MAC
+        {
+            let mut entry = self.self_entry.write().await;
+            entry.endpoint = new_endpoint;
+            entry.mac = new_mac.clone();
+            entry.last_seen = chrono::Utc::now();
+        }
+
+        // Re-register mDNS with updated MAC (resolution info changed)
+        if let Some(ref mdns) = self.mdns_handle {
+            if let Err(e) = mdns.reregister(new_mac.as_deref()) {
+                tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
+            }
+        }
+
+        // Immediately chirp the updated entry via UDP
+        let entry = self.self_entry.read().await.clone();
+        if let Err(e) = crate::announcement::announce(&entry).await {
+            tracing::warn!(error = ?e, "Failed to chirp after resolution change");
+        } else {
+            tracing::info!("Resolution change announced (mDNS + UDP chirp)");
+        }
     }
 }

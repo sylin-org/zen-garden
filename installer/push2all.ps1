@@ -14,8 +14,10 @@
 .PARAMETER Timeout
     Discovery timeout in seconds (default: 3)
 
-.PARAMETER Parallel
-    Push to stones in parallel instead of sequentially (HTTP method only)
+.PARAMETER Sequential
+    Push to stones sequentially instead of in parallel (HTTP method only).
+    Use this when you need to see detailed output for each stone or for debugging.
+    Default behavior is parallel deployment for faster updates.
 
 .PARAMETER Port
     Override the port number (default: 0 = use discovered port, typically 7185)
@@ -48,8 +50,8 @@
     Deploy via SSH with custom credentials
 
 .EXAMPLE
-    .\push2all.ps1 -Parallel
-    Deploy via HTTP API in parallel mode
+    .\push2all.ps1 -Sequential
+    Deploy via HTTP API one stone at a time (for debugging)
 
 .EXAMPLE
     .\push2all.ps1 -SkipBuild -Method SSH
@@ -58,7 +60,7 @@
 
 param(
     [int]$Timeout = 5,
-    [switch]$Parallel,
+    [switch]$Sequential,
     [int]$Port = 0,  # Override port (0 = use discovered port)
     [switch]$SkipBuild,  # Skip automatic build (for testing)
     [switch]$Build,  # Force build
@@ -392,16 +394,80 @@ function Discover-AllStones {
     return $stones
 }
 
+function Resolve-StoneEndpoint {
+    <#
+    .SYNOPSIS
+        Resolve the actual reachable endpoint for a stone.
+
+        When stones report 127.0.0.1 (due to IP detection issues), this function
+        provides fallbacks:
+        1. Use the UDP source address (the real IP from discovery response)
+        2. Try mDNS resolution (<stone-name>.local)
+
+        This allows push2all to work even when stones have broken IP detection.
+    #>
+    param([PSCustomObject]$Stone)
+
+    $endpoint = $Stone.Endpoint
+
+    # Check if endpoint contains loopback address
+    if ($endpoint -match "127\.0\.0\.1|localhost") {
+        Write-Status "   ⚠️  $($Stone.Name) reports loopback address, using fallback resolution" -Type "Warning"
+
+        # Extract port from original endpoint
+        $port = "7185"  # Default
+        if ($endpoint -match ":(\d+)") {
+            $port = $Matches[1]
+        }
+
+        # Fallback 1: Use UDP source address (we already know the real IP from discovery)
+        if ($Stone.Address -and $Stone.Address -ne "127.0.0.1") {
+            $resolvedEndpoint = "http://$($Stone.Address):$port"
+            Write-Status "      → Using UDP source address: $resolvedEndpoint" -Type "Success"
+            return $resolvedEndpoint
+        }
+
+        # Fallback 2: Try mDNS resolution (<stone-name>.local)
+        $mdnsName = "$($Stone.Name).local"
+        Write-Status "      → Trying mDNS resolution: $mdnsName"
+
+        try {
+            $resolved = [System.Net.Dns]::GetHostAddresses($mdnsName) |
+                Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
+                Select-Object -First 1
+
+            if ($resolved) {
+                $resolvedEndpoint = "http://$($resolved.IPAddressToString):$port"
+                Write-Status "      → Resolved via mDNS: $resolvedEndpoint" -Type "Success"
+                return $resolvedEndpoint
+            }
+        }
+        catch {
+            Write-Status "      → mDNS resolution failed: $_" -Type "Warning"
+        }
+
+        # Last resort: return original (will likely fail)
+        Write-Status "      → No fallback available, using original endpoint" -Type "Warning"
+        return $endpoint
+    }
+
+    return $endpoint
+}
+
 function Get-StoneInfo {
     param([PSCustomObject]$Stone)
-    
+
+    # Resolve actual endpoint (handles loopback fallback)
+    $resolvedEndpoint = Resolve-StoneEndpoint -Stone $Stone
+
     try {
-        $url = "$($Stone.Endpoint.TrimEnd('/'))/health"
+        $url = "$($resolvedEndpoint.TrimEnd('/'))/health"
         $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 3
-        
+
         return [PSCustomObject]@{
             OS = if ($health.os) { $health.os } else { "linux" }  # Default to linux for older versions
             Architecture = if ($health.architecture) { $health.architecture } else { "x86_64" }
+            ResolvedEndpoint = $resolvedEndpoint  # Pass through the resolved endpoint
         }
     }
     catch {
@@ -409,6 +475,7 @@ function Get-StoneInfo {
         return [PSCustomObject]@{
             OS = "linux"
             Architecture = "x86_64"
+            ResolvedEndpoint = $resolvedEndpoint
         }
     }
 }
@@ -993,7 +1060,7 @@ try {
     }
 
     # Detect platform for each stone and prepare configs
-    Write-Status "`n🔍 Detecting platform for each stone..."
+    Write-Status "`n🔍 Detecting platform and resolving endpoints for each stone..."
     $stoneConfigs = @()
     foreach ($stone in $stones) {
         Write-Status "   $($stone.Name): " -NoNewline
@@ -1004,8 +1071,15 @@ try {
         # Determine package path for this platform
         $packagePath = if ($binaries.Platform -eq "Windows") { $windowsPackage } else { $linuxPackage }
 
+        # Create a modified stone object with the resolved endpoint
+        $resolvedStone = [PSCustomObject]@{
+            Name = $stone.Name
+            Endpoint = $info.ResolvedEndpoint  # Use resolved endpoint (handles loopback fallback)
+            Address = $stone.Address
+        }
+
         $stoneConfigs += [PSCustomObject]@{
-            Stone = $stone
+            Stone = $resolvedStone
             Platform = $binaries.Platform
             MossPath = $binaries.Moss
             RakePath = $binaries.Rake
@@ -1059,29 +1133,106 @@ try {
 
     # Deployment based on PublishMode and Method
     if ($PublishMode -eq "Package") {
-        # Package-based deployment
-        Write-Status "   Mode: Package deployment via $Method`n"
+        if (-not $Sequential -and $Method -ne 'SSH') {
+            # Parallel HTTP package deployment
+            Write-Status "   Mode: Parallel package deployment via HTTP`n"
 
-        foreach ($config in $stoneConfigs) {
-            if ($Method -eq 'SSH') {
-                $success = Push-PackageViaSSH `
-                    -Stone $config.Stone `
-                    -PackagePath $config.PackagePath `
-                    -SSHUser $SSHUser `
-                    -SSHPassword $SSHPassword `
-                    -Platform $config.Platform
-            }
-            else {
-                $success = Push-PackageToStone `
-                    -Stone $config.Stone `
-                    -PackagePath $config.PackagePath `
-                    -Platform $config.Platform
+            $jobs = @()
+            foreach ($config in $stoneConfigs) {
+                # Read package bytes for this platform
+                $packageBytes = [System.IO.File]::ReadAllBytes($config.PackagePath)
+                $packageHash = (Get-FileHash $config.PackagePath -Algorithm SHA256).Hash.ToLower()
+
+                $jobs += Start-Job -ScriptBlock {
+                    param($StoneName, $StoneEndpoint, $PackageBytes, $PackageHash, $Platform)
+
+                    $url = "$($StoneEndpoint.TrimEnd('/'))/api/v1/stone/deploy"
+
+                    try {
+                        # Send package with hash header
+                        $headers = @{
+                            "X-Package-SHA256" = $PackageHash
+                        }
+
+                        $response = Invoke-RestMethod -Uri $url -Method Post -Body $PackageBytes -ContentType "application/octet-stream" -Headers $headers -TimeoutSec 120
+
+                        if ($response.status -ne "accepted") {
+                            return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Unexpected response: $($response.status)" }
+                        }
+
+                        # Wait for service to restart
+                        Start-Sleep -Seconds 5
+
+                        # Poll health endpoint
+                        $healthUrl = "$($StoneEndpoint.TrimEnd('/'))/health"
+                        $online = $false
+
+                        for ($i = 1; $i -le 15; $i++) {
+                            Start-Sleep -Seconds 2
+                            try {
+                                $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 3
+                                if ($health.status) {
+                                    $online = $true
+                                    break
+                                }
+                            }
+                            catch {}
+                        }
+
+                        if (-not $online) {
+                            return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Stone did not come back online" }
+                        }
+
+                        return @{ Success = $true; Name = $StoneName; Platform = $Platform }
+                    }
+                    catch {
+                        return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = $_.Exception.Message }
+                    }
+                } -ArgumentList $config.Stone.Name, $config.Stone.Endpoint, $packageBytes, $packageHash, $config.Platform
+
+                Write-Status "   ⏳ Started: $($config.Stone.Name)" -Type "Info"
             }
 
-            $results += @{
-                Success = $success
-                Name = $config.Stone.Name
-                Platform = $config.Platform
+            # Wait for all jobs with progress indicator
+            Write-Status "`n   Waiting for all deployments to complete..."
+            $completed = 0
+            while ($completed -lt $jobs.Count) {
+                $done = @($jobs | Where-Object { $_.State -eq 'Completed' }).Count
+                if ($done -gt $completed) {
+                    $completed = $done
+                    Write-Status "   Progress: $completed/$($jobs.Count) complete"
+                }
+                Start-Sleep -Milliseconds 500
+            }
+
+            $results = $jobs | Receive-Job
+            $jobs | Remove-Job
+        }
+        else {
+            # Sequential package deployment (SSH or non-parallel HTTP)
+            Write-Status "   Mode: Sequential package deployment via $Method`n"
+
+            foreach ($config in $stoneConfigs) {
+                if ($Method -eq 'SSH') {
+                    $success = Push-PackageViaSSH `
+                        -Stone $config.Stone `
+                        -PackagePath $config.PackagePath `
+                        -SSHUser $SSHUser `
+                        -SSHPassword $SSHPassword `
+                        -Platform $config.Platform
+                }
+                else {
+                    $success = Push-PackageToStone `
+                        -Stone $config.Stone `
+                        -PackagePath $config.PackagePath `
+                        -Platform $config.Platform
+                }
+
+                $results += @{
+                    Success = $success
+                    Name = $config.Stone.Name
+                    Platform = $config.Platform
+                }
             }
         }
     }
@@ -1105,7 +1256,7 @@ try {
             }
         }
     }
-    elseif ($Parallel -and $PublishMode -ne "MossOnly") {
+    elseif (-not $Sequential -and $PublishMode -ne "MossOnly") {
         # Parallel HTTP deployment (moss + rake only)
         Write-Status "   Mode: Parallel HTTP deployment`n"
 

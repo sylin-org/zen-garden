@@ -1,47 +1,130 @@
+/// mDNS service handle for re-registration on IP/MAC changes
+#[cfg(not(target_os = "windows"))]
+pub struct MdnsHandle {
+    daemon: mdns_sd::ServiceDaemon,
+    stone_id: Option<String>,
+    stone_name: String,
+    port: u16,
+    /// Whether we've registered the service (guards against advertising bad IPs)
+    registered: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl MdnsHandle {
+    /// Register or re-register the mDNS service
+    ///
+    /// Called when:
+    /// - Initial registration (if IP was valid at startup)
+    /// - IP/MAC changes (to update resolution info)
+    ///
+    /// Safe to call multiple times - mdns_sd handles dedup internally.
+    pub fn reregister(&self, mac: Option<&str>) -> anyhow::Result<()> {
+        use mdns_sd::ServiceInfo;
+        use std::collections::HashMap;
+
+        let service_type = "_moss._tcp.local.";
+        let host_name = format!("{}.local.", self.stone_name);
+
+        // Build TXT record properties
+        let mut properties: HashMap<String, String> = HashMap::new();
+        if let Some(id) = &self.stone_id {
+            properties.insert("stone_id".to_string(), id.clone());
+        }
+        properties.insert("stone_name".to_string(), self.stone_name.clone());
+        if let Some(mac_addr) = mac {
+            properties.insert("mac".to_string(), mac_addr.to_string());
+        }
+
+        let service = ServiceInfo::new(
+            service_type,
+            &self.stone_name,
+            &host_name,
+            "0.0.0.0", // Let mDNS daemon auto-resolve
+            self.port,
+            properties,
+        )?;
+
+        self.daemon.register(service)?;
+
+        let was_registered = self.registered.swap(true, std::sync::atomic::Ordering::SeqCst);
+        if was_registered {
+            tracing::info!(
+                stone_name = %self.stone_name,
+                mac = ?mac,
+                "mDNS service re-registered after resolution change"
+            );
+        } else {
+            tracing::info!(
+                stone_name = %self.stone_name,
+                mac = ?mac,
+                "mDNS service registered (deferred from startup)"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Check if service is currently registered
+    pub fn is_registered(&self) -> bool {
+        self.registered.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Create mDNS handle, optionally registering immediately
+///
+/// If `current_ip` is a loopback address, the service daemon is created but
+/// registration is deferred until a valid IP is available (via `reregister()`).
+/// This prevents advertising bad resolution info to the network.
 #[cfg(not(target_os = "windows"))]
 pub fn announce_moss(
     stone_id: Option<&str>,
     stone_name: &str,
     port: u16,
     mac: Option<&str>,
-) -> anyhow::Result<mdns_sd::ServiceDaemon> {
-    use mdns_sd::{ServiceDaemon, ServiceInfo};
-    use std::collections::HashMap;
+    current_ip: &str,
+) -> anyhow::Result<MdnsHandle> {
+    use mdns_sd::ServiceDaemon;
 
     let mdns = ServiceDaemon::new()?;
 
-    let service_type = "_moss._tcp.local.";
-    let instance_name = stone_name;
-    let host_name = format!("{}.local.", stone_name);
-
-    // Build TXT record properties for service discovery
-    let mut properties: HashMap<String, String> = HashMap::new();
-    if let Some(id) = stone_id {
-        properties.insert("stone_id".to_string(), id.to_string());
-    }
-    properties.insert("stone_name".to_string(), stone_name.to_string());
-    if let Some(mac_addr) = mac {
-        properties.insert("mac".to_string(), mac_addr.to_string());
-    }
-
-    let service = ServiceInfo::new(
-        service_type,
-        instance_name,
-        &host_name,
-        "0.0.0.0",
+    let handle = MdnsHandle {
+        daemon: mdns,
+        stone_id: stone_id.map(|s| s.to_string()),
+        stone_name: stone_name.to_string(),
         port,
-        properties,
-    )?;
+        registered: std::sync::atomic::AtomicBool::new(false),
+    };
 
-    mdns.register(service)?;
-    tracing::info!(
-        instance = %instance_name,
-        stone_id = ?stone_id,
-        mac = ?mac,
-        "mDNS announcement registered with TXT records"
-    );
+    // Gate: Don't advertise if we have a loopback IP
+    if current_ip == "127.0.0.1" || current_ip.is_empty() {
+        tracing::warn!(
+            stone_name = %stone_name,
+            current_ip = %current_ip,
+            "mDNS registration deferred - detected loopback/invalid IP"
+        );
+        // Return handle without registering - will register on valid IP
+        return Ok(handle);
+    }
 
-    Ok(mdns)
+    // Valid IP - register immediately
+    handle.reregister(mac)?;
+
+    Ok(handle)
+}
+
+/// Dummy mDNS handle for Windows (no-op)
+#[cfg(target_os = "windows")]
+pub struct MdnsHandle;
+
+#[cfg(target_os = "windows")]
+impl MdnsHandle {
+    pub fn reregister(&self, _mac: Option<&str>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    pub fn is_registered(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -50,9 +133,10 @@ pub fn announce_moss(
     _stone_name: &str,
     _port: u16,
     _mac: Option<&str>,
-) -> anyhow::Result<()> {
+    _current_ip: &str,
+) -> anyhow::Result<MdnsHandle> {
     tracing::debug!("mDNS not available on Windows, skipping");
-    Ok(())
+    Ok(MdnsHandle)
 }
 
 /// Discovered stone from mDNS

@@ -28,22 +28,35 @@ pub fn get_local_ip() -> String {
 
     // Try priority-based selection first
     if let Some(ip) = get_local_ip_with_priority() {
+        tracing::debug!(ip = %ip, "Local IP detected via priority selection");
         return ip;
     }
 
+    tracing::debug!("Priority-based IP selection failed, trying fallback");
+
     // Fallback: use local_ip_address crate's simpler method
     // This works on more systems but doesn't give us priority control
-    if let Ok(ip) = local_ip_address::local_ip() {
-        if let IpAddr::V4(ipv4) = ip {
-            // Still skip Docker bridge if we can detect it
-            let octets = ipv4.octets();
-            if !(octets[0] == 172 && octets[1] == 17) {
-                return ipv4.to_string();
+    match local_ip_address::local_ip() {
+        Ok(ip) => {
+            if let IpAddr::V4(ipv4) = ip {
+                // Still skip Docker bridge if we can detect it
+                let octets = ipv4.octets();
+                if !(octets[0] == 172 && octets[1] == 17) {
+                    tracing::debug!(ip = %ipv4, "Local IP detected via fallback");
+                    return ipv4.to_string();
+                }
+                tracing::debug!(ip = %ipv4, "Fallback returned Docker bridge IP, skipping");
+            } else {
+                tracing::debug!(ip = %ip, "Fallback returned IPv6, skipping");
             }
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "local_ip_address::local_ip() failed");
         }
     }
 
     // Last resort fallback
+    tracing::warn!("All IP detection methods failed, using 127.0.0.1");
     "127.0.0.1".to_string()
 }
 
@@ -52,14 +65,27 @@ pub fn get_local_ip() -> String {
 fn get_local_ip_with_priority() -> Option<String> {
     use std::net::IpAddr;
 
-    let addrs = local_ip_address::list_afinet_netifas().ok()?;
+    let addrs = match local_ip_address::list_afinet_netifas() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::debug!(error = ?e, "list_afinet_netifas() failed");
+            return None;
+        }
+    };
+
+    tracing::trace!(count = addrs.len(), "Enumerating network interfaces");
 
     let mut candidates: Vec<(u8, std::net::Ipv4Addr)> = Vec::new();
 
     for (iface_name, ip) in addrs {
         if let IpAddr::V4(ipv4) = ip {
             // Skip loopback and link-local
-            if ipv4.is_loopback() || ipv4.is_link_local() {
+            if ipv4.is_loopback() {
+                tracing::trace!(iface = %iface_name, ip = %ipv4, "Skipping loopback");
+                continue;
+            }
+            if ipv4.is_link_local() {
+                tracing::trace!(iface = %iface_name, ip = %ipv4, "Skipping link-local");
                 continue;
             }
 
@@ -68,14 +94,17 @@ fn get_local_ip_with_priority() -> Option<String> {
 
             // Skip addresses with priority 0 (Docker bridge, etc.)
             if priority == 0 {
+                tracing::trace!(iface = %iface_name, ip = %ipv4, "Skipping priority-0 interface");
                 continue;
             }
 
+            tracing::trace!(iface = %iface_name, ip = %ipv4, priority = priority, "Candidate IP");
             candidates.push((priority, ipv4));
         }
     }
 
     if candidates.is_empty() {
+        tracing::debug!("No valid IP candidates found after filtering");
         return None;
     }
 

@@ -12,7 +12,7 @@ use crate::{
     start_manifest_loader, start_health_monitor, start_auto_adoption,
     install_batch_task,
     // Network monitoring
-    NetworkMonitor, NetworkMonitorConfig,
+    NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
     // Bootstrap functions
     load_preinstall_manifest,
     run_first_boot_initialization,
@@ -137,9 +137,18 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Phase 4: mDNS announcement (Linux only) - includes stone_id and MAC in TXT records
+    // Must happen before IP change handler so we can pass the handle
+    // Note: If current IP is loopback, registration is deferred until valid IP is available
+    let current_ip = network_monitor.get_ip().await;
     let (_, mac_for_mdns) = crate::infra::network::get_local_ip_and_mac();
-    let _mdns = match mdns::announce_moss(Some(stone_id.as_str()), &stone_name, port, mac_for_mdns.as_deref()) {
-        Ok(daemon) => Some(daemon),
+    let mdns_handle: Option<Arc<mdns::MdnsHandle>> = match mdns::announce_moss(
+        Some(stone_id.as_str()),
+        &stone_name,
+        port,
+        mac_for_mdns.as_deref(),
+        &current_ip,  // Gate: won't register if loopback
+    ) {
+        Ok(handle) => Some(Arc::new(handle)),
         Err(e) => {
             tracing::warn!(error = ?e, "mDNS announcement failed");
             None
@@ -147,6 +156,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     };
 
     // Phase 4.5: Start mDNS lurk-listener (moved to Phase 11 after state creation)
+    // Note: IP change handler moved to Phase 11 to use AppState.announce_resolution_change()
 
     // Phase 6: Lantern registration (console already created in Phase 1)
     start_lantern_registration(
@@ -211,6 +221,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         api_port: port,
         topology_cache: topology_cache.clone(),
         self_entry: self_entry.clone(),
+        mdns_handle: mdns_handle.clone(),
     };
 
     // Phase 11: Start background tasks
@@ -219,7 +230,30 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     start_registry_loader(state.clone());
     start_catalog_builder(state.clone(), console_printer.clone());
     start_manifest_loader(state.clone(), console_printer.clone());
-    
+
+    // Phase 11.1: IP change handler (resolution announcements)
+    // Uses AppState.announce_resolution_change() for proper SoC
+    if use_static_host.is_none() {
+        let state_for_ip = state.clone();
+        let mut network_rx = state.network_monitor.subscribe();
+
+        tokio::spawn(async move {
+            while let Ok(event) = network_rx.recv().await {
+                let new_ip = match &event {
+                    NetworkEvent::IpChanged { new, .. } => Some(new.clone()),
+                    NetworkEvent::Reconnected { new } => Some(new.clone()),
+                    NetworkEvent::Disconnected { .. } => None,
+                };
+
+                if let Some(ip) = new_ip {
+                    // Delegate all resolution change handling to AppState
+                    state_for_ip.announce_resolution_change(&ip).await;
+                }
+            }
+        });
+        tracing::debug!("IP change handler spawned (uses AppState.announce_resolution_change)");
+    }
+
     // Phase 11.3: Sync self_entry services after registry loads
     let state_for_sync = state.clone();
     tokio::spawn(async move {

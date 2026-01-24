@@ -107,20 +107,9 @@ Service orchestration engine on each Stone. Moss generates `docker-compose.yml` 
 
 ### mDNS (Multicast DNS)
 
-Automatic discovery protocol (20+ years proven, used by AirPlay/Chromecast).
+Zero-config discovery protocol. Stones announce services; apps query for them. No configuration required.
 
-**How it works**:
-1. Stone announces: `_koan-stone._tcp.local.` with TXT record (`offering=mongodb port=27017`)
-2. App queries: "Who offers mongodb?"
-3. Stone responds with connection details
-4. App connects using standard driver
-
-**Built into**:
-- macOS (Bonjour)
-- Linux (Avahi)
-- Windows (requires Bonjour for Windows or Lantern)
-
-→ See: [specs/discovery.md](../specs/discovery.md)
+→ See: [glossary](../glossary.md#discovery--networking), [specs/discovery.md](../specs/discovery.md)
 
 ### Lantern (Optional)
 
@@ -130,7 +119,6 @@ HTTP directory service (port 7184) for cross-subnet discovery and Windows compat
 - Windows clients without mDNS
 - VLANs blocking multicast
 - Docker Desktop network isolation
-- Central monitoring dashboard
 
 **Not needed for**:
 - Linux/macOS on same LAN

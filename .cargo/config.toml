@@ -1,0 +1,23 @@
+# Build optimization configuration
+# Improves compile and link times significantly
+
+[build]
+incremental = true
+
+# Linux: Use mold linker (much faster than default ld)
+# NOTE: Commented out - Docker build container uses its own linker config
+# For local Linux builds, uncomment and install: apt install clang mold
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# Windows: Reduce debug info overhead in dev builds
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/DEBUG:NONE"]
+
+# macOS: Use lld if available
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

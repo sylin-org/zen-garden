@@ -1,0 +1,8 @@
+﻿{
+  "name": "sqlserver",
+  "description": "Microsoft SQL Server database",
+  "category": "data",
+  "tags": ["database", "relational", "sql", "microsoft"],
+  "port": 1433,
+  "volumes": ["sqlserver-data"]
+}

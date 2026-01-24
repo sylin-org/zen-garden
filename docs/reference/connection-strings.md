@@ -4,11 +4,7 @@ doc_type: reference
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Authoritative technical reference for Zen Garden protocol. Complete API documentation covering connection string protocol, mDNS service announcement, Lantern HTTP API, TXT record schema, supported service types, client libraries, and error handling. Canonical until formal ZGP protocol specifications published."
-related:
-  - TECHNICAL-SPEC.md
-  - SERVICE-INVENTORY.md
-  - UNDERSTANDING.md
+note: "Authoritative technical reference for Zen Garden protocol."
 ---
 
 # Technical Reference

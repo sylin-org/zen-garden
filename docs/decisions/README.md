@@ -56,7 +56,7 @@ canonical: true
 
 _No pending ADRs at this time._
 
-See [proposals/](../proposals/) for active proposals under discussion.
+See [archive/proposals/](../archive/proposals/) for historical proposals.
 
 ---
 
@@ -68,7 +68,7 @@ _No superseded ADRs at this time._
 
 ## ADR Process
 
-1. **Proposal**: Create in `docs/proposals/` with `status: proposed`
+1. **Proposal**: Create proposal document
 2. **Review**: Discuss in GitHub Issues/Discussions
 3. **Decision**: Accept → Create ADR | Reject → Archive with rationale
 4. **Formalize**: Convert accepted proposal to ADR format
@@ -239,9 +239,6 @@ Once an ADR is **Accepted**:
 
 ## Related Documentation
 
-- [STRUCTURE.md](../STRUCTURE.md) - Documentation structure rules
-- [Proposals](../proposals/) - Active proposals under review
-- [Technical Specification](../specifications/technical.md) - Implementation details
 - [Archive](../archive/) - Historical decisions and proposals
 
 ---

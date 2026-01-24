@@ -301,7 +301,6 @@ Consideration: Tier 2 adds defense in depth, but not APT-proof
 - **[Pond Setup Guide](pond-setup.md)** - Enable Pond, join Stones
 - **[Threat Analysis](threat-analysis.md)** - Detailed attack scenarios
 - **[Security Specification](../specs/security.md)** - Complete technical design
-- **[TOTP Admission Proposal](../proposals/totp-admission.md)** - Stone admission workflow
 
 ---
 

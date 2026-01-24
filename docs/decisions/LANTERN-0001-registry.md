@@ -461,10 +461,9 @@ log_level = "info"
 
 ## References
 
-- **Proposal:** [docs/proposals/LANTERN-SERVICE-PROPOSAL.md](../proposals/LANTERN-SERVICE-PROPOSAL.md)
-- **Security:** [docs/SECURITY-SPEC.md](../SECURITY-SPEC.md) - Bearer token implementation
-- **Ports:** [docs/reference/ports.md](../reference/ports.md) - Port 7186 (HTTP), 7187 (UDP)
-- **Technical Spec:** [docs/TECHNICAL-SPEC.md](../TECHNICAL-SPEC.md) - Moss integration points
+- **Security:** [specs/security.md](../specs/security.md) - Bearer token implementation
+- **Ports:** [reference/ports.md](../reference/ports.md) - Port 7186 (HTTP), 7187 (UDP)
+- **Technical Spec:** [specs/moss-daemon-lifecycle.md](../specs/moss-daemon-lifecycle.md) - Moss integration points
 
 ---
 

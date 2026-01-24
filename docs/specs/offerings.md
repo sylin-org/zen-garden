@@ -415,7 +415,7 @@ Response:
 
 ## Next Steps
 
-- **Moss daemon specification:** [moss-daemon.md](moss-daemon.md)
-- **Rake CLI specification:** [rake-cli.md](rake-cli.md)
+- **Moss daemon specification:** [moss-daemon-lifecycle.md](moss-daemon-lifecycle.md)
+- **Rake CLI specification:** [rake-commands.md](rake-commands.md)
 - **Discovery protocol:** [discovery.md](discovery.md)
 - **Creating custom offerings:** [../guides/offering-services.md](../guides/offering-services.md)

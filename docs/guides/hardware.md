@@ -4,11 +4,7 @@ doc_type: reference
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Authoritative hardware guide for Stone selection and setup. Covers e-waste reframing philosophy, tier system ($0-250), service-to-hardware matching, shopping lists, and environmental impact calculations."
-related:
-  - MISSION.md
-  - UNDERSTANDING.md
-  - STORIES.md
+note: "Authoritative hardware guide for Stone selection and setup."
 ---
 
 # Hardware Guide

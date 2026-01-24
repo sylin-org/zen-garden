@@ -4,10 +4,6 @@ doc_type: guide
 status: current
 last_verified: 2026-01-18
 canonical: true
-related:
-  - DEPLOYMENT-GUIDE.md
-  - ARCHITECTURE.md
-  - docs/TECHNICAL-SPEC.md
 ---
 
 # Zen Garden Distribution Build Plan

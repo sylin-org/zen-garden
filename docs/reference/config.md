@@ -4,10 +4,7 @@ doc_type: reference
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Authoritative configuration reference for Garden-Moss daemon. Documents layered configuration system (CLI > Env > Config File > Defaults), all options (stone_name, port, log_level), file locations, usage examples, and troubleshooting."
-related:
-  - TECHNICAL-SPEC.md
-  - PORT-ALLOCATION.md
+note: "Authoritative configuration reference for Garden-Moss daemon."
 ---
 
 # Moss Configuration System

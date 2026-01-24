@@ -78,7 +78,7 @@ Output:
 - Recommended: 52+ bits (4 XKCD words + number)
 - Pattern: `word1-word2-word3-number` (e.g., `compass-twilight-harvest-82`)
 
-**Learn more:** [Passphrase Generation UX](../proposals/passphrase-generation-ux.md), [XKCD 936](https://xkcd.com/936/)
+**Learn more:** [XKCD 936](https://xkcd.com/936/)
 
 Store passphrases securely (1Password, Bitwarden, etc.). **Never plain text.**
 
@@ -438,7 +438,6 @@ garden-rake diagnose pond                  # Pond health check
 - **[Security Overview](overview.md)** - Threat models, what Pond protects
 - **[Threat Analysis](threat-analysis.md)** - Attack scenarios and mitigations
 - **[Security Specification](../specs/security.md)** - Complete technical design
-- **[TOTP Admission Proposal](../proposals/totp-admission.md)** - Stone admission workflow
 
 ---
 

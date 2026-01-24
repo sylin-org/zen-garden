@@ -555,7 +555,7 @@ async fn execute_on_all_stones(operation: Operation) -> Result<()> {
 
 ## Next Steps
 
-- **Moss daemon specification:** [moss-daemon.md](moss-daemon.md)
+- **Moss daemon specification:** [moss-daemon-lifecycle.md](moss-daemon-lifecycle.md)
 - **Service offerings:** [offerings.md](offerings.md)
 - **Discovery protocol:** [discovery.md](discovery.md)
 - **User guides:** [../guides/offering-services.md](../guides/offering-services.md)

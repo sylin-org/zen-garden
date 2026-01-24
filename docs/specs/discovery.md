@@ -338,7 +338,7 @@ zen-garden:<service-type>[/<database>][?options]
 
 ## Next Steps
 
-- **Moss daemon specification:** [moss-daemon.md](moss-daemon.md)
-- **Rake CLI specification:** [rake-cli.md](rake-cli.md)
+- **Moss daemon specification:** [moss-daemon-lifecycle.md](moss-daemon-lifecycle.md)
+- **Rake CLI specification:** [rake-commands.md](rake-commands.md)
 - **Service offerings specification:** [offerings.md](offerings.md)
 - **Troubleshooting discovery:** [../guides/troubleshooting.md](../guides/troubleshooting.md)

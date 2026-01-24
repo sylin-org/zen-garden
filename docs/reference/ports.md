@@ -4,11 +4,7 @@ doc_type: reference
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Authoritative port registry for all Zen Garden services. Baseline port 7184 (GRDN phone keypad), allocation table (7184-7199 reserved), migration notes, firewall rules. Prevents port conflicts across infrastructure."
-related:
-  - TECHNICAL-SPEC.md
-  - MOSS-CONFIG.md
-  - REFERENCE.md
+note: "Authoritative port registry for all Zen Garden services."
 ---
 
 # Zen Garden Port Allocation
@@ -264,6 +260,5 @@ curl http://localhost:7185/health
 
 ## See Also
 
-- [LANTERN-SERVICE-PROPOSAL.md](proposals/LANTERN-SERVICE-PROPOSAL.md) - Lantern architecture
-- [SECURITY-SPEC.md](SECURITY-SPEC.md) - Bearer token authentication
-- [TECHNICAL-SPEC.md](TECHNICAL-SPEC.md) - Moss API reference
+- [Security Specification](../specs/security.md) - Bearer token authentication
+- [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md) - Moss API reference

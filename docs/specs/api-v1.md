@@ -4,12 +4,7 @@ doc_type: spec
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Formal ADR documenting dual-layer API architecture (Offerings API for 90% of users, Services API for power users). Defines complete v1 endpoint structure, progressive disclosure philosophy, and semantic action patterns. Authoritative specification for all API v1 implementations."
-related:
-  - API-ARCHITECTURE-V1-EVALUATION.md
-  - API-REFERENCE.md
-  - CLI-V1-MIGRATION.md
-  - ASYNC-JOB-API.md
+note: "Formal ADR documenting dual-layer API architecture."
 ---
 
 # Zen Garden API v1: Dual-Layer Architecture

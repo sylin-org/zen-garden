@@ -614,7 +614,6 @@ When designing any feature, ask:
 
 ## References
 
-- Proposal: [Passphrase Generation UX](../proposals/passphrase-generation-ux.md)
 - Decision: [SECURITY-0003 - Keystone Protection Tiers](../decisions/SECURITY-0003-keystone-protection-tiers.md)
 - Decision: [LANTERN-0003 - mDNS Service Discovery](../decisions/LANTERN-0003-mdns-service-discovery.md)
 - External: [XKCD 936 - Password Strength](https://xkcd.com/936/)

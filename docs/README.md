@@ -4,9 +4,31 @@
 
 ---
 
+## What Is This?
+
+**Zen Garden is automatic service discovery for self-hosted infrastructure.**
+
+You have old hardware—laptops, thin clients, Raspberry Pis. You want to run databases, caches, file servers. The problem: when hardware fails, you have to update every application's connection string.
+
+Zen Garden solves this. Services announce themselves. Apps discover them. When you replace failed hardware, apps reconnect automatically. No configuration changes.
+
+```bash
+# Your app asks for MongoDB. A Stone answers.
+MONGODB_URI=zen-garden:mongodb/mydb
+```
+
+**Time investment**: 30 minutes to first Stone. 5 minutes per additional Stone.  
+**Hardware required**: Any 64-bit machine with 2GB+ RAM.  
+**Skills required**: Basic terminal comfort. No DevOps expertise.
+
+→ **Ready to start?** [First Stone Guide](guides/first-stone.md)  
+→ **Want to understand why?** Keep reading.
+
+---
+
 ## Philosophy
 
-Why we build infrastructure this way:
+Why we build infrastructure this way. [Full index with reading order →](philosophy/README.md)
 
 - [Humanist Infrastructure](philosophy/humanist-infrastructure.md) — The moral case for accessible, understandable systems
 - [Metaphor as Architecture](philosophy/metaphor-as-architecture.md) — How naming shapes design decisions

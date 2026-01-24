@@ -4,11 +4,7 @@ doc_type: spec
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Authoritative security specification for Pond authentication and Stone management. Comprehensive design covering security philosophy, threat models (home lab vs enterprise), Pond architecture (Bluetooth pairing model, two-keypair system, distributed election), Tier 1 (Garden Pond) vs Tier 2 (Deep Pond), cryptographic design, vulnerability assessment, and operational security."
-related:
-  - UNDERSTANDING.md
-  - ROADMAP.md
-  - ../decisions/
+note: "Authoritative security specification for Pond authentication and Stone management."
 ---
 
 # Zen Garden Security Specification
@@ -1382,12 +1378,6 @@ garden-rake harden pond
 ---
 
 ## References
-
-### Internal Documentation
-
-- [TECHNICAL-SPEC.md](TECHNICAL-SPEC.md) - Moss/Rake implementation
-- [UNDERSTANDING.md](UNDERSTANDING.md) - Core concepts
-- [STORIES.md](STORIES.md) - User scenarios
 
 ### Standards & RFCs
 

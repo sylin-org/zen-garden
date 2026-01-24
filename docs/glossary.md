@@ -23,10 +23,10 @@
 → See: [guides/hardware.md](guides/hardware.md)
 
 **Moss** - Daemon service running on each Stone (port 7185). Manages Docker Compose services, announces via mDNS, responds to management commands from Rake.  
-→ See: [specs/moss-daemon.md](specs/moss-daemon.md)
+→ See: [specs/moss-daemon-lifecycle.md](specs/moss-daemon-lifecycle.md)
 
 **Rake** - CLI tool (`garden-rake`) for discovering Stones and sending management commands. Operators use Rake to install services, check health, and coordinate operations.  
-→ See: [reference/rake-cli.md](reference/rake-cli.md)
+→ See: [specs/rake-commands.md](specs/rake-commands.md)
 
 **Lantern** - Optional HTTP directory service (port 7184) for cross-subnet discovery and Windows compatibility. Not required for Linux/macOS on same LAN.  
 → See: [decisions/LANTERN-0001-registry.md](decisions/LANTERN-0001-registry.md)
@@ -108,7 +108,7 @@
 → See: [decisions/SECURITY-0001-pond-tiers.md](decisions/SECURITY-0001-pond-tiers.md)
 
 **Stone Admission** - Process of joining a Stone to a Pond. Cornerstone verifies Stone authenticity (via TOTP or challenge-response) and issues certificate.  
-→ See: [proposals/totp-admission.md](proposals/totp-admission.md)
+→ See: [archive/proposals/totp-admission.md](archive/proposals/totp-admission.md)
 
 ---
 

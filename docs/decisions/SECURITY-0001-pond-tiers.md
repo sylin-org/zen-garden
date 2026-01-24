@@ -179,11 +179,10 @@ garden-rake pond approve op_123 --admin admin2 --sign
 
 ## References
 
-- **Canonical spec:** [SECURITY-SPEC.md](../SECURITY-SPEC.md)
-- **Threat models:** [SECURITY-SPEC.md § Threat Models](../SECURITY-SPEC.md#threat-models)
-- **Pond architecture:** [SECURITY-SPEC.md § Pond Security Architecture](../SECURITY-SPEC.md#pond-security-architecture)
-- **Cryptographic design:** [SECURITY-SPEC.md § Cryptographic Design](../SECURITY-SPEC.md#cryptographic-design)
-- **TOTP admission:** [proposals/TOTP-STONE-ADMISSION.md](../proposals/TOTP-STONE-ADMISSION.md)
+- **Canonical spec:** [specs/security.md](../specs/security.md)
+- **Threat models:** [specs/security.md § Threat Models](../specs/security.md#threat-models)
+- **Pond architecture:** [specs/security.md § Pond Security Architecture](../specs/security.md#pond-security-architecture)
+- **Cryptographic design:** [specs/security.md § Cryptographic Design](../specs/security.md#cryptographic-design)
 
 ## Security Review
 

@@ -4,11 +4,7 @@ doc_type: reference
 status: current
 last_verified: 2026-01-19
 canonical: true
-note: "Complete HTTP API documentation for Moss daemon v1. Phase 3 complete (scaffolding), Phase 3b pending (cryptographic implementation)."
-related:
-  - TECHNICAL-SPEC.md
-  - REFERENCE.md
-  - decisions/API-V1-DUAL-LAYER-DESIGN.md
+note: "Complete HTTP API documentation for Moss daemon v1."
 ---
 
 # Zen Garden API Reference

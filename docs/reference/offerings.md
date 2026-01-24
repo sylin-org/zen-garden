@@ -4,8 +4,6 @@ doc_type: reference
 status: current
 last_verified: 2026-01-18
 canonical: true
-related:
-  - ../ops/roadmap.md
 ---
 
 # Zen Garden Service Inventory

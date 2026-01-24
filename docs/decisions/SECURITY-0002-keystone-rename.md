@@ -162,7 +162,6 @@ POST /api/v1/pond/init     # Response: "keystone_path"
 ## References
 
 - Related: [SECURITY-0001](SECURITY-0001-pond-tiers.md) - Pond security tiers
-- Proposal: [pebble-android.md](../proposals/pebble-android.md) - Android device tier
 - Workshop: Naming collision workshop (2026-01-18)
 
 ---

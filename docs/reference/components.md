@@ -65,7 +65,7 @@ Rust daemon running on each Stone (port 7185). Manages service lifecycle and coo
 - Load balancing between service instances
 - Container runtime (delegates to Docker Engine)
 
-→ See: [specs/moss-daemon.md](../specs/moss-daemon.md)
+→ See: [specs/moss-daemon-lifecycle.md](../specs/moss-daemon-lifecycle.md)
 
 ### Rake CLI
 
@@ -87,7 +87,7 @@ garden-rake upgrade --all         # Upgrade all services everywhere
 garden-rake health               # Check Garden health
 ```
 
-→ See: [reference/rake-cli.md](../reference/rake-cli.md)
+→ See: [specs/rake-commands.md](../specs/rake-commands.md)
 
 ### Docker Compose
 
@@ -385,9 +385,8 @@ Response 202: {
 
 ## Related Documentation
 
-- **[Core Concepts](overview.md)** - 2-minute mental model
-- **[Moss Daemon Spec](../specs/moss-daemon.md)** - Implementation details
-- **[Rake CLI Spec](../specs/rake-cli.md)** - Command reference
+- **[Moss Daemon Spec](../specs/moss-daemon-lifecycle.md)** - Implementation details
+- **[Rake CLI Spec](../specs/rake-commands.md)** - Command reference
 - **[Discovery Spec](../specs/discovery.md)** - mDNS protocol
 - **[Security Overview](../security/overview.md)** - Pond architecture
 - **[Maintainer Docs](../ops/maintainers.md)** - System invariants

@@ -4,12 +4,7 @@ doc_type: guide
 status: current
 last_verified: 2026-01-19
 canonical: false
-note: "Maintainer-grade operational documentation covering system overview, invariants, release process, debugging entrypoints, and stability markers. Summarizes security operational implications (full spec in SECURITY-SPEC.md)."
-related:
-  - TECHNICAL-SPEC.md
-  - SECURITY-SPEC.md
-  - ROADMAP.md
-  - decisions/
+note: "Maintainer-grade operational documentation."
 ---
 
 # Maintainer Documentation

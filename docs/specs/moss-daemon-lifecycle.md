@@ -848,7 +848,7 @@ GET /api/garden/stones?since=01936d2e-8f4a-7890-b123-456789abcdef
 
 ## Next Steps
 
-- **Rake CLI specification:** [rake-cli.md](rake-cli.md)
+- **Rake CLI specification:** [rake-commands.md](rake-commands.md)
 - **Service offerings:** [offerings.md](offerings.md)
 - **Discovery protocol:** [discovery.md](discovery.md)
 - **Security specification:** [security.md](security.md)

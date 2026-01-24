@@ -1,7 +1,30 @@
-﻿# Your First Stone: Installation Guide
+﻿# Your First Stone
 
-**Purpose:** Step-by-step Stone installation from hardware selection to first service deployment.  
-**Audience:** Operators installing their first Stone, developers setting up development environment.
+**From old hardware to running service in 30 minutes.**
+
+---
+
+## Before You Begin
+
+**What you'll need:**
+
+| Item | Notes |
+|------|-------|
+| Old hardware | Laptop, desktop, thin client, or Raspberry Pi. 64-bit CPU, 2GB+ RAM. |
+| USB drive | 8GB+, will be erased |
+| Windows machine | For running the USB installer script (Linux/macOS installer coming soon) |
+| Ethernet cable | Optional but recommended for reliability |
+| 30 minutes | First Stone takes longest. Additional Stones: ~5 minutes each. |
+
+**What you'll do:**
+
+1. Create a bootable USB with the Stone installer
+2. Boot your old hardware from USB
+3. Let the automated installation complete
+4. Deploy your first service (MongoDB, Redis, etc.)
+5. Connect an app to the service
+
+**No expertise required.** If you can boot from USB and run a PowerShell script, you can do this.
 
 ---
 

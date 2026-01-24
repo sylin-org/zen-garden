@@ -9,7 +9,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use axum::Router;
 use tokio::net::TcpListener;
-use crate::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
+use crate::console::{
+    ConsolePrinter, ConsoleEvent, EventCategory, EventStatus,
+    BootBannerInfo, ShutdownBannerInfo, try_boot_banner, try_shutdown_banner,
+};
 use crate::infra::platform::shutdown_signal;
 
 /// Server configuration
@@ -79,6 +82,8 @@ pub async fn run(
     shutdown_notify: Arc<tokio::sync::Notify>,
     config: ServerConfig,
     shutdown_callback: Option<ShutdownCallback>,
+    boot_banner: Option<BootBannerInfo>,
+    shutdown_banner: Option<ShutdownBannerInfo>,
 ) -> anyhow::Result<()> {
     let addr = listener.local_addr()?;
 
@@ -95,6 +100,9 @@ pub async fn run(
         EventStatus::Ready,
         format!("HTTP server → {}", api_endpoint)
     ));
+
+    // Print boot banner to TTY1 (Linux only)
+    try_boot_banner(boot_banner.as_ref());
 
     // Create server with graceful shutdown
     let server = axum::serve(listener, app)
@@ -142,6 +150,9 @@ pub async fn run(
     tokio::time::sleep(tokio::time::Duration::from_secs(config.graceful_shutdown_timeout_secs)).await;
 
     tracing::info!("Moss daemon shutdown complete");
+
+    // Print shutdown banner to TTY1 (Linux only)
+    try_shutdown_banner(shutdown_banner.as_ref());
 
     console.emit(ConsoleEvent::new(
         EventCategory::System,

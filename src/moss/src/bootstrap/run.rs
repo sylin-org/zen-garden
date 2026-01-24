@@ -9,7 +9,7 @@ use crate::{
     start_lantern_registration,
     start_discovery_listener, start_hardware_detection,
     start_registry_loader, start_catalog_builder,
-    start_manifest_loader, start_health_monitor, start_auto_adoption,
+    start_health_monitor, start_auto_adoption,
     install_batch_task,
     // Network monitoring
     NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
@@ -22,8 +22,6 @@ use crate::{
     version_string,
     // Console
     console,
-    // Templates
-    templates::TemplateLoader,
     // mDNS
     mdns,
     // Infrastructure
@@ -200,16 +198,40 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     }
 
-    // Phase 10: Build AppState
+    // Phase 10: Load ManifestRegistry (single source of truth for all manifests)
+    let sw_dir = std::path::Path::new(infra::RUNTIME_TEMPLATES_DIR);
+    let hw_dir = std::path::Path::new(infra::RUNTIME_HW_MANIFESTS_DIR);
+    let hw_dir_opt = if hw_dir.exists() { Some(hw_dir) } else { None };
+
+    let manifest_registry = match infra::ManifestRegistry::load(sw_dir, hw_dir_opt) {
+        Ok(registry) => {
+            console_printer.emit(console::ConsoleEvent::new(
+                console::EventCategory::Manifests,
+                console::EventStatus::Loaded,
+                format!("{} sw, {} hw manifests", registry.sw.entries.len(), registry.hw.entries.len()),
+            ));
+            Arc::new(registry)
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to load manifest registry, using empty");
+            console_printer.emit(console::ConsoleEvent::new(
+                console::EventCategory::Manifests,
+                console::EventStatus::Invalid,
+                "Using empty registry".to_string(),
+            ));
+            Arc::new(infra::ManifestRegistry::empty())
+        }
+    };
+
+    // Phase 11: Build AppState
     let state = AppState {
         stone_id: stone_id.clone(),
         stone_name: stone_name.clone(),
         registry: Arc::new(RwLock::new(Vec::new())),
         adopted_offerings: Arc::new(RwLock::new(Vec::new())),
         borrowed_offerings: Arc::new(RwLock::new(Vec::new())),
-        manifests: Arc::new(RwLock::new(Vec::new())),
+        manifest_registry: manifest_registry.clone(),
         docker: docker.clone(),
-        templates: Arc::new(TemplateLoader::new()),
         jobs: Arc::new(RwLock::new(HashMap::new())),
         event_tx,
         shutdown_tx: shutdown_tx.clone(),
@@ -224,12 +246,12 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         mdns_handle: mdns_handle.clone(),
     };
 
-    // Phase 11: Start background tasks
+    // Phase 12: Start background tasks
     // UDP listener already started in Phase 1
+    // ManifestRegistry already loaded in Phase 10
     start_hardware_detection(stone_name.clone(), capabilities_arc.clone(), console_printer.clone(), state.clone());
     start_registry_loader(state.clone());
     start_catalog_builder(state.clone(), console_printer.clone());
-    start_manifest_loader(state.clone(), console_printer.clone());
 
     // Phase 11.1: IP change handler (resolution announcements)
     // Uses AppState.announce_resolution_change() for proper SoC
@@ -393,6 +415,23 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         })
     });
 
+    // Prepare boot banner info
+    let current_ip = state.network_monitor.get_ip().await;
+    let manifests_count = state.manifest_registry.sw.entries.len();
+    let boot_banner = Some(console::BootBannerInfo {
+        stone_name: stone_name.clone(),
+        version: version_string(),
+        ip: current_ip,
+        port,
+        manifests_count,
+    });
+
+    // Prepare shutdown banner info (start_time used for uptime at shutdown)
+    let shutdown_banner = Some(console::ShutdownBannerInfo {
+        stone_name: stone_name.clone(),
+        start_time: state.start_time,
+    });
+
     run_server(
         listener,
         app,
@@ -401,6 +440,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         shutdown_tx,
         ServerConfig::default(),
         Some(shutdown_callback),
+        boot_banner,
+        shutdown_banner,
     ).await
 }
 
@@ -509,7 +550,7 @@ async fn start_preinstall_handler(state: &AppState) {
 
     // Validate all offerings exist before creating job
     let invalid_offerings: Vec<_> = manifest.offerings.iter()
-        .filter(|o| state.templates.load(o).is_err())
+        .filter(|o| state.manifest_registry.sw.get(o).is_none())
         .cloned()
         .collect();
 

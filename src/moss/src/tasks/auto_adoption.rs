@@ -48,17 +48,12 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
 
         tracing::debug!("Running auto-adoption scan");
 
-        // Load manifests that support adopted mode
-        let manifests = state.manifests.read().await.clone();
+        // Get manifests that support adopted mode
+        let adoptable_manifests = state.manifest_registry.offerings_by_mode(&OfferingMode::Adopted);
 
         let orchestrator = DetectionOrchestrator::new(state.docker.clone());
 
-        for manifest in manifests {
-            // Only check manifests with adopted mode
-            if !manifest.modes.iter().any(|m| matches!(m, OfferingMode::Adopted)) {
-                continue;
-            }
-
+        for manifest in adoptable_manifests {
             // Check exclusion list
             if config.is_excluded(&manifest.name) {
                 tracing::debug!(offering = %manifest.name, "Skipping excluded offering");
@@ -74,7 +69,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
             }
 
             // Try detection
-            match orchestrator.detect(&manifest).await {
+            match orchestrator.detect(manifest).await {
                 Ok(result) if result.detected && result.stable => {
                     tracing::info!(
                         offering = %manifest.name,

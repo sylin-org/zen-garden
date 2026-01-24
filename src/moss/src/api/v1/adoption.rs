@@ -28,17 +28,12 @@ pub async fn list_adoptable_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Vec<AdoptableOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // Load manifests that support adopted mode
-    let manifests = state.manifests.read().await;
+    // Get offering manifests that support adopted mode
+    let adoptable_manifests = state.manifest_registry.offerings_by_mode(&garden_common::OfferingMode::Adopted);
 
     let mut adoptable = Vec::new();
 
-    for manifest in manifests.iter() {
-        // Only check manifests with adopted mode
-        if !manifest.modes.iter().any(|m| matches!(m, garden_common::OfferingMode::Adopted)) {
-            continue;
-        }
-
+    for manifest in adoptable_manifests {
         // Check if already adopted
         let already_adopted = {
             let adopted = state.adopted_offerings.read().await;
@@ -100,18 +95,14 @@ pub async fn adopt_offering_v1(
     }
 
     // Find manifest for offering
-    let manifest = {
-        let manifests = state.manifests.read().await;
-        manifests.iter()
-            .find(|m| m.name == offering)
-            .cloned()
-            .ok_or_else(|| error_response(
-                StatusCode::NOT_FOUND,
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found", offering),
-                None,
-            ))?
-    };
+    let manifest = state.manifest_registry.get_offering_manifest(&offering)
+        .cloned()
+        .ok_or_else(|| error_response(
+            StatusCode::NOT_FOUND,
+            "OFFERING_NOT_FOUND",
+            format!("Offering '{}' not found", offering),
+            None,
+        ))?;
 
     // Verify manifest supports adopted mode
     if !manifest.modes.iter().any(|m| matches!(m, garden_common::OfferingMode::Adopted)) {

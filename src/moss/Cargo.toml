@@ -59,5 +59,8 @@ windows = { version = "0.52", features = [
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", features = ["process", "signal"] }
 
+[dev-dependencies]
+tempfile = "3.10"
+
 [build-dependencies]
 garden-build-utils = { path = "../build-utils" }

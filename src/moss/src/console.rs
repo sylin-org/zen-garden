@@ -878,8 +878,7 @@ pub async fn ensure_etc_writable() -> Result<bool> {
 pub fn tty_write(text: &str) -> Result<()> {
     // Try to open /dev/tty1 for writing
     match OpenOptions::new()
-        
-        .append(true)
+        .write(true)
         .open("/dev/tty1")
     {
         Ok(mut tty) => {
@@ -1257,5 +1256,119 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
 /// Prefers LAN addresses (192.168.x.x, 10.x.x.x) over Docker bridge (172.17.x.x).
 pub fn get_local_ip_sync() -> String {
     crate::infra::network::get_local_ip()
+}
+
+// ================================================================================================
+// BOOT/SHUTDOWN BANNERS
+// ================================================================================================
+
+/// Boot banner info for display after READY
+pub struct BootBannerInfo {
+    pub stone_name: String,
+    pub version: String,
+    pub ip: String,
+    pub port: u16,
+    pub manifests_count: usize,
+}
+
+/// Print boot banner to TTY1 after System READY
+///
+/// Shows stone identity, endpoints, and status at a glance.
+/// Called once after bootstrap completes successfully.
+pub fn print_boot_banner(info: &BootBannerInfo) -> Result<()> {
+    let divider = "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    let mdns_url = format!("http://{}.local:{}", info.stone_name, info.port);
+    let ip_url = format!("http://{}:{}", info.ip, info.port);
+
+    let manifests_str = if info.manifests_count == 1 {
+        "1 manifest".to_string()
+    } else {
+        format!("{} manifests", info.manifests_count)
+    };
+
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write("")?;
+    tty_write(&format!("    ░▒▓█ zen-garden █▓▒░           {}", info.version))?;
+    tty_write("")?;
+    tty_write(&format!("    {}                 .:.  thriving", info.stone_name))?;
+    tty_write(&format!("    {}", ip_url))?;
+    tty_write(&format!("    {}", mdns_url))?;
+    tty_write("")?;
+    tty_write(&format!("    {}", manifests_str))?;
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write("")?;
+
+    Ok(())
+}
+
+/// Shutdown banner info
+pub struct ShutdownBannerInfo {
+    pub stone_name: String,
+    pub start_time: std::time::Instant,
+}
+
+/// Format uptime in human-readable form
+fn format_uptime(secs: u64) -> String {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let mins = (secs % 3600) / 60;
+
+    if days > 0 {
+        format!("{}d {}h {}m", days, hours, mins)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, mins)
+    } else if mins > 0 {
+        format!("{}m", mins)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
+/// Print shutdown banner to TTY1 before stopping
+///
+/// Shows graceful shutdown status with uptime.
+pub fn print_shutdown_banner(info: &ShutdownBannerInfo) -> Result<()> {
+    let divider = "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    let uptime_secs = info.start_time.elapsed().as_secs();
+    let uptime_str = format_uptime(uptime_secs);
+
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write(&format!("    {} going to rest...  ◐", info.stone_name))?;
+    tty_write(&format!("    uptime: {}  ·  goodbye", uptime_str))?;
+    tty_write(divider)?;
+    tty_write("")?;
+
+    Ok(())
+}
+
+/// Try to print boot banner to TTY1 (Linux only, no-op elsewhere)
+///
+/// Logs errors at debug level rather than failing.
+pub fn try_boot_banner(info: Option<&BootBannerInfo>) {
+    #[cfg(target_os = "linux")]
+    if let Some(info) = info {
+        if let Err(e) = print_boot_banner(info) {
+            tracing::debug!(error = ?e, "Failed to print boot banner to TTY1");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = info;
+}
+
+/// Try to print shutdown banner to TTY1 (Linux only, no-op elsewhere)
+///
+/// Logs errors at debug level rather than failing.
+pub fn try_shutdown_banner(info: Option<&ShutdownBannerInfo>) {
+    #[cfg(target_os = "linux")]
+    if let Some(info) = info {
+        if let Err(e) = print_shutdown_banner(info) {
+            tracing::debug!(error = ?e, "Failed to print shutdown banner to TTY1");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = info;
 }
 

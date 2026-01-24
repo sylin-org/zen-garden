@@ -251,17 +251,46 @@ mod tests {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
+    /// Helper to create a minimal TopologyEntry for testing
+    fn make_entry(stone_id: &str, stone_name: &str, endpoint: &str, version: &str) -> TopologyEntry {
+        TopologyEntry {
+            stone_id: stone_id.to_string(),
+            stone_name: stone_name.to_string(),
+            endpoint: endpoint.to_string(),
+            moss_version: version.to_string(),
+            services: vec![],
+            mac: None,
+            health: "thriving".to_string(),
+            capabilities: None,
+            status: StoneStatus::Online,
+            discovered_at: Utc::now(),
+            last_seen: Utc::now(),
+        }
+    }
+
+    /// Helper to create a TopologyEntry with MAC for testing
+    fn make_entry_with_mac(stone_id: &str, stone_name: &str, endpoint: &str, version: &str, mac: Option<&str>) -> TopologyEntry {
+        TopologyEntry {
+            stone_id: stone_id.to_string(),
+            stone_name: stone_name.to_string(),
+            endpoint: endpoint.to_string(),
+            moss_version: version.to_string(),
+            services: vec![],
+            mac: mac.map(|s| s.to_string()),
+            health: "thriving".to_string(),
+            capabilities: None,
+            status: StoneStatus::Online,
+            discovered_at: Utc::now(),
+            last_seen: Utc::now(),
+        }
+    }
+
     #[tokio::test]
     async fn test_upsert_and_get() {
         let cache = make_test_cache();
 
-        upsert_stone(
-            &cache,
-            "stone-123".to_string(),
-            "oak".to_string(),
-            "http://192.168.1.10:7123".to_string(),
-            "0.1.0".to_string(),
-        ).await;
+        let entry = make_entry("stone-123", "oak", "http://192.168.1.10:7123", "0.1.0");
+        upsert_from_chirp(&cache, entry).await;
 
         let stone = get_stone_by_id(&cache, "stone-123").await;
         assert!(stone.is_some());
@@ -276,22 +305,12 @@ mod tests {
     async fn test_upsert_updates_existing() {
         let cache = make_test_cache();
 
-        upsert_stone(
-            &cache,
-            "stone-123".to_string(),
-            "oak".to_string(),
-            "http://192.168.1.10:7123".to_string(),
-            "0.1.0".to_string(),
-        ).await;
+        let entry1 = make_entry("stone-123", "oak", "http://192.168.1.10:7123", "0.1.0");
+        upsert_from_chirp(&cache, entry1).await;
 
         // Update with new endpoint
-        upsert_stone(
-            &cache,
-            "stone-123".to_string(),
-            "oak".to_string(),
-            "http://192.168.1.99:7123".to_string(),
-            "0.1.1".to_string(),
-        ).await;
+        let entry2 = make_entry("stone-123", "oak", "http://192.168.1.99:7123", "0.1.1");
+        upsert_from_chirp(&cache, entry2).await;
 
         let stone = get_stone_by_id(&cache, "stone-123").await.unwrap();
         assert_eq!(stone.endpoint, "http://192.168.1.99:7123");
@@ -304,26 +323,12 @@ mod tests {
         let cache = make_test_cache();
 
         // First upsert with MAC
-        upsert_stone_full(
-            &cache,
-            "stone-123".to_string(),
-            "oak".to_string(),
-            "http://192.168.1.10:7123".to_string(),
-            "0.1.0".to_string(),
-            vec![],
-            Some("AA:BB:CC:DD:EE:FF".to_string()),
-        ).await;
+        let entry1 = make_entry_with_mac("stone-123", "oak", "http://192.168.1.10:7123", "0.1.0", Some("AA:BB:CC:DD:EE:FF"));
+        upsert_from_chirp(&cache, entry1).await;
 
         // Update without MAC - should preserve existing
-        upsert_stone_full(
-            &cache,
-            "stone-123".to_string(),
-            "oak".to_string(),
-            "http://192.168.1.99:7123".to_string(),
-            "0.1.1".to_string(),
-            vec![],
-            None,
-        ).await;
+        let entry2 = make_entry_with_mac("stone-123", "oak", "http://192.168.1.99:7123", "0.1.1", None);
+        upsert_from_chirp(&cache, entry2).await;
 
         let stone = get_stone_by_id(&cache, "stone-123").await.unwrap();
         assert_eq!(stone.mac, Some("AA:BB:CC:DD:EE:FF".to_string()));
@@ -333,21 +338,11 @@ mod tests {
     async fn test_get_by_name() {
         let cache = make_test_cache();
 
-        upsert_stone(
-            &cache,
-            "stone-123".to_string(),
-            "oak".to_string(),
-            "http://192.168.1.10:7123".to_string(),
-            "0.1.0".to_string(),
-        ).await;
+        let entry1 = make_entry("stone-123", "oak", "http://192.168.1.10:7123", "0.1.0");
+        upsert_from_chirp(&cache, entry1).await;
 
-        upsert_stone(
-            &cache,
-            "stone-456".to_string(),
-            "cedar".to_string(),
-            "http://192.168.1.11:7123".to_string(),
-            "0.1.0".to_string(),
-        ).await;
+        let entry2 = make_entry("stone-456", "cedar", "http://192.168.1.11:7123", "0.1.0");
+        upsert_from_chirp(&cache, entry2).await;
 
         let stone = get_stone_by_name(&cache, "cedar").await;
         assert!(stone.is_some());
@@ -358,9 +353,9 @@ mod tests {
     async fn test_get_all_stones() {
         let cache = make_test_cache();
 
-        upsert_stone(&cache, "s1".to_string(), "oak".to_string(), "http://10.0.0.1:7123".to_string(), "0.1.0".to_string()).await;
-        upsert_stone(&cache, "s2".to_string(), "cedar".to_string(), "http://10.0.0.2:7123".to_string(), "0.1.0".to_string()).await;
-        upsert_stone(&cache, "s3".to_string(), "maple".to_string(), "http://10.0.0.3:7123".to_string(), "0.1.0".to_string()).await;
+        upsert_from_chirp(&cache, make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0")).await;
+        upsert_from_chirp(&cache, make_entry("s2", "cedar", "http://10.0.0.2:7123", "0.1.0")).await;
+        upsert_from_chirp(&cache, make_entry("s3", "maple", "http://10.0.0.3:7123", "0.1.0")).await;
 
         let all = get_all_stones(&cache).await;
         assert_eq!(all.len(), 3);
@@ -376,8 +371,8 @@ mod tests {
     async fn test_forget_stone() {
         let cache = make_test_cache();
 
-        upsert_stone(&cache, "s1".to_string(), "oak".to_string(), "http://10.0.0.1:7123".to_string(), "0.1.0".to_string()).await;
-        upsert_stone(&cache, "s2".to_string(), "cedar".to_string(), "http://10.0.0.2:7123".to_string(), "0.1.0".to_string()).await;
+        upsert_from_chirp(&cache, make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0")).await;
+        upsert_from_chirp(&cache, make_entry("s2", "cedar", "http://10.0.0.2:7123", "0.1.0")).await;
 
         assert_eq!(count_stones(&cache).await, 2);
 

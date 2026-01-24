@@ -1,14 +1,14 @@
 //! Offerings index management
 //!
 //! Business logic for:
-//! - Building offerings index from templates
+//! - Building offerings index from ManifestRegistry
 //! - Caching compiled offerings with fingerprinting
 //! - Template hashing for cache invalidation
 //!
 //! Composed with compatibility module for rule evaluation.
 
 use anyhow::Result;
-use crate::templates::TemplateLoader;
+use crate::infra::ManifestRegistry;
 use crate::domain::compatibility::{CompiledCompatibility, compile_compatibility};
 
 /// Compiled offering ready for API consumption
@@ -94,28 +94,28 @@ pub fn current_capabilities_hash() -> String {
     blake3_hex(serde_json::to_vec(&payload).unwrap_or_default().as_slice())
 }
 
-/// Compute hash of all templates for cache invalidation
+/// Compute hash of all manifests for cache invalidation
 ///
-/// Includes moss version, template names, and all configuration.
+/// Includes moss version, offering names, and all configuration.
 /// Changes trigger offerings index rebuild.
-pub async fn templates_hash(templates: &TemplateLoader) -> Result<String> {
-    let template_list = templates.list_templates()?;
+pub fn manifests_hash(registry: &ManifestRegistry) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
 
-    // Include moss version in the template hash input so schema/template parsing changes
+    // Include moss version in the hash so schema/parsing changes
     // can't accidentally reuse an old cache.
     hasher.update(moss_version_string().as_bytes());
 
     // Hash each offering's effective config in stable order.
-    let mut template_list = template_list;
-    template_list.sort_by(|a, b| a.name.cmp(&b.name));
-    for t in template_list {
-        let template = templates.load(&t.name)?;
+    let mut entries: Vec<_> = registry.sw.entries.values().collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for entry in entries {
+        let template = entry.parse_template()?;
         let payload = serde_json::json!({
-            "name": t.name,
-            "category": t.category,
-            "description": t.description,
-            "tags": t.tags,
+            "name": entry.name,
+            "category": entry.category,
+            "description": entry.description(),
+            "tags": entry.tags(),
             "image": template.image,
             "ports": template.ports,
             "environment": template.environment,
@@ -133,10 +133,10 @@ pub async fn templates_hash(templates: &TemplateLoader) -> Result<String> {
 /// Loads offerings index from cache or rebuilds if:
 /// - Cache doesn't exist
 /// - force_rebuild is true
-/// - Fingerprint doesn't match (version/capabilities/templates changed)
+/// - Fingerprint doesn't match (version/capabilities/manifests changed)
 ///
 /// # Parameters
-/// - `state`: Application state with templates and offerings_index
+/// - `state`: Application state with manifest_registry and offerings_index
 /// - `force_rebuild`: Skip cache and force rebuild
 ///
 /// # Composability
@@ -162,7 +162,7 @@ pub async fn ensure_offerings_index(
             let current = OfferingsFingerprint {
                 moss_version: moss_version_string(),
                 capabilities_hash: current_capabilities_hash(),
-                templates_hash: templates_hash(&state.templates).await?,
+                templates_hash: manifests_hash(&state.manifest_registry)?,
             };
 
             if on_disk.fingerprint == current {
@@ -172,7 +172,7 @@ pub async fn ensure_offerings_index(
         }
     }
 
-    let rebuilt = rebuild_offerings_index(&state.templates).await?;
+    let rebuilt = rebuild_offerings_index(&state.manifest_registry)?;
     crate::infra::save_offerings_cache(&rebuilt).await?;
     *state.offerings_index.write().await = Some(rebuilt);
     Ok(())
@@ -201,30 +201,30 @@ pub async fn get_compiled_offering(
         .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering).cloned()))
 }
 
-/// Rebuild offerings index from templates
+/// Rebuild offerings index from ManifestRegistry
 ///
 /// Evaluates compatibility rules and compiles all offerings.
 /// Returns cache-ready index with fingerprint.
-pub async fn rebuild_offerings_index(templates: &TemplateLoader) -> Result<OfferingsIndexCache> {
-    let mut template_list = templates.list_templates()?;
-    template_list.sort_by(|a, b| a.name.cmp(&b.name));
+pub fn rebuild_offerings_index(registry: &ManifestRegistry) -> Result<OfferingsIndexCache> {
+    let mut entries: Vec<_> = registry.sw.entries.values().collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     let fingerprint = OfferingsFingerprint {
         moss_version: moss_version_string(),
         capabilities_hash: current_capabilities_hash(),
-        templates_hash: templates_hash(templates).await?,
+        templates_hash: manifests_hash(registry)?,
     };
 
-    let mut offerings = Vec::with_capacity(template_list.len());
-    for t in template_list {
-        let mut template = templates.load(&t.name)?;
+    let mut offerings = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let mut template = entry.parse_template()?;
         let compatibility = compile_compatibility(&mut template);
 
         offerings.push(CompiledOffering {
-            name: t.name,
-            category: t.category,
-            description: t.description,
-            tags: t.tags,
+            name: entry.name.clone(),
+            category: entry.category.clone(),
+            description: entry.description(),
+            tags: entry.tags(),
             image: template.image,
             ports: template.ports,
             environment: template.environment,

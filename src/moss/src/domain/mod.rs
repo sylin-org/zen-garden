@@ -37,7 +37,7 @@ pub use compatibility::{
 };
 pub use offerings::{
     CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
-    moss_version_string, current_capabilities_hash, templates_hash, rebuild_offerings_index,
+    moss_version_string, current_capabilities_hash, manifests_hash, rebuild_offerings_index,
     ensure_offerings_index, get_compiled_offering,
 };
 pub use health::{

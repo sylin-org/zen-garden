@@ -200,43 +200,6 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
     });
 }
 
-/// Start offering manifest loader
-///
-/// Loads offering manifests for multi-mode offerings.
-pub fn start_manifest_loader(state: AppState, console: Arc<ConsolePrinter>) {
-    tokio::spawn(async move {
-        tracing::info!("Loading offering manifests...");
-
-        console.emit(ConsoleEvent::new(
-            EventCategory::Manifests,
-            EventStatus::Scanning,
-            "Offering manifests",
-        ));
-
-        match infra::load_manifests(infra::default_manifests_dir()).await {
-            Ok(manifests) => {
-                let count = manifests.len();
-                *state.manifests.write().await = manifests;
-
-                tracing::info!(count, "Offering manifests loaded successfully");
-                console.emit(ConsoleEvent::new(
-                    EventCategory::Manifests,
-                    EventStatus::Loaded,
-                    format!("{} offerings", count),
-                ));
-            }
-            Err(e) => {
-                tracing::warn!(error = ?e, "Failed to load offering manifests");
-                console.emit(ConsoleEvent::new(
-                    EventCategory::Manifests,
-                    EventStatus::Invalid,
-                    "Manifest load failed",
-                ));
-            }
-        }
-    });
-}
-
 /// Start health monitoring task
 pub fn start_health_monitor(state: AppState) {
     tokio::spawn(async move {
@@ -450,8 +413,7 @@ pub async fn start_all_background_tasks(
     // Start catalog building
     start_catalog_builder(state.clone(), console.clone());
 
-    // Start manifest loading
-    start_manifest_loader(state.clone(), console.clone());
+    // Manifests already loaded via ManifestRegistry at startup
 
     // Start health monitoring
     start_health_monitor(state.clone());

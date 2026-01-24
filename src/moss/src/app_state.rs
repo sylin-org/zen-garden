@@ -3,7 +3,7 @@
 //! Holds all dependencies for moss daemon:
 //! - Service registry (Vec<ServiceInfo>)
 //! - Docker manager
-//! - Template loader
+//! - Manifest registry (unified software/hardware manifests)
 //! - Job tracking
 //! - Event broadcasting
 //! - Hardware capabilities cache
@@ -14,7 +14,7 @@
 
 use crate::docker::DockerManager;
 use crate::mdns::MdnsHandle;
-use crate::templates::TemplateLoader;
+use crate::infra::ManifestRegistry;
 use crate::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
 use garden_common::{HardwareCapabilities, ServiceInfo};
@@ -62,7 +62,6 @@ pub use crate::domain::{
 pub use garden_common::{
     AdoptedOfferingInfo, BorrowedOfferingInfo, OfferingMode,
 };
-pub use garden_common::manifests::OfferingManifest;
 
 /// Application state for HTTP handlers
 ///
@@ -86,14 +85,12 @@ pub struct AppState {
     /// Borrowed offerings registry (external network services)
     pub borrowed_offerings: Arc<RwLock<Vec<BorrowedOfferingInfo>>>,
 
-    /// Offering manifests (loaded from templates directory)
-    pub manifests: Arc<RwLock<Vec<OfferingManifest>>>,
+    /// Manifest registry - single source of truth for all manifests
+    /// Contains both software (sw) and hardware (hw) manifests
+    pub manifest_registry: Arc<ManifestRegistry>,
 
     /// Docker daemon manager
     pub docker: Arc<DockerManager>,
-
-    /// Template loader for service manifests
-    pub templates: Arc<TemplateLoader>,
 
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,

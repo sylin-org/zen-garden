@@ -21,7 +21,6 @@ pub mod docker;
 pub mod discovery;
 pub mod mdns;
 pub mod metrics;
-pub mod templates;
 pub mod console;
 pub mod network_singletons;
 
@@ -63,7 +62,7 @@ pub use tasks::{
     start_all_background_tasks,
     start_discovery_listener, start_hardware_detection,
     start_registry_loader, start_catalog_builder,
-    start_manifest_loader, start_health_monitor, start_auto_adoption,
+    start_health_monitor, start_auto_adoption,
     start_lantern_registration,
 };
 

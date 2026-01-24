@@ -96,7 +96,7 @@ pub fn get_current_compat_capabilities() -> CompatCheckCapabilities {
 /// Evaluates rules and modifies template image if needed (fallback).
 /// Returns structured compatibility result.
 pub fn compile_compatibility(
-    template: &mut crate::templates::ServiceTemplate,
+    template: &mut crate::infra::manifests::ServiceTemplate,
 ) -> CompiledCompatibility {
     if let Some(rules) = &template.compatibility {
         let capabilities = get_current_compat_capabilities();

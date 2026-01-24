@@ -12,7 +12,7 @@ use crate::domain::{
     CompatibilityDecision, evaluate_compatibility, get_current_compat_capabilities,
 };
 use crate::docker::DockerManager;
-use crate::templates::TemplateLoader;
+use crate::infra::ManifestRegistry;
 use garden_common::{Ports, ServiceHealthStatus, ServiceStatus};
 
 /// Adopt a container for a specific offering into the registry
@@ -35,13 +35,16 @@ use garden_common::{Ports, ServiceHealthStatus, ServiceStatus};
 /// - Emitting events
 pub async fn adopt_offering_container(
     docker: &DockerManager,
-    templates: &TemplateLoader,
+    manifest_registry: &ManifestRegistry,
     offering: &str,
 ) -> anyhow::Result<Option<ServiceInfo>> {
     // Only adopt if the offering maps to a known template (valid manifest/template).
-    let mut template = match templates.load(offering) {
-        Ok(t) => t,
-        Err(_) => return Ok(None),
+    let mut template = match manifest_registry.sw.get(offering) {
+        Some(entry) => match entry.parse_template() {
+            Ok(t) => t,
+            Err(_) => return Ok(None),
+        },
+        None => return Ok(None),
     };
 
     // Compute expected image based on compatibility rules.
@@ -152,7 +155,7 @@ pub async fn adopt_existing_containers(
             continue;
         }
 
-        match adopt_offering_container(&state.docker, &state.templates, &offering).await {
+        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering).await {
             Ok(Some(info)) => {
                 tracing::info!(offering = %offering, "Adopting existing zen-offering container into registry");
                 adopted.push(info);

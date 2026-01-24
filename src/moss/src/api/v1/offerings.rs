@@ -197,12 +197,11 @@ pub async fn get_offering_manifest_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
-    match state.templates.get_template_content(&name) {
-        Ok(content) => Ok((StatusCode::OK, content)),
-        Err(e) => {
+    match state.manifest_registry.sw.get(&name) {
+        Some(entry) => Ok((StatusCode::OK, entry.snippet_yaml.clone())),
+        None => {
             let mut details = HashMap::new();
             details.insert("name".to_string(), serde_json::json!(name));
-            details.insert("error".to_string(), serde_json::json!(e.to_string()));
             Err(error_response(
                 StatusCode::NOT_FOUND,
                 error_codes::TEMPLATE_NOT_FOUND,

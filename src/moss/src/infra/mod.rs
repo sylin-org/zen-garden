@@ -16,7 +16,7 @@ pub mod container;
 pub mod detection;
 pub mod filesystem;
 pub mod hardware;
-pub mod manifest_loader;
+pub mod manifests;
 pub mod network;
 pub mod persistence;
 pub mod platform;
@@ -34,7 +34,8 @@ pub use process::{kill_existing_moss_processes_graceful, check_moss_processes_ex
 pub use service::{install_windows_service, finalize_service_update, cleanup_after_service_update};
 pub use filesystem::FileSystem;
 pub use hardware::{detect_hardware, load_cached_capabilities, save_capabilities_cache, create_skeleton};
-pub use manifest_loader::{load_manifests, default_manifests_dir};
+pub use manifests::{ManifestRegistry, SwManifests, SwEntry, HwManifests, HwEntry};
+pub use manifests::{RUNTIME_TEMPLATES_DIR, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
 pub use persistence::{load_registry, save_registry, save_registry_vec, load_offerings_cache, save_offerings_cache, load_or_generate_stone_id};
 pub use platform::{is_running_from_removable_media, shutdown_signal};
 pub use secrets::SecretsManager;

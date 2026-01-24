@@ -188,7 +188,7 @@ mod tests {
             mac: None,
             health: "thriving".to_string(),
             capabilities: None,
-            status: crate::domain::StoneStatus::Online,
+            status: garden_common::StoneStatus::Online,
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
         };
@@ -212,7 +212,7 @@ mod tests {
             mac: None,
             health: "thriving".to_string(),
             capabilities: None,
-            status: crate::domain::StoneStatus::Online,
+            status: garden_common::StoneStatus::Online,
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
         };
@@ -236,7 +236,7 @@ mod tests {
             mac: None,
             health: "thriving".to_string(),
             capabilities: None,
-            status: crate::domain::StoneStatus::Online,
+            status: garden_common::StoneStatus::Online,
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
         };

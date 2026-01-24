@@ -183,7 +183,7 @@ pub async fn create_service_v1(
         };
 
         if !in_registry {
-            if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.templates, &offering).await {
+            if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering).await {
                 let mut reg = state.registry.write().await;
                 reg.push(info);
                 drop(reg);
@@ -463,7 +463,15 @@ pub async fn nourish_service_v1(
     drop(registry);
 
     // Load template for upgrade
-    let template = state.templates.load(&offering).map_err(|e| {
+    let entry = state.manifest_registry.sw.get(&offering).ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "TEMPLATE_NOT_FOUND",
+            format!("Template for '{}' not found", offering),
+            None,
+        )
+    })?;
+    let template = entry.parse_template().map_err(|e| {
         // Restore status on error
         let state_clone = state.clone();
         let service_clone = service_name.clone();
@@ -637,16 +645,12 @@ pub async fn destroy_service_v1(
 /// GET /api/v1/services/manifests - List all service manifests
 pub async fn list_manifests_v1(
     State(state): State<AppState>,
-) -> Result<(StatusCode, Json<ApiResponse<Vec<crate::templates::TemplateInfo>>>), (StatusCode, Json<ApiErrorResponse>)> {
-    let manifests = state.templates.list_templates().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "MANIFEST_LIST_FAILED",
-            format!("Failed to list manifests: {}", e),
-            None,
-        )
-    })?;
-    
+) -> Result<(StatusCode, Json<ApiResponse<Vec<crate::infra::manifests::TemplateInfo>>>), (StatusCode, Json<ApiErrorResponse>)> {
+    let manifests: Vec<_> = state.manifest_registry.sw.entries
+        .values()
+        .map(|e| e.to_template_info())
+        .collect();
+
     Ok((
         StatusCode::OK,
         Json(ApiResponse {
@@ -661,16 +665,16 @@ pub async fn get_manifest_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<ApiErrorResponse>)> {
-    let content = state.templates.get_template_content(&name).map_err(|e| {
+    let entry = state.manifest_registry.sw.get(&name).ok_or_else(|| {
         error_response(
             StatusCode::NOT_FOUND,
             "MANIFEST_NOT_FOUND",
-            format!("Manifest for '{}' not found: {}", name, e),
+            format!("Manifest for '{}' not found", name),
             None,
         )
     })?;
-    
-    Ok((StatusCode::OK, content))
+
+    Ok((StatusCode::OK, entry.snippet_yaml.clone()))
 }
 
 /// GET /api/v1/services/:service/logs - Stream service logs (SSE)

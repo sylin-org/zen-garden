@@ -27,7 +27,7 @@ pub use coordinator::{
     start_all_background_tasks,
     start_discovery_listener, start_hardware_detection,
     start_registry_loader, start_catalog_builder,
-    start_manifest_loader, start_health_monitor, start_auto_adoption,
+    start_health_monitor, start_auto_adoption,
     start_lantern_registration,
 };
 pub use discovery::lantern_registration_loop;

@@ -1,126 +1,131 @@
 ﻿# Zen Garden
 
-**Automatic service discovery for self-hosted infrastructure. No hardcoded IPs.**
+**Automatic service discovery for self-hosted infrastructure.**
 
-Turn old laptops into database servers. Swap failed hardware without updating configs.
+Turn old laptops into database servers. Swap failed hardware without updating configs. Understand what you're running.
 
 ---
 
-## 30-Second Pitch
+## The Situation
+
+Every year, humanity generates 62 million tonnes of electronic waste.
+
+Much of it works. Laptops discarded because they can't run Windows 11. Servers decommissioned because they're "out of support." Thin clients abandoned because a vendor stopped making drivers. The machines function. They simply don't function for what the *market* wants.
+
+Meanwhile, self-hosting remains hard—not because the software is complex, but because **machines fail**. When your database laptop dies, you face a choice: rename the replacement to match the old hostname (complex networking), or update every application's configuration (error-prone, downtime). Most people give up and pay $100/month for managed databases.
+
+Zen Garden exists because both of these problems have the same solution.
+
+---
+
+## The Idea
+
+```bash
+# Traditional: tightly coupled to machines
+MONGODB_URI=mongodb://old-laptop-01.local:27017
+
+# Zen Garden: coupled to services
+MONGODB_URI=zen-garden:mongodb/mydb
+```
 
 Your app asks "Where's MongoDB?" A Stone answers. Connection established.
 
-```bash
-# This never changes, even when hardware fails
-MONGODB_URI=zen-garden:mongodb/mydb
-```
+When hardware fails, swap in a replacement. The new Stone announces the same service. Apps reconnect automatically. No configuration changes. No coordination. No expertise required.
 
-When your laptop's hard drive dies, swap in a replacement. Apps reconnect automatically.
-
-**That's the entire idea.** Everything else (security, registries, configuration) is optional.
+**That's the entire idea.** The old laptop becomes useful again. The hardware swap becomes trivial. You understand what's running because you can see it, touch it, hear the fan spin.
 
 ---
 
-## 2-Minute Mental Model
+## The Vocabulary
 
-### The Problem: Configuration Brittleness
+The names are the architecture. When you understand the words, you understand the system.
 
-```bash
-# Traditional approach: tightly coupled to machines
-MONGODB_URI=mongodb://old-laptop-01.local:27017
-REDIS_URL=redis://thin-client-02.local:6379
+| Term | What It Is | Why This Name |
+|------|------------|---------------|
+| **Stone** | A device offering services (laptop, desktop, Raspberry Pi, thin client) | Stones have weight. They sit where you put them. You can touch them. They don't float in a cloud. |
+| **Moss** | The daemon running on each Stone (port 7185) | Moss grows on stones. It can't exist without them. It lives where the stone lives. |
+| **Rake** | The CLI tool for tending the garden | You shape a garden with a rake. You don't command it—you tend it. |
+| **Lantern** | Optional registry for larger gardens | When you can't see all your Stones from where you stand, you light a lantern. |
+| **Pond** | Optional security layer (mTLS) | Water creates boundaries. Inside the pond, different rules apply. |
 
-# When old-laptop-01 dies:
-# → Deploy replacement
-# → Rename new machine to old-laptop-01 (complex networking)
-#    OR update every app's config (error-prone, downtime)
-```
-
-Self-hosting fails because **machines fail**. Every hardware swap requires coordination across your entire stack.
-
-### The Solution: Resource Abstraction
-
-```bash
-# Connection strings reference SERVICES, not MACHINES
-MONGODB_URI=zen-garden:mongodb/mydb
-
-# Stone announces: "I offer MongoDB"
-# App discovers: "Who has MongoDB?"
-# Connection: Automatic, no config updates
-```
-
-**Stones** are devices offering services (any laptop, desktop, Raspberry Pi, thin client).  
-**Discovery** is automatic via mDNS (same protocol as AirPlay, Chromecast—20+ years proven).  
-**Connection strings** never change, even when hardware is replaced.
-
-### The Mission: Repurpose, Don't Discard
-
-**62 million tonnes of e-waste in 2024.** Much of it functional but "too slow" for primary use.
-
-A 2015 laptop is insufficient for video editing but perfect for MongoDB (handles 1,000+ req/sec). Zen Garden makes repurposing **frictionless**:
-
-- No networking expertise required (discovery is automatic)
-- Physical infrastructure (point at blue device = database)
-- Zero monthly cloud costs ($90-350/month → $2-5/month electricity)
-
-**Environmental + Economic + Digital Sovereignty.**
+You already understood most of this. The vocabulary carries meaning you didn't have to learn.
 
 ---
 
-## Quickstart (60 Seconds)
+## Quickstart
 
 ```bash
-# Terminal 1: Start MongoDB Stone
+# Terminal 1: Start a MongoDB Stone
 docker run -d -p 27017:27017 --name mongo-stone \
   -e ANNOUNCE_SERVICE=mongodb \
   zen-garden/stone:latest
 
-# Terminal 2: App connects automatically
-CONNECTION_STRING="zen-garden:mongodb" node app.js
+# Terminal 2: Discover what's running
+garden-rake find mongodb
+
+# Output:
+# Found: mongodb on stone-01 (192.168.1.42:27017)
 ```
 
-**What happened:**
-1. Stone announced "I offer MongoDB" via mDNS
-2. App asked "Who has MongoDB?" via multicast
-3. Stone responded with connection details
-4. Connection established
+The Stone announced itself via mDNS (the same protocol as AirPlay and Chromecast—20+ years proven). The Rake heard the announcement. No configuration. No registry. Just presence.
 
-Want to run on real hardware? → **[Start Here Guide](docs/start-here.md)**
+**Want real hardware?** → [First Stone Guide](docs/guides/first-stone.md)  
+**Want to understand the protocol?** → [Discovery Spec](docs/specs/discovery.md)
+
+---
+
+## What You Can Build
+
+A small garden. Three to ten Stones.
+
+- A 2015 laptop running MongoDB (handles 1,000+ req/sec—more than most apps need)
+- A Dell Wyse thin client running Redis (2GB RAM, draws 5 watts, silent)
+- An old desktop serving files via MinIO
+- A Raspberry Pi running Prometheus
+
+All discovered automatically. All managed through `garden-rake`. All *yours*.
+
+You can see each Stone from where you stand. When one fails, you replace the hardware—not the configuration. When you outgrow the garden, you light lanterns and fill ponds. But you probably won't outgrow it. Most applications don't need infinite scale. They need *appropriate* scale.
+
+---
+
+## Permission
+
+If you've read this far, you may be looking for permission to do something unfashionable.
+
+To use old hardware. To build small. To run infrastructure you can understand. To care about things that don't scale to millions of users.
+
+**This is that permission.**
+
+Zen Garden is for people who want their feet on the ground. Not because the cloud is wrong, but because this is where they choose to stand.
+
+---
+
+## How It Works
+
+**Discovery**: Stones announce services via mDNS multicast. Apps query for service types. No central registry required for small gardens.
+
+**Orchestration**: Each Stone runs Docker Compose. Services are defined as "offerings"—curated templates with sensible defaults. You don't write YAML; you select from a catalog.
+
+**Failure**: When a Stone disappears, apps retry discovery. When a new Stone offers the same service, apps reconnect. Hardware becomes interchangeable.
+
+**Security** (optional): Fill a Pond to add mTLS authentication. Stones inside the pond trust each other. The boundary is explicit.
+
+**Scale**: 3-10 Stones work with mDNS alone. Beyond that, light a Lantern (registry service). This isn't a limitation—it's a design choice. Zen Garden is for home labs, not data centers.
 
 ---
 
 ## Documentation
 
-**New here?**  
-→ [Start Here Guide](docs/start-here.md) - Zero to first working Stone in 30 minutes
-
-**Need the why?**  
-→ [Mission](docs/mission.md) - E-waste crisis, self-hosting barriers, social value
-
-**Want to understand the design?**  
-→ [Core Concepts](docs/concepts/overview.md) - 2-minute mental model  
-→ [Architecture](docs/concepts/architecture.md) - Component relationships  
-→ [Use Cases](docs/concepts/stories.md) - Real people using Zen Garden
-
-**Operating Stones?**  
-→ [Hardware Guide](docs/guides/hardware.md) - Turn old devices into Stones  
-→ [Offering Services](docs/guides/offering-services.md) - Plant and manage services  
-→ [Troubleshooting](docs/guides/troubleshooting.md) - Common problems and solutions
-
-**Need technical references?**  
-→ [API Reference](docs/reference/api.md) - Moss daemon HTTP API  
-→ [Connection Strings](docs/reference/connection-strings.md) - Protocol details  
-→ [Offerings Catalog](docs/reference/offerings.md) - Available service templates  
-→ [Rake CLI](docs/reference/rake-cli.md) - Command reference
-
-**Security concerns?**  
-→ [Security Overview](docs/security/overview.md) - Threat models and guarantees  
-→ [Pond Setup](docs/security/pond-setup.md) - Enable mTLS authentication
-
-**Contributing or maintaining?**  
-→ [Maintainer Docs](docs/ops/maintainers.md) - System invariants, debugging  
-→ [Roadmap](docs/ops/roadmap.md) - Implementation timeline  
-→ [Architecture Decisions](docs/decisions/) - ADRs documenting design choices
+| If you want to... | Start here |
+|-------------------|------------|
+| Set up your first Stone | [First Stone Guide](docs/guides/first-stone.md) |
+| Understand the philosophy | [Humanist Infrastructure](docs/pillars/humanist-infrastructure.md) |
+| See what services are available | [Offerings Catalog](docs/reference/offerings.md) |
+| Learn the CLI | [Rake Command Reference](docs/specs/rake-cli.md) |
+| Understand security options | [Security Overview](docs/security/overview.md) |
+| Read the specifications | [Moss Daemon Spec](docs/specs/moss-daemon.md) |
+| See architecture decisions | [Decision Records](docs/decisions/) |
 
 **Complete navigation**: [Documentation Hub](docs/README.md)
 
@@ -128,42 +133,40 @@ Want to run on real hardware? → **[Start Here Guide](docs/start-here.md)**
 
 ## Project Status
 
-**Phase:** Protocol specification + prototype development (Q1 2026)  
-**Current milestone:** Phase 0 complete (specifications), Phase 1 in progress (Python prototype, February 2026)
+**Version**: 0.1.0 (Initial Garden Phase)  
+**Status**: Active development, post-refactoring
 
-**What exists today:**
-- Complete documentation (architecture, security, API specifications)
-- NewStone.ps1 USB installer (creates bootable Debian Stones)
-- Service manifest templates (14 YAML files)
+The Rust implementation is complete and functional:
+- `garden-moss` daemon with 14-phase startup orchestration
+- `garden-rake` CLI with full command taxonomy
+- `lantern` registry for cross-subnet discovery
+- 30+ service offering templates
 
-**What's coming:**
-- Rust CLI (`garden-rake`) and daemon (`garden-moss`) - Q2 2026
-- C# client libraries - Q3 2026
-- Pond security layer (mTLS) - Q3 2026
-
-See [Roadmap](docs/ops/roadmap.md) for detailed timeline.
+See [Release Notes](docs/ops/release-notes.md) for details.
 
 ---
 
 ## Contributing
 
-**Ways to help:**
-- Test the prototype on your hardware
-- Report issues and suggest improvements
-- Write service offering templates
-- Improve documentation
-- Share your Stone builds
+The best way to help:
+- Run Stones on your old hardware and tell us what breaks
+- Write offering templates for services you use
+- Improve documentation where it confused you
 
-**For contributors:** See [Architecture Decisions](docs/decisions/) for design rationale.
+See [Maintainer Docs](docs/ops/maintainers.md) for architecture invariants.
 
 ---
 
-## License & Maintainership
+## The Name
 
-**Maintained by:** Sylin.org (Koan Framework maintainer)  
-**License:** Apache 2.0 (see [LICENSE](LICENSE))  
-**Repository:** [github.com/sylin/zen-garden](https://github.com/sylin/zen-garden)
+A zen garden is a space for contemplation. Stones placed deliberately. Moss growing slowly. Patterns raked into gravel. Nothing wasted. Nothing rushed.
+
+Infrastructure can be like this. Not the frantic scaling of cloud dashboards, but the quiet satisfaction of systems you understand. Hardware you can touch. Services you can see.
+
+That's what we're building.
 
 ---
 
-**Zen Garden**: Because hardware shouldn't be disposable, and self-hosting shouldn't be hard.
+**License**: Apache 2.0  
+**Maintainer**: Sylin.org  
+**Repository**: [github.com/sylin/zen-garden](https://github.com/sylin/zen-garden)

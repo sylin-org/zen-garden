@@ -119,13 +119,13 @@ Zen Garden is for people who want their feet on the ground. Not because the clou
 
 | If you want to...               | Start here                                                         |
 | ------------------------------- | ------------------------------------------------------------------ |
-| Set up your first Stone         | [First Stone Guide](docs/guides/first-stone.md)                    |
-| Understand the philosophy       | [Humanist Infrastructure](docs/pillars/humanist-infrastructure.md) |
-| See what services are available | [Offerings Catalog](docs/reference/offerings.md)                   |
-| Learn the CLI                   | [Rake Command Reference](docs/specs/rake-cli.md)                   |
-| Understand security options     | [Security Overview](docs/security/overview.md)                     |
-| Read the specifications         | [Moss Daemon Spec](docs/specs/moss-daemon.md)                      |
-| See architecture decisions      | [Decision Records](docs/decisions/)                                |
+| Set up your first Stone         | [First Stone Guide](docs/guides/first-stone.md)                       |
+| Understand the philosophy       | [Humanist Infrastructure](docs/philosophy/humanist-infrastructure.md) |
+| See what services are available | [Offerings Catalog](docs/reference/offerings.md)                      |
+| Learn the CLI                   | [Rake Commands](docs/specs/rake-commands.md)                          |
+| Understand security options     | [Security Overview](docs/security/overview.md)                        |
+| Read the specifications         | [Moss Daemon Lifecycle](docs/specs/moss-daemon-lifecycle.md)          |
+| See architecture decisions      | [Decision Records](docs/decisions/)                                   |
 
 **Complete navigation**: [Documentation Hub](docs/README.md)
 

@@ -141,58 +141,48 @@ $processedFiles += Merge-FolderFiles -FolderPath "decisions" -Output "$Namespace
     -Title "Zen Garden Architecture Decision Records" `
     -Description "Complete collection of all architectural decisions made for the Zen Garden project."
 
-Write-Host "`n2. Consolidating Proposals (proposals/)..." -ForegroundColor Cyan
-$processedFiles += Merge-FolderFiles -FolderPath "proposals" -Output "$Namespace-proposals-all.md" `
-    -Title "Zen Garden Proposals" `
-    -Description "Collection of all feature proposals, design evaluations, and specifications under consideration." `
+Write-Host "`n2. Consolidating Proposals (archive/proposals/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "archive/proposals" -Output "$Namespace-proposals-all.md" `
+    -Title "Zen Garden Proposals (Archived)" `
+    -Description "Archived collection of feature proposals and design evaluations." `
     -Recursive
 
-Write-Host "`n3. Consolidating Concepts (concepts/)..." -ForegroundColor Cyan
-$processedFiles += Merge-FolderFiles -FolderPath "concepts" -Output "$Namespace-concepts.md" `
-    -Title "Zen Garden Core Concepts" `
-    -Description "Comprehensive overview of Zen Garden architecture, design philosophy, and core concepts."
-
-Write-Host "`n4. Consolidating Guides (guides/)..." -ForegroundColor Cyan
+Write-Host "`n3. Consolidating Guides (guides/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "guides" -Output "$Namespace-guides-all.md" `
     -Title "Zen Garden Guides" `
     -Description "Operational guides for installation, hardware setup, service configuration, and troubleshooting."
 
-Write-Host "`n5. Consolidating Reference (reference/)..." -ForegroundColor Cyan
+Write-Host "`n4. Consolidating Reference (reference/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "reference" -Output "$Namespace-reference-all.md" `
     -Title "Zen Garden Reference" `
     -Description "Complete API, configuration, and technical reference documentation." `
     -Recursive
 
-Write-Host "`n6. Consolidating Specifications (specs/)..." -ForegroundColor Cyan
+Write-Host "`n5. Consolidating Specifications (specs/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "specs" -Output "$Namespace-specs-all.md" `
     -Title "Zen Garden Specifications" `
     -Description "Technical specifications for all Zen Garden components."
 
-Write-Host "`n7. Consolidating Security (security/)..." -ForegroundColor Cyan
+Write-Host "`n6. Consolidating Security (security/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "security" -Output "$Namespace-security-all.md" `
     -Title "Zen Garden Security" `
     -Description "Security model, threat analysis, and Pond setup documentation."
 
-Write-Host "`n8. Consolidating Operations (ops/)..." -ForegroundColor Cyan
+Write-Host "`n7. Consolidating Operations (ops/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "ops" -Output "$Namespace-ops-all.md" `
     -Title "Zen Garden Operations" `
     -Description "Build, deployment, release, and maintenance documentation."
 
-Write-Host "`n9. Consolidating Architecture (architecture/)..." -ForegroundColor Cyan
-$processedFiles += Merge-FolderFiles -FolderPath "architecture" -Output "$Namespace-architecture-all.md" `
-    -Title "Zen Garden Architecture" `
-    -Description "Design philosophy and architectural patterns."
-
-Write-Host "`n10. Consolidating Pillars (pillars/)..." -ForegroundColor Cyan
-$processedFiles += Merge-FolderFiles -FolderPath "pillars" -Output "$Namespace-pillars-all.md" `
-    -Title "Zen Garden Pillars" `
-    -Description "Core philosophical pillars and design principles that guide Zen Garden development."
+Write-Host "`n8. Consolidating Philosophy (philosophy/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "philosophy" -Output "$Namespace-philosophy-all.md" `
+    -Title "Zen Garden Philosophy" `
+    -Description "Core philosophical essays and design principles that guide Zen Garden development."
 
 # ============================================================================
 # ROOT-LEVEL DOCS FILES (not in subfolders)
 # ============================================================================
 
-Write-Host "`n11. Processing root-level docs files..." -ForegroundColor Cyan
+Write-Host "`n9. Processing root-level docs files..." -ForegroundColor Cyan
 
 $docsPath = Join-Path $RootDir $SourceRoot
 $rootFiles = Get-ChildItem -Path $docsPath -Filter "*.md" -File |
@@ -214,7 +204,7 @@ foreach ($file in $rootFiles) {
 # SPECIAL FILES (outside docs/)
 # ============================================================================
 
-Write-Host "`n12. Processing special files..." -ForegroundColor Cyan
+Write-Host "`n10. Processing special files..." -ForegroundColor Cyan
 
 # Main README
 $readmePath = Join-Path $RootDir "README.md"
@@ -279,7 +269,7 @@ if (Test-Path $installerPath) {
 # METADATA FILES
 # ============================================================================
 
-Write-Host "`n13. Generating distribution metadata..." -ForegroundColor Cyan
+Write-Host "`n11. Generating distribution metadata..." -ForegroundColor Cyan
 
 $files = Get-ChildItem -Path $OutputDir -Filter "*.md" | Sort-Object Name
 
@@ -299,7 +289,7 @@ for easy AI consumption. All .md files from docs/ are automatically included.
 
 1. Start here: zen-garden-readme.md - Main project overview
 2. Learn terms: zen-garden-glossary.md - Essential terminology
-3. Understand concepts: zen-garden-concepts.md - Core architecture
+3. Read philosophy: zen-garden-philosophy-all.md - Design principles
 4. Deep dive: zen-garden-specs-all.md - Technical specifications
 
 ## File Naming Convention
@@ -309,16 +299,14 @@ All files follow the pattern: zen-garden-[category].md
 Categories:
 - readme - Main project overview
 - glossary - Terminology reference
-- concepts - Core concepts and architecture
 - guides-all - All operational guides
 - reference-all - API and configuration reference
 - specs-all - Technical specifications
 - security-all - Security model and threat analysis
 - ops-all - Operations, releases, and build guides
 - decisions-all - All architectural decision records (ADRs)
-- proposals-all - All feature proposals
-- architecture-all - Design philosophy
-- pillars-all - Core philosophical pillars
+- proposals-all - Archived feature proposals
+- philosophy-all - Core philosophical essays
 
 ## File Count
 

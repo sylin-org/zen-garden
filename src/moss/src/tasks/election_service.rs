@@ -28,13 +28,14 @@ const CLEANUP_INTERVAL_SECS: u64 = 60;
 const INITIATED_ELECTION_TTL_SECS: u64 = 60;
 
 /// Election service state
+///
+/// IMPORTANT: Does NOT create its own UDP socket.
+/// Subscribes to UDP events from singleton listener in discovery.rs
 pub struct ElectionService {
     /// This stone's ID
     stone_id: String,
     /// This stone's name
     stone_name: String,
-    /// UDP socket for broadcast/unicast
-    socket: Arc<UdpSocket>,
     /// Pending candidate timers (election_id -> PendingElection)
     pending: Arc<RwLock<HashMap<String, PendingElection>>>,
     /// Initiated elections (self-exclusion) - election_id -> timestamp
@@ -49,7 +50,6 @@ impl Clone for ElectionService {
         Self {
             stone_id: self.stone_id.clone(),
             stone_name: self.stone_name.clone(),
-            socket: self.socket.clone(),
             pending: self.pending.clone(),
             initiated: self.initiated.clone(),
             state_provider: self.state_provider.clone(),
@@ -71,34 +71,25 @@ pub trait StateProvider: Send + Sync {
 }
 
 impl ElectionService {
-    /// Create new election service
-    pub async fn new(
+    /// Create new election service (does NOT bind UDP socket)
+    pub fn new(
         stone_id: String,
         stone_name: String,
-        port: u16,
         state_provider: Box<dyn StateProvider>,
-    ) -> Result<Self> {
-        let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))
-            .await
-            .with_context(|| format!("Failed to bind UDP socket on port {}", port))?;
-
-        socket.set_broadcast(true)?;
-
+    ) -> Self {
         tracing::info!(
             stone_id = %stone_id,
             stone_name = %stone_name,
-            port = port,
-            "Election service initialized"
+            "Election service initialized (will subscribe to singleton UDP)"
         );
 
-        Ok(Self {
+        Self {
             stone_id,
             stone_name,
-            socket: Arc::new(socket),
             pending: Arc::new(RwLock::new(HashMap::new())),
             initiated: Arc::new(RwLock::new(HashMap::new())),
             state_provider: Arc::new(RwLock::new(state_provider)),
-        })
+        }
     }
 
     /// Start UDP listener loop (call this from bootstrap as background task)

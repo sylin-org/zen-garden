@@ -15,6 +15,9 @@ use crate::network_singletons;
 /// - `Request`: Another stone is looking for peers (respond with our info)
 /// - `Chirp`: Another stone is announcing its presence (update topology cache)
 /// - `Goodbye`: Another stone is shutting down (mark as offline immediately)
+/// - `ElectionRequest`: Election initiation (candidates evaluate criteria and respond)
+/// - `ElectionCandidate`: Candidacy announcement (coordinator tracks for winner selection)
+/// - `ElectionResult`: Winner announcement (broadcast to all participants)
 #[derive(Debug, Clone)]
 pub enum UdpEvent {
     /// Discovery request from a stone looking for peers
@@ -30,6 +33,21 @@ pub enum UdpEvent {
     /// Stone goodbye - graceful shutdown notification
     Goodbye {
         goodbye: StoneGoodbyePayload,
+        from_addr: SocketAddr,
+    },
+    /// Election request - initiates distributed election
+    ElectionRequest {
+        request: garden_common::election::ElectionRequest,
+        from_addr: SocketAddr,
+    },
+    /// Election candidate - stone announcing candidacy
+    ElectionCandidate {
+        candidate: garden_common::election::CandidateAnnouncement,
+        from_addr: SocketAddr,
+    },
+    /// Election result - winner announcement
+    ElectionResult {
+        result: garden_common::election::ElectionResult,
         from_addr: SocketAddr,
     },
 }
@@ -214,6 +232,48 @@ async fn handle_announcement(
                 // Broadcast goodbye event to consumers (for immediate offline marking)
                 let _ = broadcast_tx.send(UdpEvent::Goodbye {
                     goodbye,
+                    from_addr: addr,
+                });
+            }
+        }
+        announcement_types::ELECTION_REQUEST => {
+            if let Ok(request) = serde_json::from_value::<garden_common::election::ElectionRequest>(announcement.data.clone()) {
+                tracing::debug!(
+                    election_id = %request.election_id,
+                    election_type = ?request.election_type,
+                    from = ?addr,
+                    "Received election request"
+                );
+                let _ = broadcast_tx.send(UdpEvent::ElectionRequest {
+                    request,
+                    from_addr: addr,
+                });
+            }
+        }
+        announcement_types::ELECTION_CANDIDATE => {
+            if let Ok(candidate) = serde_json::from_value::<garden_common::election::CandidateAnnouncement>(announcement.data.clone()) {
+                tracing::debug!(
+                    election_id = %candidate.election_id,
+                    stone_id = %candidate.stone_id,
+                    from = ?addr,
+                    "Received election candidate"
+                );
+                let _ = broadcast_tx.send(UdpEvent::ElectionCandidate {
+                    candidate,
+                    from_addr: addr,
+                });
+            }
+        }
+        announcement_types::ELECTION_RESULT => {
+            if let Ok(result) = serde_json::from_value::<garden_common::election::ElectionResult>(announcement.data.clone()) {
+                tracing::debug!(
+                    election_id = %result.election_id,
+                    winner = ?result.winner,
+                    from = ?addr,
+                    "Received election result"
+                );
+                let _ = broadcast_tx.send(UdpEvent::ElectionResult {
+                    result,
                     from_addr: addr,
                 });
             }

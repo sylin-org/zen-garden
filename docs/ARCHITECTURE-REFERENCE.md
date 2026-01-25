@@ -1,4 +1,4 @@
-﻿# Zen Garden - Capabilities Directory
+﻿# Zen Garden - Architecture Reference
 **Version**: 0.1.0 | **Updated**: 2026-01-25
 
 > **Read this FIRST. Don't reinvent wheels. Use what exists.**
@@ -32,6 +32,37 @@ Moss handles all garden-wide coordination:
 - `GET /api/v1/garden/nourishment` → Moss queries ALL stones, aggregates results
 - `POST /api/v1/garden/nourishment/execute` → Moss dispatches updates to each affected stone
 - `GET /api/v1/garden/observe` → Moss queries ALL stones, aggregates topology
+
+### P2P Transport Singleton (CRITICAL)
+**ALL UDP communication MUST go through `infra/communications/p2p.rs`.**
+
+**Rules:**
+- ❌ **NEVER** import `tokio::net::UdpSocket` in domain/tasks modules
+- ❌ **NEVER** call `UdpSocket::bind()` anywhere except `p2p.rs`
+- ✅ **ALWAYS** use `p2p::subscribe_to_events()` for receiving
+- ✅ **ALWAYS** use `p2p::send_announcement(type, payload)` for sending
+
+**Pattern:**
+```rust
+// Receiving (in tasks/handlers)
+let mut udp_rx = p2p::subscribe_to_events().await?;
+loop {
+    match udp_rx.recv().await {
+        Ok(UdpEvent::ElectionRequest { request, .. }) => handle(request),
+        Ok(UdpEvent::StoneChirp { chirp, .. }) => handle(chirp),
+        _ => {}
+    }
+}
+
+// Sending (from anywhere)
+p2p::send_announcement(
+    announcement_types::ELECTION_REQUEST,
+    &election_request
+).await?;
+```
+
+**Why:** Prevents port conflicts (7184), enforces SoC/DDD, enables testing.  
+**Reference:** [COMM-0001](decisions/COMM-0001-p2p-transport-singleton.md)
 
 ---
 

@@ -4,7 +4,7 @@
 
 **ALWAYS read this first before writing code:**
 
-📖 **[docs/CAPABILITIES-DIRECTORY.md](../docs/CAPABILITIES-DIRECTORY.md)**
+📖 **[docs/ARCHITECTURE-REFERENCE.md](../docs/ARCHITECTURE-REFERENCE.md)**
 
 This is your primary reference for:
 - All existing utilities and functions
@@ -16,7 +16,7 @@ This is your primary reference for:
 ## 🚨 Critical Requirements
 
 ### 1. Don't Reinvent Wheels
-Check `docs/CAPABILITIES-DIRECTORY.md` for existing utilities before creating new ones:
+Check `docs/ARCHITECTURE-REFERENCE.md` for existing utilities before creating new ones:
 - Formatting: `format_bytes()`, `format_uptime()`
 - Paths: Use `garden_common::constants::paths::*` functions
 - Timeouts/Limits: Predefined constants exist
@@ -67,11 +67,12 @@ fn handler() -> Result<Json<T>, (StatusCode, Json<ErrorResponse>)> {
 ## 📋 Pre-Flight Checklist
 
 Before generating code:
-- [ ] Read relevant sections of CAPABILITIES-DIRECTORY.md
+- [ ] Read relevant sections of ARCHITECTURE-REFERENCE.md
 - [ ] Verify no existing utility already does this
 - [ ] Check if types should be in `garden_common`
 - [ ] Use platform-aware path functions
 - [ ] Follow domain/infra separation
+- [ ] Verify P2P transport usage (no direct UDP sockets)
 
 ## 🎯 Module Structure
 
@@ -99,7 +100,7 @@ src/
 
 ## ✅ Always Do This
 
-- ✅ Check CAPABILITIES-DIRECTORY.md first
+- ✅ Check ARCHITECTURE-REFERENCE.md first
 - ✅ Use shared types from `garden_common`
 - ✅ Use path functions for cross-platform compatibility
 - ✅ Propagate errors with `.context()`

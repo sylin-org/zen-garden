@@ -16,6 +16,7 @@ pub mod announcer;
 pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
+pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;

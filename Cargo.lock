@@ -955,6 +955,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "blake3",
  "chrono",
  "futures",
  "mdns-sd",
@@ -965,6 +966,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
+ "tracing",
  "uuid",
 ]
 

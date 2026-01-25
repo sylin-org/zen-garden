@@ -535,7 +535,13 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
         // Simple list (no resource metrics in topology cache)
         for svc in filtered_services {
             let status_indicator = ui::status_indicator(&svc.status, term.supports_color);
-            println!("{}", ui::place_value(&format!("{}        {} ({})", indent, svc.name, svc.offering), &status_indicator));
+            // Only show offering type if name differs from offering (e.g., "db-primary (mongodb)")
+            let display_name = if svc.name == svc.offering {
+                svc.name.clone()
+            } else {
+                format!("{} ({})", svc.name, svc.offering)
+            };
+            println!("{}", ui::place_value(&format!("{}        {}", indent, display_name), &status_indicator));
         }
     }
 

@@ -153,6 +153,8 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
             kernel_version,
             swap_mb,
             ai_capabilities: None,
+            system_manufacturer: None,
+            system_product: None,
         },
         runtime: None, // TODO: Add runtime info (docker version, OS, kernel)
         detection_status: DetectionStatus::Complete, // Synchronous detection

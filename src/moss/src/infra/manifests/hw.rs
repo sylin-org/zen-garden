@@ -271,8 +271,16 @@ impl HwManifests {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
-}
 
+    /// Find a hardware manifest that matches the given system identity
+    /// Uses DMI/SMBIOS values from the running system
+    pub fn find_matching(&self, manufacturer: Option<&str>, product: Option<&str>) -> Option<&HwEntry> {
+        let mfr = manufacturer?;
+        let prod = product?;
+        
+        self.entries.values().find(|entry| entry.matches_dmidecode(mfr, prod))
+    }
+}
 impl HwEntry {
     /// Get the full key (vendor/model)
     pub fn key(&self) -> String {

@@ -7,6 +7,40 @@ use anyhow::Result;
 use garden_common::HardwareCapabilities;
 use std::path::PathBuf;
 
+/// Detect system manufacturer from DMI/SMBIOS
+///
+/// Linux: reads from /sys/class/dmi/id/sys_vendor
+/// Windows: uses WMI (stub for now)
+#[cfg(target_os = "linux")]
+fn detect_system_manufacturer() -> Option<String> {
+    std::fs::read_to_string("/sys/class/dmi/id/sys_vendor")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detect_system_manufacturer() -> Option<String> {
+    None // TODO: WMI query for Windows
+}
+
+/// Detect system product name from DMI/SMBIOS
+///
+/// Linux: reads from /sys/class/dmi/id/product_name
+/// Windows: uses WMI (stub for now)
+#[cfg(target_os = "linux")]
+fn detect_system_product() -> Option<String> {
+    std::fs::read_to_string("/sys/class/dmi/id/product_name")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detect_system_product() -> Option<String> {
+    None // TODO: WMI query for Windows
+}
+
 /// Load cached hardware capabilities from disk
 ///
 /// Returns None if cache doesn't exist or is invalid.
@@ -99,6 +133,14 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
     let kernel_version = crate::metrics::detect_kernel_version();
     let swap_mb = crate::metrics::detect_swap();
 
+    // DMI/SMBIOS system identity (for hw manifest matching)
+    let system_manufacturer = detect_system_manufacturer();
+    let system_product = detect_system_product();
+    
+    if let (Some(ref mfr), Some(ref prod)) = (&system_manufacturer, &system_product) {
+        tracing::info!(manufacturer = %mfr, product = %prod, "Detected system identity");
+    }
+
     let hardware = HardwareInventory {
         cpu: CpuCapabilities {
             model: if cpu_model == "Unknown" { None } else { Some(cpu_model.clone()) },
@@ -117,6 +159,8 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
         kernel_version: kernel_version.clone(),
         swap_mb,
         ai_capabilities: None,
+        system_manufacturer,
+        system_product,
     };
 
     let capabilities = HardwareCapabilities {
@@ -165,6 +209,8 @@ pub fn create_skeleton(stone_name: String) -> HardwareCapabilities {
         kernel_version: None,
         swap_mb: None,
         ai_capabilities: None,
+        system_manufacturer: None,
+        system_product: None,
     };
 
     HardwareCapabilities {

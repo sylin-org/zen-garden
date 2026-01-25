@@ -170,6 +170,8 @@ fn create_capabilities_skeleton(stone_id: &str, stone_name: &str) -> HardwareCap
             kernel_version: None,
             swap_mb: None,
             ai_capabilities: None,
+            system_manufacturer: None,
+            system_product: None,
         },
         runtime: Some(RuntimeInfo {
             docker_version: None,

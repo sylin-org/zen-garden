@@ -174,8 +174,8 @@ pub async fn detect_capabilities_background(
                 os_version: None,
                 kernel_version: None,
                 swap_mb: None,
-                ai_capabilities: None,
-            },
+                ai_capabilities: None,                system_manufacturer: None,
+                system_product: None,            },
             runtime: Some(RuntimeInfo {
                 docker_version: None,
                 os: std::env::consts::OS.to_string(),

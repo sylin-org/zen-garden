@@ -201,70 +201,140 @@ impl StoneCandidate {
 /// Execute an async operation against the best available stone.
 ///
 /// This is the main entry point for stone communication. It handles:
-/// 1. Trying the tended stone first (instant, no network discovery)
-/// 2. If tended fails → UDP broadcast discovery (works on Windows + Linux)
-/// 3. Auto-tend to first responder, or fail gracefully ("no stones detected")
+/// 1. Trying the tended stone immediately
+/// 2. After 3 seconds, start discovery in parallel (while still waiting for tended)
+/// 3. Tended wins if it responds, even if slow
+/// 4. If discovery responds first AND tended fails, elect new tended
 ///
 /// # Arguments
-/// * `discovery_timeout` - How long to wait for fallback discovery (only used if needed)
+/// * `discovery_timeout` - How long to wait for fallback discovery
 /// * `on_tended_offline` - Optional callback when tended stone is offline (for UI feedback)
-/// * `operation` - Async closure that performs the actual request. Returns `Some(T)` on success.
+/// * `operation` - Async closure that performs the actual request
 ///
 /// # Returns
 /// * `Ok((result, stone))` - The operation succeeded, with the responding stone info
 /// * `Err` - No stones available or all stones failed
-///
-/// # Example
-/// ```ignore
-/// let (topology, stone) = tending::execute_on_stone(
-///     Duration::from_secs(3),
-///     Some(|name| println!("Stone '{}' is offline, trying fallback...", name)),
-///     |candidate| async move {
-///         let url = format!("{}/api/v1/garden/topology", candidate.endpoint);
-///         client.get(&url).send().await.ok()?.json().await.ok()
-///     },
-/// ).await?;
-/// ```
 pub async fn execute_on_stone<F, Fut, T>(
     discovery_timeout: std::time::Duration,
     on_tended_offline: Option<impl Fn(&str)>,
     operation: F,
 ) -> Result<(T, StoneCandidate)>
 where
-    F: Fn(&StoneCandidate) -> Fut,
+    F: Fn(&StoneCandidate) -> Fut + Clone,
     Fut: std::future::Future<Output = Result<T, StoneError>>,
 {
     use crate::discovery;
+    use tokio::time::{sleep, Duration};
 
-    // 1. Try tended stone first (instant - no discovery)
-    if let Ok(tended_state) = read_tending() {
-        let tended = StoneCandidate::from_tending(&tended_state);
-        tracing::debug!(stone = %tended.stone_name, "Trying tended stone");
+    const DISCOVERY_DELAY: Duration = Duration::from_secs(3);
+    const TENDED_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
-        match operation(&tended).await {
-            Ok(result) => {
-                tracing::debug!(stone = %tended.stone_name, "Tended stone responded successfully");
-                return Ok((result, tended));
+    // Check if we have a tended stone
+    let tended_state = read_tending().ok();
+    
+    if let Some(ref state) = tended_state {
+        let tended = StoneCandidate::from_tending(state);
+        tracing::debug!(stone = %tended.stone_name, "Trying tended stone with parallel discovery fallback");
+
+        // Start tended request immediately
+        let operation_clone = operation.clone();
+        let tended_clone = tended.clone();
+        let tended_future = async move {
+            operation_clone(&tended_clone).await
+        };
+
+        // Start discovery after delay
+        let discovery_future = async {
+            sleep(DISCOVERY_DELAY).await;
+            tracing::debug!("Starting parallel discovery...");
+            discovery::discover_moss_auto(discovery_timeout)
+        };
+
+        // Race: tended vs delayed discovery
+        tokio::pin!(tended_future);
+        tokio::pin!(discovery_future);
+
+        // First, try to get tended result before discovery even starts
+        let tended_result = tokio::select! {
+            biased; // Prefer tended
+            
+            result = &mut tended_future => {
+                Some(result)
             }
-            Err(e) if e.is_retryable() => {
-                // Connection failed - stone might be offline, try fallback
-                tracing::debug!(stone = %tended.stone_name, error = %e, "Tended stone unreachable");
-                if let Some(ref callback) = on_tended_offline {
-                    callback(&tended.stone_name);
-                }
+            _ = &mut discovery_future => {
+                // Discovery completed first, but give tended a grace period
+                None
             }
-            Err(e) => {
-                // Non-retryable error - stop here, don't try other stones
-                tracing::error!(stone = %tended.stone_name, error = %e, "Operation failed on tended stone");
+        };
+
+        // If tended responded, use it
+        if let Some(Ok(result)) = tended_result {
+            tracing::debug!(stone = %tended.stone_name, "Tended stone responded successfully");
+            return Ok((result, tended));
+        }
+
+        // If tended had a non-retryable error, fail immediately
+        if let Some(Err(e)) = &tended_result {
+            if !e.is_retryable() {
                 return Err(anyhow::anyhow!("Stone '{}' error: {}", tended.stone_name, e));
             }
+            // Retryable error - tended is offline
+            tracing::debug!(stone = %tended.stone_name, error = %e, "Tended stone unreachable");
+            if let Some(ref callback) = on_tended_offline {
+                callback(&tended.stone_name);
+            }
         }
+
+        // Tended didn't respond in time or failed - wait for discovery
+        // But give tended a grace period after discovery completes
+        let discovered = if tended_result.is_none() {
+            // Discovery already completed, give tended one more chance
+            tokio::select! {
+                biased;
+                result = &mut tended_future => {
+                    match result {
+                        Ok(r) => {
+                            tracing::debug!(stone = %tended.stone_name, "Tended responded during grace period");
+                            return Ok((r, tended));
+                        }
+                        Err(e) if !e.is_retryable() => {
+                            return Err(anyhow::anyhow!("Stone '{}' error: {}", tended.stone_name, e));
+                        }
+                        Err(e) => {
+                            tracing::debug!(stone = %tended.stone_name, error = %e, "Tended failed during grace period");
+                            if let Some(ref callback) = on_tended_offline {
+                                callback(&tended.stone_name);
+                            }
+                        }
+                    }
+                }
+                _ = sleep(TENDED_GRACE_PERIOD) => {
+                    tracing::debug!(stone = %tended.stone_name, "Tended grace period expired");
+                    if let Some(ref callback) = on_tended_offline {
+                        callback(&tended.stone_name);
+                    }
+                }
+            }
+            
+            // Get discovery results (already completed)
+            discovery::discover_moss_auto(discovery_timeout).unwrap_or_default()
+        } else {
+            // Tended failed, run discovery now
+            match discovery::discover_moss_auto(discovery_timeout) {
+                Ok(stones) => stones,
+                Err(e) => {
+                    tracing::warn!(error = ?e, "Discovery failed");
+                    anyhow::bail!("No stones available: tended offline and discovery failed");
+                }
+            }
+        };
+
+        // Filter out the failed tended stone and try fallbacks
+        return try_fallback_stones(discovered, Some(&tended.endpoint), operation).await;
     }
 
-    // 2. Fallback: discover other stones (slow - only runs if tended failed or doesn't exist)
-    tracing::debug!("Running fallback discovery...");
-    let tended_endpoint = read_tending().ok().map(|t| t.endpoint);
-
+    // No tended stone - just do discovery
+    tracing::debug!("No tending state, running discovery...");
     let discovered = match discovery::discover_moss_auto(discovery_timeout) {
         Ok(stones) => stones,
         Err(e) => {
@@ -273,26 +343,45 @@ where
         }
     };
 
-    if discovered.is_empty() && tended_endpoint.is_none() {
-        anyhow::bail!("No stones available: none discovered and no tending");
+    if discovered.is_empty() {
+        anyhow::bail!("No stones available: none discovered");
     }
 
-    // Filter out the failed tended stone
+    try_fallback_stones(discovered, None, operation).await
+}
+
+/// Try fallback stones from discovery results
+async fn try_fallback_stones<F, Fut, T>(
+    discovered: Vec<garden_common::DiscoveryResponse>,
+    exclude_endpoint: Option<&str>,
+    operation: F,
+) -> Result<(T, StoneCandidate)>
+where
+    F: Fn(&StoneCandidate) -> Fut,
+    Fut: std::future::Future<Output = Result<T, StoneError>>,
+{
+    if discovered.is_empty() {
+        anyhow::bail!("No stones available: none discovered");
+    }
+
+    // Filter out excluded endpoint (failed tended)
     let fallbacks: Vec<StoneCandidate> = discovered
         .into_iter()
         .filter(|r| {
-            if let Some(ref exclude) = tended_endpoint {
-                &r.stone_endpoint != exclude
-            } else {
-                true
-            }
+            exclude_endpoint
+                .map(|exclude| &r.stone_endpoint != exclude)
+                .unwrap_or(true)
         })
         .map(|r| StoneCandidate::from_discovery(&r))
         .collect();
 
+    if fallbacks.is_empty() {
+        anyhow::bail!("No stones available: tended offline, no alternatives discovered");
+    }
+
     tracing::debug!(count = fallbacks.len(), "Trying fallback stones");
 
-    // 3. Try each fallback
+    // Try each fallback
     for candidate in fallbacks {
         match operation(&candidate).await {
             Ok(result) => {
@@ -308,13 +397,10 @@ where
                 return Ok((result, candidate));
             }
             Err(e) if e.is_retryable() => {
-                // Connection failed, try next stone
                 tracing::debug!(stone = %candidate.stone_name, error = %e, "Fallback stone unreachable");
                 continue;
             }
             Err(e) => {
-                // Non-retryable error - stop trying
-                tracing::error!(stone = %candidate.stone_name, error = %e, "Operation failed on fallback stone");
                 return Err(anyhow::anyhow!("Stone '{}' error: {}", candidate.stone_name, e));
             }
         }

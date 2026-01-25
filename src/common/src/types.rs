@@ -438,6 +438,14 @@ pub mod announcement_types {
     pub const STONE_CHIRP: &str = "stone_chirp";
     /// Stone going offline announcement (graceful shutdown)
     pub const STONE_GOODBYE: &str = "stone_goodbye";
+    
+    // Election protocol (ELECTION-0001)
+    /// Election request broadcast (start election)
+    pub const ELECTION_REQUEST: &str = "election_request";
+    /// Election candidate response (unicast to requester)
+    pub const ELECTION_CANDIDATE: &str = "election_candidate";
+    /// Election result announcement (broadcast winner)
+    pub const ELECTION_RESULT: &str = "election_result";
 }
 
 /// Service information for topology entries and chirp payloads

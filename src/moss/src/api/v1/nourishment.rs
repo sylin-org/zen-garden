@@ -4,11 +4,14 @@
 //! - Software offerings (Docker images)
 //! - Hardware firmware (via fwupd/LVFS)
 //!
-//! Endpoints:
-//! - GET /api/v1/nourishment/check - Local stone update check
-//! - GET /api/v1/garden/nourishment - Garden-wide update check (orchestrated)
-//! - POST /api/v1/nourishment/execute - Execute selected updates
-//! - GET /api/v1/nourishment/stream/:job_id - Live status stream (SSE)
+//! ## Garden endpoints (Rake → tended Moss, orchestrated):
+//! - GET  /api/v1/garden/nourishment - Aggregates updates from all stones
+//! - POST /api/v1/garden/nourishment/execute - Dispatches to affected stones
+//!
+//! ## Stone endpoints (local or Moss → Moss):
+//! - GET  /api/v1/stone/nourishment - This stone's pending updates
+//! - POST /api/v1/stone/nourishment/execute - Execute on this stone
+//! - GET  /api/v1/stone/nourishment/stream/:job_id - SSE status stream
 
 use axum::{
     extract::{Path, State},
@@ -28,14 +31,14 @@ use garden_common::HardwareCapabilities;
 use garden_common::nourishment::*;
 
 // ============================================================================
-// Endpoint: GET /api/v1/nourishment/check
+// Endpoint: GET /api/v1/stone/nourishment
 // ============================================================================
 
-/// Local stone update check
+/// Stone-local update check
 ///
 /// Queries Docker registry for offering updates and detects firmware updates.
 /// Validates hardware constraints and returns available/blocked updates.
-pub async fn check_local(
+pub async fn check_stone(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<NourishmentCheckResponse>>, (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     // Get hardware capabilities for constraint checking
@@ -57,8 +60,8 @@ pub async fn check_local(
             None,
         ))?;
 
-    // Check firmware updates
-    let firmware_updates = check_firmware_updates(capabilities).await
+    // Check firmware updates (with manifest support)
+    let firmware_updates = check_firmware_updates(&state, capabilities).await
         .map_err(|e| crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "FIRMWARE_ERROR",
@@ -146,7 +149,7 @@ async fn query_stone_nourishment(
     endpoint: &str,
     stone_name: &str,
 ) -> Option<NourishmentCheckResponse> {
-    let url = format!("{}/api/v1/nourishment/check", endpoint.trim_end_matches('/'));
+    let url = format!("{}/api/v1/stone/nourishment", endpoint.trim_end_matches('/'));
     
     match client.get(&url).send().await {
         Ok(resp) if resp.status().is_success() => {
@@ -170,29 +173,260 @@ async fn query_stone_nourishment(
 }
 
 // ============================================================================
-// Endpoint: POST /api/v1/nourishment/execute
+// Endpoint: POST /api/v1/garden/nourishment/execute
 // ============================================================================
 
-/// Execute selected updates
+/// Garden-wide update execution (orchestrated)
 ///
-/// Starts background job and returns job ID for status tracking.
-pub async fn execute_updates(
+/// Receives scope from Rake, queries all stones for pending updates,
+/// then dispatches execute requests to each affected stone.
+pub async fn execute_garden(
+    State(state): State<AppState>,
+    Json(request): Json<ExecuteRequest>,
+) -> Result<Json<ApiResponse<GardenExecuteResponse>>, (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+    use garden_common::utils::ids::generate_guidv7;
+    use garden_common::nourishment::UpdateScope;
+
+    // Step 1: Query all stones for their pending updates
+    let entries = crate::domain::topology::get_all_stones(&state.topology_cache).await;
+    
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    // Query each stone for updates
+    let check_tasks: Vec<_> = entries.iter()
+        .map(|entry| {
+            let client = client.clone();
+            let endpoint = entry.endpoint.clone();
+            let stone_name = entry.stone_name.clone();
+            
+            tokio::spawn(async move {
+                let resp = query_stone_nourishment(&client, &endpoint, &stone_name).await;
+                (stone_name, endpoint, resp)
+            })
+        })
+        .collect();
+
+    // Collect results and filter to affected stones
+    let mut affected_stones = Vec::new();
+    for task in check_tasks {
+        if let Ok((stone_name, endpoint, Some(check_response))) = task.await {
+            // Check if this stone has updates matching the scope
+            let has_matching_updates = check_response.updates.available.iter().any(|update| {
+                match (&request.scope, update) {
+                    (UpdateScope::All, _) => true,
+                    (UpdateScope::Offerings, Update::Offering { .. }) => true,
+                    (UpdateScope::Firmware, Update::Firmware { .. }) => true,
+                    _ => false,
+                }
+            });
+            
+            if has_matching_updates {
+                affected_stones.push((stone_name, endpoint));
+            }
+        }
+    }
+
+    if affected_stones.is_empty() {
+        return Ok(Json(ApiResponse {
+            data: GardenExecuteResponse {
+                job_id: generate_guidv7(),
+                stone_jobs: Vec::new(),
+            },
+            suggestions: Some(vec!["No stones have matching updates".to_string()]),
+        }));
+    }
+
+    // Step 2: Dispatch execute request to each affected stone
+    let garden_job_id = generate_guidv7();
+    
+    let dispatch_tasks: Vec<_> = affected_stones.iter()
+        .map(|(stone_name, endpoint)| {
+            let client = client.clone();
+            let stone_name = stone_name.clone();
+            let endpoint = endpoint.clone();
+            let request = request.clone();
+            
+            tokio::spawn(async move {
+                dispatch_execute_to_stone(&client, &stone_name, &endpoint, &request).await
+            })
+        })
+        .collect();
+
+    // Collect results
+    let mut stone_jobs = Vec::new();
+    for task in dispatch_tasks {
+        match task.await {
+            Ok(status) => stone_jobs.push(status),
+            Err(e) => {
+                tracing::error!(error = ?e, "Task join error during garden execute");
+            }
+        }
+    }
+
+    let response = GardenExecuteResponse {
+        job_id: garden_job_id,
+        stone_jobs,
+    };
+
+    Ok(Json(ApiResponse {
+        data: response,
+        suggestions: None,
+    }))
+}
+
+/// Dispatch execute request to a single stone
+async fn dispatch_execute_to_stone(
+    client: &reqwest::Client,
+    stone_name: &str,
+    endpoint: &str,
+    request: &ExecuteRequest,
+) -> StoneJobStatus {
+    let url = format!("{}/api/v1/stone/nourishment/execute", endpoint.trim_end_matches('/'));
+
+    match client.post(&url).json(request).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<ApiResponse<ExecuteResponse>>().await {
+                Ok(api_response) => {
+                    tracing::info!(stone = %stone_name, job_id = %api_response.data.job_id, "Update dispatched");
+                    StoneJobStatus {
+                        stone_name: stone_name.to_string(),
+                        job_id: Some(api_response.data.job_id),
+                        state: StoneJobState::Running,
+                        message: None,
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(stone = %stone_name, error = ?e, "Failed to parse execute response");
+                    StoneJobStatus {
+                        stone_name: stone_name.to_string(),
+                        job_id: None,
+                        state: StoneJobState::Failed,
+                        message: Some(format!("Parse error: {}", e)),
+                    }
+                }
+            }
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(stone = %stone_name, status = ?status, body = %body, "Stone returned error");
+            StoneJobStatus {
+                stone_name: stone_name.to_string(),
+                job_id: None,
+                state: StoneJobState::Failed,
+                message: Some(format!("HTTP {}: {}", status, body)),
+            }
+        }
+        Err(e) => {
+            tracing::warn!(stone = %stone_name, error = ?e, "Failed to reach stone");
+            StoneJobStatus {
+                stone_name: stone_name.to_string(),
+                job_id: None,
+                state: StoneJobState::Unreachable,
+                message: Some(format!("Connection error: {}", e)),
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Endpoint: POST /api/v1/stone/nourishment/execute
+// ============================================================================
+
+/// Execute updates on THIS stone based on scope
+///
+/// Interprets the scope, fetches this stone's pending updates, and executes matching ones.
+/// - scope: "all" → apply all pending updates
+/// - scope: "offerings" → apply only offering updates
+/// - scope: "firmware" → apply only firmware updates
+/// - items: ["offering:x", "firmware:y"] → apply specific items (future V1+)
+pub async fn execute_stone(
     State(state): State<AppState>,
     Json(request): Json<ExecuteRequest>,
 ) -> Result<Json<ApiResponse<ExecuteResponse>>, (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     use garden_common::utils::ids::generate_guidv7;
+    use garden_common::nourishment::UpdateScope;
 
-    if request.updates.is_empty() {
+    // Get this stone's pending updates
+    let caps_guard = state.capabilities.read().await;
+    let capabilities = caps_guard.as_ref()
+        .ok_or_else(|| crate::infra::error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "HARDWARE_NOT_DETECTED",
+            "Hardware capabilities not yet detected".to_string(),
+            None,
+        ))?;
+
+    // Check what updates are available
+    let offering_updates = check_offering_updates(&state, capabilities).await
+        .map_err(|e| crate::infra::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "REGISTRY_ERROR",
+            format!("Failed to check offering updates: {}", e),
+            None,
+        ))?;
+
+    let firmware_updates = check_firmware_updates(&state, capabilities).await
+        .map_err(|e| crate::infra::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "FIRMWARE_ERROR",
+            format!("Failed to check firmware updates: {}", e),
+            None,
+        ))?;
+
+    // Filter based on scope
+    let (apply_offerings, apply_firmware) = match request.scope {
+        UpdateScope::All => (true, true),
+        UpdateScope::Offerings => (true, false),
+        UpdateScope::Firmware => (false, true),
+    };
+
+    // Collect updates to execute
+    let mut pending_offerings = Vec::new();
+    let mut pending_firmware = Vec::new();
+
+    if apply_offerings {
+        for update in &offering_updates {
+            if let Ok(Update::Offering { name, .. }) = update {
+                pending_offerings.push(name.clone());
+            }
+        }
+    }
+
+    if apply_firmware {
+        for update in &firmware_updates {
+            if let Ok(Update::Firmware { device_id, .. }) = update {
+                pending_firmware.push(device_id.clone());
+            }
+        }
+    }
+
+    // TODO V1+: Handle items field for granular selection
+    // if !request.items.is_empty() { ... }
+
+    if pending_offerings.is_empty() && pending_firmware.is_empty() {
         return Err(crate::infra::error_response(
-            StatusCode::BAD_REQUEST,
-            "EMPTY_REQUEST",
-            "No updates specified".to_string(),
+            StatusCode::OK,
+            "NO_UPDATES",
+            "No matching updates pending for this stone".to_string(),
             None,
         ));
     }
 
     // Generate job ID
     let job_id = generate_guidv7();
+
+    // Log job creation with scope
+    tracing::info!(
+        job_id = %job_id,
+        scope = ?request.scope,
+        pending_offerings = pending_offerings.len(),
+        pending_firmware = pending_firmware.len(),
+        "Nourishment job created"
+    );
 
     // Create broadcast channel for status updates
     let (tx, _rx) = broadcast::channel::<String>(100);
@@ -203,13 +437,15 @@ pub async fn execute_updates(
         jobs.insert(job_id.clone(), tx.clone());
     }
 
+    // Drop the capabilities guard before spawning
+    drop(caps_guard);
+
     // Spawn background task
     let state_clone = state.clone();
-    let updates = request.updates.clone();
     let job_id_clone = job_id.clone();
     
     tokio::spawn(async move {
-        execute_updates_background(state_clone, updates, job_id_clone, tx).await;
+        execute_updates_background(state_clone, pending_offerings, pending_firmware, job_id_clone, tx).await;
     });
 
     let response = ExecuteResponse { job_id };
@@ -223,65 +459,91 @@ pub async fn execute_updates(
 /// Background task for executing updates
 async fn execute_updates_background(
     state: AppState,
-    updates: Vec<UpdateSelector>,
+    offerings: Vec<String>,
+    firmware: Vec<String>,
     job_id: String,
     tx: broadcast::Sender<String>,
 ) {
+    tracing::info!(job_id = %job_id, "Nourishment job starting execution");
     let _ = tx.send(format!("Starting nourishment job {}", job_id));
-
-    // Separate software and hardware updates
-    let (offerings, firmware): (Vec<_>, Vec<_>) = updates.iter()
-        .partition(|u| matches!(u, UpdateSelector::Offering { .. }));
 
     // Phase 1: Software updates (offerings)
     if !offerings.is_empty() {
         let _ = tx.send(format!("📦 Phase 1: Updating {} offering(s)", offerings.len()));
         
-        for (idx, update) in offerings.iter().enumerate() {
-            if let UpdateSelector::Offering { name } = update {
-                let _ = tx.send(format!("  [{}/{}] Updating {}", idx + 1, offerings.len(), name));
-                
-                match execute_offering_update(&state, name, &tx).await {
-                    Ok(()) => {
-                        let _ = tx.send(format!("    ✓ {} updated successfully", name));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(format!("    ✗ {} failed: {}", name, e));
-                    }
+        for (idx, name) in offerings.iter().enumerate() {
+            let _ = tx.send(format!("  [{}/{}] Updating {}", idx + 1, offerings.len(), name));
+            
+            match execute_offering_update(&state, name, &tx).await {
+                Ok(()) => {
+                    tracing::info!(job_id = %job_id, offering = %name, "Offering updated successfully");
+                    let _ = tx.send(format!("    ✓ {} updated successfully", name));
+                }
+                Err(e) => {
+                    tracing::warn!(job_id = %job_id, offering = %name, error = %e, "Offering update failed");
+                    let _ = tx.send(format!("    ✗ {} failed: {}", name, e));
                 }
             }
         }
     }
 
     // Phase 2: Hardware updates (firmware)
+    let mut needs_reboot = false;
     if !firmware.is_empty() {
         let _ = tx.send(format!("🔧 Phase 2: Updating {} firmware device(s)", firmware.len()));
         
-        for (idx, update) in firmware.iter().enumerate() {
-            if let UpdateSelector::Firmware { device_id } = update {
-                let _ = tx.send(format!("  [{}/{}] Updating firmware: {}", idx + 1, firmware.len(), device_id));
-                
-                match execute_firmware_update(device_id, &tx).await {
-                    Ok(requires_reboot) => {
-                        if requires_reboot {
-                            let _ = tx.send(format!("    ✓ {} updated (reboot required)", device_id));
-                        } else {
-                            let _ = tx.send(format!("    ✓ {} updated successfully", device_id));
-                        }
+        for (idx, device_id) in firmware.iter().enumerate() {
+            let _ = tx.send(format!("  [{}/{}] Updating firmware: {}", idx + 1, firmware.len(), device_id));
+            
+            match execute_firmware_update(device_id, &tx).await {
+                Ok(requires_reboot) => {
+                    if requires_reboot {
+                        needs_reboot = true;
+                        tracing::info!(job_id = %job_id, device = %device_id, "Firmware updated (reboot required)");
+                        let _ = tx.send(format!("    ✓ {} updated (reboot required)", device_id));
+                    } else {
+                        tracing::info!(job_id = %job_id, device = %device_id, "Firmware updated successfully");
+                        let _ = tx.send(format!("    ✓ {} updated successfully", device_id));
                     }
-                    Err(e) => {
-                        let _ = tx.send(format!("    ✗ {} failed: {}", device_id, e));
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!(job_id = %job_id, device = %device_id, error = %e, "Firmware update failed");
+                    let _ = tx.send(format!("    ✗ {} failed: {}", device_id, e));
                 }
             }
         }
     }
 
-    let _ = tx.send("✅ Nourishment complete".to_string());
+    // Cleanup job from state before potential reboot
+    {
+        let mut jobs = state.nourishment_jobs.write().await;
+        jobs.remove(&job_id);
+    }
 
-    // Cleanup job from state
-    let mut jobs = state.nourishment_jobs.write().await;
-    jobs.remove(&job_id);
+    // Phase 3: Reboot if firmware updates require it
+    if needs_reboot {
+        tracing::info!(job_id = %job_id, "Nourishment complete, initiating reboot in 5s");
+        let _ = tx.send("🔄 Firmware updates require reboot. Restarting in 5 seconds...".to_string());
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let _ = tx.send("✅ Nourishment complete. Rebooting now...".to_string());
+        
+        // Trigger system reboot
+        #[cfg(target_os = "linux")]
+        {
+            tracing::info!(job_id = %job_id, "Executing systemctl reboot");
+            let _ = tokio::process::Command::new("systemctl")
+                .args(["reboot"])
+                .spawn();
+        }
+        
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = tx.send("⚠ Reboot not supported on this platform".to_string());
+        }
+    } else {
+        tracing::info!(job_id = %job_id, "Nourishment job complete");
+        let _ = tx.send("✅ Nourishment complete".to_string());
+    }
 }
 
 /// Execute offering (Docker container) update
@@ -303,6 +565,7 @@ async fn execute_offering_update(
 }
 
 /// Execute firmware update via fwupdmgr
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
 async fn execute_firmware_update(
     device_id: &str,
     tx: &broadcast::Sender<String>,
@@ -461,30 +724,199 @@ async fn check_offering_updates(
     Ok(results)
 }
 
-/// Check firmware updates
+/// Check firmware updates with hardware manifest support
+///
+/// Enriches fwupd detection with manifest constraints:
+/// - Matches fwupd devices against manifest's lvfs_device_id (Tested confidence)
+/// - Shows all other fwupd updates as Suggested confidence
+/// - Blocks updates if requires_ac_power and not plugged in
+/// - Adds version context from manifest (minimum, recommended, latest_known)
 async fn check_firmware_updates(
-    _capabilities: &HardwareCapabilities,
+    state: &AppState,
+    capabilities: &HardwareCapabilities,
 ) -> anyhow::Result<Vec<Result<Update, BlockedUpdate>>> {
     use crate::infra::firmware::detect_firmware_updates;
+    use garden_common::nourishment::FirmwareConfidence;
 
     let firmware_list = detect_firmware_updates().await?;
     
-    let updates: Vec<Result<Update, BlockedUpdate>> = firmware_list
-        .into_iter()
-        .map(|fw| {
-            Ok(Update::Firmware {
-                device_id: fw.device_id,
-                name: fw.device_name,
-                vendor: fw.vendor,
-                current: fw.current_version,
-                available: fw.available_version,
-                requires_reboot: fw.requires_reboot,
-                description: fw.description,
-            })
-        })
-        .collect();
+    // Find matching hardware manifest for this system
+    let hw_entry = state.manifest_registry.hw.find_matching(
+        capabilities.hardware.system_manufacturer.as_deref(),
+        capabilities.hardware.system_product.as_deref(),
+    );
+    
+    if let Some(entry) = hw_entry {
+        tracing::info!(
+            manifest = %entry.key(),
+            "Matched system to hardware manifest"
+        );
+    }
+    
+    // Get manifest firmware config if available
+    let manifest_config = hw_entry.and_then(|e| {
+        e.manifest.as_ref().and_then(|m| m.firmware.as_ref())
+    });
+    
+    let mut results: Vec<Result<Update, BlockedUpdate>> = Vec::new();
+    
+    for fw in firmware_list {
+        // Determine confidence level based on manifest match
+        let (confidence, is_manifest_device) = if let Some(firmware_cfg) = manifest_config {
+            if let Some(ref manifest_device_id) = firmware_cfg.lvfs_device_id {
+                if fw.device_id.contains(manifest_device_id) || manifest_device_id == &fw.device_id {
+                    (FirmwareConfidence::Tested, true)
+                } else {
+                    (FirmwareConfidence::Suggested, false)
+                }
+            } else {
+                // Manifest exists but no specific device ID - treat as suggested
+                (FirmwareConfidence::Suggested, false)
+            }
+        } else {
+            // No manifest at all - all updates are suggested
+            (FirmwareConfidence::Suggested, false)
+        };
+        
+        let update = Update::Firmware {
+            device_id: fw.device_id.clone(),
+            name: fw.device_name.clone(),
+            vendor: fw.vendor.clone(),
+            current: fw.current_version.clone(),
+            available: fw.available_version.clone(),
+            requires_reboot: fw.requires_reboot,
+            description: fw.description.clone(),
+            confidence,
+        };
+        
+        // Apply manifest constraints only to tested (manifest-matched) devices
+        if is_manifest_device {
+            if let Some(firmware_cfg) = manifest_config {
+                // Check AC power requirement
+                if firmware_cfg.requires_ac_power.unwrap_or(false) {
+                    if !is_on_ac_power().await {
+                        results.push(Err(BlockedUpdate {
+                            update,
+                            reason: "Firmware update requires AC power. Please plug in the power adapter.".to_string(),
+                        }));
+                        continue;
+                    }
+                }
+                
+                // Check version constraints
+                if let Some(ref versions) = firmware_cfg.versions {
+                    // Warn if trying to go below minimum
+                    if let Some(ref minimum) = versions.minimum {
+                        if version_less_than(&fw.available_version, minimum) {
+                            results.push(Err(BlockedUpdate {
+                                update,
+                                reason: format!(
+                                    "Available version {} is below minimum required version {}",
+                                    fw.available_version, minimum
+                                ),
+                            }));
+                            continue;
+                        }
+                    }
+                    
+                    // Log version context
+                    if let Some(ref recommended) = versions.recommended {
+                        if version_less_than(&fw.available_version, recommended) {
+                            tracing::info!(
+                                available = %fw.available_version,
+                                recommended = %recommended,
+                                "Update available but not yet at recommended version"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        
+        results.push(Ok(update));
+    }
 
-    Ok(updates)
+    Ok(results)
+}
+
+/// Check if system is running on AC power
+async fn is_on_ac_power() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // Check via sysfs - common paths for AC adapter status
+        let ac_paths = [
+            "/sys/class/power_supply/AC/online",
+            "/sys/class/power_supply/AC0/online",
+            "/sys/class/power_supply/ACAD/online",
+            "/sys/class/power_supply/ADP1/online",
+        ];
+        
+        for path in ac_paths {
+            if let Ok(content) = tokio::fs::read_to_string(path).await {
+                if content.trim() == "1" {
+                    return true;
+                }
+            }
+        }
+        
+        // No AC adapter found means desktop (always "on AC")
+        // Check if there's any battery - if no battery, assume desktop
+        let has_battery = match tokio::fs::read_dir("/sys/class/power_supply").await {
+            Ok(mut dir) => {
+                let mut found_battery = false;
+                while let Ok(Some(entry)) = dir.next_entry().await {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("BAT") {
+                        found_battery = true;
+                        break;
+                    }
+                }
+                found_battery
+            }
+            Err(_) => false,
+        };
+        
+        // If no battery detected, assume desktop (always on AC)
+        if !has_battery {
+            return true;
+        }
+        
+        false
+    }
+    
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Windows: Assume AC power for thin clients
+        true
+    }
+}
+
+/// Simple version comparison (less than)
+/// Handles versions like "1.2.3", "1.10.0", etc.
+fn version_less_than(a: &str, b: &str) -> bool {
+    let parse_version = |s: &str| -> Vec<u32> {
+        s.split('.')
+            .filter_map(|part| part.parse::<u32>().ok())
+            .collect()
+    };
+    
+    let va = parse_version(a);
+    let vb = parse_version(b);
+    
+    for i in 0..va.len().max(vb.len()) {
+        let part_a = va.get(i).copied().unwrap_or(0);
+        let part_b = vb.get(i).copied().unwrap_or(0);
+        
+        if part_a < part_b {
+            return true;
+        }
+        if part_a > part_b {
+            return false;
+        }
+    }
+    
+    false // Equal
 }
 
 /// Get hardware requirements for an offering

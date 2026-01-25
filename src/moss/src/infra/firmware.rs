@@ -4,6 +4,7 @@
 //! - Linux: fwupd/LVFS integration
 //! - Windows: Stub for V0 (future: Windows Update API)
 
+#[cfg_attr(not(target_os = "linux"), allow(unused_imports))]
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -95,45 +96,45 @@ fn parse_fwupd_json(json_str: &str) -> Result<Vec<FirmwareUpdate>> {
     let mut updates = Vec::new();
 
     // fwupdmgr JSON structure: { "Devices": [ { "DeviceId": "...", "Releases": [...] } ] }
-    if let Some(devices) = data.get("Devices").and_then(|d: &serde_json::Value| d.as_array()) {
+    if let Some(devices) = data.get("Devices").and_then(|d| d.as_array()) {
         for device in devices {
-            let device_id = device
+            let device_id: String = device
                 .get("DeviceId")
-                .and_then(|v: &serde_json::Value| v.as_str())
+                .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
 
-            let device_name = device
+            let device_name: String = device
                 .get("Name")
-                .and_then(|v: &serde_json::Value| v.as_str())
+                .and_then(|v| v.as_str())
                 .unwrap_or("Unknown Device")
                 .to_string();
 
-            let vendor = device
+            let vendor: String = device
                 .get("Vendor")
-                .and_then(|v: &serde_json::Value| v.as_str())
+                .and_then(|v| v.as_str())
                 .unwrap_or("Unknown")
                 .to_string();
 
-            let current_version = device
+            let current_version: String = device
                 .get("Version")
-                .and_then(|v: &serde_json::Value| v.as_str())
+                .and_then(|v| v.as_str())
                 .unwrap_or("0.0.0")
                 .to_string();
 
             // Get first available release
-            if let Some(releases) = device.get("Releases").and_then(|r: &serde_json::Value| r.as_array()) {
+            if let Some(releases) = device.get("Releases").and_then(|r| r.as_array()) {
                 if let Some(release) = releases.first() {
-                    let available_version = release
+                    let available_version: String = release
                         .get("Version")
-                        .and_then(|v: &serde_json::Value| v.as_str())
+                        .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let description = release
+                    let description: Option<String> = release
                         .get("Description")
-                        .and_then(|v: &serde_json::Value| v.as_str())
-                        .map(|s: &str| s.to_string());
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
 
                     // Most firmware updates require reboot
                     let requires_reboot = true;

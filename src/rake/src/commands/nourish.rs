@@ -101,7 +101,7 @@ impl Command for NourishCommand {
             println!("\nApply updates:");
             println!("  [A] All updates");
             println!("  [O] Offerings only");
-            println!("  [S] Stone-specific (TODO)");
+            println!("  [F] Firmware only");
             println!("  [ESC/Q] Cancel");
             print!("\nChoice: ");
             io::stdout().flush()?;
@@ -112,15 +112,15 @@ impl Command for NourishCommand {
             match input.trim().to_uppercase().as_str() {
                 "A" => {
                     // Apply all updates
-                    execute_all_updates(ctx, &nourishment_response.data, &responding_stone).await?;
+                    execute_all_updates(ctx, &nourishment_response.data).await?;
                 }
                 "O" => {
                     // Apply offering updates only
-                    execute_offering_updates(ctx, &nourishment_response.data, &responding_stone).await?;
+                    execute_offering_updates(ctx, &nourishment_response.data).await?;
                 }
-                "S" => {
-                    println!("\n⚠ Stone-specific selection not yet implemented");
-                    return Ok(());
+                "F" => {
+                    // Apply firmware updates only
+                    execute_firmware_updates(ctx, &nourishment_response.data).await?;
                 }
                 "" | "Q" | "ESC" | "\x1B" => {
                     println!("Cancelled.");
@@ -133,7 +133,7 @@ impl Command for NourishCommand {
             }
         } else {
             // Auto-confirm: apply all
-            execute_all_updates(ctx, &nourishment_response.data, &responding_stone).await?;
+            execute_all_updates(ctx, &nourishment_response.data).await?;
         }
 
         Ok(())
@@ -157,6 +157,8 @@ impl Command for NourishCommand {
 // ============================================================================
 
 fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str) {
+    use garden_common::nourishment::FirmwareConfidence;
+    
     println!("\n╭─ Stone: {} ─╮", queried_stone);
     println!("\n📦 Garden-wide Update Status\n");
 
@@ -178,43 +180,60 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
         println!("  {}", stone.stone_name);
 
         if !stone.updates.available.is_empty() {
-            println!("    AVAILABLE:");
-            for update in &stone.updates.available {
-                match update {
-                    Update::Offering {
-                        name,
-                        current,
-                        available,
-                        ..
-                    } => {
-                        println!(
-                            "      • {} {} → {}",
-                            name, current, available
-                        );
+            // Separate offerings from firmware, and firmware by confidence
+            let offerings: Vec<_> = stone.updates.available.iter()
+                .filter(|u| matches!(u, Update::Offering { .. }))
+                .collect();
+            
+            let firmware_tested: Vec<_> = stone.updates.available.iter()
+                .filter_map(|u| match u {
+                    Update::Firmware { confidence: FirmwareConfidence::Tested, .. } => Some(u),
+                    _ => None,
+                })
+                .collect();
+            
+            let firmware_suggested: Vec<_> = stone.updates.available.iter()
+                .filter_map(|u| match u {
+                    Update::Firmware { confidence: FirmwareConfidence::Suggested, .. } => Some(u),
+                    _ => None,
+                })
+                .collect();
+            
+            // Display offerings
+            if !offerings.is_empty() {
+                println!("    📦 OFFERINGS:");
+                for update in offerings {
+                    if let Update::Offering { name, current, available, .. } = update {
+                        println!("      • {} {} → {}", name, current, available);
                     }
-                    Update::Firmware {
-                        name,
-                        current,
-                        available,
-                        requires_reboot,
-                        ..
-                    } => {
-                        let reboot = if *requires_reboot {
-                            " (reboot required)"
-                        } else {
-                            ""
-                        };
-                        println!(
-                            "      • {} {} → {}{}",
-                            name, current, available, reboot
-                        );
+                }
+            }
+            
+            // Display tested firmware (from manifests)
+            if !firmware_tested.is_empty() {
+                println!("    🔧 FIRMWARE (tested):");
+                for update in firmware_tested {
+                    if let Update::Firmware { name, current, available, requires_reboot, .. } = update {
+                        let reboot = if *requires_reboot { " ⟲" } else { "" };
+                        println!("      ✓ {} {} → {}{}", name, current, available, reboot);
+                    }
+                }
+            }
+            
+            // Display suggested firmware (from LVFS, not in manifests)
+            if !firmware_suggested.is_empty() {
+                println!("    🔧 FIRMWARE (suggested):");
+                for update in firmware_suggested {
+                    if let Update::Firmware { name, current, available, requires_reboot, .. } = update {
+                        let reboot = if *requires_reboot { " ⟲" } else { "" };
+                        println!("      ○ {} {} → {}{}", name, current, available, reboot);
                     }
                 }
             }
         }
 
         if !stone.updates.blocked.is_empty() {
-            println!("    BLOCKED:");
+            println!("    ⚠ BLOCKED:");
             for blocked in &stone.updates.blocked {
                 let (name, current, available) = match &blocked.update {
                     Update::Offering { name, current, available, .. } => (name, current, available),
@@ -232,7 +251,8 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
 
     println!("───────────────────────────────────────────────");
     if total_available > 0 {
-        println!("\nUse [A] to apply all, [O] for offerings only");
+        println!("\n⟲ = reboot required");
+        println!("Use [A] to apply all, [O] for offerings only, [F] for firmware only");
     }
 }
 
@@ -243,132 +263,108 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
 /// Execute all updates (offerings + firmware)
 async fn execute_all_updates(
     ctx: &CommandContext,
-    response: &GardenNourishmentResponse,
-    stone: &tending::StoneCandidate,
+    _response: &GardenNourishmentResponse,
 ) -> anyhow::Result<()> {
     println!("\n🚀 Applying all updates...\n");
-
-    // Build update selectors from all available updates
-    let mut selectors = Vec::new();
-    
-    for stone_resp in &response.stones {
-        for update in &stone_resp.updates.available {
-            match update {
-                Update::Offering { name, .. } => {
-                    selectors.push(UpdateSelector::Offering { name: name.clone() });
-                }
-                Update::Firmware { device_id, .. } => {
-                    selectors.push(UpdateSelector::Firmware { device_id: device_id.clone() });
-                }
-            }
-        }
-    }
-
-    if selectors.is_empty() {
-        println!("No updates to apply.");
-        return Ok(());
-    }
-
-    execute_and_stream(ctx, &stone.endpoint, selectors).await
+    execute_with_scope(ctx, UpdateScope::All).await
 }
 
 /// Execute offering updates only
 async fn execute_offering_updates(
     ctx: &CommandContext,
-    response: &GardenNourishmentResponse,
-    stone: &tending::StoneCandidate,
+    _response: &GardenNourishmentResponse,
 ) -> anyhow::Result<()> {
     println!("\n🚀 Applying offering updates...\n");
-
-    // Build update selectors from offerings only
-    let mut selectors = Vec::new();
-    
-    for stone_resp in &response.stones {
-        for update in &stone_resp.updates.available {
-            if let Update::Offering { name, .. } = update {
-                selectors.push(UpdateSelector::Offering { name: name.clone() });
-            }
-        }
-    }
-
-    if selectors.is_empty() {
-        println!("No offering updates to apply.");
-        return Ok(());
-    }
-
-    execute_and_stream(ctx, &stone.endpoint, selectors).await
+    execute_with_scope(ctx, UpdateScope::Offerings).await
 }
 
-/// Execute updates and stream status
-async fn execute_and_stream(
+/// Execute firmware updates only
+async fn execute_firmware_updates(
     ctx: &CommandContext,
-    endpoint: &str,
-    selectors: Vec<UpdateSelector>,
+    _response: &GardenNourishmentResponse,
 ) -> anyhow::Result<()> {
-    use futures_util::StreamExt;
-    
-    // POST to execute endpoint
-    let execute_url = format!("{}/api/v1/nourishment/execute", endpoint.trim_end_matches('/'));
-    
-    let request = ExecuteRequest { updates: selectors };
-    
-    let response = ctx.client
-        .post(&execute_url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to send execute request: {}", e))?;
+    println!("\n🚀 Applying firmware updates...\n");
+    execute_with_scope(ctx, UpdateScope::Firmware).await
+}
 
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to execute updates: {}", response.status());
-    }
+/// Send scope to tended stone, which orchestrates to all affected stones
+async fn execute_with_scope(
+    ctx: &CommandContext,
+    scope: UpdateScope,
+) -> anyhow::Result<()> {
+    // Build request payload
+    let request = ExecuteRequest {
+        scope,
+        items: Vec::new(),
+    };
 
-    let api_response: ApiResponse<ExecuteResponse> = response.json().await
-        .map_err(|e| anyhow::anyhow!("Failed to parse execute response: {}", e))?;
-    let job_id = api_response.data.job_id;
-
-    println!("Job ID: {}\n", job_id);
-
-    // Stream status via SSE
-    let stream_url = format!("{}/api/v1/nourishment/stream/{}", endpoint.trim_end_matches('/'), job_id);
-    
-    let response = ctx.client
-        .get(&stream_url)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to stream: {}", e))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to open status stream: {}", response.status());
-    }
-
-    let mut stream = response.bytes_stream();
-    
-    loop {
-        match tokio::time::timeout(Duration::from_secs(300), stream.next()).await {
-            Ok(Some(Ok(bytes))) => {
-                if let Ok(text) = std::str::from_utf8(&bytes) {
-                    for line in text.lines() {
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            println!("{}", data);
-                            if data.contains("complete") || data.contains("Nourishment complete") {
-                                return Ok(());
-                            }
-                        }
-                    }
+    // Send to tended stone's garden execute endpoint
+    let (response, stone) = tending::execute_on_stone(
+        Duration::from_secs(30),
+        Some(|stone_name: &str| {
+            println!("Stone '{}' is offline, trying fallback...", stone_name);
+        }),
+        |candidate| {
+            let client = ctx.client.clone();
+            let endpoint = candidate.endpoint.clone();
+            let request = request.clone();
+            async move {
+                use crate::tending::StoneError;
+                
+                let url = format!("{}/api/v1/garden/nourishment/execute", endpoint.trim_end_matches('/'));
+                
+                let response = client.post(&url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| StoneError::ConnectionFailed(format!("HTTP request failed: {}", e)))?;
+                
+                let status = response.status();
+                
+                if !status.is_success() {
+                    let body = response.text().await.unwrap_or_default();
+                    return Err(StoneError::ResponseError(
+                        status.as_u16(),
+                        format!("Execute failed: {}", body)
+                    ));
                 }
+                
+                let text = response.text().await
+                    .map_err(|e| StoneError::ProcessingError(format!("Failed to read response: {}", e)))?;
+                
+                serde_json::from_str::<ApiResponse<GardenExecuteResponse>>(&text)
+                    .map_err(|e| StoneError::ProcessingError(format!("JSON parse failed: {}", e)))
             }
-            Ok(Some(Err(e))) => {
-                anyhow::bail!("Stream error: {}", e);
-            }
-            Ok(None) => {
-                println!("\nStream ended.");
-                return Ok(());
-            }
-            Err(_) => {
-                anyhow::bail!("Timeout waiting for updates (300s)");
-            }
+        },
+    ).await?;
+
+    println!("Orchestrated by: {}", stone.stone_name);
+    println!("Garden Job ID: {}\n", response.data.job_id);
+
+    // Display results for each stone
+    for job in &response.data.stone_jobs {
+        let status_icon = match job.state {
+            StoneJobState::Running => "🔄",
+            StoneJobState::Success => "✅",
+            StoneJobState::Failed => "❌",
+            StoneJobState::Unreachable => "⚠️",
+            StoneJobState::Pending => "⏳",
+        };
+        
+        print!("  {} {}", status_icon, job.stone_name);
+        if let Some(ref job_id) = job.job_id {
+            print!(" (job: {})", job_id);
         }
+        if let Some(ref msg) = job.message {
+            print!(" - {}", msg);
+        }
+        println!();
     }
+
+    // TODO: Stream status from each stone's job
+    // For now, just show dispatch status
+    
+    println!("\n✅ Dispatch complete");
+    Ok(())
 }
 

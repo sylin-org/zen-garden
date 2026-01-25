@@ -2,6 +2,7 @@
 pub mod adoption;
 pub mod capabilities;
 pub mod console;
+pub mod election;
 pub mod events;
 pub mod garden;
 pub mod health;

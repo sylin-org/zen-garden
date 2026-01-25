@@ -11,7 +11,7 @@ use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
 use std::time::Instant;
 use anyhow::{Context, Result};
-use chrono::Local;
+use chrono::{Local, Timelike};
 
 // ================================================================================================
 // CONSOLE EVENT SYSTEM
@@ -1273,30 +1273,21 @@ pub struct BootBannerInfo {
 
 /// Print boot banner to TTY1 after System READY
 ///
-/// Shows stone identity, endpoints, and status at a glance.
+/// Shows stone identity with a waking cat and time-aware greeting.
 /// Called once after bootstrap completes successfully.
 pub fn print_boot_banner(info: &BootBannerInfo) -> Result<()> {
-    let divider = "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    let mdns_url = format!("http://{}.local:{}", info.stone_name, info.port);
-    let ip_url = format!("http://{}:{}", info.ip, info.port);
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    let greeting = time_greeting();
+    let symbol = boot_symbol();
 
-    let manifests_str = if info.manifests_count == 1 {
-        "1 manifest".to_string()
-    } else {
-        format!("{} manifests", info.manifests_count)
-    };
+    // Waking cat with dynamic symbol and stone name
+    let cat_line1 = format!("    _|\\_/|    {:9} Stone: {}", symbol, info.stone_name);
+    let cat_line2 = format!("  c(>(^-^)              This stone awakens... {}!", greeting);
 
     tty_write("")?;
     tty_write(divider)?;
-    tty_write("")?;
-    tty_write(&format!("    ░▒▓█ zen-garden █▓▒░           {}", info.version))?;
-    tty_write("")?;
-    tty_write(&format!("    {}                 .:.  thriving", info.stone_name))?;
-    tty_write(&format!("    {}", ip_url))?;
-    tty_write(&format!("    {}", mdns_url))?;
-    tty_write("")?;
-    tty_write(&format!("    {}", manifests_str))?;
-    tty_write("")?;
+    tty_write(&cat_line1)?;
+    tty_write(&cat_line2)?;
     tty_write(divider)?;
     tty_write("")?;
 
@@ -1309,18 +1300,55 @@ pub struct ShutdownBannerInfo {
     pub start_time: std::time::Instant,
 }
 
+/// Get time-aware greeting based on current hour
+fn time_greeting() -> &'static str {
+    let hour = chrono::Local::now().hour();
+    match hour {
+        5..=11 => "good morning",
+        12..=17 => "good afternoon",
+        18..=20 => "good evening",
+        _ => "good night", // 21-4
+    }
+}
+
+/// Check if it's daytime (6am-6pm)
+fn is_daytime() -> bool {
+    let hour = chrono::Local::now().hour();
+    (6..18).contains(&hour)
+}
+
+/// Get a random boot symbol based on time of day
+fn boot_symbol() -> &'static str {
+    let symbols_day = ["    *    ", "  c[_]   ", "~stretch~"];
+    let symbols_night = ["    c    ", " *dimly* ", "  ~yawn~ "];
+    
+    // Use current second as simple randomizer
+    let idx = (chrono::Local::now().second() as usize) % 3;
+    
+    if is_daytime() {
+        symbols_day[idx]
+    } else {
+        symbols_night[idx]
+    }
+}
+
 /// Print shutdown banner to TTY1 before stopping
 ///
-/// Shows graceful shutdown status with uptime.
+/// Shows graceful shutdown status with uptime and a sleepy cat.
 pub fn print_shutdown_banner(info: &ShutdownBannerInfo) -> Result<()> {
-    let divider = "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     let uptime_secs = info.start_time.elapsed().as_secs();
     let uptime_str = garden_common::utils::format_uptime(uptime_secs);
+    let greeting = time_greeting();
+
+    // Cat ASCII art with aligned right-side text starting at column 20
+    let cat_line1 = format!("    _|\\_/|    ZZZzzz    Uptime: {}", uptime_str);
+    let cat_line2 = format!("  c(-(-.-)              This stone rests... {}", greeting);
 
     tty_write("")?;
     tty_write(divider)?;
-    tty_write(&format!("    {} going to rest...  ◐", info.stone_name))?;
-    tty_write(&format!("    uptime: {}  ·  goodbye", uptime_str))?;
+    tty_write(&cat_line1)?;
+    tty_write(&cat_line2)?;
     tty_write(divider)?;
     tty_write("")?;
 

@@ -588,6 +588,15 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// Test distributed election protocol
+    #[command(
+        long_about = "Test distributed election protocol (ELECTION-0001).\n\n\
+        Examples:\n  \
+        garden-rake election start --election-type update_source --criteria '{\"moss_version\": {\"$gt\": \"0.1.0\"}}'\n  \
+        garden-rake election start --election-type ceremony_coordinator"
+    )]
+    Election(commands::election::ElectionCommand),
+
     /// Install moss as a system service (zen syntax)
     #[command(
         long_about = "Install moss as a Windows system service (zen: take-root).\n\n\
@@ -1397,6 +1406,12 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Nourish { stone, updates_only, auto_confirm, at: _ } => {
             let cmd = commands::nourish::NourishCommand::new(stone, updates_only, auto_confirm);
             dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
+        }
+
+        Commands::Election(election_cmd) => {
+            // Resolve tended stone
+            let tended_stone = dispatch::resolve_tended_stone(&client, None, &*GLOBAL_CACHE, fresh_mode).await?;
+            commands::election::handle_election(election_cmd, &tended_stone).await?;
         }
 
         Commands::Watch { target, until, at } => {

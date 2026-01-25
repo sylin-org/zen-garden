@@ -11,7 +11,7 @@ use garden_rake::commands::Command;
 use garden_rake::context::CommandContext;
 use garden_rake::discovery;
 use garden_rake::tending;
-use garden_rake::ui::{self, TerminalInfo};
+use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use std::time::Duration;
 
 /// Dispatch a command with standard middleware

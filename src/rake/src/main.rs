@@ -1,12 +1,11 @@
 // Binary-only modules (not needed by library)
 mod dispatch;
-mod parser;
 
 // Use shared modules from the library
 use garden_rake::command_manifest;
 use garden_rake::commands;
 use garden_rake::commands::Command;
-use garden_rake::ui;
+use garden_common::ui::rendering as ui;
 
 #[cfg(test)]
 mod discovery_tests;
@@ -852,7 +851,7 @@ fn count_verbosity(args: &[String]) -> u8 {
 }
 
 /// Convert zen syntax to normative args for Clap
-fn normalize_zen_to_clap(parsed: &parser::ParsedCommand) -> anyhow::Result<Vec<String>> {
+fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> anyhow::Result<Vec<String>> {
     let mut args = Vec::new();
 
     // Map zen verbs to Commands
@@ -1151,8 +1150,8 @@ async fn async_main() -> anyhow::Result<()> {
     }
     
     let (cli, parsed_keywords) = if !raw_args.is_empty() {
-        match parser::parse_args(raw_args.clone()) {
-            Ok(parsed) if parsed.style == parser::CommandStyle::Zen => {
+        match garden_common::cli::parser::parse_args(raw_args.clone()) {
+            Ok(parsed) if parsed.style == garden_common::cli::parser::CommandStyle::Zen => {
                 // Convert zen to normative args for Clap
                 let normalized = normalize_zen_to_clap(&parsed)?;
                 let cli = Cli::parse_from(std::iter::once("garden-rake".to_string()).chain(normalized));

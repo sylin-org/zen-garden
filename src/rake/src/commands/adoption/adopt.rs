@@ -6,7 +6,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use crate::ui;
+use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
 
 /// Adopt an existing container

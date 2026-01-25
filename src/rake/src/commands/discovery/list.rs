@@ -6,7 +6,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use crate::ui::{self, TerminalInfo};
+use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::Deserialize;

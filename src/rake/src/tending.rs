@@ -1,4 +1,4 @@
-﻿use anyhow::{Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -247,7 +247,7 @@ where
         let discovery_future = async {
             sleep(DISCOVERY_DELAY).await;
             tracing::debug!("Starting parallel discovery...");
-            discovery::discover_moss_auto(discovery_timeout)
+            discovery::discover_moss_auto(discovery_timeout).await
         };
 
         // Race: tended vs delayed discovery
@@ -317,10 +317,10 @@ where
             }
             
             // Get discovery results (already completed)
-            discovery::discover_moss_auto(discovery_timeout).unwrap_or_default()
+            discovery::discover_moss_auto(discovery_timeout).await.unwrap_or_default()
         } else {
             // Tended failed, run discovery now
-            match discovery::discover_moss_auto(discovery_timeout) {
+            match discovery::discover_moss_auto(discovery_timeout).await {
                 Ok(stones) => stones,
                 Err(e) => {
                     tracing::warn!(error = ?e, "Discovery failed");
@@ -335,7 +335,7 @@ where
 
     // No tended stone - just do discovery
     tracing::debug!("No tending state, running discovery...");
-    let discovered = match discovery::discover_moss_auto(discovery_timeout) {
+    let discovered = match discovery::discover_moss_auto(discovery_timeout).await {
         Ok(stones) => stones,
         Err(e) => {
             tracing::warn!(error = ?e, "Discovery failed");
@@ -422,13 +422,13 @@ where
 /// * `Ok(Some(candidate))` - Found an alternative stone
 /// * `Ok(None)` - No alternatives found (current is the only stone, or no stones at all)
 /// * `Err` - Discovery mechanism failed
-pub fn discover_alternative_stone(timeout: std::time::Duration) -> Result<Option<StoneCandidate>> {
+pub async fn discover_alternative_stone(timeout: std::time::Duration) -> Result<Option<StoneCandidate>> {
     use crate::discovery;
 
     let current_endpoint = read_tending().ok().map(|t| t.endpoint);
 
     tracing::debug!("Discovering alternative stones...");
-    let discovered = discovery::discover_moss_auto(timeout)?;
+    let discovered = discovery::discover_moss_auto(timeout).await?;
 
     // Filter out current tended stone
     let alternatives: Vec<_> = discovered

@@ -14,14 +14,12 @@ pub mod command_manifest;
 pub mod commands;
 pub mod context;
 pub mod discovery;
-pub mod layout;
 pub mod stone_cache;
 pub mod suggestions;
 pub mod tending;
-pub mod ui;
 
 // Re-exports for convenience
 pub use client::{resolve_target_endpoint, CachedStoneOps, CachedStoneInfo};
 pub use context::CommandContext;
-pub use layout::{Layout, IndentLevel};
-pub use ui::{OutputWriter, TerminalInfo};
+pub use garden_common::ui::layout::{Layout, IndentLevel};
+pub use garden_common::ui::rendering::{OutputWriter, TerminalInfo};

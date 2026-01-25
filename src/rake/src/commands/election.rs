@@ -1,4 +1,4 @@
-﻿//! Election command - test distributed election protocol
+//! Election command - test distributed election protocol
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};

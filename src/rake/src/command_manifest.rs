@@ -1,4 +1,4 @@
-﻿/// Command manifest system for Zen Garden Rake
+/// Command manifest system for Zen Garden Rake
 /// 
 /// This module provides a declarative way to define commands with compile-time validation
 /// that ensures every clap command has a corresponding manifest entry.

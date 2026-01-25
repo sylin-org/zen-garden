@@ -33,7 +33,7 @@ pub fn print_suggestions(command_name: &str, quiet_mode: bool) {
         return;
     }
 
-    let indent = crate::ui::constants::DEFAULT_INDENT;
+    let indent = garden_common::ui::rendering::constants::DEFAULT_INDENT;
     println!();
     println!("{}Related commands:", " ".repeat(indent));
     for suggestion in suggestions.iter().take(3) {

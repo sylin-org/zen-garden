@@ -1,4 +1,4 @@
-﻿// Copyright (c) The Zen Garden Core Contributors
+// Copyright (c) The Zen Garden Core Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 //! Nourish command - check and apply updates for offerings and firmware

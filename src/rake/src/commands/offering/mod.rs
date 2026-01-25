@@ -15,7 +15,7 @@ use crate::command_manifest::cmd;
 use crate::commands::Command;
 use crate::context::CommandContext;
 use crate::discovery;
-use crate::ui;
+use garden_common::ui::rendering as ui;
 
 // ============================================================================
 // Types

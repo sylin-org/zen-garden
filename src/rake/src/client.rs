@@ -81,12 +81,12 @@ async fn resolve_stone_name_to_endpoint(client: &reqwest::Client, stone_name: &s
 
 	// 3) UDP Discovery - find stone by name OR id on the network (case-insensitive)
 	let mut discovered_responses = Vec::new();
-	let _stone_count = crate::discovery::discover_all_moss_stream(
+	let _stone_count = crate::discovery::discover_all_moss_stream_async(
 		Duration::from_secs(3),
 		|response, _instant| {
 			discovered_responses.push(response);
 		},
-	);
+	).await;
 
 	// Check each discovered stone's name AND id (case-insensitive)
 	for response in discovered_responses {

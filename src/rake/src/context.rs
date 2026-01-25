@@ -3,7 +3,7 @@
 //! Provides shared state and utilities for command handlers.
 //! This eliminates repetitive setup code in each command.
 
-use crate::ui::{OutputWriter, TerminalInfo};
+use garden_common::ui::rendering::{OutputWriter, TerminalInfo};
 
 /// Context passed to command handlers
 ///

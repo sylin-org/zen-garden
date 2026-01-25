@@ -82,7 +82,7 @@ impl Command for TendCommand {
                 tend_target::ANOTHER => {
                     // Switch to another available stone
                     println!("Looking for alternative stones...");
-                    match tending::discover_alternative_stone(Duration::from_secs(3))? {
+                    match tending::discover_alternative_stone(Duration::from_secs(3)).await? {
                         Some(alternative) => {
                             // Validate and get stone name
                             let health_url = format!("{}/health", alternative.endpoint.trim_end_matches('/'));

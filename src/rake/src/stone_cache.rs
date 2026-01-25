@@ -25,6 +25,7 @@ impl CachedStone {
     }
 
     /// Convert from common CachedStone (requires fetching capabilities)
+    #[allow(dead_code)]
     fn from_common(common: &CommonCachedStone, capabilities: HardwareCapabilities) -> Self {
         Self {
             endpoint: common.endpoint.clone(),

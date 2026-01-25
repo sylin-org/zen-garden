@@ -127,7 +127,7 @@ pub async fn discover_moss() -> Result<String> {
 /// 
 /// # Returns
 /// Async version using p2p transport for streaming discovery
-async fn discover_all_moss_stream_async<F>(
+pub async fn discover_all_moss_stream_async<F>(
     timeout: Duration,
     mut on_discovered: F,
 ) -> Result<usize>
@@ -196,6 +196,8 @@ where
 
 /// Synchronous wrapper for async streaming discovery
 /// Total count of unique stones discovered
+/// 
+/// DEPRECATED: Use discover_all_moss_stream_async directly from async contexts
 pub fn discover_all_moss_stream<F>(
     timeout: Duration,
     on_discovered: F,
@@ -203,11 +205,9 @@ pub fn discover_all_moss_stream<F>(
 where
     F: FnMut(DiscoveryResponse, std::time::Instant) -> () + Send,
 {
-    // Use tokio runtime handle
-    tokio::runtime::Handle::try_current()
-        .ok()
-        .ok_or_else(|| anyhow::anyhow!("No tokio runtime available"))?
-        .block_on(discover_all_moss_stream_async(timeout, on_discovered))
+    // Create a new runtime for truly synchronous contexts only
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(discover_all_moss_stream_async(timeout, on_discovered))
 }
 
 // ============================================================================
@@ -417,7 +417,7 @@ where
 ///
 /// Note: Windows Moss services don't announce via mDNS, so we must always do UDP
 /// broadcast to discover them, even on Linux.
-pub fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
+pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
 
@@ -448,14 +448,14 @@ pub fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
         // Run UDP discovery in main thread
         let udp_results = results.clone();
         let udp_seen = seen_endpoints.clone();
-        let _ = discover_all_moss_stream(timeout, |response, _instant| {
+        let _ = discover_all_moss_stream_async(timeout, |response, _instant| {
             let mut results = udp_results.lock().unwrap();
             let mut seen = udp_seen.lock().unwrap();
             if !seen.contains(&response.stone_endpoint) {
                 seen.insert(response.stone_endpoint.clone());
                 results.push(response);
             }
-        });
+        }).await;
 
         // Wait for mDNS to complete
         let _ = mdns_handle.join();
@@ -464,14 +464,14 @@ pub fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
     // Windows: UDP only
     #[cfg(target_os = "windows")]
     {
-        let _ = discover_all_moss_stream(timeout, |response, _instant| {
+        let _ = discover_all_moss_stream_async(timeout, |response, _instant| {
             let mut results = results.lock().unwrap();
             let mut seen = seen_endpoints.lock().unwrap();
             if !seen.contains(&response.stone_endpoint) {
                 seen.insert(response.stone_endpoint.clone());
                 results.push(response);
             }
-        });
+        }).await;
     }
 
     let final_results = match Arc::try_unwrap(results) {

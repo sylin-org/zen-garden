@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 use crate::commands::offering::{
     TaxonomyDictionary, OfferingEntry, OfferingCompatibility,
     normalize_tokens, token_matches_category, offering_relevance_score, stone_prefer_score
@@ -12,8 +12,8 @@ fn dict(pairs: &[(&str, &str)]) -> TaxonomyDictionary {
     TaxonomyDictionary { map }
 }
 
-fn caps_with_disk_type(disk_type: &str) -> HardwareCapabilities {
-    HardwareCapabilities {
+fn caps_with_disk_type(disk_type: &str) -> garden_common::HardwareCapabilities {
+    garden_common::HardwareCapabilities {
         stone_id: None,
         stone_name: "stone-01".to_string(),
         hardware: garden_common::HardwareInventory {
@@ -35,6 +35,8 @@ fn caps_with_disk_type(disk_type: &str) -> HardwareCapabilities {
             kernel_version: None,
             swap_mb: None,
             ai_capabilities: None,
+            system_manufacturer: None,
+            system_product: None,
         },
         runtime: None,
         detection_status: garden_common::DetectionStatus::Complete,

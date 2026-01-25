@@ -6,7 +6,7 @@ use crate::command_manifest::{self, cmd, MANIFEST};
 use crate::commands::help::{display_all_commands, display_command_category, display_command_detail};
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
-use crate::ui;
+use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
 
 /// Browse commands in the manifest

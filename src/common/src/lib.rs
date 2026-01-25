@@ -16,6 +16,7 @@ pub mod discovery;
 pub mod api_utils;
 pub mod manifests;
 pub mod cli_colors;
+pub mod nourishment;
 
 // Re-export commonly used items
 pub use types::*;

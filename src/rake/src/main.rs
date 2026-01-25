@@ -558,6 +558,36 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// Check and apply updates for offerings and firmware
+    #[command(
+        long_about = "Check and apply updates for Docker offerings and system firmware.\n\n\
+        Examples:\n  \
+        garden-rake nourish                       # Check all stones, interactive selection\n  \
+        garden-rake nourish --stone stone-01      # Check specific stone\n  \
+        garden-rake nourish --updates-only        # Just check, don't apply\n  \
+        garden-rake nourish --auto-confirm        # Apply all updates automatically\n\n\
+        Updates are validated against hardware constraints before being offered.\n\
+        Firmware updates require fwupd on Linux. Select updates interactively\n\
+        with SPACE key, confirm with ENTER, or ESC to cancel."
+    )]
+    Nourish {
+        /// Target specific stone (omit for garden-wide)
+        #[arg(long)]
+        stone: Option<String>,
+
+        /// Only check for updates, don't apply
+        #[arg(long)]
+        updates_only: bool,
+
+        /// Automatically apply all available updates without prompting
+        #[arg(long)]
+        auto_confirm: bool,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
     /// Install moss as a system service (zen syntax)
     #[command(
         long_about = "Install moss as a Windows system service (zen: take-root).\n\n\
@@ -833,8 +863,8 @@ fn normalize_zen_to_clap(parsed: &parser::ParsedCommand) -> anyhow::Result<Vec<S
             args.extend(parsed.args.clone());
         }
         "nourish" => {
-            // nourish (zen) → upgrade (clap command)
-            args.push("upgrade".to_string());
+            // nourish (zen) → nourish command (unified Docker + firmware updates)
+            args.push("nourish".to_string());
             args.extend(parsed.args.clone());
         }
         "remove" => {
@@ -1361,6 +1391,11 @@ async fn async_main() -> anyhow::Result<()> {
 
         Commands::Observe { stone, offering } => {
             let cmd = commands::discovery::ObserveCommand::new(stone, offering, quiet_mode);
+            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
+        }
+
+        Commands::Nourish { stone, updates_only, auto_confirm, at: _ } => {
+            let cmd = commands::nourish::NourishCommand::new(stone, updates_only, auto_confirm);
             dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
         }
 

@@ -902,6 +902,8 @@ async fn handle_placement_recommendation(
             let stone_name = candidate.stone_name.clone();
             let endpoint = candidate.endpoint.clone();
             async move {
+                use crate::tending::StoneError;
+                
                 let url = format!("{}/api/v1/garden/recommend", endpoint.trim_end_matches('/'));
                 let payload = serde_json::json!({
                     "offering": offering,
@@ -909,33 +911,36 @@ async fn handle_placement_recommendation(
                     "top_n": 3
                 });
 
-                match client.post(&url).json(&payload).timeout(Duration::from_secs(10)).send().await {
-                    Ok(response) if response.status().is_success() => {
-                        if let Ok(json) = response.json::<serde_json::Value>().await {
-                            if let Ok(data) = serde_json::from_value::<GardenApiResponse<PlacementResponse>>(json.clone()) {
-                                return Some(data.data);
-                            } else if let Ok(data) = serde_json::from_value::<PlacementResponse>(json) {
-                                return Some(data);
-                            }
-                        }
-                        None
-                    }
-                    Ok(response) => {
-                        tracing::debug!(
-                            stone = %stone_name,
-                            status = %response.status(),
-                            "Stone returned error"
-                        );
-                        None
-                    }
-                    Err(e) => {
+                let response = client.post(&url).json(&payload).timeout(Duration::from_secs(10)).send().await
+                    .map_err(|e| {
                         tracing::debug!(
                             stone = %stone_name,
                             error = ?e,
                             "Failed to reach stone"
                         );
-                        None
-                    }
+                        StoneError::ConnectionFailed(format!("Failed to reach stone: {}", e))
+                    })?;
+
+                let status = response.status();
+                if !status.is_success() {
+                    tracing::debug!(
+                        stone = %stone_name,
+                        status = %status,
+                        "Stone returned error"
+                    );
+                    return Err(StoneError::ResponseError(status.as_u16(), format!("Stone returned {}", status)));
+                }
+
+                let json = response.json::<serde_json::Value>().await
+                    .map_err(|e| StoneError::ProcessingError(format!("Failed to read response: {}", e)))?;
+
+                // Try both wrapped and unwrapped formats
+                if let Ok(data) = serde_json::from_value::<GardenApiResponse<PlacementResponse>>(json.clone()) {
+                    Ok(data.data)
+                } else if let Ok(data) = serde_json::from_value::<PlacementResponse>(json.clone()) {
+                    Ok(data)
+                } else {
+                    Err(StoneError::ProcessingError("Failed to parse placement response".to_string()))
                 }
             }
         },

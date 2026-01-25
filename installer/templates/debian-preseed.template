@@ -67,7 +67,7 @@ d-i partman/confirm_nooverwrite boolean true
 
 #### Package selection
 tasksel tasksel/first multiselect standard, ssh-server
-d-i pkgsel/include string sudo docker.io docker-compose avahi-daemon
+d-i pkgsel/include string sudo docker.io docker-compose avahi-daemon fwupd
 d-i pkgsel/upgrade select full-upgrade
 
 # Do not report installed packages

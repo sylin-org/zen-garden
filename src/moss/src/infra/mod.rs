@@ -20,6 +20,7 @@ pub mod config;
 pub mod container;
 pub mod detection;
 pub mod filesystem;
+pub mod firmware;
 pub mod hardware;
 pub mod harvest;
 pub mod harvest_store;
@@ -28,6 +29,7 @@ pub mod network;
 pub mod persistence;
 pub mod platform;
 pub mod process;
+pub mod registry;
 pub mod secrets;
 pub mod service;
 

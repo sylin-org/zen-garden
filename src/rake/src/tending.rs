@@ -4,6 +4,36 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Errors that can occur when executing operations on stones
+#[derive(Debug)]
+pub enum StoneError {
+    /// Connection failed (timeout, unreachable) - try another stone
+    ConnectionFailed(String),
+    /// Stone responded with error (404, 500, etc.) - don't retry
+    ResponseError(u16, String),
+    /// Data processing failed (JSON parse, etc.) - don't retry
+    ProcessingError(String),
+}
+
+impl std::fmt::Display for StoneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoneError::ConnectionFailed(msg) => write!(f, "Connection failed: {}", msg),
+            StoneError::ResponseError(status, msg) => write!(f, "HTTP {}: {}", status, msg),
+            StoneError::ProcessingError(msg) => write!(f, "Processing failed: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for StoneError {}
+
+impl StoneError {
+    /// Returns true if this error indicates the stone might be offline (should try another)
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, StoneError::ConnectionFailed(_))
+    }
+}
+
 /// Tending state - persists indefinitely until explicitly changed or stone goes offline.
 /// No TTL - Rake stays connected to the same stone across sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,7 +232,7 @@ pub async fn execute_on_stone<F, Fut, T>(
 ) -> Result<(T, StoneCandidate)>
 where
     F: Fn(&StoneCandidate) -> Fut,
-    Fut: std::future::Future<Output = Option<T>>,
+    Fut: std::future::Future<Output = Result<T, StoneError>>,
 {
     use crate::discovery;
 
@@ -211,15 +241,23 @@ where
         let tended = StoneCandidate::from_tending(&tended_state);
         tracing::debug!(stone = %tended.stone_name, "Trying tended stone");
 
-        if let Some(result) = operation(&tended).await {
-            tracing::debug!(stone = %tended.stone_name, "Tended stone responded");
-            return Ok((result, tended));
-        }
-
-        // Tended stone failed - notify caller
-        tracing::debug!(stone = %tended.stone_name, "Tended stone offline");
-        if let Some(ref callback) = on_tended_offline {
-            callback(&tended.stone_name);
+        match operation(&tended).await {
+            Ok(result) => {
+                tracing::debug!(stone = %tended.stone_name, "Tended stone responded successfully");
+                return Ok((result, tended));
+            }
+            Err(e) if e.is_retryable() => {
+                // Connection failed - stone might be offline, try fallback
+                tracing::debug!(stone = %tended.stone_name, error = %e, "Tended stone unreachable");
+                if let Some(ref callback) = on_tended_offline {
+                    callback(&tended.stone_name);
+                }
+            }
+            Err(e) => {
+                // Non-retryable error - stop here, don't try other stones
+                tracing::error!(stone = %tended.stone_name, error = %e, "Operation failed on tended stone");
+                return Err(anyhow::anyhow!("Stone '{}' error: {}", tended.stone_name, e));
+            }
         }
     }
 
@@ -256,18 +294,29 @@ where
 
     // 3. Try each fallback
     for candidate in fallbacks {
-        if let Some(result) = operation(&candidate).await {
-            // Auto-tend to this stone
-            tracing::info!(
-                stone = %candidate.stone_name,
-                endpoint = %candidate.endpoint,
-                "Auto-tending to new stone after fallback"
-            );
-            if let Err(e) = write_tending(candidate.stone_name.clone(), candidate.endpoint.clone()) {
-                tracing::warn!(error = ?e, "Failed to write tending state");
+        match operation(&candidate).await {
+            Ok(result) => {
+                // Auto-tend to this stone
+                tracing::info!(
+                    stone = %candidate.stone_name,
+                    endpoint = %candidate.endpoint,
+                    "Auto-tending to new stone after fallback"
+                );
+                if let Err(e) = write_tending(candidate.stone_name.clone(), candidate.endpoint.clone()) {
+                    tracing::warn!(error = ?e, "Failed to write tending state");
+                }
+                return Ok((result, candidate));
             }
-
-            return Ok((result, candidate));
+            Err(e) if e.is_retryable() => {
+                // Connection failed, try next stone
+                tracing::debug!(stone = %candidate.stone_name, error = %e, "Fallback stone unreachable");
+                continue;
+            }
+            Err(e) => {
+                // Non-retryable error - stop trying
+                tracing::error!(stone = %candidate.stone_name, error = %e, "Operation failed on fallback stone");
+                return Err(anyhow::anyhow!("Stone '{}' error: {}", candidate.stone_name, e));
+            }
         }
     }
 

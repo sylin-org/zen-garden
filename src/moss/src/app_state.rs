@@ -140,6 +140,9 @@ pub struct AppState {
 
     /// Harvest store (backup manifests and archives)
     pub harvest_store: Arc<HarvestStore>,
+
+    /// Nourishment job status channels (for SSE streaming)
+    pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
 }
 
 impl AppState {

@@ -580,26 +580,81 @@ pub fn format_wall_clock() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
 
+/// Calculate visible length of a string, excluding ANSI escape codes
+///
+/// ANSI codes are sequences like `\x1b[0m`, `\x1b[1;32m`, etc.
+fn visible_length(s: &str) -> usize {
+    let mut visible = 0;
+    let mut chars = s.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Skip ANSI escape sequence
+            // Format: ESC [ ... m  OR  ESC [ ... K  OR  ESC [ ... H, etc.
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Skip until we hit a letter (the final character of the sequence)
+                while let Some(c) = chars.next() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            visible += 1;
+        }
+    }
+    
+    visible
+}
+
+/// Pad a string to a specific visible width, accounting for ANSI codes
+///
+/// The string may contain ANSI escape codes which are NOT counted toward
+/// the visible width. Returns the string padded with spaces to reach the
+/// desired visible width.
+///
+/// Example:
+/// ```ignore
+/// let colored = "\x1b[1;36mHello\x1b[0m"; // Bold cyan "Hello" (5 visible chars)
+/// let padded = pad_visible(colored, 10);  // "Hello     " (colored, 10 visible)
+/// ```
+pub fn pad_visible(s: &str, width: usize) -> String {
+    let visible = visible_length(s);
+    
+    if visible >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - visible))
+    }
+}
+
 /// Place a value at the standard column (VALUE_COLUMN)
 ///
-/// Pads or truncates the label to fit exactly before VALUE_COLUMN,
-/// then appends the value. If label is too long, truncates with ellipsis.
+/// Takes the complete left side (including indentation, labels, and ANSI codes)
+/// and intelligently truncates or pads it to exactly VALUE_COLUMN - 1 visible characters,
+/// then appends the value. This ensures values always align at the same column.
 ///
-/// Example output (VALUE_COLUMN = 36):
-/// ```text
-/// stone-coral-prairie                 [thriving]
-/// some-very-long-stone-name-that-i... [thriving]
+/// Example:
+/// ```ignore
+/// let left = "    stone-crystal-forest";  // indent + name
+/// let value = "[thriving] [tended]";
+/// println!("{}", place_value(&left, value));
+/// // Output: "    stone-crystal-forest                 [thriving] [tended]"
+/// //                                                  ^ column 49
 /// ```
-pub fn place_value(label: &str, value: &str) -> String {
-    let max_label_width = constants::VALUE_COLUMN - 1; // 35 chars for label
+pub fn place_value(left_side: &str, value: &str) -> String {
+    let target_col = constants::VALUE_COLUMN - 2; // 47 chars, space at 48, value at 49
+    let visible = visible_length(left_side);
 
-    if label.len() > max_label_width {
-        // Truncate with ellipsis
-        let truncated = format!("{}...", &label[..max_label_width - 3]);
-        format!("{} {}", truncated, value)
+    if visible > target_col {
+        // Truncate with ellipsis - for now, simple truncation
+        // TODO: Smarter truncation that preserves ANSI codes
+        format!("{}... {}", &left_side[..(target_col - 3).min(left_side.len())], value)
     } else {
-        // Pad to align value
-        format!("{:<width$} {}", label, value, width = max_label_width)
+        // Pad to target column, add space, value appears at VALUE_COLUMN
+        let padded = pad_visible(left_side, target_col);
+        format!("{} {}", padded, value)
     }
 }
 
@@ -612,13 +667,61 @@ pub mod constants {
     pub const MAX_SERVICE_NAME_LEN: usize = 24;
     pub const LEGEND_SYMBOL: char = '*';
     /// Column at which values should be placed (after label)
-    pub const VALUE_COLUMN: usize = 36;
+    /// All values, tags, and statuses should align at this column
+    pub const VALUE_COLUMN: usize = 49;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
+    #[test]
+    fn test_visible_length_plain() {
+        assert_eq!(visible_length("hello"), 5);
+        assert_eq!(visible_length("stone-coral-prairie"), 19);
+    }
+
+    #[test]
+    fn test_visible_length_with_ansi() {
+        // Bold white: \x1b[1m \x1b[0m
+        let bold = format!("\x1b[1mhello\x1b[0m");
+        assert_eq!(visible_length(&bold), 5);
+        
+        // Bold + color: \x1b[1;97m ... \x1b[0m
+        let colored = format!("\x1b[1;97mstone-coral-prairie\x1b[0m");
+        assert_eq!(visible_length(&colored), 19);
+    }
+
+    #[test]
+    fn test_pad_visible() {
+        let plain = "hello";
+        assert_eq!(pad_visible(plain, 10), "hello     ");
+        
+        let colored = format!("\x1b[1;97mhello\x1b[0m");
+        let padded = pad_visible(&colored, 10);
+        // Should have colored "hello" + 5 spaces
+        assert_eq!(visible_length(&padded), 10);
+    }
+
+    #[test]
+    fn test_place_value_with_title() {
+        // Test with full left side including indent
+        let indent = "    "; // 4 spaces
+        let title_name = format!("\x1b[1m\x1b[97mstone-crystal-forest\x1b[0m\x1b[0m");
+        let left_side = format!("{}{}", indent, title_name);
+        let status = "[thriving] [tended]";
+        let result = place_value(&left_side, status);
+        
+        // Visible length should be 4 (indent) + 20 (name) = 24
+        assert_eq!(visible_length(&left_side), 24);
+        // After padding to 48 + space + status, visible should be 48 + 1 + 19 = 68
+        let expected_visible = 48 + 1 + visible_length(status);
+        assert_eq!(visible_length(&result), expected_visible);
+        
+        println!("Result: {}", result);
+        println!("Visible length: {}", visible_length(&result));
+    }
+
     #[test]
     fn test_stone_banner_format() {
         // Test basic format structure - should have === prefix and fill with equals

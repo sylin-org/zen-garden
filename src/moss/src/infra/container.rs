@@ -73,6 +73,11 @@ impl ContainerRuntime {
     pub async fn get_service_image(&self, service_name: &str) -> Result<String> {
         self.docker.get_service_image(service_name).await
     }
+
+    /// Get the actual running image ID for a service
+    pub async fn get_service_image_id(&self, service_name: &str) -> Result<String> {
+        self.docker.get_service_image_id(service_name).await
+    }
 }
 
 #[cfg(test)]

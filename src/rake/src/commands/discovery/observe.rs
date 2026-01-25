@@ -152,6 +152,8 @@ async fn observe_garden(
             let stone_name = candidate.stone_name.clone();
             let endpoint = candidate.endpoint.clone();
             async move {
+                use crate::tending::StoneError;
+                
                 let layout = Layout::new();
                 layout.line(&format!("querying topology from {}...", stone_name))
                     .level(IndentLevel::Card)
@@ -168,54 +170,8 @@ async fn observe_garden(
                         .print();
                 }
 
-                match client.get(&topology_url).timeout(Duration::from_secs(5)).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<GardenApiResponse<Vec<TopologyEntry>>>().await {
-                            Ok(api_response) => {
-                                if verbose > 0 {
-                                    layout.field("Response")
-                                        .value(format!("{} stones in topology", api_response.data.len()))
-                                        .level(IndentLevel::Card)
-                                        .tag("verbose")
-                                        .print();
-                                    for stone in &api_response.data {
-                                        layout.line(&format!("- {} (id: {}, endpoint: {}, health: {})",
-                                            stone.stone_name, stone.stone_id, stone.endpoint, stone.health))
-                                            .level(IndentLevel::Section)
-                                            .tag("verbose")
-                                            .print();
-                                    }
-                                    layout.blank();
-                                }
-                                Some(api_response.data)
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = ?e, "Failed to parse topology JSON");
-                                if verbose > 0 {
-                                    layout.field("JSON parse error")
-                                        .value(e.to_string())
-                                        .level(IndentLevel::Card)
-                                        .tag("verbose")
-                                        .print();
-                                }
-                                None
-                            }
-                        }
-                    }
-                    Ok(resp) => {
-                        let status = resp.status();
-                        tracing::warn!(status = ?status, "Stone returned error");
-                        if verbose > 0 {
-                            layout.field("Response status")
-                                .value(status.to_string())
-                                .level(IndentLevel::Card)
-                                .tag("verbose")
-                                .print();
-                        }
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = ?e, "Failed to reach stone");
+                let response = client.get(&topology_url).timeout(Duration::from_secs(5)).send().await
+                    .map_err(|e| {
                         if verbose > 0 {
                             layout.field("Connection error")
                                 .value(e.to_string())
@@ -223,9 +179,50 @@ async fn observe_garden(
                                 .tag("verbose")
                                 .print();
                         }
-                        None
+                        StoneError::ConnectionFailed(format!("Failed to reach stone: {}", e))
+                    })?;
+
+                let status = response.status();
+                if !status.is_success() {
+                    if verbose > 0 {
+                        layout.field("Response status")
+                            .value(status.to_string())
+                            .level(IndentLevel::Card)
+                            .tag("verbose")
+                            .print();
                     }
+                    return Err(StoneError::ResponseError(status.as_u16(), format!("Stone returned {}", status)));
                 }
+
+                let api_response = response.json::<GardenApiResponse<Vec<TopologyEntry>>>().await
+                    .map_err(|e| {
+                        tracing::warn!(error = ?e, "Failed to parse topology JSON");
+                        if verbose > 0 {
+                            layout.field("JSON parse error")
+                                .value(e.to_string())
+                                .level(IndentLevel::Card)
+                                .tag("verbose")
+                                .print();
+                        }
+                        StoneError::ProcessingError(format!("JSON parse failed: {}", e))
+                    })?;
+
+                if verbose > 0 {
+                    layout.field("Response")
+                        .value(format!("{} stones in topology", api_response.data.len()))
+                        .level(IndentLevel::Card)
+                        .tag("verbose")
+                        .print();
+                    for stone in &api_response.data {
+                        layout.line(&format!("- {} (id: {}, endpoint: {}, health: {})",
+                            stone.stone_name, stone.stone_id, stone.endpoint, stone.health))
+                            .level(IndentLevel::Section)
+                            .tag("verbose")
+                            .print();
+                    }
+                    layout.blank();
+                }
+                Ok(api_response.data)
             }
         },
     ).await;
@@ -369,8 +366,11 @@ fn display_lantern_topology(topology: &garden_common::LanternTopology, offering_
         // Stone name with status and tended marker on same line - preserve original case
         let status_indicator = ui::status_indicator(&stone.status, term.supports_color);
         let status_with_tended = format!("{}{}", status_indicator, tended_marker);
+        
+        // Build complete left side: indent + formatted name
         let name_display = fmt.title(&stone.name);
-        println!("{}{}", indent, ui::place_value(&name_display, &status_with_tended));
+        let left_side = format!("{}{}", indent, name_display);
+        println!("{}", ui::place_value(&left_side, &status_with_tended));
 
         // Stone ID if available
         if let Some(ref stone_id) = stone.stone_id {
@@ -383,7 +383,7 @@ fn display_lantern_topology(topology: &garden_common::LanternTopology, offering_
         println!();
         println!("{}    {}", indent, fmt.group("ACCESS"));
         let endpoint_display = stone.endpoint.trim_start_matches("http://").trim_end_matches('/');
-        println!("{}        {}", indent, ui::place_value("ENDPOINT", endpoint_display));
+        println!("{}", ui::place_value(&format!("{}        ENDPOINT", indent), endpoint_display));
         println!();
 
         // Filter services if needed
@@ -399,13 +399,13 @@ fn display_lantern_topology(topology: &garden_common::LanternTopology, offering_
         // OFFERINGS section
         println!("{}    {}", indent, fmt.group("OFFERINGS"));
         if filtered_services.is_empty() && offering_filter.is_some() {
-            println!("{}        {}", indent, ui::place_value("", "No matching offerings"));
+            println!("{}", ui::place_value(&format!("{}        ", indent), "No matching offerings"));
         } else if filtered_services.is_empty() {
-            println!("{}        {}", indent, ui::place_value("", "No offerings installed"));
+            println!("{}", ui::place_value(&format!("{}        ", indent), "No offerings installed"));
         } else {
             for svc in filtered_services.iter() {
                 let status = ui::status_indicator(&svc.status, term.supports_color);
-                println!("{}        {}", indent, ui::place_value(&svc.name, &status));
+                println!("{}", ui::place_value(&format!("{}        {}", indent, svc.name), &status));
             }
         }
 
@@ -431,8 +431,11 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
     let status_indicator = ui::status_indicator(status_text, term.supports_color);
     let tended_marker = if is_tended { ui::tended_marker(term.supports_color) } else { String::new() };
     let status_with_tended = format!("{}{}", status_indicator, tended_marker);
+    
+    // Build complete left side: indent + formatted name
     let name_display = fmt.title(&entry.stone_name);
-    println!("{}{}", indent, ui::place_value(&name_display, &status_with_tended));
+    let left_side = format!("{}{}", indent, name_display);
+    println!("{}", ui::place_value(&left_side, &status_with_tended));
 
     // Stone ID
     println!("{}{}", indent, fmt.hint(&format!("id: {}", entry.stone_id)));
@@ -448,16 +451,16 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
         (endpoint_clean, "7185")
     };
     let mdns_name = format!("{}.local", entry.stone_name.to_lowercase());
-    println!("{}        {}", indent, ui::place_value("HTTP Endpoint", &format!("http://{}:{}", ip_addr, port)));
-    println!("{}        {}", indent, ui::place_value("mDNS Name", &mdns_name));
-    println!("{}        {}", indent, ui::place_value("IP Address", ip_addr));
+    println!("{}", ui::place_value(&format!("{}        HTTP Endpoint", indent), &format!("http://{}:{}", ip_addr, port)));
+    println!("{}", ui::place_value(&format!("{}        mDNS Name", indent), &mdns_name));
+    println!("{}", ui::place_value(&format!("{}        IP Address", indent), ip_addr));
 
     // === HARDWARE SECTION ===
     println!();
     println!("{}    {}", indent, fmt.group("HARDWARE"));
-    println!("{}        {}", indent, ui::place_value("Architecture", &caps.hardware.cpu.architecture));
-    println!("{}        {}", indent, ui::place_value("CPU Cores", &format!("{} cores", caps.hardware.cpu.cores)));
-    println!("{}        {}", indent, ui::place_value("Memory", &format!("{} GB", caps.hardware.memory.total_mb / 1024)));
+    println!("{}", ui::place_value(&format!("{}        Architecture", indent), &caps.hardware.cpu.architecture));
+    println!("{}", ui::place_value(&format!("{}        CPU Cores", indent), &format!("{} cores", caps.hardware.cpu.cores)));
+    println!("{}", ui::place_value(&format!("{}        Memory", indent), &format!("{} GB", caps.hardware.memory.total_mb / 1024)));
 
     // Storage
     if !caps.hardware.storage.is_empty() {
@@ -473,7 +476,7 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
             } else {
                 format!("{} GB {} ({:.0}% used)", largest.size_gb, disk_type_str, largest.used_percent)
             };
-            println!("{}        {}", indent, ui::place_value("Storage", &storage_value));
+            println!("{}", ui::place_value(&format!("{}        Storage", indent), &storage_value));
         }
     }
 
@@ -503,7 +506,7 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
             } else {
                 String::new()
             };
-            println!("{}        {}", indent, ui::place_value("AI", &format!("{}{}{}", gpu_text, vram_text, runtime_text)));
+            println!("{}", ui::place_value(&format!("{}        AI", indent), &format!("{}{}{}", gpu_text, vram_text, runtime_text)));
         }
     }
 
@@ -521,18 +524,18 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
     };
 
     if filtered_services.is_empty() && offering_filter.is_some() {
-        println!("{}        {}", indent, ui::place_value("", "No matching offerings"));
+        println!("{}", ui::place_value(&format!("{}        ", indent), "No matching offerings"));
         let hidden = entry.services.len();
         if hidden > 0 {
             println!("{}        ({} other service{})", indent, hidden, if hidden == 1 { "" } else { "s" });
         }
     } else if filtered_services.is_empty() {
-        println!("{}        {}", indent, ui::place_value("", "No offerings installed"));
+        println!("{}", ui::place_value(&format!("{}        ", indent), "No offerings installed"));
     } else {
         // Simple list (no resource metrics in topology cache)
         for svc in filtered_services {
             let status_indicator = ui::status_indicator(&svc.status, term.supports_color);
-            println!("{}        {}", indent, ui::place_value(&format!("{} ({})", svc.name, svc.offering), &status_indicator));
+            println!("{}", ui::place_value(&format!("{}        {} ({})", indent, svc.name, svc.offering), &status_indicator));
         }
     }
 

@@ -83,7 +83,13 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/garden/topology", get(api::v1::garden::get_topology_v1))
         .route("/api/v1/garden/recommend", post(api::v1::garden::recommend_placement_v1))
         .route("/api/v1/garden/stones/:stone_name", get(api::v1::garden::get_stone_v1))
+        .route("/api/v1/garden/nourishment", get(api::v1::nourishment::check_garden))
         .route("/api/v1/stone", get(api::v1::garden::get_local_stone_v1))
+
+        // V1 API - Nourishment (software & firmware updates)
+        .route("/api/v1/nourishment/check", get(api::v1::nourishment::check_local))
+        .route("/api/v1/nourishment/execute", post(api::v1::nourishment::execute_updates))
+        .route("/api/v1/nourishment/stream/:job_id", get(api::v1::nourishment::stream_status))
 
         // V1 API - Pond security
         .route("/api/v1/pond/init", post(api::v1::pond::pond_init_v1))

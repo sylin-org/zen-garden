@@ -7,6 +7,7 @@ pub mod garden;
 pub mod health;
 pub mod jobs;
 pub mod metrics;
+pub mod nourishment;
 pub mod offerings;
 pub mod pond;
 pub mod services;

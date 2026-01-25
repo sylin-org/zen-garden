@@ -335,6 +335,22 @@ impl DockerManager {
         Ok(image)
     }
 
+    /// Get the actual running image ID/SHA for a container (not the tag reference)
+    /// Returns the full SHA256 like "sha256:abcd1234..." that identifies the actual image
+    pub async fn get_service_image_id(&self, name: &str) -> Result<String> {
+        let container_name = format!("zen-offering-{}", name);
+        let inspect = self
+            .docker
+            .inspect_container(&container_name, None::<InspectContainerOptions>)
+            .await
+            .context(format!("Failed to inspect container '{}'", container_name))?;
+
+        // The top-level `image` field contains the actual SHA256 of the running image
+        inspect
+            .image
+            .context(format!("Container '{}' has no image ID", container_name))
+    }
+
     /// Pull a Docker image from registry
     ///
     /// Used during install and nourishment to fetch images.

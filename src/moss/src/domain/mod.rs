@@ -16,6 +16,7 @@
 pub mod service_manager;
 pub mod registry;
 pub mod compatibility;
+pub mod constraints;
 pub mod offerings;
 pub mod health;
 pub mod adoption;

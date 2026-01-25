@@ -251,6 +251,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         ceremony_registry,
         ceremony_journal,
         harvest_store,
+        nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)

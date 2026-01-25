@@ -2,25 +2,187 @@
 
 **Safe updates for offerings and stones with ceremony-based orchestration**
 
-**Status:** Proposal
-**Date:** January 2026
-**Authors:** Collaborative design session
+**Status:** V0 Implemented (2026-01-24), V1 Planned  
+**Date:** January 2026  
+**Authors:** Collaborative design session  
 **Dependencies:** [ceremonies.md](ceremonies.md), [stone-lifecycle.md](stone-lifecycle.md)
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Vocabulary](#vocabulary)
-3. [CLI Specification](#cli-specification)
-4. [Ceremony Policies](#ceremony-policies)
-5. [Nourishment Flows](#nourishment-flows)
-6. [Stored Offerings](#stored-offerings)
-7. [Vacate Ceremony](#vacate-ceremony)
-8. [Ceremony Engine](#ceremony-engine)
-9. [Implementation Roadmap](#implementation-roadmap)
-10. [API Specification](#api-specification)
+1. [V0 Implementation Status](#v0-implementation-status) ✅ **NEW**
+2. [Overview](#overview)
+3. [Vocabulary](#vocabulary)
+4. [CLI Specification](#cli-specification)
+5. [Ceremony Policies](#ceremony-policies)
+6. [Nourishment Flows](#nourishment-flows)
+7. [Stored Offerings](#stored-offerings)
+8. [Vacate Ceremony](#vacate-ceremony)
+9. [Ceremony Engine](#ceremony-engine)
+10. [Implementation Roadmap](#implementation-roadmap)
+11. [API Specification](#api-specification)
+
+---
+
+## V0 Implementation Status
+
+**Implementation Date:** January 24, 2026  
+**Phase:** Detection & Reporting (No Execution)
+
+### What's Implemented
+
+✅ **Unified Type System** (`garden_common::nourishment`)
+- Single source of truth for all nourishment types
+- Shared between moss (API) and rake (CLI)
+- Eliminated 140+ lines of duplicate code
+
+✅ **Docker Image Update Detection**
+- Registry API integration (Docker Hub + Registry V2)
+- **Digest-based comparison** (resolves "latest" vs "7.4.0" properly)
+- Semantic version parsing and sorting
+- Running container image ID resolution
+
+✅ **Firmware Update Detection**
+- fwupd integration on Linux via `fwupdmgr get-updates`
+- Detects BIOS/UEFI firmware updates from LVFS
+- Reports reboot requirements
+- Added fwupd to preseed template for future stones
+
+✅ **Constraint Checking**
+- Hardware capability detection (CPU features: AVX, SSE4.2)
+- Requirement validation (e.g., MongoDB 5.0+ requires AVX)
+- Blocked updates with reasons displayed to user
+
+✅ **REST API Endpoints**
+```
+GET  /api/v1/nourishment/check         # Detect available updates
+POST /api/v1/nourishment/execute       # Execute updates (stub, returns job_id)
+GET  /api/v1/nourishment/status/:id    # Query job status (stub)
+GET  /api/v1/nourishment/stream/:id    # SSE progress stream (stub)
+```
+
+✅ **Rake Command**
+```bash
+garden-rake nourish                    # Garden-wide update check
+garden-rake nourish --updates-only     # Report only, no interactive prompt
+```
+
+Interactive UI with:
+- Garden-wide summary (X available, Y blocked)
+- Per-stone breakdown
+- Firmware updates with reboot indicators
+- Blocked updates with constraint violation reasons
+- Options: [A] All updates, [O] Offerings only, [S] Stone-specific, [Q] Cancel
+
+✅ **Architecture Improvements**
+- Domain/Infra separation maintained
+- `execute_on_stone` pattern for discovery
+- Shared contracts via `garden_common`
+- AI convention enforcement via `.cursorrules` and `.github/copilot-instructions.md`
+
+### What's NOT Implemented (V1)
+
+❌ **Execution** - No actual updates applied yet (returns stub job_id)  
+❌ **Harvest/Backup** - No data backup before updates  
+❌ **Ceremony Engine** - No multi-phase orchestration  
+❌ **Rollback** - No automatic rollback on failure  
+❌ **Stored Offerings** - No portable snapshots  
+❌ **Vacate** - No stone evacuation for firmware updates  
+❌ **Quiesce/Resume** - No graceful service pausing
+
+### Known Issues
+
+⚠️ **Digest Comparison** - Implemented but needs production testing  
+⚠️ **Tag Parsing** - Complex tags (e.g., "7.4.0-v8-x86_64") may not sort correctly  
+⚠️ **Registry Auth** - Only supports public Docker Hub (no private registries yet)
+
+### Example Output
+
+```
+📦 Garden-wide Update Status
+
+Summary: 7 available, 1 blocked
+
+───────────────────────────────────────────────
+
+  stone-crystal-forest
+    AVAILABLE:
+      • memcached 1.6 → 1.6.40-trixie
+      • System Firmware 1.17.0 → 1.38.0 (reboot required)
+
+  stone-coral-prairie
+    AVAILABLE:
+      • redis latest → 7.4.0-v8-x86_64
+      • rabbitmq 3-management-alpine → 4.2.3-management
+      • vault 1.18 → 1.21.2
+      • System Firmware 1.7.1 → 1.38.0 (reboot required)
+    BLOCKED:
+      ⚠ mongodb 4.4 → 8.2.3: Requires AVX (CPU: Pentium Silver J5005)
+
+  stone-bronze-canyon
+    AVAILABLE:
+      • mariadb 11 → 12.2.1-ubi10-rc
+
+───────────────────────────────────────────────
+
+Use [A] to apply all, [O] for offerings only
+
+Apply updates:
+  [A] All updates
+  [O] Offerings only
+  [S] Stone-specific (TODO)
+  [Q] Cancel
+```
+
+### V0 Technical Details
+
+**Shared Types** ([garden_common/nourishment.rs](../../src/common/src/nourishment.rs)):
+```rust
+pub enum Update {
+    Offering {
+        name: String,
+        current: String,
+        available: String,
+        age_days: Option<u32>,
+    },
+    Firmware {
+        device_id: String,
+        name: String,
+        vendor: String,
+        current: String,
+        available: String,
+        requires_reboot: bool,
+        description: Option<String>,
+    },
+}
+
+pub struct Updates {
+    pub available: Vec<Update>,
+    pub blocked: Vec<BlockedUpdate>,
+}
+
+pub struct BlockedUpdate {
+    #[serde(flatten)]
+    pub update: Update,
+    pub reason: String,
+}
+```
+
+**Digest Resolution** ([moss/infra/registry.rs](../../src/moss/src/infra/registry.rs)):
+- `get_service_image_id()` - Returns actual running image SHA256
+- `get_image_digest()` - Resolves tag to digest from registry
+- Compares digests instead of symbolic tags
+
+**Constraint System** ([moss/domain/constraints.rs](../../src/moss/src/domain/constraints.rs)):
+- `check_constraints()` - Validates requirements against hardware
+- Returns `Ok(())` or `Err(Violation)` with user-friendly message
+
+### V0 Summary
+
+**What works:** Detection, reporting, constraint checking  
+**What doesn't:** Execution, backup, rollback, ceremony orchestration  
+**Next step:** Phase 1 - Harvest infrastructure for safe updates
 
 ---
 
@@ -30,7 +192,10 @@
 
 **Nourishment** is the process of updating offerings (container images) and stones (firmware/BIOS) to newer versions while preserving data integrity and minimizing downtime.
 
-Unlike simple `docker pull && docker restart`, nourishment is a **ceremony** - a deliberate, multi-phase operation with:
+**V0 Focus:** Detection and reporting only - identify what needs updating  
+**V1 Goal:** Full ceremony-based execution with safety guarantees
+
+Unlike simple `docker pull && docker restart`, nourishment (V1) will be a **ceremony** - a deliberate, multi-phase operation with:
 - Pre-flight safety checks
 - Data backup (harvest/store)
 - Graceful service transitions
@@ -39,6 +204,13 @@ Unlike simple `docker pull && docker restart`, nourishment is a **ceremony** - a
 
 ### Design Principles
 
+**V0 (Implemented):**
+1. **Detection accuracy** - Digest-based comparison, not symbolic tags
+2. **Honest reporting** - Show what's available, what's blocked, and why
+3. **Shared contracts** - Single source of truth for types (DRY principle)
+4. **Hardware awareness** - Validate CPU requirements before suggesting updates
+
+**V1 (Planned):**
 1. **Safety by default** - Stateful offerings require backup before update
 2. **Explicit risk** - `recklessly` modifier bypasses safeguards intentionally
 3. **Honest reporting** - Partial success is reported honestly, not hidden
@@ -48,6 +220,16 @@ Unlike simple `docker pull && docker restart`, nourishment is a **ceremony** - a
 
 ## Vocabulary
 
+**V0 Terms (Implemented):**
+| Term | Definition | Scope |
+|------|------------|-------|
+| **nourish** | Detect and report available updates | Offerings + Stones |
+| **blocked** | Update prevented by constraint violation | Single update |
+| **digest** | SHA256 hash identifying exact image version | Docker image |
+
+**V1 Terms (Planned):**
+
+**V1 Terms (Planned):**
 | Term | Definition | Scope |
 |------|------------|-------|
 | **nourish** | Update to newer version | Offerings + Stones |
@@ -65,7 +247,24 @@ Unlike simple `docker pull && docker restart`, nourishment is a **ceremony** - a
 
 ## CLI Specification
 
-### Zen Syntax
+### V0 Implementation (Current)
+
+```bash
+# Detection only (implemented)
+garden-rake nourish                    # Show garden-wide updates (interactive)
+garden-rake nourish --updates-only     # Report only, no prompt
+```
+
+**Interactive UI:**
+- Shows available updates per stone
+- Shows blocked updates with reasons
+- Firmware updates with reboot indicators
+- Options: [A] All, [O] Offerings only, [Q] Cancel
+- Execution returns stub job_id (no actual update yet)
+
+### V1 Zen Syntax (Planned)
+
+### V1 Zen Syntax (Planned)
 
 ```bash
 # Report only (default)
@@ -88,7 +287,7 @@ garden-rake nourish all                # Everything (offerings + stones)
 garden-rake nourish all recklessly     # Everything, no safety nets
 ```
 
-### Normative Syntax
+### V1 Normative Syntax (Planned)
 
 ```bash
 # Offerings
@@ -102,7 +301,7 @@ garden-rake firmware upgrade --stone stone-01   # = nourish stone-01
 garden-rake firmware upgrade --all --force      # = nourish stones recklessly
 ```
 
-### Supporting Commands
+### V1 Supporting Commands (Planned)
 
 ```bash
 # Stored offerings
@@ -126,7 +325,7 @@ garden-rake watch ceremony vacate-stone01-20260124
 
 ---
 
-## Ceremony Policies
+## Ceremony Policies (V1)
 
 ### Template Schema Extension
 
@@ -741,22 +940,35 @@ impl CeremonyDiscovery {
 
 ## Implementation Roadmap
 
-### Phase 0: Foundation (Prerequisites)
+### ✅ Phase 0: Detection Foundation (Completed 2026-01-24)
 
-**Milestone: Core types and infrastructure**
+**Milestone:** Unified update detection without execution
 
-| Task | Files | Dependencies | Validation |
-|------|-------|--------------|------------|
-| Ceremony types | `src/moss/src/domain/ceremony/types.rs` | None | Unit tests |
-| Ceremony events | `src/common/src/events.rs` | MossEvent | Build passes |
-| Harvest paths | `src/moss/src/infra/paths.rs` | None | Constants exist |
-| Template ceremony policy | `src/moss/src/infra/manifests/sw.rs` | None | Parse test YAML |
+**Implemented:**
+- ✅ Shared type system (`garden_common::nourishment`)
+- ✅ Docker registry API client (Docker Hub + Registry V2)
+- ✅ Image digest resolution and comparison
+- ✅ Firmware update detection via fwupd
+- ✅ Hardware capability detection (AVX, SSE4.2)
+- ✅ Constraint checking system
+- ✅ REST API endpoints (`/check`, `/execute`, `/status`, `/stream`)
+- ✅ Rake command with interactive UI
+- ✅ Garden-wide update reporting
+- ✅ Blocked update reasons
 
-**Gate:** `cargo test` passes, ceremony types compile
+**Files:**
+- `src/common/src/nourishment.rs` - Shared types (82 lines)
+- `src/moss/src/api/v1/nourishment.rs` - API implementation (527 lines)
+- `src/moss/src/infra/registry.rs` - Docker registry client (395 lines)
+- `src/moss/src/infra/firmware.rs` - fwupd integration (70 lines)
+- `src/moss/src/domain/constraints.rs` - Constraint validation (115 lines)
+- `src/rake/src/commands/nourish.rs` - CLI command (375 lines)
+
+**Gate:** ✅ Can detect Docker + firmware updates across garden
 
 ---
 
-### Phase 1: Harvest Infrastructure
+### Phase 1: Harvest Infrastructure (Planned)
 
 **Milestone: Can backup and restore a single offering**
 
@@ -931,7 +1143,88 @@ async fn test_replant_cross_stone() {
 
 ## API Specification
 
-### Nourishment Endpoints
+### V0 Endpoints (Implemented)
+
+**Nourishment Check:**
+```
+GET  /api/v1/nourishment/check
+     Returns: GardenNourishmentResponse
+     {
+       "stones": [
+         {
+           "stone_name": "stone-coral-prairie",
+           "updates": {
+             "available": [
+               {
+                 "type": "offering",
+                 "name": "redis",
+                 "current": "latest",
+                 "available": "7.4.0-v8-x86_64",
+                 "age_days": null
+               },
+               {
+                 "type": "firmware",
+                 "device_id": "...",
+                 "name": "System Firmware",
+                 "vendor": "Dell Inc.",
+                 "current": "1.7.1",
+                 "available": "1.38.0",
+                 "requires_reboot": true,
+                 "description": "..."
+               }
+             ],
+             "blocked": [
+               {
+                 "type": "offering",
+                 "name": "mongodb",
+                 "current": "4.4",
+                 "available": "8.2.3",
+                 "reason": "Requires AVX (CPU: Pentium Silver J5005)"
+               }
+             ]
+           }
+         }
+       ]
+     }
+```
+
+**Nourishment Execute (Stub):**
+```
+POST /api/v1/nourishment/execute
+     Body: ExecuteRequest
+     {
+       "updates": [
+         { "type": "offering", "name": "redis" },
+         { "type": "firmware", "device_id": "..." }
+       ]
+     }
+     Returns: ExecuteResponse
+     { "job_id": "nourish-20260124-abc123" }
+     
+     Note: Currently returns stub job_id, no actual execution
+```
+
+**Job Status (Stub):**
+```
+GET  /api/v1/nourishment/status/:job_id
+     Returns: { "status": "pending" }
+     
+     Note: Stub implementation, always returns pending
+```
+
+**Progress Stream (Stub):**
+```
+GET  /api/v1/nourishment/stream/:job_id
+     Content-Type: text/event-stream
+     
+     Note: Infrastructure in place, but no real events yet
+```
+
+---
+
+### V1 Endpoints (Planned)
+
+**Ceremony Endpoints:**
 
 ```
 GET  /api/v1/nourishment/report
@@ -1060,7 +1353,26 @@ max_stored_offerings = 50
 
 ## Summary
 
-This specification defines:
+### V0 Status (2026-01-24)
+
+**Implemented:**
+1. ✅ **Update detection** - Docker registry + firmware (fwupd) integration
+2. ✅ **Digest comparison** - Proper image version resolution
+3. ✅ **Constraint checking** - Hardware requirement validation
+4. ✅ **Shared types** - DRY architecture via `garden_common`
+5. ✅ **Interactive CLI** - Garden-wide reporting with per-stone breakdown
+6. ✅ **REST API** - Detection endpoint + execution stubs
+
+**What V0 achieves:**
+- Accurate detection of available updates across all stones
+- Identification of blocked updates with reasons (e.g., missing AVX)
+- Foundation for V1 execution infrastructure
+
+---
+
+### V1 Specification (Planned)
+
+This document defines the complete V1 nourishment system:
 
 1. **Nourish command** - Safe updates with Zen and Normative syntax
 2. **Ceremony policies** - Template-defined quiesce/resume hooks
@@ -1068,10 +1380,14 @@ This specification defines:
 4. **Stored offerings** - Portable container+data packages
 5. **Vacate ceremony** - Zero-downtime stone maintenance
 6. **Ceremony engine** - Multi-phase orchestration with Jobs
-7. **8-phase implementation roadmap** - From foundation to full feature
+7. **Multi-phase roadmap** - From detection (done) to full orchestration
 
-The design prioritizes:
+The V1 design prioritizes:
 - **Safety** - Backup before update, automatic rollback
 - **Honesty** - Clear reporting, no hidden failures
 - **Intentionality** - Ceremonies are deliberate operations
 - **Resilience** - Journal recovery, coordinator election
+
+---
+
+**Next Steps:** Implement Phase 1 (Harvest Infrastructure) to enable safe execution of detected updates.

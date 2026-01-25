@@ -33,6 +33,7 @@ pub mod lifecycle;
 pub mod local;
 pub mod management;
 pub mod offering;
+pub mod nourish;
 
 use crate::context::CommandContext;
 use async_trait::async_trait;

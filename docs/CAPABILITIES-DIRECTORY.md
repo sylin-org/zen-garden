@@ -31,6 +31,13 @@ Always use `garden_common::constants::paths::*` functions - they handle Windows 
 - HTTP: Use `reqwest` with 30s timeout (see `constants::timeouts`)
 - Background tasks: Use `tokio::spawn` with error logging
 
+### **Shared Contracts/Models**
+**CRITICAL**: Moss and Rake MUST share the majority of contracts/models via `garden_common`.
+- API request/response types: Define once in `common/src/*.rs`
+- NO bespoke structures unless necessary and explicitly approved
+- Reduces drift, ensures compatibility, simplifies maintenance
+- Example: `garden_common::nourishment::*` used by both moss API and rake CLI
+
 ---
 
 ## 📚 Table of Contents

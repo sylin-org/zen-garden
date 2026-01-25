@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y \
     file \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace files
-COPY Cargo.toml Cargo.lock ./
-COPY src/ ./src/
+# Source code is mounted as a volume at runtime via -v flag
+# No COPY needed - workspace is mapped to /build
 
 # Build release binaries
 # Note: Default builds debug, pass --release for optimized
 CMD ["bash", "-c", "cargo build --bin garden-moss && cargo build --bin garden-rake"]
+
 

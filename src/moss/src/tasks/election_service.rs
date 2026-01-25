@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-use crate::infra::communications::p2p::{self, UdpEvent};
+use garden_common::infra::communications::p2p;
 
 /// Maximum pending elections to track
 const MAX_PENDING_ELECTIONS: usize = 100;
@@ -106,31 +106,35 @@ impl ElectionService {
             cleanup_service.run_cleanup_loop().await;
         });
 
-        // Subscribe to p2p UDP events
-        let mut udp_rx = p2p::subscribe_to_events().await?;
+        // Subscribe to all p2p UDP events (need request, candidate, result)
+        let mut udp_rx = p2p::subscribe_to_all().await?;
 
         loop {
             match udp_rx.recv().await {
-                Ok(event) => {
-                    if let Err(e) = self.handle_udp_event(event).await {
+                Some((announcement_type, payload, from_addr)) => {
+                    if let Err(e) = self.handle_udp_event(announcement_type, payload, from_addr).await {
                         tracing::debug!(error = ?e, "Failed to handle UDP event");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(error = ?e, "UDP event recv error");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                None => {
+                    tracing::error!("P2P channel closed");
+                    break;
                 }
             }
         }
+        
+        Ok(())
     }
 
     /// Handle incoming UDP event from p2p transport
-    async fn handle_udp_event(&self, event: UdpEvent) -> Result<()> {
-        match event {
-            UdpEvent::ElectionRequest { request, from_addr } => {
+    async fn handle_udp_event(&self, announcement_type: String, payload: serde_json::Value, from_addr: std::net::SocketAddr) -> Result<()> {
+        match announcement_type.as_str() {
+            announcement_types::ELECTION_REQUEST => {
+                let request: ElectionRequest = serde_json::from_value(payload)?;
                 self.handle_election_request(request, from_addr).await?;
             }
-            UdpEvent::ElectionResult { result, .. } => {
+            announcement_types::ELECTION_RESULT => {
+                let result: ElectionResult = serde_json::from_value(payload)?;
                 self.handle_election_result(result).await?;
             }
             // Ignore other event types (handled by coordinator/discovery)
@@ -310,13 +314,21 @@ impl ElectionService {
         );
 
         // Subscribe to p2p events to receive ELECTION_CANDIDATE responses
-        let mut udp_rx = p2p::subscribe_to_events().await?;
+        let mut udp_rx = p2p::subscribe_to_announcement(announcement_types::ELECTION_CANDIDATE).await?;
         let wait_duration = Duration::from_secs(timeout_secs);
 
         let winner = match timeout(wait_duration, async {
             loop {
                 match udp_rx.recv().await {
-                    Ok(UdpEvent::ElectionCandidate { candidate, .. }) => {
+                    Some((payload, _from_addr)) => {
+                        let candidate: ElectionCandidate = match serde_json::from_value(payload) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(error = ?e, "Failed to parse candidate");
+                                continue;
+                            }
+                        };
+                        
                         if candidate.election_id == election_id {
                             return Some(ElectionWinner {
                                 stone_id: candidate.stone_id,
@@ -324,12 +336,13 @@ impl ElectionService {
                             });
                         }
                     }
-                    Err(e) => {
-                        tracing::debug!(error = ?e, "Event recv error while waiting for candidates");
+                    None => {
+                        tracing::error!("P2P channel closed");
+                        break;
                     }
-                    _ => {} // Ignore other event types
                 }
             }
+            None
         }).await {
             Ok(Some(winner)) => Some(winner),
             Ok(None) | Err(_) => None,

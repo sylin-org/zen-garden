@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::domain::connection::{self, ResolvedConnection};
-use crate::domain::topology;
+use crate::domain::{topology, TopologyEntry};
 use crate::AppState;
 use garden_common::manifests::get_category_registry;
 use garden_common::ServiceStatus;
@@ -447,7 +447,7 @@ async fn find_remote_services(
 async fn fetch_remote_services(
     endpoint: &str,
     criteria: &ServiceSearchCriteria,
-    stone: &topology::TopologyEntry,
+    stone: &TopologyEntry,
     timeout: Duration,
     state: &AppState,
 ) -> anyhow::Result<Vec<FoundService>> {

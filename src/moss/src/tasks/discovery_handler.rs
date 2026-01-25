@@ -9,7 +9,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::infra::communications::p2p;
+use garden_common::infra::communications::p2p;
 use crate::domain::TopologyEntry;
 
 /// Start discovery request handler
@@ -21,11 +21,19 @@ pub async fn start_discovery_handler(
 ) -> Result<()> {
     tracing::info!("Discovery handler starting, subscribing to p2p events");
 
-    let mut udp_rx = p2p::subscribe_to_events().await?;
+    let mut udp_rx = p2p::subscribe_to_announcement(garden_common::announcement_types::DISCOVERY_REQUEST).await?;
 
     loop {
         match udp_rx.recv().await {
-            Ok(p2p::UdpEvent::Request { request, from_addr }) => {
+            Some((payload, from_addr)) => {
+                let request: garden_common::DiscoveryRequest = match serde_json::from_value(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(error = ?e, "Failed to parse discovery request");
+                        continue;
+                    }
+                };
+                
                 tracing::debug!(
                     request_id = %request.request_id,
                     requester = %request.requester,
@@ -57,12 +65,12 @@ pub async fn start_discovery_handler(
                     );
                 }
             }
-            Ok(_) => {
-                // Ignore other event types (chirps, goodbyes, elections)
-            }
-            Err(e) => {
-                tracing::debug!(error = ?e, "UDP event recv lag");
+            None => {
+                tracing::error!("P2P channel closed");
+                break;
             }
         }
     }
+    
+    Ok(())
 }

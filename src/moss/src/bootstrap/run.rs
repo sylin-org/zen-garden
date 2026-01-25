@@ -80,7 +80,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         self_entry.clone(),
-        &console_printer,
+        console_printer.clone(),
     )
     .await;
     tracing::info!("UDP listener started at Phase 1 (can respond to discovery requests)");
@@ -398,12 +398,45 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
 
     // Phase 12: Active peer discovery (send discovery request at startup)
     tracing::info!("Discovering peer stones...");
-    let discovered_peers = crate::discovery::discover_peers(&stone_id, 3).await;
-    for peer in discovered_peers {
-        if let Some(peer_id) = peer.stone_id {
-            let entry = crate::domain::TopologyEntry {
-                stone_id: peer_id,
-                stone_name: peer.stone_name,
+    
+    // Subscribe to discovery responses before sending request
+    if let Ok(mut discovery_rx) = garden_common::infra::communications::p2p::subscribe_to_announcement(
+        garden_common::announcement_types::DISCOVERY_RESPONSE
+    ).await {
+        // Send discovery request
+        let request = garden_common::DiscoveryRequest {
+            discover: "moss".to_string(),
+            request_id: garden_common::ids::generate_guidv7(),
+            requester: stone_id.clone(),
+        };
+        
+        if let Err(e) = garden_common::infra::communications::p2p::send_announcement(
+            garden_common::announcement_types::DISCOVERY_REQUEST,
+            &request
+        ).await {
+            tracing::warn!(error = ?e, "Failed to send discovery request");
+        } else {
+            // Collect responses for 3 seconds
+            let timeout_fut = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                async {
+                    let mut responses = Vec::new();
+                    while let Some((payload, _from_addr)) = discovery_rx.recv().await {
+                        if let Ok(response) = serde_json::from_value::<garden_common::DiscoveryResponse>(payload) {
+                            responses.push(response);
+                        }
+                    }
+                    responses
+                }
+            );
+            
+            let discovered_peers = timeout_fut.await.unwrap_or_else(|_| Vec::new());
+            
+            for peer in discovered_peers {
+                if let Some(peer_id) = peer.stone_id {
+                    let entry = crate::domain::TopologyEntry {
+                        stone_id: peer_id,
+                        stone_name: peer.stone_name,
                 endpoint: peer.stone_endpoint,
                 moss_version: peer.moss_version,
                 services: vec![], // Discovery response doesn't include services yet
@@ -419,6 +452,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                 entry,
             ).await;
         }
+    }
+        }
+    } else {
+        tracing::warn!("Failed to subscribe to discovery responses");
     }
 
     // Phase 13: Initial announcement (announce ourselves)

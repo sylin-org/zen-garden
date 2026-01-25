@@ -16,6 +16,7 @@
 use anyhow::Result;
 use garden_common::{
     announcement_types, StoneGoodbyePayload,
+    infra::communications::p2p,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -109,7 +110,7 @@ fn calculate_state_hash(entry: &TopologyEntry) -> u64 {
 /// **REFACTORED (COMM-0001 Phase 2)**: Now uses p2p transport singleton instead of creating own socket.
 async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
     // Use p2p transport singleton (no socket creation)
-    crate::infra::communications::p2p::send_announcement(
+    p2p::send_announcement(
         announcement_types::STONE_CHIRP,
         entry,
     )
@@ -145,7 +146,7 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
     );
 
     // Use p2p transport singleton (no socket creation)
-    crate::infra::communications::p2p::send_announcement(
+    p2p::send_announcement(
         announcement_types::STONE_GOODBYE,
         &goodbye,
     )

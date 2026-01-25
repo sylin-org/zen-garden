@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::time::Duration;
 
-use crate::domain::{compatibility, metrics_collection, scoring, services, topology, CompiledOffering};
+use crate::domain::{compatibility, metrics_collection, scoring, services, topology, CompiledOffering, TopologyEntry};
 use crate::AppState;
 
 /// Placement request from client
@@ -310,7 +310,7 @@ async fn score_local_stone(
 
 /// Score a remote stone
 async fn score_remote_stone(
-    stone: &topology::TopologyEntry,
+    stone: &TopologyEntry,
     _offering_id: &str,
     offering: &CompiledOffering,
     metrics: &metrics_collection::StoneMetrics,

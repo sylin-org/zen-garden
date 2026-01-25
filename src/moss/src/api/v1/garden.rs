@@ -6,7 +6,7 @@
 use crate::api::responses::{GardenOverview, StoneInfo, ApiResponse};
 use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::{error_response, AppState, metrics};
-use crate::domain::{placement::{PlacementRequest, PlacementResponse}, topology};
+use crate::domain::{placement::{PlacementRequest, PlacementResponse}, topology, TopologyEntry};
 use garden_common::{api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory, MemoryCapabilities};
 
 /// GET /api/v1/garden - Get garden overview (all stones)
@@ -191,7 +191,7 @@ async fn get_local_stone_info(state: &AppState) -> Result<StoneInfo, (StatusCode
 pub async fn get_topology_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<topology::TopologyEntry>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<Vec<TopologyEntry>>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Step 1: Read self entry (single source of truth for local stone)
     let self_entry = state.self_entry.read().await.clone();
     

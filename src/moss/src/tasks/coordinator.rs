@@ -16,14 +16,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus, ServiceStatus};
 use crate::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
-use crate::infra::communications::p2p;
+use garden_common::infra::communications::p2p;
 use crate::domain::topology::{TopologyCache, upsert_from_chirp, mark_stone_offline};
 use crate::{
     AppState,
     adopt_existing_containers, ensure_offerings_index,
     detect_capabilities_background, health_monitor_task, auto_adoption_task,
     lantern_registration_loop,
-    discovery, infra,
+    infra,
 };
 use crate::tasks::network_monitor::{NetworkMonitor, NetworkEvent};
 
@@ -33,66 +33,80 @@ use crate::tasks::network_monitor::{NetworkMonitor, NetworkEvent};
 /// Handles discovery requests (chirp response), stone chirps (topology updates), and goodbyes.
 /// Returns immediately after spawning the listener.
 pub async fn start_discovery_listener(
-    stone_id: String,
-    stone_name: String,
-    api_endpoint: String,
+    _stone_id: String,
+    _stone_name: String,
+    _api_endpoint: String,
     topology_cache: TopologyCache,
-    self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
-    console: &ConsolePrinter,
+    _self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+    console: Arc<ConsolePrinter>,
 ) {
-    match discovery::ensure_udp_listener(stone_id, stone_name, api_endpoint).await {
-        Ok(mut udp_rx) => {
-            // Spawn UDP event monitor that handles chirps and goodbyes
-            tokio::spawn(async move {
-                while let Ok(event) = udp_rx.recv().await {
-                    match event {
-                        p2p::UdpEvent::Chirp { chirp, from_addr } => {
-                            tracing::debug!(
-                                stone = %chirp.stone_name,
-                                services = chirp.services.len(),
-                                mac = ?chirp.mac,
-                                health = %chirp.health,
-                                from = %from_addr,
-                                "Stone chirp received, updating topology cache"
-                            );
-                            // Update topology cache with chirp data
-                            upsert_from_chirp(&topology_cache, chirp).await;
+    // Spawn UDP event monitor that handles chirps and goodbyes
+    tokio::spawn(async move {
+        let mut all_events = match p2p::subscribe_to_all().await {
+            Ok(rx) => rx,
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to subscribe to p2p events");
+                console.emit(ConsoleEvent::new(
+                    EventCategory::Network,
+                    EventStatus::Failed,
+                    format!("UDP listener: {}", e),
+                ));
+                return;
+            }
+        };
+        
+        console.emit(ConsoleEvent::new(
+            EventCategory::Network,
+            EventStatus::Started,
+            format!("UDP listener on port {}", garden_common::ports::DISCOVERY_UDP),
+        ));
+        
+        while let Some((announcement_type, payload, from_addr)) = all_events.recv().await {
+            match announcement_type.as_str() {
+                garden_common::announcement_types::STONE_CHIRP => {
+                    let chirp: garden_common::TopologyEntry = match serde_json::from_value(payload) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(error = ?e, "Failed to parse chirp");
+                            continue;
                         }
-                        p2p::UdpEvent::Goodbye { goodbye, from_addr } => {
-                            tracing::info!(
-                                stone = %goodbye.stone_name,
-                                from = %from_addr,
-                                "Stone goodbye received, marking offline"
-                            );
-                            // Mark stone as offline immediately (don't wait for timeout)
-                            mark_stone_offline(&topology_cache, &goodbye.stone_id).await;
-                        }
-                        // Election events handled by election service
-                        p2p::UdpEvent::ElectionRequest { .. } | 
-                        p2p::UdpEvent::ElectionCandidate { .. } | 
-                        p2p::UdpEvent::ElectionResult { .. } => {
-                            // Election service subscribes separately
-                        }
-                    }
+                    };
+                    
+                    tracing::debug!(
+                        stone = %chirp.stone_name,
+                        services = chirp.services.len(),
+                        mac = ?chirp.mac,
+                        health = %chirp.health,
+                        from = %from_addr,
+                        "Stone chirp received, updating topology cache"
+                    );
+                    // Update topology cache with chirp data
+                    upsert_from_chirp(&topology_cache, chirp).await;
                 }
-                tracing::info!("UDP event monitor stopped");
-            });
-
-            console.emit(ConsoleEvent::new(
-                EventCategory::Network,
-                EventStatus::Started,
-                format!("UDP listener on port {}", garden_common::ports::DISCOVERY_UDP),
-            ));
+                garden_common::announcement_types::STONE_GOODBYE => {
+                    let goodbye: garden_common::StoneGoodbyePayload = match serde_json::from_value(payload) {
+                        Ok(g) => g,
+                        Err(e) => {
+                            tracing::warn!(error = ?e, "Failed to parse goodbye");
+                            continue;
+                        }
+                    };
+                    
+                    tracing::info!(
+                        stone = %goodbye.stone_name,
+                        from = %from_addr,
+                        "Stone goodbye received, marking offline"
+                    );
+                    // Mark stone as offline immediately (don't wait for timeout)
+                    mark_stone_offline(&topology_cache, &goodbye.stone_id).await;
+                }
+                _ => {
+                    // Ignore other announcement types (election events handled by election service, discovery handled by discovery_handler)
+                }
+            }
         }
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to start UDP listener");
-            console.emit(ConsoleEvent::new(
-                EventCategory::Network,
-                EventStatus::Failed,
-                format!("UDP listener: {}", e),
-            ));
-        }
-    }
+        tracing::info!("UDP event monitor stopped");
+    });
 }
 
 /// Start background hardware detection
@@ -383,7 +397,7 @@ pub async fn start_all_background_tasks(
         api_endpoint.to_string(),
         state.topology_cache.clone(),
         state.self_entry.clone(),
-        &console,
+        console.clone(),
     )
     .await;
 

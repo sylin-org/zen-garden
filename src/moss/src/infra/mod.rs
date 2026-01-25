@@ -17,7 +17,6 @@ pub mod api_helpers;
 pub mod archive;
 pub mod auth;
 pub mod ceremony_journal;
-pub mod communications;
 pub mod config;
 pub mod container;
 pub mod detection;

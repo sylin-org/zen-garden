@@ -20,6 +20,7 @@ pub mod nourishment;
 pub mod election;
 pub mod infra;
 pub mod metrics;
+pub mod ui;
 
 // Re-export commonly used items
 pub use types::*;

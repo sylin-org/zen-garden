@@ -1,6 +1,7 @@
 //! Infrastructure layer - I/O operations
 //!
 //! This layer contains all external I/O:
+//! - Communications (UDP P2P, mDNS)
 //! - Container runtime (Podman/Docker)
 //! - File system operations
 //! - Authentication implementation (NoAuth for v0.1.0)
@@ -16,6 +17,7 @@ pub mod api_helpers;
 pub mod archive;
 pub mod auth;
 pub mod ceremony_journal;
+pub mod communications;
 pub mod config;
 pub mod container;
 pub mod detection;

@@ -43,24 +43,26 @@ impl MossStateProvider {
     }
 }
 
-impl super::election_service::StateProvider for MossStateProvider {
-    fn get_state(&self) -> HashMap<String, Value> {
-        // For sync access, return minimal identity
-        // Async criteria evaluation should use get_state_async() instead
-        let mut fields = HashMap::new();
-        fields.insert("stone_id".to_string(), json!(self.state.stone_id));
-        fields.insert("stone_name".to_string(), json!(self.state.stone_name));
-        fields.insert("moss_version".to_string(), json!(version_string()));
-        fields
-    }
-}
+// TODO: Re-enable after Phase 4 (COMM-0001)
+// impl super::election_service::StateProvider for MossStateProvider {
+//     fn get_state(&self) -> HashMap<String, Value> {
+//         // For sync access, return minimal identity
+//         // Async criteria evaluation should use get_state_async() instead
+//         let mut fields = HashMap::new();
+//         fields.insert("stone_id".to_string(), json!(self.state.stone_id));
+//         fields.insert("stone_name".to_string(), json!(self.state.stone_name));
+//         fields.insert("moss_version".to_string(), json!(version_string()));
+//         fields
+//     }
+// }
 
 /// Placeholder state provider for bootstrapping
 /// Used temporarily before AppState is fully constructed
 pub struct PlaceholderStateProvider;
 
-impl super::election_service::StateProvider for PlaceholderStateProvider {
-    fn get_state(&self) -> HashMap<String, Value> {
-        HashMap::new() // No criteria matching during bootstrap
-    }
-}
+// TODO: Re-enable after Phase 4 (COMM-0001)
+// impl super::election_service::StateProvider for PlaceholderStateProvider {
+//     fn get_state(&self) -> HashMap<String, Value> {
+//         HashMap::new() // No criteria matching during bootstrap
+//     }
+// }

@@ -144,8 +144,9 @@ pub struct AppState {
     /// Nourishment job status channels (for SSE streaming)
     pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
 
-    /// Election service for distributed elections (testing)
-    pub election_service: Arc<crate::tasks::election_service::ElectionService>,
+    // TODO: Phase 4 (COMM-0001) - Re-enable election service field
+    // /// Election service for distributed elections (testing)
+    // pub election_service: Arc<crate::tasks::election_service::ElectionService>,
 }
 
 impl AppState {

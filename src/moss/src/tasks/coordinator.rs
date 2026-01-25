@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus, ServiceStatus};
 use crate::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
-use crate::discovery::UdpEvent;
+use crate::infra::communications::p2p::{self, UdpEvent};
 use crate::domain::topology::{TopologyCache, upsert_from_chirp, mark_stone_offline};
 use crate::{
     AppState,
@@ -41,13 +41,12 @@ pub async fn start_discovery_listener(
     console: &ConsolePrinter,
 ) {
     match discovery::ensure_udp_listener(stone_id, stone_name, api_endpoint).await {
-        Ok(receiver) => {
+        Ok(mut udp_rx) => {
             // Spawn UDP event monitor that handles both requests and chirps
-            let mut udp_rx = receiver;
             tokio::spawn(async move {
                 while let Ok(event) = udp_rx.recv().await {
                     match event {
-                        UdpEvent::Request { request, from_addr } => {
+                        p2p::UdpEvent::Request { request, from_addr } => {
                             tracing::debug!(
                                 request_id = %request.request_id,
                                 from = %from_addr,
@@ -64,7 +63,7 @@ pub async fn start_discovery_listener(
                                 );
                             }
                         }
-                        UdpEvent::Chirp { chirp, from_addr } => {
+                        p2p::UdpEvent::Chirp { chirp, from_addr } => {
                             tracing::debug!(
                                 stone = %chirp.stone_name,
                                 services = chirp.services.len(),
@@ -76,7 +75,7 @@ pub async fn start_discovery_listener(
                             // Update topology cache with chirp data
                             upsert_from_chirp(&topology_cache, chirp).await;
                         }
-                        UdpEvent::Goodbye { goodbye, from_addr } => {
+                        p2p::UdpEvent::Goodbye { goodbye, from_addr } => {
                             tracing::info!(
                                 stone = %goodbye.stone_name,
                                 from = %from_addr,
@@ -84,6 +83,12 @@ pub async fn start_discovery_listener(
                             );
                             // Mark stone as offline immediately (don't wait for timeout)
                             mark_stone_offline(&topology_cache, &goodbye.stone_id).await;
+                        }
+                        // Election events handled by election service
+                        p2p::UdpEvent::ElectionRequest { .. } | 
+                        p2p::UdpEvent::ElectionCandidate { .. } | 
+                        p2p::UdpEvent::ElectionResult { .. } => {
+                            // Election service subscribes separately
                         }
                     }
                 }

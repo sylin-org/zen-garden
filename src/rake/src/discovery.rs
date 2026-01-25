@@ -1,47 +1,8 @@
 use anyhow::Result;
-use std::net::UdpSocket;  // Still used by streaming/mdns discovery
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
-use garden_common::{DiscoveryRequest, DiscoveryResponse, ports};
+use garden_common::{DiscoveryRequest, DiscoveryResponse};
 use garden_common::infra::communications::p2p;
-
-/// Get a LAN-suitable local IP address for binding UDP sockets
-/// Prioritizes: 192.168.x.x > 10.x.x.x > 172.16-31.x.x
-/// This ensures broadcasts go out the correct interface on multi-homed systems
-fn get_lan_bind_address() -> String {
-    if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {
-        let mut candidates: Vec<(u8, std::net::Ipv4Addr)> = Vec::new();
-
-        for (_, ip) in interfaces {
-            if let std::net::IpAddr::V4(ipv4) = ip {
-                let octets = ipv4.octets();
-                // Skip loopback, link-local
-                if ipv4.is_loopback() || octets[0] == 169 {
-                    continue;
-                }
-                // Skip Docker bridge (172.17.x.x) and WSL/Hyper-V ranges
-                if octets[0] == 172 && (octets[1] == 17 || octets[1] >= 24) {
-                    continue;
-                }
-                // Prioritize by network type
-                let priority = match octets[0] {
-                    192 if octets[1] == 168 => 1, // 192.168.x.x - home/small office
-                    10 => 2,                       // 10.x.x.x - enterprise
-                    172 if (16..=23).contains(&octets[1]) => 3, // 172.16-23.x.x
-                    _ => 4,                        // Other
-                };
-                candidates.push((priority, ipv4));
-            }
-        }
-
-        candidates.sort_by_key(|(p, _)| *p);
-        if let Some((_, ip)) = candidates.first() {
-            return format!("{}:0", ip);
-        }
-    }
-
-    "0.0.0.0:0".to_string()
-}
 
 /// Cached Lantern discovery result
 static LANTERN_CACHE: once_cell::sync::Lazy<Arc<Mutex<Option<Option<String>>>>> =
@@ -64,16 +25,12 @@ pub fn get_cached_lantern() -> Option<String> {
     LANTERN_CACHE.lock().ok()?.as_ref()?.clone()
 }
 
-/// Synchronous Lantern discovery (blocks for up to 2 seconds)
-fn discover_lantern_sync() -> Option<String> {
-    // Bind to LAN interface for reliable broadcast on multi-interface systems
-    let bind_addr = get_lan_bind_address();
-    let socket = match UdpSocket::bind(&bind_addr) {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-    socket.set_broadcast(true).ok()?;
-    socket.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+/// Async Lantern discovery using p2p transport
+async fn discover_lantern_async() -> Option<String> {
+    // Subscribe to discovery responses (Lantern uses same discovery protocol)
+    let mut response_rx = p2p::subscribe_to_announcement(
+        garden_common::announcement_types::DISCOVERY_RESPONSE
+    ).await.ok()?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
@@ -82,28 +39,40 @@ fn discover_lantern_sync() -> Option<String> {
         requester: "rake-cli".into(),
     };
 
-    let request_bytes = serde_json::to_vec(&request).ok()?;
-    socket.send_to(&request_bytes, "255.255.255.255:7187").ok()?;
+    // Send discovery request via p2p transport
+    p2p::send_announcement(
+        garden_common::announcement_types::DISCOVERY_REQUEST,
+        &request
+    ).await.ok()?;
 
-    tracing::debug!(request_id = %request_id, bind = %bind_addr, "Sent Lantern discovery broadcast");
+    tracing::debug!(request_id = %request_id, "Sent Lantern discovery broadcast (via p2p)");
 
-    // Wait for Lantern response (shorter timeout than Moss discovery)
-    let mut buf = [0u8; 1024];
-    if let Ok((len, addr)) = socket.recv_from(&mut buf) {
-        if let Ok(response) = serde_json::from_slice::<DiscoveryResponse>(&buf[..len]) {
-            tracing::info!(?addr, endpoint = %response.stone_endpoint, "Discovered Lantern registry");
-            return Some(response.stone_endpoint);
+    // Wait for Lantern response (2 second timeout)
+    let response = tokio::time::timeout(
+        Duration::from_secs(2),
+        async {
+            while let Some((payload, addr)) = response_rx.recv().await {
+                if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(payload) {
+                    // Lantern responses have "lantern" in the discover field or specific port
+                    tracing::info!(?addr, endpoint = %response.stone_endpoint, "Discovered Lantern registry");
+                    return Some(response.stone_endpoint);
+                }
+            }
+            None
         }
-    }
+    ).await.ok()??;
 
-    None
+    Some(response)
 }
 
-/// Attempt to discover a Lantern service registry via UDP broadcast (deprecated - use background version)
-/// Returns the Lantern HTTP endpoint if found, None if only Moss stones are discovered
-#[deprecated(note = "Use discover_lantern_background() and get_cached_lantern() instead")]
-pub fn discover_lantern() -> Option<String> {
-    discover_lantern_sync()
+/// Synchronous wrapper for async Lantern discovery
+fn discover_lantern_sync() -> Option<String> {
+    // Use tokio runtime handle if available, otherwise create blocking task
+    tokio::runtime::Handle::try_current()
+        .ok()
+        .and_then(|handle| {
+            handle.block_on(discover_lantern_async())
+        })
 }
 
 pub async fn discover_moss() -> Result<String> {
@@ -157,24 +126,21 @@ pub async fn discover_moss() -> Result<String> {
 ///   - Called immediately when stone responds
 /// 
 /// # Returns
-/// Total count of unique stones discovered
-pub fn discover_all_moss_stream<F>(
+/// Async version using p2p transport for streaming discovery
+async fn discover_all_moss_stream_async<F>(
     timeout: Duration,
     mut on_discovered: F,
 ) -> Result<usize>
 where
-    F: FnMut(DiscoveryResponse, std::time::Instant) -> (),
+    F: FnMut(DiscoveryResponse, std::time::Instant) + Send,
 {
     use std::collections::HashSet;
     use std::time::Instant;
 
-    // Bind to LAN interface for reliable broadcast on multi-interface systems
-    let bind_addr = get_lan_bind_address();
-    let socket = UdpSocket::bind(&bind_addr)?;
-    let local = socket.local_addr()?;
-    socket.set_broadcast(true)?;
-    // Short read timeout for polling (not the full discovery timeout)
-    socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+    // Subscribe to discovery responses before sending request
+    let mut response_rx = p2p::subscribe_to_announcement(
+        garden_common::announcement_types::DISCOVERY_RESPONSE
+    ).await?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
@@ -183,82 +149,65 @@ where
         requester: "rake-cli".into(),
     };
 
-    // Wrap in UdpAnnouncement envelope
-    let announcement = garden_common::UdpAnnouncement {
-        announcement_type: garden_common::announcement_types::DISCOVERY_REQUEST.to_string(),
-        data: serde_json::to_value(&request)?,
-    };
+    // Send discovery request via p2p transport
+    p2p::send_announcement(
+        garden_common::announcement_types::DISCOVERY_REQUEST,
+        &request
+    ).await?;
 
-    let request_bytes = serde_json::to_vec(&announcement)?;
-    let sent = socket.send_to(&request_bytes, format!("255.255.255.255:{}", ports::DISCOVERY_UDP))?;
-
-    tracing::debug!(?local, bytes = sent, request_id = %request_id, "Sent UDP discovery broadcast (streaming mode, envelope format)");
+    tracing::debug!(request_id = %request_id, "Sent UDP discovery broadcast (streaming mode, via p2p)");
 
     let start = Instant::now();
     let mut discovered_endpoints = HashSet::new();
-    let mut buf = [0u8; 2048];
 
-    loop {
-        // Check if we've exceeded the discovery timeout
-        if start.elapsed() >= timeout {
-            tracing::debug!(count = discovered_endpoints.len(), "Discovery timeout reached");
-            break;
+    // Stream responses until timeout
+    let response_future = async {
+        while let Some((payload, addr)) = response_rx.recv().await {
+            if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(payload) {
+                // Only process unique endpoints
+                if !discovered_endpoints.contains(&response.stone_endpoint) {
+                    discovered_endpoints.insert(response.stone_endpoint.clone());
+                    let discovery_instant = Instant::now();
+                    
+                    tracing::info!(
+                        ?addr, 
+                        stone = %response.stone_name,
+                        elapsed_ms = discovery_instant.duration_since(start).as_millis(),
+                        "Discovered Moss (streaming)"
+                    );
+                    
+                    // ✅ IMMEDIATE CALLBACK - Progressive disclosure
+                    on_discovered(response, discovery_instant);
+                }
+            }
         }
+        discovered_endpoints.len()
+    };
 
-        match socket.recv_from(&mut buf) {
-            Ok((len, addr)) => {
-                // Try parsing as envelope first
-                if let Ok(announcement) = serde_json::from_slice::<garden_common::UdpAnnouncement>(&buf[..len]) {
-                    if announcement.announcement_type == garden_common::announcement_types::DISCOVERY_RESPONSE {
-                        if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(announcement.data.clone()) {
-                            // Only process unique endpoints
-                            if !discovered_endpoints.contains(&response.stone_endpoint) {
-                                discovered_endpoints.insert(response.stone_endpoint.clone());
-                                let discovery_instant = Instant::now();
-                                
-                                tracing::info!(
-                                    ?addr, 
-                                    stone = %response.stone_name,
-                                    elapsed_ms = discovery_instant.duration_since(start).as_millis(),
-                                    "Discovered Moss (streaming, envelope)"
-                                );
-                                
-                                // ✅ IMMEDIATE CALLBACK - Progressive disclosure
-                                on_discovered(response, discovery_instant);
-                            }
-                        }
-                    }
-                }
-                // Fallback: try raw DiscoveryResponse for backwards compat
-                else if let Ok(response) = serde_json::from_slice::<DiscoveryResponse>(&buf[..len]) {
-                    // Only process unique endpoints
-                    if !discovered_endpoints.contains(&response.stone_endpoint) {
-                        discovered_endpoints.insert(response.stone_endpoint.clone());
-                        let discovery_instant = Instant::now();
-                        
-                        tracing::info!(
-                            ?addr, 
-                            stone = %response.stone_name,
-                            elapsed_ms = discovery_instant.duration_since(start).as_millis(),
-                            "Discovered Moss (streaming, legacy)"
-                        );
-                        
-                        on_discovered(response, discovery_instant);
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
-                // Timeout on this recv, continue polling
-                continue;
-            }
-            Err(e) => {
-                tracing::debug!(error = ?e, count = discovered_endpoints.len(), "Discovery ended with error");
-                break;
-            }
+    // Apply timeout
+    match tokio::time::timeout(timeout, response_future).await {
+        Ok(count) => Ok(count),
+        Err(_) => {
+            tracing::debug!(count = discovered_endpoints.len(), "Discovery timeout reached");
+            Ok(discovered_endpoints.len())
         }
     }
+}
 
-    Ok(discovered_endpoints.len())
+/// Synchronous wrapper for async streaming discovery
+/// Total count of unique stones discovered
+pub fn discover_all_moss_stream<F>(
+    timeout: Duration,
+    on_discovered: F,
+) -> Result<usize>
+where
+    F: FnMut(DiscoveryResponse, std::time::Instant) -> () + Send,
+{
+    // Use tokio runtime handle
+    tokio::runtime::Handle::try_current()
+        .ok()
+        .ok_or_else(|| anyhow::anyhow!("No tokio runtime available"))?
+        .block_on(discover_all_moss_stream_async(timeout, on_discovered))
 }
 
 // ============================================================================

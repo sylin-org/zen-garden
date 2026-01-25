@@ -12,7 +12,6 @@ pub mod client;
 pub mod traits;
 pub mod events;
 pub mod persistence;
-pub mod discovery;
 pub mod api_utils;
 pub mod manifests;
 pub mod cli_colors;

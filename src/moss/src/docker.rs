@@ -335,7 +335,10 @@ impl DockerManager {
         Ok(image)
     }
 
-    async fn pull_image(&self, image: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
+    /// Pull a Docker image from registry
+    ///
+    /// Used during install and nourishment to fetch images.
+    pub async fn pull_image(&self, image: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
@@ -668,6 +671,163 @@ impl DockerManager {
                 }
             }
         })
+    }
+
+    // ========================================================================
+    // Harvest Operations (for ceremony nourishment)
+    // ========================================================================
+
+    /// Commit a running container to a new image
+    ///
+    /// Creates a snapshot of the container's filesystem as a new image.
+    /// Used during harvest to preserve container state before nourishment.
+    ///
+    /// # Arguments
+    /// * `container_name` - Full container name (e.g., "zen-offering-mongodb")
+    /// * `repo` - Repository name for the new image (e.g., "zen-harvest/mongodb")
+    /// * `tag` - Tag for the new image (e.g., "20240115T120000")
+    /// * `pause` - Whether to pause the container during commit (recommended for data consistency)
+    ///
+    /// # Returns
+    /// The created image ID
+    pub async fn commit_container(
+        &self,
+        container_name: &str,
+        repo: &str,
+        tag: &str,
+        pause: bool,
+    ) -> Result<String> {
+        use bollard::image::CommitContainerOptions;
+        use bollard::container::Config;
+
+        tracing::info!(
+            container = %container_name,
+            repo = %repo,
+            tag = %tag,
+            pause,
+            "Committing container to image"
+        );
+
+        let options = CommitContainerOptions {
+            container: container_name,
+            repo,
+            tag,
+            pause,
+            ..Default::default()
+        };
+
+        let config = Config::<String>::default();
+
+        let result = self
+            .docker
+            .commit_container(options, config)
+            .await
+            .context(format!("Failed to commit container {}", container_name))?;
+
+        let image_id = result.id.unwrap_or_default();
+        tracing::info!(
+            container = %container_name,
+            image_id = %image_id,
+            "Container committed successfully"
+        );
+
+        Ok(image_id)
+    }
+
+    /// Get volume mounts for a container
+    ///
+    /// Returns a list of (host_path, container_path) tuples for all bind mounts.
+    pub async fn get_container_volumes(&self, name: &str) -> Result<Vec<(String, String)>> {
+        let container_name = format!("zen-offering-{}", name);
+        let info = self
+            .docker
+            .inspect_container(&container_name, None::<InspectContainerOptions>)
+            .await
+            .context(format!("Failed to inspect container {}", container_name))?;
+
+        let mounts = info.mounts.unwrap_or_default();
+
+        let volumes: Vec<(String, String)> = mounts
+            .iter()
+            .filter_map(|m| {
+                let source = m.source.as_ref()?;
+                let dest = m.destination.as_ref()?;
+                Some((source.clone(), dest.clone()))
+            })
+            .collect();
+
+        tracing::debug!(
+            container = %container_name,
+            volume_count = volumes.len(),
+            "Retrieved container volumes"
+        );
+
+        Ok(volumes)
+    }
+
+    /// Execute a command inside a running container
+    ///
+    /// Used for quiesce/resume operations during ceremonies.
+    pub async fn exec_in_container(
+        &self,
+        name: &str,
+        cmd: &[String],
+        timeout_secs: u32,
+    ) -> Result<(i64, String)> {
+        use bollard::exec::{CreateExecOptions, StartExecResults};
+
+        let container_name = format!("zen-offering-{}", name);
+
+        tracing::debug!(
+            container = %container_name,
+            cmd = ?cmd,
+            "Executing command in container"
+        );
+
+        let exec = self
+            .docker
+            .create_exec(
+                &container_name,
+                CreateExecOptions {
+                    cmd: Some(cmd.to_vec()),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("Failed to create exec")?;
+
+        let output = match self.docker.start_exec(&exec.id, None).await? {
+            StartExecResults::Attached { mut output, .. } => {
+                let mut result = String::new();
+                let deadline = tokio::time::Instant::now()
+                    + tokio::time::Duration::from_secs(timeout_secs as u64);
+
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(deadline) => {
+                            anyhow::bail!("Exec command timed out after {}s", timeout_secs);
+                        }
+                        item = output.next() => {
+                            match item {
+                                Some(Ok(msg)) => result.push_str(&msg.to_string()),
+                                Some(Err(e)) => anyhow::bail!("Exec error: {}", e),
+                                None => break,
+                            }
+                        }
+                    }
+                }
+                result
+            }
+            StartExecResults::Detached => String::new(),
+        };
+
+        // Get exit code
+        let inspect = self.docker.inspect_exec(&exec.id).await?;
+        let exit_code = inspect.exit_code.unwrap_or(-1);
+
+        Ok((exit_code, output))
     }
 }
 

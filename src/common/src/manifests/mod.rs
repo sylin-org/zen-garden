@@ -4,6 +4,7 @@
 //! multiple deployment modes (managed, adopted, borrowed).
 
 pub mod category;
+pub mod ceremony;
 pub mod offering;
 
 pub use category::{
@@ -25,4 +26,11 @@ pub use offering::{
     ControlConfig,
     LocationConfig,
     HealthConfig,
+};
+
+pub use ceremony::{
+    CeremonyMode,
+    CeremonyPolicy,
+    ExecConfig,
+    RollbackConfig,
 };

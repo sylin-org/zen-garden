@@ -6,16 +6,23 @@
 //! - Authentication implementation (NoAuth for v0.1.0)
 //! - Platform-specific utilities
 //! - API response helpers
+//! - Archive operations (centralized compression/checksum)
+//! - Harvest storage
+//! - Ceremony journal (crash recovery)
 //!
 //! No business logic here - pure I/O adapters.
 
 pub mod api_helpers;
+pub mod archive;
 pub mod auth;
+pub mod ceremony_journal;
 pub mod config;
 pub mod container;
 pub mod detection;
 pub mod filesystem;
 pub mod hardware;
+pub mod harvest;
+pub mod harvest_store;
 pub mod manifests;
 pub mod network;
 pub mod persistence;
@@ -39,3 +46,7 @@ pub use manifests::{RUNTIME_TEMPLATES_DIR, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MAN
 pub use persistence::{load_registry, save_registry, save_registry_vec, load_offerings_cache, save_offerings_cache, load_or_generate_stone_id};
 pub use platform::{is_running_from_removable_media, shutdown_signal};
 pub use secrets::SecretsManager;
+pub use archive::{Archiver, ArchiveInfo, create_archive, extract_archive, calculate_checksum, verify_checksum, format_bytes};
+pub use ceremony_journal::CeremonyJournal;
+pub use harvest_store::HarvestStore;
+pub use harvest::{create_harvest, restore_harvest, verify_harvest};

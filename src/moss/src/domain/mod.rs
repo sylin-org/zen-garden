@@ -8,6 +8,7 @@
 //! - Container adoption
 //! - Service reconciliation
 //! - Service discovery
+//! - Ceremony orchestration
 //!
 //! Domain layer is pure business logic - no I/O.
 //! All I/O goes through infra layer.
@@ -27,6 +28,8 @@ pub mod services;
 pub mod placement;
 pub mod connection;
 pub mod service_discovery;
+pub mod ceremony;
+pub mod harvest;
 
 pub use service_manager::ServiceManager;
 pub use registry::Registry;
@@ -63,4 +66,9 @@ pub use service_discovery::{
     find_services, find_local_services, list_all_local_services,
 };
 pub use topology::TopologyEntry;
+pub use ceremony::{
+    execute_nourish_offering, Ceremony, CeremonyId, CeremonyInitiator, CeremonyOptions,
+    CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
+};
+pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

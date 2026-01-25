@@ -13,8 +13,9 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::DockerManager;
+use crate::domain::CeremonyRegistry;
+use crate::infra::{CeremonyJournal, HarvestStore, ManifestRegistry};
 use crate::mdns::MdnsHandle;
-use crate::infra::ManifestRegistry;
 use crate::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
 use garden_common::{HardwareCapabilities, ServiceInfo};
@@ -128,6 +129,17 @@ pub struct AppState {
     /// mDNS handle for re-registration on resolution changes (Linux only)
     /// Used when IP/MAC changes to update mDNS service advertisement
     pub mdns_handle: Option<Arc<MdnsHandle>>,
+
+    // === Ceremony Infrastructure ===
+
+    /// Active ceremony registry (in-memory state)
+    pub ceremony_registry: Arc<CeremonyRegistry>,
+
+    /// Ceremony journal (persistent state for crash recovery)
+    pub ceremony_journal: Arc<CeremonyJournal>,
+
+    /// Harvest store (backup manifests and archives)
+    pub harvest_store: Arc<HarvestStore>,
 }
 
 impl AppState {
@@ -274,5 +286,33 @@ impl AppState {
         } else {
             tracing::info!("Resolution change announced (mDNS + UDP chirp)");
         }
+    }
+
+    /// Recover incomplete ceremonies from previous run
+    ///
+    /// Called on startup to detect ceremonies that were interrupted
+    /// (e.g., by crash or restart). Returns count of recovered ceremonies.
+    pub async fn recover_ceremonies(&self) -> anyhow::Result<usize> {
+        let incomplete = self.ceremony_journal.load_active().await?;
+        let count = incomplete.len();
+
+        for ceremony in incomplete {
+            tracing::warn!(
+                ceremony_id = %ceremony.id,
+                ceremony_type = ceremony.ceremony_type.name(),
+                state = ?ceremony.state,
+                "Found incomplete ceremony from previous run"
+            );
+            self.ceremony_registry.insert(ceremony).await;
+        }
+
+        if count > 0 {
+            tracing::warn!(
+                count,
+                "Recovered incomplete ceremonies - manual intervention may be required"
+            );
+        }
+
+        Ok(count)
     }
 }

@@ -21,45 +21,6 @@ A proposal moves to `implemented/` when:
 
 ## Current Ongoing Proposals
 
-### [rust-refactoring-proposal.md](rust-refactoring-proposal.md)
-**Status**: ✅ Substantially Implemented (75-80%)
-**Implementation Report**: [RUST-REFACTORING-STATUS.md](../../RUST-REFACTORING-STATUS.md)
-**Date**: 2026-01-20
-
-**Completed** (75-80%):
-- ✅ domain/infra/API separation complete
-- ✅ main.rs reduced 74% (3,976 → 1,014 lines)
-- ✅ 50+ focused modules established
-- ✅ Clean separation of concerns
-- ✅ Testable architecture (103 tests passing)
-- ✅ Common library for shared code
-- ✅ Event system foundation
-- ✅ Job pipeline system
-
-**Remaining Work** (20-25%):
-- 🔶 Further main.rs reduction (target: < 200 lines)
-  - Extract route registration to bootstrap/router.rs
-  - Extract state initialization to bootstrap/state.rs
-- 🔶 Move legacy files to proper directories
-  - docker.rs → infra/container/docker.rs
-  - metrics.rs → infra/telemetry/metrics.rs
-  - console.rs → infra/output/console.rs
-  - discovery.rs/mdns.rs → infra/discovery/
-- 🔶 Event system polish
-  - Consistent event emission across all operations
-  - Event handlers for cross-cutting concerns
-- 🔶 Job pipeline enhancements
-  - Better cancellation support
-  - Job chaining/dependencies
-  - Improved progress tracking
-
-**Next Steps**:
-1. Create Phase 2 proposal for remaining cleanup (optional)
-2. Or close proposal as "substantially complete"
-3. Remaining work can be done incrementally without formal proposal
-
-**Why in ongoing/**: Core refactoring is complete and production-ready. Remaining work is optional polish that doesn't block usage or future development.
-
 ### [cli-taxonomy.md](cli-taxonomy.md)
 **Status**: ✅ Partially Implemented (60-70%)
 **Implementation**: garden-rake CLI (src/rake/)
@@ -125,10 +86,10 @@ If work stalls and proposal needs re-planning (rare)
 
 | Metric | Value |
 |--------|-------|
-| Total Ongoing | 2 |
-| Average Completion | 65-75% |
-| Total Files Created | 68+ |
-| Total Lines Added | ~14,000+ |
+| Total Ongoing | 1 |
+| Average Completion | 70% |
+| Total Files Created | 20+ (CLI) |
+| Total Lines Added | ~5,000+ |
 | Total Tests | 103 |
 
 ---
@@ -141,4 +102,4 @@ If work stalls and proposal needs re-planning (rare)
 
 ---
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-01-24

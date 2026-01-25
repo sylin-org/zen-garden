@@ -224,6 +224,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     };
 
     // Phase 11: Build AppState
+    let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
+    let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
+    let harvest_store = Arc::new(infra::HarvestStore::default_store());
+
     let state = AppState {
         stone_id: stone_id.clone(),
         stone_name: stone_name.clone(),
@@ -244,7 +248,17 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         topology_cache: topology_cache.clone(),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
+        ceremony_registry,
+        ceremony_journal,
+        harvest_store,
     };
+
+    // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
+    match state.recover_ceremonies().await {
+        Ok(0) => tracing::debug!("No incomplete ceremonies to recover"),
+        Ok(n) => tracing::warn!(count = n, "Recovered incomplete ceremonies"),
+        Err(e) => tracing::error!(error = ?e, "Failed to recover ceremonies"),
+    }
 
     // Phase 12: Start background tasks
     // UDP listener already started in Phase 1

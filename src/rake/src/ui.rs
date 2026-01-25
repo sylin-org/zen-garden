@@ -281,12 +281,9 @@ pub fn format_number(value: f64, precision: usize) -> String {
 }
 
 /// Truncate service/offering name to max length
+/// Delegates to garden_common::utils::strings::truncate
 pub fn truncate_name(name: &str, max_len: usize) -> String {
-    if name.len() > max_len {
-        format!("{}...", &name[..max_len - 3])
-    } else {
-        name.to_string()
-    }
+    garden_common::utils::strings::truncate(name, max_len)
 }
 
 /// Render text with specified color (respects terminal color support)
@@ -685,9 +682,8 @@ mod tests {
         // Very long: should truncate properly (first 21 chars + "...")
         assert_eq!(truncate_name("very-long-service-name-that-exceeds", 24), "very-long-service-nam...");
         
-        // Edge case: max_len < 3 (can't fit ellipsis properly)
-        // With max_len=2, takes name[..2-3] which wraps/panics, so let's test valid case
-        assert_eq!(truncate_name("test", 3), "...");
+        // Edge case: max_len <= 3 returns first chars without ellipsis
+        assert_eq!(truncate_name("test", 3), "tes");
         
         // Empty string
         assert_eq!(truncate_name("", 24), "");

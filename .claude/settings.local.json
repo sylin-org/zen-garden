@@ -16,7 +16,8 @@
       "Bash(then mv \"$dir\" sw/)",
       "Bash(fi)",
       "Bash(done)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(cargo metadata:*)"
     ]
   }
 }

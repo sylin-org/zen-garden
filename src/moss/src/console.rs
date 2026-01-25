@@ -1309,30 +1309,13 @@ pub struct ShutdownBannerInfo {
     pub start_time: std::time::Instant,
 }
 
-/// Format uptime in human-readable form
-fn format_uptime(secs: u64) -> String {
-    let days = secs / 86400;
-    let hours = (secs % 86400) / 3600;
-    let mins = (secs % 3600) / 60;
-
-    if days > 0 {
-        format!("{}d {}h {}m", days, hours, mins)
-    } else if hours > 0 {
-        format!("{}h {}m", hours, mins)
-    } else if mins > 0 {
-        format!("{}m", mins)
-    } else {
-        format!("{}s", secs)
-    }
-}
-
 /// Print shutdown banner to TTY1 before stopping
 ///
 /// Shows graceful shutdown status with uptime.
 pub fn print_shutdown_banner(info: &ShutdownBannerInfo) -> Result<()> {
     let divider = "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     let uptime_secs = info.start_time.elapsed().as_secs();
-    let uptime_str = format_uptime(uptime_secs);
+    let uptime_str = garden_common::utils::format_uptime(uptime_secs);
 
     tty_write("")?;
     tty_write(divider)?;

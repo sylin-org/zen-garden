@@ -872,6 +872,7 @@ mod tests {
                 agnostic: Some(8080),
             },
             resources: None,
+            job_id: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         let deserialized: ServiceInfo = serde_json::from_str(&json).unwrap();

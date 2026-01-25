@@ -48,9 +48,6 @@ pub async fn start_election(
         "Election API: Starting election"
     );
 
-// TODO: Phase 4 (COMM-0001) - Re-enable after election_service refactor
-// Temporarily disabled - election_service field removed from AppState
-/*
     // Generate election ID
     let election_id = generate_guidv7();
 
@@ -103,12 +100,4 @@ pub async fn start_election(
             ))
         }
     }
-*/
-    Err((
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({
-            "error": "Election service temporarily disabled",
-            "message": "Refactoring in progress (COMM-0001 Phase 4)"
-        })),
-    ))
 }

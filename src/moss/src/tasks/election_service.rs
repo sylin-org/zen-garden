@@ -2,21 +2,24 @@
 //!
 //! This service implements the election protocol specified in
 //! docs/specs/ELECTION-0001-distributed-election.md
+//!
+//! **REFACTORED (COMM-0001 Phase 4)**: Now uses p2p transport singleton for all UDP operations.
+//! Subscribes to UDP events via p2p::subscribe_to_events() instead of binding own socket.
 
 use anyhow::{Context, Result};
 use garden_common::election::{
     calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest,
     ElectionResult, ElectionType, ElectionWinner,
 };
-use garden_common::types::{announcement_types, UdpAnnouncement};
+use garden_common::types::announcement_types;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+
+use crate::infra::communications::p2p::{self, UdpEvent};
 
 /// Maximum pending elections to track
 const MAX_PENDING_ELECTIONS: usize = 100;
@@ -29,8 +32,8 @@ const INITIATED_ELECTION_TTL_SECS: u64 = 60;
 
 /// Election service state
 ///
-/// IMPORTANT: Does NOT create its own UDP socket.
-/// Subscribes to UDP events from singleton listener in discovery.rs
+/// **REFACTORED (COMM-0001 Phase 4)**: Does NOT create/own UDP socket.
+/// Subscribes to UDP events from p2p singleton transport.
 pub struct ElectionService {
     /// This stone's ID
     stone_id: String,
@@ -71,7 +74,7 @@ pub trait StateProvider: Send + Sync {
 }
 
 impl ElectionService {
-    /// Create new election service (does NOT bind UDP socket)
+    /// Create new election service (no socket binding, no async needed)
     pub fn new(
         stone_id: String,
         stone_name: String,
@@ -80,7 +83,7 @@ impl ElectionService {
         tracing::info!(
             stone_id = %stone_id,
             stone_name = %stone_name,
-            "Election service initialized (will subscribe to singleton UDP)"
+            "Election service initialized (will subscribe to p2p transport)"
         );
 
         Self {
@@ -92,56 +95,52 @@ impl ElectionService {
         }
     }
 
-    /// Start UDP listener loop (call this from bootstrap as background task)
+    /// Start UDP event listener loop (subscribes to p2p transport)
+    /// Call this from bootstrap as background task after p2p initialization
     pub async fn run_listener(self: Arc<Self>) -> Result<()> {
-        tracing::info!("Election service listener starting");
+        tracing::info!("Election service listener starting, subscribing to p2p transport");
 
+        // Start cleanup loop
         let cleanup_service = self.clone();
         tokio::spawn(async move {
             cleanup_service.run_cleanup_loop().await;
         });
 
-        let mut buf = [0u8; 2048];
+        // Subscribe to p2p UDP events
+        let mut udp_rx = p2p::subscribe_to_events().await?;
+
         loop {
-            match self.socket.recv_from(&mut buf).await {
-                Ok((len, addr)) => {
-                    let data = &buf[..len];
-                    if let Err(e) = self.handle_udp_message(data, addr).await {
-                        tracing::debug!(error = ?e, "Failed to handle UDP message");
+            match udp_rx.recv().await {
+                Ok(event) => {
+                    if let Err(e) = self.handle_udp_event(event).await {
+                        tracing::debug!(error = ?e, "Failed to handle UDP event");
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(error = ?e, "UDP recv error");
+                    tracing::warn!(error = ?e, "UDP event recv error");
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
         }
     }
 
-    /// Handle incoming UDP message
-    async fn handle_udp_message(&self, data: &[u8], from: SocketAddr) -> Result<()> {
-        let msg: UdpAnnouncement = serde_json::from_slice(data)
-            .context("Failed to parse UDP announcement")?;
-
-        match msg.announcement_type.as_str() {
-            announcement_types::ELECTION_REQUEST => {
-                let req: ElectionRequest = serde_json::from_value(msg.data)
-                    .context("Failed to parse election request")?;
-                self.handle_election_request(req, from).await?;
+    /// Handle incoming UDP event from p2p transport
+    async fn handle_udp_event(&self, event: UdpEvent) -> Result<()> {
+        match event {
+            UdpEvent::ElectionRequest { request, from_addr } => {
+                self.handle_election_request(request, from_addr).await?;
             }
-            announcement_types::ELECTION_RESULT => {
-                let result: ElectionResult = serde_json::from_value(msg.data)
-                    .context("Failed to parse election result")?;
+            UdpEvent::ElectionResult { result, .. } => {
                 self.handle_election_result(result).await?;
             }
+            // Ignore other event types (handled by coordinator/discovery)
             _ => {}
         }
-
         Ok(())
     }
 
     /// Handle ELECTION_REQUEST (as candidate)
-    async fn handle_election_request(&self, req: ElectionRequest, requester: SocketAddr) -> Result<()> {
+    async fn handle_election_request(&self, req: ElectionRequest, requester: std::net::SocketAddr) -> Result<()> {
         tracing::debug!(
             election_id = %req.election_id,
             election_type = ?req.election_type,
@@ -196,7 +195,6 @@ impl ElectionService {
         let election_id = req.election_id.clone();
         let stone_id = self.stone_id.clone();
         let stone_name = self.stone_name.clone();
-        let socket = self.socket.clone();
         let pending = self.pending.clone();
 
         let timer_handle = tokio::spawn(async move {
@@ -214,22 +212,18 @@ impl ElectionService {
                     "Timer expired, sending candidacy"
                 );
 
-                // Send ELECTION_CANDIDATE
+                // Send ELECTION_CANDIDATE via p2p transport
                 let candidate = ElectionCandidate {
                     election_id: election_id.clone(),
                     stone_id,
                     stone_name,
                 };
 
-                let announcement = UdpAnnouncement {
-                    announcement_type: announcement_types::ELECTION_CANDIDATE.to_string(),
-                    data: serde_json::to_value(&candidate).unwrap(),
-                };
-
-                if let Ok(payload) = serde_json::to_vec(&announcement) {
-                    if let Err(e) = socket.send_to(&payload, requester).await {
-                        tracing::warn!(error = ?e, "Failed to send candidacy");
-                    }
+                if let Err(e) = p2p::send_announcement(
+                    announcement_types::ELECTION_CANDIDATE,
+                    &candidate,
+                ).await {
+                    tracing::warn!(error = ?e, "Failed to send candidacy");
                 }
             } else {
                 tracing::debug!(
@@ -279,6 +273,8 @@ impl ElectionService {
     }
 
     /// Start an election (as requester)
+    /// 
+    /// **REFACTORED (COMM-0001 Phase 4)**: Uses p2p transport for broadcast and subscribes to events.
     pub async fn start_election(
         &self,
         election_id: String,
@@ -299,52 +295,39 @@ impl ElectionService {
             initiated.insert(election_id.clone(), Instant::now());
         }
 
-        // Broadcast ELECTION_REQUEST
+        // Broadcast ELECTION_REQUEST via p2p transport
         let request = ElectionRequest {
             election_id: election_id.clone(),
             election_type,
             criteria,
         };
 
-        let announcement = UdpAnnouncement {
-            announcement_type: announcement_types::ELECTION_REQUEST.to_string(),
-            data: serde_json::to_value(&request)?,
-        };
-
-        let payload = serde_json::to_vec(&announcement)?;
-        let broadcast_addr = format!("255.255.255.255:{}", 7184);
-
-        self.socket.send_to(&payload, &broadcast_addr).await?;
+        p2p::send_announcement(announcement_types::ELECTION_REQUEST, &request).await?;
 
         tracing::debug!(
             election_id = %election_id,
             "Broadcast election request, awaiting candidates"
         );
 
-        // Wait for first ELECTION_CANDIDATE response
-        let mut buf = [0u8; 2048];
+        // Subscribe to p2p events to receive ELECTION_CANDIDATE responses
+        let mut udp_rx = p2p::subscribe_to_events().await?;
         let wait_duration = Duration::from_secs(timeout_secs);
 
         let winner = match timeout(wait_duration, async {
             loop {
-                match self.socket.recv_from(&mut buf).await {
-                    Ok((len, _addr)) => {
-                        if let Ok(msg) = serde_json::from_slice::<UdpAnnouncement>(&buf[..len]) {
-                            if msg.announcement_type == announcement_types::ELECTION_CANDIDATE {
-                                if let Ok(candidate) = serde_json::from_value::<ElectionCandidate>(msg.data) {
-                                    if candidate.election_id == election_id {
-                                        return Some(ElectionWinner {
-                                            stone_id: candidate.stone_id,
-                                            stone_name: candidate.stone_name,
-                                        });
-                                    }
-                                }
-                            }
+                match udp_rx.recv().await {
+                    Ok(UdpEvent::ElectionCandidate { candidate, .. }) => {
+                        if candidate.election_id == election_id {
+                            return Some(ElectionWinner {
+                                stone_id: candidate.stone_id,
+                                stone_name: candidate.stone_name,
+                            });
                         }
                     }
                     Err(e) => {
-                        tracing::debug!(error = ?e, "Socket recv error while waiting for candidates");
+                        tracing::debug!(error = ?e, "Event recv error while waiting for candidates");
                     }
+                    _ => {} // Ignore other event types
                 }
             }
         }).await {
@@ -359,13 +342,7 @@ impl ElectionService {
                 winner_id: w.stone_id.clone(),
             };
 
-            let announcement = UdpAnnouncement {
-                announcement_type: announcement_types::ELECTION_RESULT.to_string(),
-                data: serde_json::to_value(&result)?,
-            };
-
-            let payload = serde_json::to_vec(&announcement)?;
-            self.socket.send_to(&payload, &broadcast_addr).await?;
+            p2p::send_announcement(announcement_types::ELECTION_RESULT, &result).await?;
 
             tracing::info!(
                 election_id = %election_id,

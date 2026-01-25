@@ -228,18 +228,15 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
 
-    // TODO: Phase 4 (COMM-0001) - Re-enable election service with p2p transport
-    // // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
-    // let election_service_placeholder = Arc::new(
-    //     crate::tasks::election_service::ElectionService::new(
-    //         stone_id.clone(),
-    //         stone_name.clone(),
-    //         7184, // UDP port shared with discovery
-    //         Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
-    //     )
-    //     .await
-    //     .expect("Failed to create election service"),
-    // );
+    // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
+    // Note: No longer async - no socket binding (uses p2p transport)
+    let election_service_placeholder = Arc::new(
+        crate::tasks::election_service::ElectionService::new(
+            stone_id.clone(),
+            stone_name.clone(),
+            Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
+        )
+    );
 
     let state = AppState {
         stone_id: stone_id.clone(),
@@ -265,40 +262,34 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         ceremony_journal,
         harvest_store,
         nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
-        // TODO: Phase 4 (COMM-0001) - Re-enable election service field
-        // election_service: election_service_placeholder,
+        election_service: election_service_placeholder,
     };
 
-    // TODO: Phase 4 (COMM-0001) - Re-enable election service with p2p transport
-    // // Phase 11.post: Update election service with proper state provider now that AppState exists
-    // let state_for_election = Arc::new(state.clone());
-    // let election_service_final = Arc::new(
-    //     crate::tasks::election_service::ElectionService::new(
-    //         stone_id.clone(),
-    //         stone_name.clone(),
-    //         7184,
-    //         Box::new(crate::tasks::state_provider::MossStateProvider::new(state_for_election)),
-    //     )
-    //     .await
-    //     .expect("Failed to recreate election service with proper state provider"),
-    // );
+    // Phase 11.post: Update election service with proper state provider now that AppState exists
+    // Note: No longer async - no socket binding (uses p2p transport)
+    let state_for_election = Arc::new(state.clone());
+    let election_service_final = Arc::new(
+        crate::tasks::election_service::ElectionService::new(
+            stone_id.clone(),
+            stone_name.clone(),
+            Box::new(crate::tasks::state_provider::MossStateProvider::new(state_for_election)),
+        )
+    );
     
-    // TODO: Phase 4 (COMM-0001) - Re-enable
-    // // Update the state's election_service
-    // let state = AppState {
-    //     election_service: election_service_final.clone(),
-    //     ..state
-    // };
+    // Update the state's election_service
+    let state = AppState {
+        election_service: election_service_final.clone(),
+        ..state
+    };
     
-    // tracing::info!("Election service initialized");
+    tracing::info!("Election service initialized (using p2p transport)");
 
-    // TODO: Phase 4 (COMM-0001) - Re-enable
-    // // Phase 11.post2: Start election service listener
-    // tokio::spawn(async move {
-    //     if let Err(e) = election_service_final.run_listener().await {
-    //         tracing::error!(error = ?e, "Election service listener failed");
-    //     }
-    // });
+    // Phase 11.post2: Start election service listener (subscribes to p2p events)
+    tokio::spawn(async move {
+        if let Err(e) = election_service_final.run_listener().await {
+            tracing::error!(error = ?e, "Election service listener failed");
+        }
+    });
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
     match state.recover_ceremonies().await {

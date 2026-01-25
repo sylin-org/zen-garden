@@ -16,8 +16,7 @@ pub mod announcer;
 pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
-// TODO: Refactor election_service to use p2p transport (COMM-0001 Phase 4)
-// pub mod election_service;
+pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;

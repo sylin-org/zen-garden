@@ -29,16 +29,16 @@
 //! ## Usage
 //!
 //! ### Filtered Subscription (Recommended)
-//! ```rust,no_run
+//! ```rust,ignore
 //! use garden_common::infra::communications::p2p;
-//! use garden_common::announcement_types;
+//! use garden_common::infra::communications::announcement_types;
 //!
 //! let mut rx = p2p::subscribe_to_announcement(announcement_types::DISCOVERY_REQUEST).await?;
 //! 
 //! loop {
 //!     match rx.recv().await {
 //!         Some((payload, source)) => {
-//!             let request: DiscoveryRequest = serde_json::from_value(payload)?;
+//!             let request: garden_common::DiscoveryRequest = serde_json::from_value(payload)?;
 //!             // Handle request...
 //!         },
 //!         None => break,
@@ -47,7 +47,9 @@
 //! ```
 //!
 //! ### Sending Announcements
-//! ```rust,no_run
+//! ```rust,ignore
+//! use garden_common::infra::communications::{p2p, announcement_types};
+//! 
 //! p2p::send_announcement(
 //!     announcement_types::DISCOVERY_RESPONSE,
 //!     &response
@@ -93,16 +95,15 @@ static UDP_SENDER: OnceCell<Arc<UdpSocket>> = OnceCell::const_new();
 /// - `mpsc::Receiver<(serde_json::Value, SocketAddr)>`: Filtered stream of (payload, source)
 ///
 /// ## Example
-/// ```rust,no_run
-/// use garden_common::infra::communications::p2p;
-/// use garden_common::announcement_types;
+/// ```rust,ignore
+/// use garden_common::infra::communications::{p2p, announcement_types};
 ///
 /// let mut rx = p2p::subscribe_to_announcement(announcement_types::DISCOVERY_REQUEST).await?;
 /// 
 /// loop {
 ///     match rx.recv().await {
 ///         Some((payload, source)) => {
-///             let request: DiscoveryRequest = serde_json::from_value(payload)?;
+///             let request: garden_common::DiscoveryRequest = serde_json::from_value(payload)?;
 ///             // Handle...
 ///         },
 ///         None => break,
@@ -154,19 +155,21 @@ pub async fn subscribe_to_announcement(
 /// Most consumers should use `subscribe_to_announcement()` instead.
 ///
 /// ## Example
-/// ```rust,no_run
+/// ```rust,ignore
+/// use garden_common::infra::communications::{p2p, announcement_types};
+/// 
 /// let mut rx = p2p::subscribe_to_all().await?;
 /// 
 /// loop {
 ///     match rx.recv().await {
-///         Ok((announcement_type, payload, source)) => {
+///         Some((announcement_type, payload, source)) => {
 ///             match announcement_type.as_str() {
 ///                 announcement_types::STONE_CHIRP => { /* handle */ },
 ///                 announcement_types::STONE_GOODBYE => { /* handle */ },
 ///                 _ => {},
 ///             }
 ///         },
-///         Err(e) => break,
+///         None => break,
 ///     }
 /// }
 /// ```
@@ -252,11 +255,10 @@ async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEv
 /// - `payload`: Serializable payload struct
 ///
 /// ## Example
-/// ```rust,no_run
-/// use garden_common::infra::communications::p2p;
-/// use garden_common::announcement_types;
+/// ```rust,ignore
+/// use garden_common::infra::communications::{p2p, announcement_types};
 ///
-/// let response = DiscoveryResponse { /* ... */ };
+/// let response = garden_common::DiscoveryResponse { /* ... */ };
 /// p2p::send_announcement(
 ///     announcement_types::DISCOVERY_RESPONSE,
 ///     &response

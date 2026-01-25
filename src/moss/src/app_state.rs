@@ -145,7 +145,7 @@ pub struct AppState {
     pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
 
     /// Election service for distributed elections (testing)
-    pub election_service: Arc<RwLock<crate::tasks::election_service::ElectionService>>,
+    pub election_service: Arc<crate::tasks::election_service::ElectionService>,
 }
 
 impl AppState {

@@ -1409,9 +1409,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
 
         Commands::Election(election_cmd) => {
-            // Resolve tended stone
-            let tended_stone = dispatch::resolve_tended_stone(&client, None, &*GLOBAL_CACHE, fresh_mode).await?;
-            commands::election::handle_election(election_cmd, &tended_stone).await?;
+            commands::election::handle_election(election_cmd, &client).await?;
         }
 
         Commands::Watch { target, until, at } => {

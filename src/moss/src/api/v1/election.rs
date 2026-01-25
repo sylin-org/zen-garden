@@ -1,7 +1,7 @@
 ﻿//! Election API endpoints - distributed election protocol testing
 
 use axum::{extract::State, http::StatusCode, Json};
-use garden_common::election::{ElectionType, ElectionWinner};
+use garden_common::election::ElectionType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub struct ElectionWinnerInfo {
 
 /// POST /api/v1/election/start - Start a distributed election
 pub async fn start_election(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Json(req): Json<StartElectionRequest>,
 ) -> Result<Json<StartElectionResponse>, (StatusCode, Json<Value>)> {
     use garden_common::utils::ids::generate_guidv7;
@@ -52,8 +52,8 @@ pub async fn start_election(
     // Generate election ID
     let election_id = generate_guidv7();
 
-    // Get election service from app state
-    let election_service = state.election_service.read().await;
+    // Get election service from app state (it's Arc, no lock needed)
+    let election_service = state.election_service.clone();
 
     // Start election
     match election_service
@@ -66,7 +66,7 @@ pub async fn start_election(
                     stone_id: w.stone_id.clone(),
                     stone_name: w.stone_name.clone(),
                 }),
-                election_id,
+                election_id: election_id.clone(),
                 candidates_count: if winner.is_some() { 1 } else { 0 },
             };
 

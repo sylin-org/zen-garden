@@ -10,7 +10,7 @@ use garden_common::election::{
 };
 use garden_common::types::{announcement_types, UdpAnnouncement};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -41,6 +41,20 @@ pub struct ElectionService {
     initiated: Arc<RwLock<HashMap<String, Instant>>>,
     /// Current state provider (for criteria evaluation)
     state_provider: Arc<RwLock<Box<dyn StateProvider>>>,
+}
+
+// Make ElectionService clonable by cloning the Arcs
+impl Clone for ElectionService {
+    fn clone(&self) -> Self {
+        Self {
+            stone_id: self.stone_id.clone(),
+            stone_name: self.stone_name.clone(),
+            socket: self.socket.clone(),
+            pending: self.pending.clone(),
+            initiated: self.initiated.clone(),
+            state_provider: self.state_provider.clone(),
+        }
+    }
 }
 
 /// Pending election state for candidates
@@ -155,7 +169,8 @@ impl ElectionService {
             }
         }
 
-        // Evaluate criteria
+        // Evaluate criteria - use sync version for quick rejection
+        // (Real implementation would ideally be fully async, but keeping sync for now)
         let state = self.state_provider.read().await.get_state();
         if !matches_criteria(&req.criteria, &state) {
             tracing::debug!(
@@ -382,7 +397,7 @@ impl ElectionService {
         loop {
             tokio::time::sleep(Duration::from_secs(CLEANUP_INTERVAL_SECS)).await;
 
-            let now = Instant::now();
+            let _now = Instant::now();
 
             // Clean up expired pending elections
             {

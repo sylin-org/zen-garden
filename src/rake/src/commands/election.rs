@@ -44,15 +44,17 @@ fn parse_election_type(s: &str) -> Result<ElectionType> {
 
 pub async fn handle_election(
     cmd: ElectionCommand,
-    tended_stone: &crate::tending::TendedStone,
+    client: &reqwest::Client,
 ) -> Result<()> {
     match cmd.action {
-        ElectionAction::Start(start) => handle_start(start, tended_stone).await,
+        ElectionAction::Start(start) => handle_start(start, client).await,
     }
 }
 
-async fn handle_start(start: StartElection, tended_stone: &crate::tending::TendedStone) -> Result<()> {
-    use garden_common::cli_colors::{AnsiColor, CliFormatter};
+async fn handle_start(start: StartElection, client: &reqwest::Client) -> Result<()> {
+    use crate::tending;
+    use garden_common::cli_colors::CliFormatter;
+    use std::time::Duration;
 
     let formatter = CliFormatter::new();
 
@@ -64,44 +66,69 @@ async fn handle_start(start: StartElection, tended_stone: &crate::tending::Tende
         serde_json::json!({}) // Empty criteria = match all
     };
 
-    formatter.print_info(&format!(
+    println!(
         "Starting election: {:?}",
         start.election_type
-    ));
+    );
     
     if !criteria.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-        formatter.print_detail(&format!("Criteria: {}", serde_json::to_string_pretty(&criteria)?));
+        println!("Criteria: {}", serde_json::to_string_pretty(&criteria)?);
     }
     
-    formatter.print_detail(&format!("Timeout: {}s", start.timeout));
+    println!("Timeout: {}s", start.timeout);
 
-    // Send request to tended Moss
-    let url = format!("{}/api/v1/election/start", tended_stone.endpoint);
-    let payload = serde_json::json!({
-        "election_type": start.election_type,
-        "criteria": criteria,
-        "timeout": start.timeout
-    });
+    // Use execute_on_stone pattern to hit tended stone
+    let (result, responding_stone) = tending::execute_on_stone(
+        Duration::from_secs(3),
+        Some(|stone_name: &str| {
+            println!("Stone '{}' is offline, trying fallback...", stone_name);
+        }),
+        |candidate| {
+            let client = client.clone();
+            let endpoint = candidate.endpoint.clone();
+            let election_type = start.election_type.clone();
+            let criteria = criteria.clone();
+            let timeout = start.timeout;
+            
+            async move {
+                use crate::tending::StoneError;
+                
+                let url = format!("{}/api/v1/election/start", endpoint.trim_end_matches('/'));
+                let payload = serde_json::json!({
+                    "election_type": election_type,
+                    "criteria": criteria,
+                    "timeout": timeout
+                });
 
-    formatter.print_detail(&format!("Requesting election from {}", tended_stone.name));
+                // Make HTTP request
+                let response = client
+                    .post(&url)
+                    .json(&payload)
+                    .timeout(Duration::from_secs(timeout + 5))
+                    .send()
+                    .await
+                    .map_err(|e| StoneError::ConnectionFailed(format!("HTTP request failed: {}", e)))?;
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
-        .json(&payload)
-        .timeout(std::time::Duration::from_secs(start.timeout + 5))
-        .send()
-        .await
-        .context("Failed to send election request")?;
+                let status = response.status();
+                
+                // Check response status
+                if !status.is_success() {
+                    let body = response.text().await.unwrap_or_default();
+                    return Err(StoneError::ResponseError(
+                        status.as_u16(),
+                        format!("Endpoint returned {} - {}", status, body)
+                    ));
+                }
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Election request failed: {} - {}", status, body);
-    }
+                // Parse JSON
+                response.json::<Value>().await
+                    .map_err(|e| StoneError::ProcessingError(format!("Failed to parse response: {}", e)))
+            }
+        },
+    )
+    .await?;
 
-    let result: serde_json::Value = response.json().await
-        .context("Failed to parse election response")?;
+    println!("Requesting election from {}", responding_stone.stone_name);
 
     // Display result
     println!();
@@ -109,14 +136,10 @@ async fn handle_start(start: StartElection, tended_stone: &crate::tending::Tende
         let stone_id = winner.get("stone_id").and_then(|v| v.as_str()).unwrap_or("unknown");
         let stone_name = winner.get("stone_name").and_then(|v| v.as_str()).unwrap_or("unknown");
         
-        formatter.print_with_icon(
-            "✓",
-            AnsiColor::Green,
-            &format!("Election winner: {}", formatter.bold(stone_name))
-        );
-        formatter.print_detail(&format!("Stone ID: {}", stone_id));
+        println!("{} Election winner: {}", formatter.success("✓"), stone_name);
+        println!("Stone ID: {}", stone_id);
     } else {
-        formatter.print_warning("No candidates responded within timeout");
+        println!("{}", formatter.warning("No candidates responded within timeout"));
     }
 
     Ok(())

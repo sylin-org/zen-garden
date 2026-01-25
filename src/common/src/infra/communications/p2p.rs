@@ -316,9 +316,34 @@ async fn udp_receiver_loop(
 
     tracing::info!("P2P transport receiver started");
 
+    // Open log file for UDP debugging (append mode)
+    let log_path = std::path::Path::new("/tmp/moss-udp-recv.log");
+    let mut log_file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .await
+        .ok();
+
+    if log_file.is_some() {
+        tracing::info!("UDP debug logging enabled: {}", log_path.display());
+    }
+
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, addr)) => {
+                // Log raw payload to file
+                if let Some(ref mut file) = log_file {
+                    let timestamp = chrono::Utc::now().to_rfc3339();
+                    let raw_str = String::from_utf8_lossy(&buf[..len]);
+                    let log_line = format!(
+                        "[{}] FROM {} ({}b): {}\n",
+                        timestamp, addr, len, raw_str
+                    );
+                    let _ = tokio::io::AsyncWriteExt::write_all(file, log_line.as_bytes()).await;
+                    let _ = tokio::io::AsyncWriteExt::flush(file).await;
+                }
+
                 if let Ok(announcement) = serde_json::from_slice::<UdpAnnouncement>(&buf[..len]) {
                     let event = InternalUdpEvent {
                         announcement_type: announcement.announcement_type.clone(),
@@ -360,6 +385,9 @@ async fn create_reusable_udp_socket(addr: &str) -> Result<UdpSocket> {
     
     // Enable SO_REUSEADDR for port reuse
     socket.set_reuse_address(true)?;
+    
+    // Enable broadcast (required to receive broadcast packets!)
+    socket.set_broadcast(true)?;
     
     // Windows: Disable WSAECONNRESET from ICMP port unreachable
     #[cfg(windows)]

@@ -326,11 +326,13 @@ function Discover-AllStones {
 
     if ($lanIP) {
         Write-Status "   Binding to LAN interface: $lanIP"
-        $localEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse($lanIP), 0)
+        # Bind to port 7184 so we can receive broadcast responses!
+        $localEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse($lanIP), 7184)
         $udpClient = New-Object System.Net.Sockets.UdpClient $localEndpoint
     } else {
         Write-Status "   No LAN interface found, using default binding" -Type "Warning"
-        $udpClient = New-Object System.Net.Sockets.UdpClient 0
+        # Bind to port 7184 to receive broadcast responses
+        $udpClient = New-Object System.Net.Sockets.UdpClient 7184
     }
 
     $udpClient.EnableBroadcast = $true
@@ -343,8 +345,9 @@ function Discover-AllStones {
         requester = "push2all-script"
     }
     
+    # NOTE: Field name is "type" not "announcement_type" (serde rename in UdpAnnouncement)
     $announcement = @{
-        announcement_type = "discovery_request"
+        type = "discovery_request"
         data = $requestData
     } | ConvertTo-Json -Compress
     
@@ -369,8 +372,8 @@ function Discover-AllStones {
             $responseJson = [System.Text.Encoding]::UTF8.GetString($responseBytes)
             $envelope = $responseJson | ConvertFrom-Json
             
-            # Check if this is a discovery_response
-            if ($envelope.announcement_type -eq "discovery_response") {
+            # Check if this is a discovery_response (field is "type" not "announcement_type")
+            if ($envelope.type -eq "discovery_response") {
                 $response = $envelope.data
                 
                 # Override port if specified

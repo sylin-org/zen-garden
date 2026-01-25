@@ -95,7 +95,7 @@ pub async fn create_harvest(
             .await
             .context(format!("Failed to archive volume {}", volume_name))?;
 
-        let size_display = archive::format_bytes(archive_info.size_bytes);
+        let size_display = garden_common::utils::format_bytes(archive_info.size_bytes);
 
         manifest.volumes.push(VolumeArchive {
             name: volume_name.clone(),
@@ -119,7 +119,7 @@ pub async fn create_harvest(
     tracing::info!(
         offering,
         harvest_id = %manifest.id,
-        total_size = %archive::format_bytes(manifest.total_size_bytes()),
+        total_size = %garden_common::utils::format_bytes(manifest.total_size_bytes()),
         volume_count = manifest.volumes.len(),
         "Harvest created successfully"
     );

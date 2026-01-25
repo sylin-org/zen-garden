@@ -49,7 +49,7 @@ pub use manifests::{RUNTIME_TEMPLATES_DIR, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MAN
 pub use persistence::{load_registry, save_registry, save_registry_vec, load_offerings_cache, save_offerings_cache, load_or_generate_stone_id};
 pub use platform::{is_running_from_removable_media, shutdown_signal};
 pub use secrets::SecretsManager;
-pub use archive::{Archiver, ArchiveInfo, create_archive, extract_archive, calculate_checksum, verify_checksum, format_bytes};
+pub use archive::{Archiver, ArchiveInfo, create_archive, extract_archive, calculate_checksum, verify_checksum};
 pub use ceremony_journal::CeremonyJournal;
 pub use harvest_store::HarvestStore;
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};

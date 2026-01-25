@@ -13,7 +13,7 @@
 //! - Offline stones evicted after 24 hours
 //! - No disk persistence - cache rebuilds on moss restart
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use garden_common::{TopologyEntry, StoneStatus};
 use std::collections::HashMap;
 use std::sync::Arc;

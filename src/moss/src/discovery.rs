@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use tokio::sync::broadcast;
-use garden_common::{ports, DiscoveryRequest, DiscoveryResponse};
+use garden_common::{DiscoveryRequest, DiscoveryResponse};
 
 // Re-export p2p types for backwards compatibility
 pub use crate::infra::communications::p2p::UdpEvent;
@@ -25,71 +25,74 @@ pub async fn ensure_udp_listener(
 
 /// Actively discover peer stones on the network
 /// 
-/// Sends a discovery broadcast and collects responses for the specified timeout.
+/// Sends a discovery broadcast and collects chirp responses via p2p transport.
 /// This is used during bootstrap to find existing stones in the garden.
+///
+/// **REFACTORED (COMM-0001)**: Now uses p2p transport for receiving chirps.
+/// Sends discovery request, subscribes to p2p events, collects chirps as responses.
 pub async fn discover_peers(
     stone_id: &str,
     timeout_secs: u64,
 ) -> Vec<DiscoveryResponse> {
-    use tokio::net::UdpSocket;
-
     let mut discovered = Vec::new();
 
-    let socket = match UdpSocket::bind("0.0.0.0:0").await {
-        Ok(s) => s,
+    // Subscribe to p2p events BEFORE sending discovery request
+    let mut udp_rx = match crate::infra::communications::p2p::subscribe_to_events().await {
+        Ok(rx) => rx,
         Err(e) => {
-            tracing::warn!(error = ?e, "Failed to bind socket for peer discovery");
+            tracing::warn!(error = ?e, "Failed to subscribe to p2p events");
             return discovered;
         }
     };
 
-    if let Err(e) = socket.set_broadcast(true) {
-        tracing::warn!(error = ?e, "Failed to set broadcast for peer discovery");
-        return discovered;
-    }
-
-    // Send discovery request
+    // Send discovery request via p2p transport
     let request = DiscoveryRequest {
         discover: "moss".to_string(),
         request_id: uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string(),
         requester: stone_id.to_string(),
     };
 
-    let data = match serde_json::to_vec(&request) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!(error = ?e, "Failed to serialize discovery request");
-            return discovered;
-        }
-    };
-
-    let broadcast_addr = format!("255.255.255.255:{}", ports::DISCOVERY_UDP);
-    if let Err(e) = socket.send_to(&data, &broadcast_addr).await {
+    if let Err(e) = crate::infra::communications::p2p::send_announcement(
+        garden_common::announcement_types::DISCOVERY_REQUEST,
+        &request,
+    )
+    .await
+    {
         tracing::warn!(error = ?e, "Failed to send discovery broadcast");
         return discovered;
     }
 
     tracing::info!(request_id = %request.request_id, "Sent peer discovery request");
 
-    // Collect responses for timeout duration
+    // Collect chirp responses for timeout duration
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
-    let mut buf = [0u8; 2048];
 
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline - tokio::time::Instant::now();
-        match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
-            Ok(Ok((len, addr))) => {
-                if let Ok(response) = serde_json::from_slice::<DiscoveryResponse>(&buf[..len]) {
-                    tracing::info!(
-                        stone = %response.stone_name,
-                        endpoint = %response.stone_endpoint,
-                        from = %addr,
-                        "Discovered peer stone"
-                    );
-                    discovered.push(response);
-                }
+        match tokio::time::timeout(remaining, udp_rx.recv()).await {
+            Ok(Ok(UdpEvent::Chirp { chirp, .. })) => {
+                // Convert TopologyEntry chirp to DiscoveryResponse
+                let response = DiscoveryResponse {
+                    stone_id: Some(chirp.stone_id.clone()),
+                    stone_name: chirp.stone_name.clone(),
+                    stone_endpoint: chirp.endpoint.clone(),
+                    moss_version: chirp.moss_version.clone(),
+                    lantern_endpoint: None, // Not available in chirp
+                };
+                tracing::info!(
+                    stone = %response.stone_name,
+                    endpoint = %response.stone_endpoint,
+                    "Discovered peer stone"
+                );
+                discovered.push(response);
             }
-            Ok(Err(_)) | Err(_) => break,
+            Ok(Ok(_)) => {
+                // Ignore other event types
+            }
+            Ok(Err(e)) => {
+                tracing::trace!(error = ?e, "Broadcast recv lag");
+            }
+            Err(_) => break, // Timeout
         }
     }
 

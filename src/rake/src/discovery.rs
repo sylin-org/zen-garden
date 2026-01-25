@@ -1,8 +1,9 @@
 use anyhow::Result;
-use std::net::UdpSocket;
+use std::net::UdpSocket;  // Still used by streaming/mdns discovery
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use garden_common::{DiscoveryRequest, DiscoveryResponse, ports};
+use garden_common::infra::communications::p2p;
 
 /// Get a LAN-suitable local IP address for binding UDP sockets
 /// Prioritizes: 192.168.x.x > 10.x.x.x > 172.16-31.x.x
@@ -105,13 +106,11 @@ pub fn discover_lantern() -> Option<String> {
     discover_lantern_sync()
 }
 
-pub fn discover_moss() -> Result<String> {
-    // Bind to LAN interface for reliable broadcast on multi-interface systems
-    let bind_addr = get_lan_bind_address();
-    let socket = UdpSocket::bind(&bind_addr)?;
-    let local = socket.local_addr()?;
-    socket.set_broadcast(true)?;
-    socket.set_read_timeout(Some(Duration::from_secs(3)))?;
+pub async fn discover_moss() -> Result<String> {
+    // Subscribe to discovery responses before sending request
+    let mut response_rx = p2p::subscribe_to_announcement(
+        garden_common::announcement_types::DISCOVERY_RESPONSE
+    ).await?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
@@ -120,44 +119,29 @@ pub fn discover_moss() -> Result<String> {
         requester: "rake-cli".into(),
     };
 
-    // Wrap in UdpAnnouncement envelope
-    let announcement = garden_common::UdpAnnouncement {
-        announcement_type: garden_common::announcement_types::DISCOVERY_REQUEST.to_string(),
-        data: serde_json::to_value(&request)?,
-    };
+    // Send discovery request via p2p transport
+    p2p::send_announcement(
+        garden_common::announcement_types::DISCOVERY_REQUEST,
+        &request
+    ).await?;
 
-    let request_bytes = serde_json::to_vec(&announcement)?;
-    let sent = socket.send_to(&request_bytes, format!("255.255.255.255:{}", ports::DISCOVERY_UDP))?;
+    tracing::debug!(request_id = %request_id, "Sent UDP discovery broadcast (via p2p)");
 
-    tracing::debug!(?local, bytes = sent, request_id = %request_id, "Sent UDP discovery broadcast (envelope format)");
-
-    // Wait for first response (also in envelope format)
-    let mut buf = [0u8; 2048];
-    let recv_result = socket.recv_from(&mut buf);
-
-    match recv_result {
-        Ok((len, addr)) => {
-            tracing::debug!(bytes = len, %request_id, ?addr, "Received UDP discovery response");
-            
-            // Try parsing as envelope first
-            if let Ok(announcement) = serde_json::from_slice::<garden_common::UdpAnnouncement>(&buf[..len]) {
-                if announcement.announcement_type == garden_common::announcement_types::DISCOVERY_RESPONSE {
-                    let response: DiscoveryResponse = serde_json::from_value(announcement.data)?;
-                    tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss");
-                    return Ok(response.stone_endpoint);
-                }
+    // Wait for first response (3 second timeout)
+    let response = tokio::time::timeout(
+        Duration::from_secs(3),
+        async {
+            if let Some((payload, addr)) = response_rx.recv().await {
+                let response: DiscoveryResponse = serde_json::from_value(payload)?;
+                tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss");
+                Ok::<String, anyhow::Error>(response.stone_endpoint)
+            } else {
+                anyhow::bail!("P2P channel closed")
             }
-            
-            // Fallback: try raw DiscoveryResponse for backwards compatibility
-            let response: DiscoveryResponse = serde_json::from_slice(&buf[..len])?;
-            tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss (legacy format)");
-            Ok(response.stone_endpoint)
         }
-        Err(e) => {
-            tracing::warn!(error = ?e, %request_id, "UDP discovery recv failed");
-            Err(e.into())
-        }
-    }
+    ).await??;
+
+    Ok(response)
 }
 
 /// Discover all Moss instances on the network

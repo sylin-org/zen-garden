@@ -141,7 +141,7 @@ impl Command for TendCommand {
                     // Force fresh discovery
                     tending::clear_tending()?;
                     println!("Discovering stones...");
-                    match discovery::discover_moss() {
+                    match discovery::discover_moss().await {
                         Ok(endpoint) => {
                             // Get capabilities for stone name
                             let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
@@ -357,7 +357,7 @@ async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> 
     }
 
     // Try network discovery
-    match discovery::discover_moss() {
+    match discovery::discover_moss().await {
         Ok(endpoint) => {
             // Get capabilities for stone name
             let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));

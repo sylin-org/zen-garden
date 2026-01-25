@@ -144,7 +144,7 @@ pub async fn resolve_endpoint(
         ui::status_indicator("info", term.supports_color)
     );
 
-    match discovery::discover_moss() {
+    match discovery::discover_moss().await {
         Ok(endpoint) => {
             tracing::info!(endpoint = %endpoint, "Auto-discovered stone");
 

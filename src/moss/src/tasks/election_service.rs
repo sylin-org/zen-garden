@@ -58,6 +58,7 @@ impl Clone for ElectionService {
 }
 
 /// Pending election state for candidates
+#[allow(dead_code)]
 struct PendingElection {
     election_id: String,
     timer_handle: Option<tokio::task::JoinHandle<()>>,

@@ -4,7 +4,6 @@ use axum::{extract::State, http::StatusCode, Json};
 use garden_common::election::ElectionType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 
 use crate::app_state::AppState;
 

@@ -19,8 +19,6 @@ pub mod cli;
 pub mod announcement;
 pub mod docker;
 pub mod mdns;
-pub mod metrics;
-pub mod console;
 
 // App state for HTTP handlers
 pub mod app_state;

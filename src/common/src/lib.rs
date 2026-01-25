@@ -22,6 +22,7 @@ pub mod infra;
 pub mod metrics;
 pub mod ui;
 pub mod detection;
+pub mod console;
 
 // Re-export commonly used items
 pub use types::*;

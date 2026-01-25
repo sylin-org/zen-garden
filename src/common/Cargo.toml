@@ -31,6 +31,7 @@ terminal_size = "0.3"
 supports-color = "3.0"
 regex = "1.10"
 walkdir = "2.4"
+rand = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Networking_WinSock", "Win32_Storage_FileSystem"] }

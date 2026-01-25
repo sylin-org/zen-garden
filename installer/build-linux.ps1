@@ -241,8 +241,15 @@ if ($UseDocker) {
         
         # Clean build artifacts to force version update
         # (Cargo cache doesn't detect CARGO_BUILD_NUMBER changes)
+        # Must clean:
+        # 1. Final binaries in target/{profile}/
+        # 2. Build script outputs in target/{profile}/build/garden-*/
+        # 3. Incremental cache in target/{profile}/incremental/garden*/
         Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-        docker exec $containerName sh -c "rm -f /build/target/*/garden-* /build/target/*/build/garden-*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -f /build/target/debug/garden-* /build/target/release/garden-* /build/target/fast-release/garden-*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -rf /build/target/debug/build/garden-* /build/target/release/build/garden-* /build/target/fast-release/build/garden-*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -rf /build/target/debug/incremental/garden* /build/target/release/incremental/garden* /build/target/fast-release/incremental/garden*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -rf /build/target/debug/.fingerprint/garden-* /build/target/release/.fingerprint/garden-* /build/target/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
         
         # Execute build in the persistent container with build number
         docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER $containerName $buildArgs
@@ -290,6 +297,28 @@ if ($UseDocker) {
 
     Push-Location $WORKSPACE_ROOT
     try {
+        # Clean build artifacts to force version update (native path)
+        Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
+        $targetProfileDirs = @("debug", "release", "fast-release")
+        foreach ($profile in $targetProfileDirs) {
+            $targetPath = Join-Path (Join-Path $WORKSPACE_ROOT "target") $profile
+            if (Test-Path $targetPath) {
+                Get-ChildItem $targetPath -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+                $buildPath = Join-Path $targetPath "build"
+                if (Test-Path $buildPath) {
+                    Get-ChildItem $buildPath -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                $incrementalPath = Join-Path $targetPath "incremental"
+                if (Test-Path $incrementalPath) {
+                    Get-ChildItem $incrementalPath -Filter "garden*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                $fingerprintPath = Join-Path $targetPath ".fingerprint"
+                if (Test-Path $fingerprintPath) {
+                    Get-ChildItem $fingerprintPath -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        
         Write-Host "  → Building garden-moss (Linux daemon)..."
         Write-Host "  → Building garden-lantern (Linux service registry)..."
         Write-Host "  → Building garden-rake (Linux CLI)..."

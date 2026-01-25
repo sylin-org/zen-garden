@@ -22,6 +22,8 @@
 /// This is typically called from a build.rs script. If CARGO_BUILD_NUMBER is not set,
 /// it defaults to "dev".
 ///
+/// Uses legacy `cargo:` instruction syntax for compatibility with Rust 1.75+.
+///
 /// # Example
 ///
 /// ```no_run

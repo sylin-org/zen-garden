@@ -298,6 +298,16 @@ pub struct HardwareInventory {
     /// Aggregated view of AI acceleration across all GPUs
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub ai_capabilities: Option<AiCapabilitiesSummary>,
+
+    /// System manufacturer from DMI/SMBIOS (e.g., "Dell Inc.")
+    /// Used for hardware manifest matching
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub system_manufacturer: Option<String>,
+
+    /// System product name from DMI/SMBIOS (e.g., "Wyse 5070")
+    /// Used for hardware manifest matching
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub system_product: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

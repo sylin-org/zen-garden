@@ -5,6 +5,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Firmware confidence level - indicates how much we've validated this update
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FirmwareConfidence {
+    /// Matched against a hardware manifest - we've tested this device/version
+    Tested,
+    /// From LVFS/fwupd but not in our manifests - cryptographically signed but not garden-tested
+    Suggested,
+}
+
+impl Default for FirmwareConfidence {
+    fn default() -> Self {
+        Self::Suggested
+    }
+}
+
 /// Unified update model - discriminated by type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -27,6 +43,9 @@ pub enum Update {
         requires_reboot: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
+        /// Confidence level - Tested (from manifest) or Suggested (from LVFS)
+        #[serde(default)]
+        confidence: FirmwareConfidence,
     },
 }
 
@@ -58,24 +77,79 @@ pub struct GardenNourishmentResponse {
     pub stones: Vec<NourishmentCheckResponse>,
 }
 
-/// Execute request
+/// Execute request - scope-based
+/// 
+/// Rake sends intent only. Each stone interprets and applies its pending updates.
+/// Examples:
+///   {"scope": "all"}           - Apply all available updates
+///   {"scope": "offerings"}     - Apply offering updates only  
+///   {"scope": "firmware"}      - Apply firmware updates only
+///
+/// Future V1+: items field for granular selection
+///   {"items": ["offering:ollama", "firmware:abc123"]}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteRequest {
-    pub updates: Vec<UpdateSelector>,
+    /// Scope of updates to apply (default: all)
+    #[serde(default)]
+    pub scope: UpdateScope,
+    /// Specific items to update (overrides scope if present)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<String>,
 }
 
-/// Update selector for execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum UpdateSelector {
-    #[serde(rename = "offering")]
-    Offering { name: String },
-    #[serde(rename = "firmware")]
-    Firmware { device_id: String },
+impl Default for ExecuteRequest {
+    fn default() -> Self {
+        Self {
+            scope: UpdateScope::All,
+            items: Vec::new(),
+        }
+    }
+}
+
+/// What scope of updates to apply
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateScope {
+    /// All available updates (offerings + firmware)
+    #[default]
+    All,
+    /// Only offering (software) updates
+    Offerings,
+    /// Only firmware updates
+    Firmware,
 }
 
 /// Execute response with job ID
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteResponse {
     pub job_id: String,
+}
+
+/// Garden-wide execute response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GardenExecuteResponse {
+    pub job_id: String,
+    pub stone_jobs: Vec<StoneJobStatus>,
+}
+
+/// Status of a stone's update job
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoneJobStatus {
+    pub stone_name: String,
+    pub state: StoneJobState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// State of a stone job
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StoneJobState {
+    Pending,
+    Running,
+    Success,
+    Failed,
+    Unreachable,
 }

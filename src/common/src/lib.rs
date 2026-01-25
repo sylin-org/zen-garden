@@ -9,6 +9,7 @@ pub mod constants;
 pub mod responses;
 pub mod jobs;
 pub mod client;
+pub mod cli;
 pub mod traits;
 pub mod events;
 pub mod persistence;
@@ -18,6 +19,7 @@ pub mod cli_colors;
 pub mod nourishment;
 pub mod election;
 pub mod infra;
+pub mod metrics;
 
 // Re-export commonly used items
 pub use types::*;

@@ -1,19 +1,12 @@
-//! Service detection infrastructure
+//! Service detection - re-exported from garden_common with moss-specific extensions
 //!
-//! Provides multiple detection methods for adopted offerings:
-//! - Command execution (e.g., "mongod --version")
-//! - Container inspection (Docker API)
-//! - HTTP probes (health endpoints)
-//!
-//! Each method returns a DetectionResult with:
-//! - detected: bool
-//! - version: Option<String>
-//! - details: String
+//! Common detection methods (command, http_probe) live in garden_common::detection
+//! Moss-specific container_inspect stays here (requires DockerManager)
 
-pub mod command;
 pub mod container_inspect;
-pub mod http_probe;
 
-pub use command::{detect_by_command, DetectionResult};
+// Re-export common detection methods
+pub use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
+
+// Moss-specific detection (requires DockerManager)
 pub use container_inspect::detect_by_container_inspect;
-pub use http_probe::detect_by_http_probe;

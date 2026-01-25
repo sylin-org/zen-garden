@@ -6,6 +6,9 @@
 pub mod category;
 pub mod ceremony;
 pub mod offering;
+pub mod hw;
+pub mod sw;
+pub mod registry;
 
 pub use category::{
     CategoryConfig,
@@ -34,3 +37,8 @@ pub use ceremony::{
     ExecConfig,
     RollbackConfig,
 };
+
+// Re-export manifest loaders
+pub use hw::{HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR};
+pub use sw::{SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, RUNTIME_TEMPLATES_DIR};
+pub use registry::{ManifestRegistry, discover_subdirectories, RUNTIME_MANIFESTS_DIR};

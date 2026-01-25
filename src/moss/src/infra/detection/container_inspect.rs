@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use crate::docker::DockerManager;
 use garden_common::manifests::ContainerInspectDetection;
-use super::command::DetectionResult;
+use garden_common::detection::DetectionResult;
 
 /// Detect service by inspecting Docker containers
 ///

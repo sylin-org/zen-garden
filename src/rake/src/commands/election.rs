@@ -19,8 +19,8 @@ pub enum ElectionAction {
 
 #[derive(Debug, Args)]
 pub struct StartElection {
-    /// Election type
-    #[arg(long, value_parser = parse_election_type)]
+    /// Election type (default: update_source)
+    #[arg(long, value_parser = parse_election_type, default_value = "update_source")]
     pub election_type: ElectionType,
 
     /// Criteria JSON (BSON-style operators)

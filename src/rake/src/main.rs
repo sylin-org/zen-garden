@@ -1022,6 +1022,12 @@ fn normalize_zen_to_clap(parsed: &parser::ParsedCommand) -> anyhow::Result<Vec<S
             args.push("ceremony".to_string());
             args.extend(parsed.args.clone());
         }
+        
+        // === TEST/DIAGNOSTIC ===
+        "election" => {
+            args.push("election".to_string());
+            args.extend(parsed.args.clone());
+        }
         _ => {
             return Err(anyhow::anyhow!("Unknown zen verb: {}", parsed.verb));
         }

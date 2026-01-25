@@ -74,6 +74,9 @@ pub mod cmd {
     pub const ROUSE: &str = "rouse";
     pub const SLUMBER: &str = "slumber";
     pub const STIR: &str = "stir";
+    
+    // Test/Diagnostic
+    pub const ELECTION: &str = "election";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1688,6 +1691,66 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["slumber", "rouse"],
     });
 
+    manifest.add(CommandDef {
+        name: cmd::ELECTION,
+        zen_name: "election",
+        normative_name: None,
+        category: CommandCategory::System,
+        description: "Test distributed election protocol",
+        long_description: "Test the distributed election protocol for garden operations.\n\n\
+            Starts an election across all stones in the garden with optional criteria.\n\
+            Used for testing leader selection for coordinated operations like updates.",
+        remote_capable: false,
+        params: vec![
+            CommandParam {
+                name: "action",
+                zen_syntax: "<action>",
+                normative_syntax: None,
+                description: "Election action (start)",
+                required: true,
+            },
+            CommandParam {
+                name: "election-type",
+                zen_syntax: "--election-type <type>",
+                normative_syntax: None,
+                description: "Election type (default: update_source; options: ceremony_coordinator, replica_target, backup_source)",
+                required: false,
+            },
+            CommandParam {
+                name: "criteria",
+                zen_syntax: "--criteria <json>",
+                normative_syntax: None,
+                description: "Selection criteria as BSON-style JSON",
+                required: false,
+            },
+            CommandParam {
+                name: "timeout",
+                zen_syntax: "--timeout <seconds>",
+                normative_syntax: None,
+                description: "Election timeout in seconds (default: 10)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Start election with default type (update_source)",
+                zen_syntax: Some("garden-rake election start"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Start election for ceremony coordinator",
+                zen_syntax: Some("garden-rake election start --election-type ceremony_coordinator"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Start election with custom timeout",
+                zen_syntax: Some("garden-rake election start --election-type backup_source --timeout 20"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["observe", "status"],
+    });
+
     manifest
 });
 
@@ -1710,6 +1773,8 @@ pub fn validate_manifest() {
         "rouse", "slumber", "stir",
         // Pond
         "pond", "place", "invite", "lift",
+        // Test/Diagnostic
+        "election",
     ];
 
     for cmd_name in expected_commands {

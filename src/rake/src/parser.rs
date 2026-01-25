@@ -100,7 +100,9 @@ fn is_zen_verb(verb: &str) -> bool {
         // Installation (zen alias)
         "take-root" |
         // Discovery/aliases (zen)
-        "explore" | "touch" | "garden"
+        "explore" | "touch" | "garden" |
+        // Test/Diagnostic (zen)
+        "election"
     )
 }
 

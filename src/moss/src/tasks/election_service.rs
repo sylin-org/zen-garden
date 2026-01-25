@@ -6,7 +6,7 @@
 //! **REFACTORED (COMM-0001 Phase 4)**: Now uses p2p transport singleton for all UDP operations.
 //! Subscribes to UDP events via p2p::subscribe_to_events() instead of binding own socket.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use garden_common::election::{
     calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest,
     ElectionResult, ElectionType, ElectionWinner,

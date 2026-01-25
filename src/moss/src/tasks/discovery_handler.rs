@@ -21,7 +21,7 @@ pub async fn start_discovery_handler(
 ) -> Result<()> {
     tracing::info!("Discovery handler starting, subscribing to p2p events");
 
-    let mut udp_rx = p2p::subscribe_to_announcement(garden_common::announcement_types::DISCOVERY_REQUEST).await?;
+    let mut udp_rx = p2p::subscribe_to_announcement(garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST).await?;
 
     loop {
         match udp_rx.recv().await {
@@ -53,7 +53,7 @@ pub async fn start_discovery_handler(
 
                 // Send response via p2p transport
                 if let Err(e) = p2p::send_announcement(
-                    garden_common::announcement_types::DISCOVERY_RESPONSE,
+                    garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE,
                     &response,
                 )
                 .await

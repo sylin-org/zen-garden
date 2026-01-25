@@ -63,7 +63,7 @@ pub async fn start_discovery_listener(
         
         while let Some((announcement_type, payload, from_addr)) = all_events.recv().await {
             match announcement_type.as_str() {
-                garden_common::announcement_types::STONE_CHIRP => {
+                garden_common::infra::communications::announcement_types::STONE_CHIRP => {
                     let chirp: garden_common::TopologyEntry = match serde_json::from_value(payload) {
                         Ok(c) => c,
                         Err(e) => {
@@ -83,7 +83,7 @@ pub async fn start_discovery_listener(
                     // Update topology cache with chirp data
                     upsert_from_chirp(&topology_cache, chirp).await;
                 }
-                garden_common::announcement_types::STONE_GOODBYE => {
+                garden_common::infra::communications::announcement_types::STONE_GOODBYE => {
                     let goodbye: garden_common::StoneGoodbyePayload = match serde_json::from_value(payload) {
                         Ok(g) => g,
                         Err(e) => {

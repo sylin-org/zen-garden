@@ -401,7 +401,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     
     // Subscribe to discovery responses before sending request
     if let Ok(mut discovery_rx) = garden_common::infra::communications::p2p::subscribe_to_announcement(
-        garden_common::announcement_types::DISCOVERY_RESPONSE
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
     ).await {
         // Send discovery request
         let request = garden_common::DiscoveryRequest {
@@ -411,7 +411,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         };
         
         if let Err(e) = garden_common::infra::communications::p2p::send_announcement(
-            garden_common::announcement_types::DISCOVERY_REQUEST,
+            garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
             &request
         ).await {
             tracing::warn!(error = ?e, "Failed to send discovery request");

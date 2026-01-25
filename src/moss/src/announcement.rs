@@ -15,8 +15,8 @@
 
 use anyhow::Result;
 use garden_common::{
-    announcement_types, StoneGoodbyePayload,
-    infra::communications::p2p,
+    infra::communications::{announcement_types, p2p},
+    StoneGoodbyePayload,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

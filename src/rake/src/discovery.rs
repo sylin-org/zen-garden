@@ -29,19 +29,19 @@ pub fn get_cached_lantern() -> Option<String> {
 async fn discover_lantern_async() -> Option<String> {
     // Subscribe to discovery responses (Lantern uses same discovery protocol)
     let mut response_rx = p2p::subscribe_to_announcement(
-        garden_common::announcement_types::DISCOVERY_RESPONSE
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
     ).await.ok()?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
-        discover: "lantern".into(),
+        discover: "moss".into(),
         request_id: request_id.clone(),
         requester: "rake-cli".into(),
     };
 
     // Send discovery request via p2p transport
     p2p::send_announcement(
-        garden_common::announcement_types::DISCOVERY_REQUEST,
+        garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
         &request
     ).await.ok()?;
 
@@ -78,7 +78,7 @@ fn discover_lantern_sync() -> Option<String> {
 pub async fn discover_moss() -> Result<String> {
     // Subscribe to discovery responses before sending request
     let mut response_rx = p2p::subscribe_to_announcement(
-        garden_common::announcement_types::DISCOVERY_RESPONSE
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
     ).await?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
@@ -90,7 +90,7 @@ pub async fn discover_moss() -> Result<String> {
 
     // Send discovery request via p2p transport
     p2p::send_announcement(
-        garden_common::announcement_types::DISCOVERY_REQUEST,
+        garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
         &request
     ).await?;
 
@@ -139,7 +139,7 @@ where
 
     // Subscribe to discovery responses before sending request
     let mut response_rx = p2p::subscribe_to_announcement(
-        garden_common::announcement_types::DISCOVERY_RESPONSE
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
     ).await?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
@@ -151,7 +151,7 @@ where
 
     // Send discovery request via p2p transport
     p2p::send_announcement(
-        garden_common::announcement_types::DISCOVERY_REQUEST,
+        garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
         &request
     ).await?;
 

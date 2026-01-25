@@ -433,7 +433,7 @@ pub async fn stone_wake(
                         "Sending Wake-on-LAN magic packet"
                     );
 
-                    match crate::infra::network::send_wol_packet(mac).await {
+                    match garden_common::infra::network::send_wol_packet(mac).await {
                         Ok(()) => {
                             (
                                 StatusCode::OK,

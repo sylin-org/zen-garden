@@ -11,7 +11,7 @@ use garden_common::election::{
     calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest,
     ElectionResult, ElectionType, ElectionWinner,
 };
-use garden_common::types::announcement_types;
+use garden_common::infra::communications::announcement_types;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;

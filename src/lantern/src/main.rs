@@ -7,11 +7,9 @@ use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
-mod election;
 mod registry;
 mod state;
 
-use election::{ElectionManager, ElectionState};
 use registry::Registry;
 use state::GardenTopology;
 
@@ -44,7 +42,6 @@ struct Cli {
 struct AppState {
     lantern_name: String,
     registry: Arc<Registry>,
-    election: Arc<RwLock<ElectionManager>>,
     topology: Arc<RwLock<GardenTopology>>,
 }
 
@@ -64,7 +61,7 @@ async fn main() -> Result<()> {
         .lantern_name
         .unwrap_or_else(|| "lantern-01".to_string());
     let http_port = cli.http_port.unwrap_or(7186);
-    let udp_port = cli.udp_port.unwrap_or(7187);
+    let _udp_port = cli.udp_port.unwrap_or(7187); // Reserved for future use
     let db_path = cli
         .db_path
         .unwrap_or_else(|| "/var/lib/zen-garden/lantern.db".to_string());
@@ -72,7 +69,6 @@ async fn main() -> Result<()> {
     tracing::info!(
         lantern_name = %lantern_name,
         http_port = http_port,
-        udp_port = udp_port,
         db_path = %db_path,
         "Lantern daemon starting"
     );
@@ -80,26 +76,12 @@ async fn main() -> Result<()> {
     // Initialize components
     let topology = Arc::new(RwLock::new(GardenTopology::new()));
     let registry = Arc::new(Registry::new(db_path, topology.clone()).await?);
-    let election = Arc::new(RwLock::new(ElectionManager::new(
-        lantern_name.clone(),
-        udp_port,
-    )));
 
     let state = AppState {
         lantern_name,
         registry,
-        election,
         topology,
     };
-
-    // Spawn election manager
-    let election_state = state.election.clone();
-    let election_name = state.lantern_name.clone();
-    tokio::spawn(async move {
-        if let Err(e) = election::run_election_loop(election_state, election_name).await {
-            tracing::error!(error = ?e, "Election loop failed");
-        }
-    });
 
     // Spawn TTL cleanup task
     let cleanup_registry = state.registry.clone();
@@ -159,20 +141,12 @@ mod handlers {
     use serde_json::{json, Value};
 
     pub async fn health(State(state): State<AppState>) -> Json<Value> {
-        let election_state = state.election.read().await;
-        let role = match election_state.state() {
-            ElectionState::Active => "active",
-            ElectionState::Dormant => "dormant",
-            ElectionState::Candidate => "candidate",
-        };
-
         let topology = state.topology.read().await;
         let stones_online = topology.stones_online_count();
 
         Json(json!({
             "status": "healthy",
             "lantern_name": state.lantern_name,
-            "role": role,
             "stones_online": stones_online,
         }))
     }
@@ -238,22 +212,10 @@ mod handlers {
     pub async fn get_topology(
         State(state): State<AppState>,
     ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-        let election_state = state.election.read().await;
-
-        match election_state.state() {
-            ElectionState::Active => {
-                let topology = state.topology.read().await;
-                let lantern_topo = topology.to_json();
-                Ok(Json(serde_json::to_value(lantern_topo).unwrap()))
-            }
-            _ => Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({
-                    "error": "Not primary",
-                    "primary_endpoint": election_state.active_endpoint()
-                })),
-            )),
-        }
+        // Return topology directly (no election, single active Lantern)
+        let topology = state.topology.read().await;
+        let lantern_topo = topology.to_json();
+        Ok(Json(serde_json::to_value(lantern_topo).unwrap()))
     }
 
     pub async fn event_stream(

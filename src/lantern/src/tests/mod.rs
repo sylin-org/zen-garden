@@ -1,4 +1,4 @@
-mod election_tests;
+// Election tests removed - Lantern now uses common moss election types
 mod registry_tests;
 mod moss_integration_tests;
 

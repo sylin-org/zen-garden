@@ -21,7 +21,6 @@ pub mod docker;
 pub mod mdns;
 pub mod metrics;
 pub mod console;
-pub mod network_singletons;
 
 // App state for HTTP handlers
 pub mod app_state;

@@ -16,7 +16,7 @@ use crate::docker::DockerManager;
 use crate::domain::CeremonyRegistry;
 use crate::infra::{CeremonyJournal, HarvestStore, ManifestRegistry};
 use crate::mdns::MdnsHandle;
-use crate::console::ConsolePrinter;
+use garden_common::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
 use garden_common::{HardwareCapabilities, ServiceInfo};
 use std::collections::HashMap;
@@ -268,7 +268,7 @@ impl AppState {
         );
 
         // Get fresh MAC address (may have changed with network)
-        let (_, new_mac) = crate::infra::network::get_local_ip_and_mac();
+        let (_, new_mac) = garden_common::infra::network::get_local_ip_and_mac();
 
         // Update self_entry with new endpoint and MAC
         {

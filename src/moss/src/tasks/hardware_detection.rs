@@ -10,7 +10,8 @@
 
 use crate::AppState;
 use crate::domain::ensure_offerings_index;
-use crate::{console, metrics};
+use garden_common::console;
+use garden_common::metrics::system as metrics;
 use crate::infra::save_capabilities_cache;
 use garden_common::{
     AiCapabilitiesSummary, CpuCapabilities, DetectionStatus, DiskCapabilities,

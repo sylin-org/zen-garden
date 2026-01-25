@@ -1,4 +1,4 @@
-﻿//! Resource scoring algorithms for placement recommendations
+//! Resource scoring algorithms for placement recommendations
 //!
 //! Pure functions for scoring stones based on resource availability and characteristics.
 //! All functions are deterministic and side-effect free for easy testing.

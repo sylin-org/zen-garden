@@ -7,7 +7,8 @@
 
 use crate::docker::DockerManager;
 use crate::domain::harvest::{HarvestManifest, VolumeArchive};
-use crate::infra::{archive, HarvestStore};
+use crate::infra::HarvestStore;
+use garden_common::infra::archive;
 use anyhow::{Context, Result};
 use std::path::Path;
 

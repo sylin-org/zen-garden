@@ -1,4 +1,4 @@
-﻿//! Placement recommendation orchestration
+//! Placement recommendation orchestration
 //!
 //! Coordinates topology discovery, metrics collection, compatibility checking,
 //! and scoring to recommend optimal stone placement for offerings.

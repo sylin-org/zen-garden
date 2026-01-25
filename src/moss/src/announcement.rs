@@ -1,4 +1,4 @@
-﻿//! Unified announcement system for topology discovery
+//! Unified announcement system for topology discovery
 //!
 //! Single source of truth for announcing stone presence and state.
 //! Called by: startup, periodic task, service change events.

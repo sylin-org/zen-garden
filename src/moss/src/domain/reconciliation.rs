@@ -9,7 +9,7 @@
 
 use crate::AppState;
 use crate::domain::adopt_offering_container;
-use crate::console;
+use garden_common::console;
 
 /// Reconcile container state with the registry
 ///

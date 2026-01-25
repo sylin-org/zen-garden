@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus, ServiceStatus};
-use crate::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
+use garden_common::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
 use crate::domain::topology::{TopologyCache, upsert_from_chirp, mark_stone_offline};
 use crate::{

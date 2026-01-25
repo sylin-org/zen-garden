@@ -1,4 +1,4 @@
-﻿//! Metrics collection and normalization for stone resources
+//! Metrics collection and normalization for stone resources
 //!
 //! Reusable functions for fetching resource metrics from local and remote stones.
 //! Provides normalized data structures for consistent scoring and comparison.
@@ -23,13 +23,13 @@ pub struct StoneMetrics {
 ///
 /// This is optimized for local evaluation - no network overhead.
 pub fn get_local_metrics() -> Result<StoneMetrics> {
-    let resources = crate::metrics::collect_stone_resources()
+    let resources = garden_common::metrics::system::collect_stone_resources()
         .context("Failed to collect local stone resources")?;
     
-    let (_, _, architecture) = crate::metrics::get_cpu_info()
+    let (_, _, architecture) = garden_common::metrics::system::get_cpu_info()
         .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
     
-    let storage_type_str = crate::metrics::detect_disk_type_for_mount(&resources.disk.path);
+    let storage_type_str = garden_common::metrics::system::detect_disk_type_for_mount(&resources.disk.path);
     let storage_type = storage_type_str
         .as_ref()
         .map(|s| parse_disk_type(s))
@@ -92,7 +92,7 @@ pub async fn fetch_stone_metrics(
         .unwrap_or_else(|_| std::env::consts::ARCH.to_string());
 
     // Detect storage type from disk path
-    let storage_type = crate::metrics::detect_disk_type_for_mount(&snapshot.disk.path)
+    let storage_type = garden_common::metrics::system::detect_disk_type_for_mount(&snapshot.disk.path)
         .map(|s| parse_disk_type(&s))
         .unwrap_or(DiskType::Unknown);
 

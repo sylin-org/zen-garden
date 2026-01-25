@@ -1,4 +1,4 @@
-﻿//! Hardware constraint validation for offering updates
+//! Hardware constraint validation for offering updates
 //!
 //! Pure business logic for validating hardware requirements against
 //! detected capabilities. No I/O - uses HardwareCapabilities from common types.
@@ -188,6 +188,8 @@ mod tests {
                 disk: None,
                 storage: vec![],
                 os_version: None,
+                system_manufacturer: None,
+                system_product: None,
                 kernel_version: None,
                 swap_mb: None,
                 ai_capabilities: None,

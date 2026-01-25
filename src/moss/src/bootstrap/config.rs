@@ -8,7 +8,8 @@
 //!
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::{cli::Cli, console, infra::MossConfig};
+use crate::{cli::Cli, infra::MossConfig};
+use garden_common::console;
 use tracing_subscriber::EnvFilter;
 
 /// Merged daemon configuration from all sources

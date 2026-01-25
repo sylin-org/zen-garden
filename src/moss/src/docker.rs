@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use garden_common::{ServiceHealthStatus, ServiceStatus};
-use crate::console::{self, ConsolePrinter};
+use garden_common::console::{self, ConsolePrinter};
 
 pub struct DockerManager {
     docker: Docker,

@@ -1,4 +1,4 @@
-﻿//! State provider for election criteria evaluation
+//! State provider for election criteria evaluation
 
 use crate::app_state::AppState;
 use crate::version_string;

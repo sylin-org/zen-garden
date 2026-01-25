@@ -12,7 +12,7 @@
 
 use crate::{AppState, JobStatus, emit_event};
 use crate::domain::get_compiled_offering;
-use crate::console;
+use garden_common::console;
 use garden_common::{Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus};
 
 /// Execute single service installation in background

@@ -27,7 +27,7 @@
 /// 5. Update Moss configuration file
 /// 6. Create MOTD with management URL
 pub async fn run_first_boot_initialization(old_name: &str, port: u16) -> anyhow::Result<String> {
-    use crate::console;
+    use garden_common::console;
 
     console::display_header("Zen Garden - First Boot")?;
     console::tty_write("")?;

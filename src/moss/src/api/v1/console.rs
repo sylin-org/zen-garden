@@ -1,10 +1,11 @@
-﻿use axum::{
+use axum::{
     extract::State,
     http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
-use crate::{AppState, console::ConsoleMode, error_response};
+use crate::{AppState, error_response};
+use garden_common::console::ConsoleMode;
 use garden_common::api_utils::ApiErrorResponse;
 
 #[derive(Debug, Deserialize)]
@@ -53,9 +54,9 @@ pub async fn set_console_mode_v1(
     state.console.set_mode(new_mode);
 
     // Emit mode change event
-    state.console.emit(crate::console::ConsoleEvent::new(
-        crate::console::EventCategory::Ops,
-        crate::console::EventStatus::Active,
+    state.console.emit(garden_common::console::ConsoleEvent::new(
+        garden_common::console::EventCategory::Ops,
+        garden_common::console::EventStatus::Active,
         format!("Console mode: {} → {}", previous_mode, new_mode)
     ));
 
@@ -70,9 +71,9 @@ pub async fn set_console_mode_v1(
             
             // Revert to original mode
             state_clone.console.set_mode(original_mode);
-            state_clone.console.emit(crate::console::ConsoleEvent::new(
-                crate::console::EventCategory::Ops,
-                crate::console::EventStatus::Active,
+            state_clone.console.emit(garden_common::console::ConsoleEvent::new(
+                garden_common::console::EventCategory::Ops,
+                garden_common::console::EventStatus::Active,
                 format!("Console mode timeout: {} → {}", new_mode, original_mode)
             ));
         });
@@ -86,18 +87,18 @@ pub async fn set_console_mode_v1(
     let persisted = if request.persist {
         match persist_console_mode(&state, new_mode).await {
             Ok(_) => {
-                state.console.emit(crate::console::ConsoleEvent::new(
-                    crate::console::EventCategory::Config,
-                    crate::console::EventStatus::Saving,
+                state.console.emit(garden_common::console::ConsoleEvent::new(
+                    garden_common::console::EventCategory::Config,
+                    garden_common::console::EventStatus::Saving,
                     format!("Console mode saved: {}", new_mode)
                 ));
                 true
             },
             Err(e) => {
                 tracing::warn!(error = ?e, "Failed to persist console mode");
-                state.console.emit(crate::console::ConsoleEvent::new(
-                    crate::console::EventCategory::Config,
-                    crate::console::EventStatus::SaveError,
+                state.console.emit(garden_common::console::ConsoleEvent::new(
+                    garden_common::console::EventCategory::Config,
+                    garden_common::console::EventStatus::SaveError,
                     format!("Failed to save console mode: {}", e)
                 ));
                 false

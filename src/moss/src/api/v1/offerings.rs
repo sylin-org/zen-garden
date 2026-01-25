@@ -1,4 +1,4 @@
-﻿// Offerings API - Human Layer
+// Offerings API - Human Layer
 // 
 // Purpose: Simplified, beginner-friendly API for managing offerings
 // Target audience: 90% of users - scripters, beginners, simple automation

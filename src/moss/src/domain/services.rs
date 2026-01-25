@@ -1,4 +1,4 @@
-﻿//! Service counting utilities for placement evaluation
+//! Service counting utilities for placement evaluation
 //!
 //! Reusable functions for counting services on local and remote stones.
 

@@ -1,4 +1,4 @@
-﻿//! Nourishment API - Software and firmware update management
+//! Nourishment API - Software and firmware update management
 //!
 //! Provides unified update checking and execution for:
 //! - Software offerings (Docker images)
@@ -642,7 +642,7 @@ async fn check_offering_updates(
     state: &AppState,
     capabilities: &HardwareCapabilities,
 ) -> anyhow::Result<Vec<Result<Update, BlockedUpdate>>> {
-    use crate::infra::registry::{query_image_tags, find_newer_version, get_image_digest, RegistryConfig};
+    use garden_common::infra::registry_client::{query_image_tags, find_newer_version, get_image_digest, RegistryConfig};
     use crate::domain::constraints::check_constraints;
 
     let registry = state.registry.read().await;
@@ -962,6 +962,7 @@ mod tests {
             available: "1.2.4".to_string(),
             requires_reboot: true,
             description: Some("Security fixes".to_string()),
+            confidence: garden_common::nourishment::FirmwareConfidence::Tested,
         };
 
         let json = serde_json::to_string(&firmware).unwrap();
@@ -971,12 +972,12 @@ mod tests {
 
     #[test]
     fn test_execute_request_deserialization() {
-        let json = r#"{"updates":[
-            {"type":"offering","name":"redis"},
-            {"type":"firmware","device_id":"com.dell.bios"}
-        ]}"#;
+        // items are simple strings like "offering:redis" or "firmware:com.dell.bios"
+        let json = r#"{"items":["offering:redis","firmware:com.dell.bios"]}"#;
 
         let req: ExecuteRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.updates.len(), 2);
+        assert_eq!(req.items.len(), 2);
+        assert_eq!(req.items[0], "offering:redis");
+        assert_eq!(req.items[1], "firmware:com.dell.bios");
     }
 }

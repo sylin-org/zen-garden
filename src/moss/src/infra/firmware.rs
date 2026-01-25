@@ -1,4 +1,4 @@
-﻿//! Firmware update detection and management
+//! Firmware update detection and management
 //!
 //! Platform-specific firmware update detection:
 //! - Linux: fwupd/LVFS integration

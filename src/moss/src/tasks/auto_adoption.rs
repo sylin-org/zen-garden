@@ -115,9 +115,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                     }
 
                     // Emit console event
-                    state.console.emit(crate::console::ConsoleEvent::new(
-                        crate::console::EventCategory::Services,
-                        crate::console::EventStatus::Healthy,
+                    state.console.emit(garden_common::console::ConsoleEvent::new(
+                        garden_common::console::EventCategory::Services,
+                        garden_common::console::EventStatus::Healthy,
                         format!("Auto-adopted {}", manifest.name),
                     ));
 

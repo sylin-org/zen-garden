@@ -20,13 +20,12 @@ use crate::{
     bind_server, run_server, ServerConfig,
     connect_docker, init_capabilities, DockerConfig,
     version_string,
-    // Console
-    console,
     // mDNS
     mdns,
     // Infrastructure
     infra,
 };
+use garden_common::console;
 use super::config::DaemonConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -100,7 +99,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     ).await;
 
     // Phase 2.5: Get MAC address for self entry
-    let (_, mac_address) = crate::infra::network::get_local_ip_and_mac();
+    let (_, mac_address) = garden_common::infra::network::get_local_ip_and_mac();
 
     // Phase 3: Resolve API endpoint
     // Prefer explicit STONE_HOST, otherwise use monitored network IP
@@ -138,7 +137,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Must happen before IP change handler so we can pass the handle
     // Note: If current IP is loopback, registration is deferred until valid IP is available
     let current_ip = network_monitor.get_ip().await;
-    let (_, mac_for_mdns) = crate::infra::network::get_local_ip_and_mac();
+    let (_, mac_for_mdns) = garden_common::infra::network::get_local_ip_and_mac();
     let mdns_handle: Option<Arc<mdns::MdnsHandle>> = match mdns::announce_moss(
         Some(stone_id.as_str()),
         &stone_name,

@@ -59,7 +59,7 @@ fn blake3_hex(bytes: &[u8]) -> String {
 /// Changes trigger offerings index rebuild.
 pub fn current_capabilities_hash() -> String {
     let caps = crate::domain::compatibility::get_current_compat_capabilities();
-    let gpus = crate::metrics::detect_gpus();
+    let gpus = garden_common::metrics::system::detect_gpus();
 
     // Include GPU/AI capabilities in hash so offerings re-evaluate when AI hardware is detected
     // Helper to check if any GPU has a runtime (supports both "cuda" and "cuda:12.2" formats)

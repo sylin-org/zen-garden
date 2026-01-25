@@ -135,7 +135,7 @@ impl NetworkMonitor {
         let ip = self.current_ip.read().await.clone();
         // Get MAC from network module - this re-detects the interface
         // but MAC lookup is fast (sysfs read on Linux)
-        let (_, mac) = crate::infra::network::get_local_ip_and_mac();
+        let (_, mac) = garden_common::infra::network::get_local_ip_and_mac();
         (ip, mac)
     }
 
@@ -187,7 +187,7 @@ pub fn is_valid_lan_ip(ip: &str) -> bool {
 
 /// Get current IP from the network module
 fn get_current_ip() -> String {
-    crate::infra::network::get_local_ip()
+    garden_common::infra::network::get_local_ip()
 }
 
 /// Background task that monitors IP changes

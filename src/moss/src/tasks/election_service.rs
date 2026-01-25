@@ -1,4 +1,4 @@
-﻿//! Distributed election service - UDP listener and responder
+//! Distributed election service - UDP listener and responder
 //!
 //! This service implements the election protocol specified in
 //! docs/specs/ELECTION-0001-distributed-election.md

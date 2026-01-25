@@ -1,4 +1,4 @@
-﻿//! Discovery request handler - responds to UDP discovery broadcasts
+//! Discovery request handler - responds to UDP discovery broadcasts
 //!
 //! Subscribes to p2p transport and responds to discovery requests with
 //! DiscoveryResponse containing this stone's information.

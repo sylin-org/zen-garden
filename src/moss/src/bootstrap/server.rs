@@ -9,11 +9,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use axum::Router;
 use tokio::net::TcpListener;
-use crate::console::{
+use garden_common::console::{
     ConsolePrinter, ConsoleEvent, EventCategory, EventStatus,
     BootBannerInfo, ShutdownBannerInfo, try_boot_banner, try_shutdown_banner,
 };
-use crate::infra::platform::shutdown_signal;
+use garden_common::infra::platform::shutdown_signal;
 
 /// Server configuration
 pub struct ServerConfig {

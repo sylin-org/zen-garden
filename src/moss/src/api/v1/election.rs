@@ -1,4 +1,4 @@
-﻿//! Election API endpoints - distributed election protocol testing
+//! Election API endpoints - distributed election protocol testing
 
 use axum::{extract::State, http::StatusCode, Json};
 use garden_common::election::ElectionType;

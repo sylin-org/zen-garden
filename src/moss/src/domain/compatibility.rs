@@ -52,13 +52,13 @@ pub struct CompiledCompatibility {
 ///
 /// Delegates to metrics module for actual detection.
 pub fn get_current_compat_capabilities() -> CompatCheckCapabilities {
-    let (cpu_model, cpu_features, architecture) = crate::metrics::get_cpu_info()
+    let (cpu_model, cpu_features, architecture) = garden_common::metrics::system::get_cpu_info()
         .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
-    let resources = crate::metrics::collect_stone_resources().ok();
+    let resources = garden_common::metrics::system::collect_stone_resources().ok();
     let total_memory_mb = resources.as_ref().map(|r| r.memory.total_bytes / 1024 / 1024);
 
     // Detect GPU/AI capabilities using new ai_runtimes format
-    let gpus = crate::metrics::detect_gpus();
+    let gpus = garden_common::metrics::system::detect_gpus();
 
     // Helper to check if any GPU has a runtime (supports both "cuda" and "cuda:12.2" formats)
     let has_runtime = |runtime_name: &str| {

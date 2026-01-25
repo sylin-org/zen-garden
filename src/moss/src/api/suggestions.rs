@@ -1,4 +1,4 @@
-﻿use axum::http::HeaderMap;
+use axum::http::HeaderMap;
 
 /// Context for generating context-aware suggestions
 pub struct SuggestionContext {

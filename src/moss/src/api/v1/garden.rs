@@ -1,11 +1,12 @@
-﻿use axum::{
+use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
 use crate::api::responses::{GardenOverview, StoneInfo, ApiResponse};
 use crate::api::suggestions::{generate_suggestions, SuggestionContext};
-use crate::{error_response, AppState, metrics};
+use crate::{error_response, AppState};
+use garden_common::metrics::system as metrics;
 use crate::domain::{placement::{PlacementRequest, PlacementResponse}, topology, TopologyEntry};
 use garden_common::{api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory, MemoryCapabilities};
 

@@ -1,4 +1,4 @@
-﻿//! Periodic announcement task
+//! Periodic announcement task
 //!
 //! Runs in background, announcing stone presence every 30 seconds.
 //! Uses change detection to minimize unnecessary network traffic.

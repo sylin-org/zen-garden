@@ -16,7 +16,7 @@ use garden_common::{HealthCheck, ComponentHealth};
 /// - < 10% available: WARN
 /// - >= 10% available: PASS
 pub fn check_disk_health() -> HealthCheck {
-    match crate::metrics::collect_stone_resources() {
+    match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
             let available_percent = (resources.disk.available_bytes as f32 / resources.disk.total_bytes as f32) * 100.0;
             if available_percent < 10.0 {
@@ -48,7 +48,7 @@ pub fn check_disk_health() -> HealthCheck {
 /// - > 90% used: WARN
 /// - <= 90% used: PASS
 pub fn check_memory_health() -> HealthCheck {
-    match crate::metrics::collect_stone_resources() {
+    match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
             if resources.memory.used_percent > 90.0 {
                 HealthCheck {
@@ -83,7 +83,7 @@ pub fn check_memory_health() -> HealthCheck {
 pub fn build_disk_component() -> ComponentHealth {
     let mut details = HashMap::new();
 
-    match crate::metrics::collect_stone_resources() {
+    match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
             let total_gb = resources.disk.total_bytes as f64 / 1_073_741_824.0;
             let free_gb = resources.disk.available_bytes as f64 / 1_073_741_824.0;
@@ -118,7 +118,7 @@ pub fn build_disk_component() -> ComponentHealth {
 pub fn build_memory_component() -> ComponentHealth {
     let mut details = HashMap::new();
 
-    match crate::metrics::collect_stone_resources() {
+    match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
             let total_gb = resources.memory.total_bytes as f64 / 1_073_741_824.0;
             let available_gb = resources.memory.available_bytes as f64 / 1_073_741_824.0;

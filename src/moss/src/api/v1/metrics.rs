@@ -12,7 +12,7 @@
 use axum::Json;
 use garden_common::{MetricsSnapshot, StoneResources, CpuMetrics, MemoryMetrics, DiskMetrics};
 use crate::api::responses::ApiResponse;
-use crate::metrics;
+use garden_common::metrics::system as metrics;
 
 /// GET /metrics - Real-time system resource metrics
 ///

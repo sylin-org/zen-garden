@@ -13,7 +13,7 @@ use garden_common::{
     CpuCapabilities, DetectionStatus, HardwareCapabilities,
     HardwareInventory, MemoryCapabilities, RuntimeInfo,
 };
-use crate::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
+use garden_common::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
 use crate::docker::DockerManager;
 use crate::infra;
 

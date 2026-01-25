@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::constants::*;
 
+pub mod topology;
+
 // ============================================================================
 // Service Types
 // ============================================================================

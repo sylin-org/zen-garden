@@ -42,27 +42,10 @@ pub async fn start_discovery_listener(
 ) {
     match discovery::ensure_udp_listener(stone_id, stone_name, api_endpoint).await {
         Ok(mut udp_rx) => {
-            // Spawn UDP event monitor that handles both requests and chirps
+            // Spawn UDP event monitor that handles chirps and goodbyes
             tokio::spawn(async move {
                 while let Ok(event) = udp_rx.recv().await {
                     match event {
-                        p2p::UdpEvent::Request { request, from_addr } => {
-                            tracing::debug!(
-                                request_id = %request.request_id,
-                                from = %from_addr,
-                                "Discovery request received, responding with self entry chirp"
-                            );
-                            
-                            // Respond to discovery request by chirping our current self entry
-                            let entry = self_entry.read().await.clone();
-                            if let Err(e) = crate::announcement::announce(&entry).await {
-                                tracing::warn!(
-                                    error = ?e,
-                                    request_id = %request.request_id,
-                                    "Failed to respond to discovery request"
-                                );
-                            }
-                        }
                         p2p::UdpEvent::Chirp { chirp, from_addr } => {
                             tracing::debug!(
                                 stone = %chirp.stone_name,

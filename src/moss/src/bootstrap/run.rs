@@ -291,6 +291,15 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     });
 
+    // Phase 11.post3: Start discovery handler (responds to discovery requests)
+    let self_entry_for_discovery = state.self_entry.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::tasks::discovery_handler::start_discovery_handler(self_entry_for_discovery).await {
+            tracing::error!(error = ?e, "Discovery handler failed");
+        }
+    });
+    tracing::info!("Discovery handler initialized (using p2p transport)");
+
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
     match state.recover_ceremonies().await {
         Ok(0) => tracing::debug!("No incomplete ceremonies to recover"),

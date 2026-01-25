@@ -14,8 +14,7 @@
 //! - No disk persistence - cache rebuilds on moss restart
 
 use chrono::{DateTime, Duration, Utc};
-use garden_common::{TopologyServiceEntry, HardwareCapabilities, StoneStatus};
-use serde::{Deserialize, Serialize};
+use garden_common::{TopologyEntry, StoneStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -28,31 +27,6 @@ const OFFLINE_THRESHOLD_SECS: i64 = 90;
 
 /// TTL for offline stones before eviction (hours)
 const OFFLINE_EVICTION_HOURS: i64 = 24;
-
-/// Discovered stone entry in topology cache
-///
-/// Used for both peer topology cache and self topology entry.
-/// Health progresses: starting → initializing → thriving/degraded
-/// This is also the chirp payload - chirps broadcast the full TopologyEntry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopologyEntry {
-    pub stone_id: String,
-    pub stone_name: String,
-    pub endpoint: String,
-    pub moss_version: String,
-    /// Services running on this stone (lightweight topology representation)
-    pub services: Vec<TopologyServiceEntry>,
-    /// MAC address for Wake-on-LAN support
-    pub mac: Option<String>,
-    /// Health status: use health_status constants (STARTING, INITIALIZING, THRIVING, DEGRADED)
-    pub health: String,
-    /// Hardware capabilities - available after detection (None during early boot)
-    pub capabilities: Option<HardwareCapabilities>,
-    /// Current connectivity status
-    pub status: StoneStatus,
-    pub discovered_at: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-}
 
 /// In-memory topology cache
 ///
@@ -253,6 +227,8 @@ mod tests {
 
     /// Helper to create a minimal TopologyEntry for testing
     fn make_entry(stone_id: &str, stone_name: &str, endpoint: &str, version: &str) -> TopologyEntry {
+        use garden_common::{TopologyServiceEntry, HardwareCapabilities};
+        
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
@@ -270,6 +246,8 @@ mod tests {
 
     /// Helper to create a TopologyEntry with MAC for testing
     fn make_entry_with_mac(stone_id: &str, stone_name: &str, endpoint: &str, version: &str, mac: Option<&str>) -> TopologyEntry {
+        use garden_common::{TopologyServiceEntry, HardwareCapabilities};
+        
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),

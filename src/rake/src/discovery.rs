@@ -120,20 +120,37 @@ pub fn discover_moss() -> Result<String> {
         requester: "rake-cli".into(),
     };
 
-    let request_bytes = serde_json::to_vec(&request)?;
+    // Wrap in UdpAnnouncement envelope
+    let announcement = garden_common::UdpAnnouncement {
+        announcement_type: garden_common::announcement_types::DISCOVERY_REQUEST.to_string(),
+        data: serde_json::to_value(&request)?,
+    };
+
+    let request_bytes = serde_json::to_vec(&announcement)?;
     let sent = socket.send_to(&request_bytes, format!("255.255.255.255:{}", ports::DISCOVERY_UDP))?;
 
-    tracing::debug!(?local, bytes = sent, request_id = %request_id, "Sent UDP discovery broadcast");
+    tracing::debug!(?local, bytes = sent, request_id = %request_id, "Sent UDP discovery broadcast (envelope format)");
 
-    // Wait for first response
-    let mut buf = [0u8; 1024];
+    // Wait for first response (also in envelope format)
+    let mut buf = [0u8; 2048];
     let recv_result = socket.recv_from(&mut buf);
 
     match recv_result {
         Ok((len, addr)) => {
             tracing::debug!(bytes = len, %request_id, ?addr, "Received UDP discovery response");
+            
+            // Try parsing as envelope first
+            if let Ok(announcement) = serde_json::from_slice::<garden_common::UdpAnnouncement>(&buf[..len]) {
+                if announcement.announcement_type == garden_common::announcement_types::DISCOVERY_RESPONSE {
+                    let response: DiscoveryResponse = serde_json::from_value(announcement.data)?;
+                    tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss");
+                    return Ok(response.stone_endpoint);
+                }
+            }
+            
+            // Fallback: try raw DiscoveryResponse for backwards compatibility
             let response: DiscoveryResponse = serde_json::from_slice(&buf[..len])?;
-            tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss");
+            tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss (legacy format)");
             Ok(response.stone_endpoint)
         }
         Err(e) => {
@@ -182,14 +199,20 @@ where
         requester: "rake-cli".into(),
     };
 
-    let request_bytes = serde_json::to_vec(&request)?;
+    // Wrap in UdpAnnouncement envelope
+    let announcement = garden_common::UdpAnnouncement {
+        announcement_type: garden_common::announcement_types::DISCOVERY_REQUEST.to_string(),
+        data: serde_json::to_value(&request)?,
+    };
+
+    let request_bytes = serde_json::to_vec(&announcement)?;
     let sent = socket.send_to(&request_bytes, format!("255.255.255.255:{}", ports::DISCOVERY_UDP))?;
 
-    tracing::debug!(?local, bytes = sent, request_id = %request_id, "Sent UDP discovery broadcast (streaming mode)");
+    tracing::debug!(?local, bytes = sent, request_id = %request_id, "Sent UDP discovery broadcast (streaming mode, envelope format)");
 
     let start = Instant::now();
     let mut discovered_endpoints = HashSet::new();
-    let mut buf = [0u8; 1024];
+    let mut buf = [0u8; 2048];
 
     loop {
         // Check if we've exceeded the discovery timeout
@@ -200,7 +223,30 @@ where
 
         match socket.recv_from(&mut buf) {
             Ok((len, addr)) => {
-                if let Ok(response) = serde_json::from_slice::<DiscoveryResponse>(&buf[..len]) {
+                // Try parsing as envelope first
+                if let Ok(announcement) = serde_json::from_slice::<garden_common::UdpAnnouncement>(&buf[..len]) {
+                    if announcement.announcement_type == garden_common::announcement_types::DISCOVERY_RESPONSE {
+                        if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(announcement.data.clone()) {
+                            // Only process unique endpoints
+                            if !discovered_endpoints.contains(&response.stone_endpoint) {
+                                discovered_endpoints.insert(response.stone_endpoint.clone());
+                                let discovery_instant = Instant::now();
+                                
+                                tracing::info!(
+                                    ?addr, 
+                                    stone = %response.stone_name,
+                                    elapsed_ms = discovery_instant.duration_since(start).as_millis(),
+                                    "Discovered Moss (streaming, envelope)"
+                                );
+                                
+                                // ✅ IMMEDIATE CALLBACK - Progressive disclosure
+                                on_discovered(response, discovery_instant);
+                            }
+                        }
+                    }
+                }
+                // Fallback: try raw DiscoveryResponse for backwards compat
+                else if let Ok(response) = serde_json::from_slice::<DiscoveryResponse>(&buf[..len]) {
                     // Only process unique endpoints
                     if !discovered_endpoints.contains(&response.stone_endpoint) {
                         discovered_endpoints.insert(response.stone_endpoint.clone());
@@ -210,10 +256,9 @@ where
                             ?addr, 
                             stone = %response.stone_name,
                             elapsed_ms = discovery_instant.duration_since(start).as_millis(),
-                            "Discovered Moss (streaming)"
+                            "Discovered Moss (streaming, legacy)"
                         );
                         
-                        // ✅ IMMEDIATE CALLBACK - Progressive disclosure
                         on_discovered(response, discovery_instant);
                     }
                 }

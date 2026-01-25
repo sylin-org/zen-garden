@@ -335,15 +335,20 @@ function Discover-AllStones {
 
     $udpClient.EnableBroadcast = $true
     
-    # Prepare discovery request
+    # Prepare discovery request (wrapped in UdpAnnouncement envelope)
     $requestId = [guid]::NewGuid().ToString()
-    $request = @{
+    $requestData = @{
         discover = "moss"
         request_id = $requestId
         requester = "push2all-script"
+    }
+    
+    $announcement = @{
+        announcement_type = "discovery_request"
+        data = $requestData
     } | ConvertTo-Json -Compress
     
-    $requestBytes = [System.Text.Encoding]::UTF8.GetBytes($request)
+    $requestBytes = [System.Text.Encoding]::UTF8.GetBytes($announcement)
     
     # Send broadcast
     $broadcastEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Broadcast, 7184)
@@ -362,22 +367,25 @@ function Discover-AllStones {
         try {
             $responseBytes = $udpClient.Receive([ref]$remoteEP)
             $responseJson = [System.Text.Encoding]::UTF8.GetString($responseBytes)
-            $response = $responseJson | ConvertFrom-Json
+            $envelope = $responseJson | ConvertFrom-Json
             
-            # Check if this response matches our request (some responses might not have request_id)
-            $endpoint = $response.stone_endpoint
-            
-            # Override port if specified
-            if ($Port -gt 0) {
-                $endpoint = $endpoint -replace ':\d+$', ":$Port"
+            # Check if this is a discovery_response
+            if ($envelope.announcement_type -eq "discovery_response") {
+                $response = $envelope.data
+                
+                # Override port if specified
+                $endpoint = $response.stone_endpoint
+                if ($Port -gt 0) {
+                    $endpoint = $endpoint -replace ':\d+$', ":$Port"
+                }
+                
+                $stones.Add([PSCustomObject]@{
+                    Name = $response.stone_name
+                    Endpoint = $endpoint
+                    Address = $remoteEP.Address.ToString()
+                }) | Out-Null
+                Write-Status "   ✓ Found: $($response.stone_name) at $endpoint" -Type "Success"
             }
-            
-            $stones.Add([PSCustomObject]@{
-                Name = $response.stone_name
-                Endpoint = $endpoint
-                Address = $remoteEP.Address.ToString()
-            }) | Out-Null
-            Write-Status "   ✓ Found: $($response.stone_name) at $endpoint" -Type "Success"
         }
         catch [System.Net.Sockets.SocketException] {
             # Timeout on this receive - continue waiting if time remains

@@ -18,9 +18,11 @@ pub mod manifests;
 pub mod cli_colors;
 pub mod nourishment;
 pub mod election;
+pub mod infra;
 
 // Re-export commonly used items
 pub use types::*;
+pub use types::topology::TopologyEntry;
 pub use utils::*;
 pub use responses::*;
 pub use jobs::*;

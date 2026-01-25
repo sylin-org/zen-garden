@@ -10,11 +10,12 @@
 //!
 //! Performance: JSON-based change detection costs ~6μs per check,
 //! negligible for 30s interval (0.0002% overhead).
+//!
+//! **REFACTORED (COMM-0001 Phase 2)**: Uses p2p transport singleton for all UDP operations.
 
 use anyhow::Result;
 use garden_common::{
-    announcement_types, ports, StoneGoodbyePayload,
-    UdpAnnouncement,
+    announcement_types, StoneGoodbyePayload,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -104,22 +105,15 @@ fn calculate_state_hash(entry: &TopologyEntry) -> u64 {
 ///
 /// Uses the `UdpAnnouncement` envelope format with `stone_chirp` type.
 /// Broadcasts the TopologyEntry directly - chirp IS the topology entry.
+///
+/// **REFACTORED (COMM-0001 Phase 2)**: Now uses p2p transport singleton instead of creating own socket.
 async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
-    use tokio::net::UdpSocket;
-
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
-    socket.set_broadcast(true)?;
-
-    // Wrap TopologyEntry in UdpAnnouncement envelope
-    let announcement = UdpAnnouncement {
-        announcement_type: announcement_types::STONE_CHIRP.to_string(),
-        data: serde_json::to_value(entry)?,
-    };
-
-    let data = serde_json::to_vec(&announcement)?;
-    let broadcast_addr = format!("255.255.255.255:{}", ports::DISCOVERY_UDP);
-
-    socket.send_to(&data, &broadcast_addr).await?;
+    // Use p2p transport singleton (no socket creation)
+    crate::infra::communications::p2p::send_announcement(
+        announcement_types::STONE_CHIRP,
+        entry,
+    )
+    .await?;
 
     tracing::trace!(
         endpoint = %entry.endpoint,
@@ -137,9 +131,9 @@ async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
 /// This allows immediate offline marking instead of waiting for the 90s chirp timeout.
 ///
 /// Called before stone shutdown/reboot operations.
+///
+/// **REFACTORED (COMM-0001 Phase 2)**: Now uses p2p transport singleton instead of creating own socket.
 pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
-    use tokio::net::UdpSocket;
-
     let goodbye = StoneGoodbyePayload {
         stone_id: state.stone_id.clone(),
         stone_name: state.stone_name.clone(),
@@ -150,18 +144,12 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
         "Sending goodbye announcement before shutdown"
     );
 
-    // Wrap in UdpAnnouncement envelope
-    let announcement = UdpAnnouncement {
-        announcement_type: announcement_types::STONE_GOODBYE.to_string(),
-        data: serde_json::to_value(&goodbye)?,
-    };
-
-    let data = serde_json::to_vec(&announcement)?;
-    let broadcast_addr = format!("255.255.255.255:{}", ports::DISCOVERY_UDP);
-
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
-    socket.set_broadcast(true)?;
-    socket.send_to(&data, &broadcast_addr).await?;
+    // Use p2p transport singleton (no socket creation)
+    crate::infra::communications::p2p::send_announcement(
+        announcement_types::STONE_GOODBYE,
+        &goodbye,
+    )
+    .await?;
 
     tracing::info!(
         stone = %goodbye.stone_name,

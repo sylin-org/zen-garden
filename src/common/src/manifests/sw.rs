@@ -499,7 +499,7 @@ mod tests {
         // Create snippet
         fs::write(
             cat_dir.join(format!("{}.snippet.yaml", name)),
-            format!("image: {}:latest\nports:\n  - \"8080:8080\"", name),
+            format!("image: {}:latest\nports:\n  - [8080, 8080]", name),
         ).unwrap();
 
         // Create frontmatter

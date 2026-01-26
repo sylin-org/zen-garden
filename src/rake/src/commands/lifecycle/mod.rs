@@ -4,8 +4,8 @@
 //! - offer - Install/list offerings
 //! - rest - Stop a service
 //! - wake - Start a service
-//! - remove - Remove a service (soft delete)
-//! - uproot - Destroy a service completely
+//! - remove - Remove service and container (preserves volumes)
+//! - uproot - Destroy service completely (including volumes)
 //! - upgrade/nourish - Update a service
 
 pub mod remove;

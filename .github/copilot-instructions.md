@@ -106,6 +106,57 @@ src/
 - ✅ Propagate errors with `.context()`
 - ✅ Use `tracing::*` for logging
 - ✅ Keep domain pure (no external deps)
+- ✅ **Update changelog when implementing significant changes**
+
+## 📝 Changelog Maintenance
+
+**When to create/update a changelog:**
+
+✅ **DO create a changelog for:**
+- New features (multicast discovery, hardware ID generation, adoption mode)
+- Breaking changes (API changes, data structure refactoring, detection schema changes)
+- Architectural refactorings (moving modules, changing patterns)
+- Bug fixes that affect user-visible behavior
+- Performance improvements with measurable impact
+- Security fixes
+
+❌ **DON'T create a changelog for:**
+- Typo fixes in comments
+- Code formatting/linting changes
+- Internal refactoring with no external impact
+- Test-only changes
+
+**Changelog format:**
+- Place in `docs/` directory (e.g., `docs/CHANGELOG-feature-name.md`)
+- Include: Problem, Solution, Impact, Files Changed, Testing
+- Reference related ADRs/specs
+- Add version/build date if applicable
+
+**Example structure:**
+```markdown
+# Feature Name - Implementation Changelog
+
+**Date**: YYYY-MM-DD
+**Status**: Complete/In Progress
+**Related**: [Decision/Spec references]
+
+## Problem
+Brief description of what was wrong or missing
+
+## Solution
+What was implemented and how
+
+## Impact
+Before/after comparison, user-visible changes
+
+## Files Changed
+| File | Change |
+|------|--------|
+| path/to/file | Description |
+
+## Testing
+Verification steps and results
+```
 
 ---
 

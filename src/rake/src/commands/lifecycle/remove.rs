@@ -1,6 +1,7 @@
-//! Remove command - soft delete a service
+//! Remove command - remove service and container
 //!
-//! Removes a service from management (container preserved as stray).
+//! Removes a service from management and stops/removes the container.
+//! Volumes are preserved by default for data recovery.
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
@@ -10,7 +11,7 @@ use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
 use std::io::Write;
 
-/// Remove a service (soft delete)
+/// Remove a service (stops and removes container, preserves volumes)
 pub struct RemoveCommand {
     pub service: String,
     pub force: bool,
@@ -33,12 +34,16 @@ impl Command for RemoveCommand {
         // Confirmation prompt (unless --force or quiet mode)
         if !self.force && !self.quiet_mode {
             println!(
-                "{}⚠️  This will permanently remove service '{}'",
+                "{}⚠️  This will remove service '{}' and stop its container",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 self.service
             );
             println!(
-                "{}Container and any associated volumes will be deleted.",
+                "{}Volumes will be preserved for data recovery.",
+                " ".repeat(ui::constants::DEFAULT_INDENT)
+            );
+            println!(
+                "{}Use 'uproot' to completely destroy including volumes.",
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
             print!(

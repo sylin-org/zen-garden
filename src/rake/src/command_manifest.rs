@@ -496,7 +496,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         ],
         examples: vec![
             CommandExample {
-                description: "Remove service from registry (container preserved)",
+                description: "Remove service (stops and removes container, preserves volumes)",
                 zen_syntax: Some("garden-rake remove mongodb"),
                 normative_syntax: Some("garden-rake services delete mongodb"),
             },

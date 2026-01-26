@@ -541,12 +541,12 @@ pub async fn nourish_service_v1(
     }))
 }
 
-/// DELETE /api/v1/services/:service - Soft delete (remove from registry, preserve container)
-/// The container becomes a "stray" that can be re-adopted later.
-/// Use POST /api/v1/services/:service/destroy for hard delete (uproot).
+/// DELETE /api/v1/services/:service - Remove service and stop container (preserves volumes)
+/// Container is stopped and removed, but volumes are preserved for potential recovery.
+/// Use POST /api/v1/services/:service/destroy for complete destruction (uproot).
 pub async fn delete_service_v1(
     State(state): State<AppState>,
-    Path(service): Path<String>,
+    Path(service): Path(String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut registry = state.registry.write().await;
@@ -563,7 +563,14 @@ pub async fn delete_service_v1(
             )
         })?;
 
-    // Soft delete: remove from registry only, container remains (becomes stray)
+    // Remove container first (preserves volumes by default)
+    if let Err(e) = state.docker.remove_service(&service, Some(&state.console)).await {
+        tracing::error!(error = ?e, service = %service, "Docker remove failed");
+        // Don't fail completely - continue to remove from registry even if container removal fails
+        tracing::warn!(service = %service, "Container removal failed, continuing with registry cleanup");
+    }
+
+    // Then remove from registry
     registry.remove(pos);
     drop(registry);
 
@@ -582,7 +589,7 @@ pub async fn delete_service_v1(
             service,
             action: "delete".to_string(),
             status: "removed".to_string(),
-            message: "Service removed from registry (container preserved as stray)".to_string(),
+            message: "Service removed (container stopped and removed, volumes preserved)".to_string(),
         },
         suggestions,
     }))

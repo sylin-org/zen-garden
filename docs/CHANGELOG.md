@@ -3,6 +3,7 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-26
+- Updated roadmap.md to reflect completed Phase 1 (discovery, topology, nourishment v0 all implemented)
 - Optimized copilot-instructions.md for AI consumption - removed verbosity, emojis, conversational language (50% reduction)
 - Added automatic changelog update instructions for AI agents in copilot-instructions.md (when to add, what format, commit workflow)
 - Fixed syntax error in `delete_service_v1()` - Path extractor had `Path(String>` instead of `Path<String>`

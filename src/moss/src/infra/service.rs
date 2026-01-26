@@ -296,28 +296,42 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
 pub async fn cleanup_after_service_update() -> anyhow::Result<()> {
     use std::process::Command;
 
+    log_update("=== cleanup_after_service_update: STARTED ===");
+
     let current_exe = std::env::current_exe()?;
     let exe_dir = current_exe.parent().ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
-    let old_exe = exe_dir.join("garden-moss-new.exe");
+    let temp_exe = exe_dir.join("garden-moss-temp.exe");
 
-    if old_exe.exists() {
-        // Wait for garden-moss-new.exe process to exit
-        for _ in 1..=20 {
+    log_update(&format!("Looking for temp updater: {:?}", temp_exe));
+
+    if temp_exe.exists() {
+        log_update("Temp updater file found, waiting for process to exit...");
+        
+        // Wait for garden-moss-temp.exe process to exit
+        for attempt in 1..=20 {
             let output = Command::new("tasklist")
-                .args(["/FI", "IMAGENAME eq garden-moss-new.exe"])
+                .args(["/FI", "IMAGENAME eq garden-moss-temp.exe"])
                 .output()?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);
-            if !stdout.contains("garden-moss-new.exe") {
+            if !stdout.contains("garden-moss-temp.exe") {
+                log_update(&format!("Temp updater process exited after attempt {}", attempt));
                 break;
             }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
-        // Remove old binary
-        std::fs::remove_file(&old_exe).ok();
+        // Remove temp binary
+        match std::fs::remove_file(&temp_exe) {
+            Ok(_) => log_update("Temp updater file removed successfully"),
+            Err(e) => log_update(&format!("Failed to remove temp updater: {}", e)),
+        }
+    } else {
+        log_update("No temp updater file found (already cleaned up or not an update)");
     }
+
+    log_update("=== cleanup_after_service_update: COMPLETE ===");
 
     // Continue with normal startup (fall through to main logic)
     Ok(())

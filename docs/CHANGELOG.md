@@ -3,6 +3,9 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-26
+- Fixed Windows self-update cleanup: corrected temp filename (garden-moss-new.exe → garden-moss-temp.exe) with logging
+- Fixed 38 manifest snippet files: converted port format from strings to tuples ([host, container])
+- Fixed ServiceConfig struct: changed ports from Vec<String> to Vec<(u16, u16)> for direct tuple deserialization
 - **Implemented Windows self-update (Phase 1)**: spawn-temp-process pattern for package-based updates
   - Added `spawn_windows_updater()` to copy moss → garden-moss-temp.exe and spawn --finalize-update
   - Updated deploy_stone_v1 API to call Windows updater before shutdown

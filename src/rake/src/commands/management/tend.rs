@@ -67,6 +67,10 @@ impl Command for TendCommand {
                                 .await?;
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), local_endpoint.clone())?;
+                            
+                            // Notify stone of tending (for visual feedback in adapters)
+                            let _ = notify_tending(ctx, &local_endpoint).await;
+                            
                             println!("Now tending to: {} (localhost)", caps.stone_name);
                         }
                         _ => {
@@ -105,6 +109,10 @@ impl Command for TendCommand {
                                         .await?;
                                     let caps = response.data;
                                     tending::write_tending(caps.stone_name.clone(), alternative.endpoint.clone())?;
+                                    
+                                    // Notify stone of tending (for visual feedback in adapters)
+                                    let _ = notify_tending(ctx, &alternative.endpoint).await;
+                                    
                                     println!(
                                         "Switched to {}.local ({})",
                                         caps.stone_name,
@@ -155,6 +163,10 @@ impl Command for TendCommand {
                                 .await?;
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), endpoint.clone())?;
+                            
+                            // Notify stone of tending (for visual feedback in adapters)
+                            let _ = notify_tending(ctx, &endpoint).await;
+                            
                             println!(
                                 "  Found {}.local ({})",
                                 caps.stone_name,
@@ -189,6 +201,10 @@ impl Command for TendCommand {
                                 .await?;
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), url.to_string())?;
+                            
+                            // Notify stone of tending (for visual feedback in adapters)
+                            let _ = notify_tending(ctx, url).await;
+                            
                             println!("Now tending to: {} ({})", caps.stone_name, url);
                         }
                         _ => {
@@ -225,6 +241,10 @@ impl Command for TendCommand {
                                 .await?
                                 .data;
                             tending::write_tending(caps.stone_name.clone(), endpoint.to_string())?;
+                            
+                            // Notify stone of tending (for visual feedback in adapters)
+                            let _ = notify_tending(ctx, &endpoint).await;
+                            
                             println!(
                                 "Now tending to: {}.local ({})",
                                 caps.stone_name,
@@ -382,4 +402,37 @@ async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> 
             e
         )),
     }
+}
+
+/// Send tending notification to stone (for visual feedback)
+/// 
+/// POSTs to /api/v1/stone/presence/notify to trigger stone.tended event.
+/// Adapters (Firefly, Cricket) can react with temporary glow/pulse.
+async fn notify_tending(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+    use garden_common::presence::ClientNotification;
+    
+    // Get hostname for "from" field
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    
+    let notification = ClientNotification {
+        event_type: "tended".to_string(),
+        client: "rake".to_string(),
+        from_host: Some(hostname.clone()),
+        message: Some(format!("Tending from {}", hostname)),
+    };
+    
+    let notify_url = format!("{}/api/v1/stone/presence/notify", endpoint.trim_end_matches('/'));
+    
+    // Fire and forget - don't fail tending if notification fails
+    let _ = ctx.client
+        .post(&notify_url)
+        .json(&notification)
+        .timeout(Duration::from_millis(500))
+        .send()
+        .await;
+    
+    Ok(())
 }

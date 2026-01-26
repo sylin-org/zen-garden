@@ -6,6 +6,8 @@
 use axum::{
     extract::{Query, State},
     response::sse::{Event, KeepAlive, Sse},
+    http::StatusCode,
+    Json,
 };
 use futures_util::stream::Stream;
 use std::convert::Infallible;
@@ -13,7 +15,7 @@ use tokio_stream::StreamExt;
 use serde::Deserialize;
 
 use crate::AppState;
-use garden_common::presence::{event_types, EventFilter, PresenceSnapshot, StoneState, ServiceState};
+use garden_common::presence::{event_types, EventFilter, PresenceSnapshot, StoneState, ServiceState, ClientNotification};
 
 #[derive(Debug, Deserialize)]
 pub struct PresenceQuery {
@@ -150,6 +152,31 @@ fn translate_to_presence(moss_event: &crate::MossEvent, filter: &EventFilter, _s
     // Parse message for event type
     // This is hacky but temporary until EventBus integration
     
+    // Check for client-initiated presence notifications first
+    if moss_event.message.starts_with("[PRESENCE]") && filter.allows(event_types::CATEGORY_STONE) {
+        // Extract event type and data from message: "[PRESENCE] stone.tended from rake | {json}"
+        if moss_event.message.contains("stone.tended") {
+            // Try to extract JSON data from message
+            if let Some(data_start) = moss_event.message.find(" | ") {
+                let data_str = &moss_event.message[data_start + 3..];
+                // Use the embedded JSON data if available
+                return Some(Event::default()
+                    .event(event_types::STONE_TENDED)
+                    .data(data_str.to_string()));
+            } else {
+                // Fallback: create minimal notification
+                let data = serde_json::json!({
+                    "by": "rake",
+                    "from": "client",
+                    "timestamp": moss_event.timestamp,
+                });
+                return Some(Event::default()
+                    .event(event_types::STONE_TENDED)
+                    .data(data.to_string()));
+            }
+        }
+    }
+    
     if moss_event.message.contains("started successfully") && filter.allows(event_types::CATEGORY_SERVICE) {
         let service = extract_service_name(&moss_event.message)?;
         let data = serde_json::json!({
@@ -191,4 +218,80 @@ fn extract_service_name(message: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// POST /api/v1/stone/presence/notify - Client-initiated presence notification
+///
+/// Allows clients (Rake, Lantern) to send notifications that get broadcast to all presence adapters.
+/// Used for visual feedback like "I'm tending to you" that creates a temporary glow/pulse.
+///
+/// **Use case**: When Rake runs `tend stone-01`, it POSTs to Moss, which broadcasts
+/// `stone.tended` event to all SSE subscribers (Firefly shows pulse, Cricket chirps).
+///
+/// **Payload**:
+/// ```json
+/// {
+///   "event_type": "tended",
+///   "client": "rake",
+///   "from_host": "leo-laptop",
+///   "message": "Tending started"
+/// }
+/// ```
+pub async fn notify_presence(
+    State(state): State<AppState>,
+    Json(notification): Json<ClientNotification>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    tracing::info!(
+        event = %notification.event_type,
+        client = %notification.client,
+        "Received client presence notification"
+    );
+    
+    // Translate to stone.tended event and broadcast to SSE subscribers
+    let event_type = match notification.event_type.as_str() {
+        "tended" => event_types::STONE_TENDED,
+        other => {
+            tracing::warn!("Unknown notification event type: {}", other);
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Unknown event type: {}", other),
+            ));
+        }
+    };
+    
+    // Create SSE event data
+    let data = serde_json::json!({
+        "by": notification.client,
+        "from": notification.from_host.unwrap_or_else(|| "unknown".to_string()),
+        "message": notification.message,
+        "timestamp": chrono::Utc::now(),
+    });
+    let data_str = serde_json::to_string(&data).unwrap_or_default();
+    
+    // Broadcast via MossEvent (will be picked up by SSE subscribers)
+    // Include data in message so translator can extract it
+    let moss_event = crate::MossEvent {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        level: "info".to_string(),
+        message: format!(
+            "[PRESENCE] {} from {} | {}",
+            event_type,
+            notification.client,
+            data_str
+        ),
+        job_id: None,
+    };
+    
+    // Send to event bus - SSE subscribers will translate it
+    let _ = state.event_tx.send(moss_event);
+    
+    // Also emit directly to ensure presence adapters get it
+    // (in case they're not subscribed to regular MossEvents)
+    tracing::info!(
+        event_type = %event_type,
+        "Broadcasted presence notification to {} subscribers",
+        state.event_tx.receiver_count()
+    );
+    
+    Ok(StatusCode::ACCEPTED)
 }

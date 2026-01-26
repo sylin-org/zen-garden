@@ -15,6 +15,13 @@ pub const SERVICE_STOPPED: &str = "service.stopped";
 pub const SERVICE_SPROUTED: &str = "service.sprouted";
 pub const SERVICE_UPROOTED: &str = "service.uprooted";
 
+// Offering status events (for visual feedback)
+pub const OFFERING_STATUS_UP: &str = "offering.status.up";
+pub const OFFERING_STATUS_DOWN: &str = "offering.status.down";
+pub const OFFERING_STATUS_MAINTENANCE: &str = "offering.status.maintenance";
+pub const OFFERING_REMOVED: &str = "offering.removed";
+pub const OFFERING_ADOPTED: &str = "offering.adopted";
+
 // Stone health events
 pub const STONE_LOAD_UPDATED: &str = "stone.load.updated";
 pub const STONE_HEALTH_CHANGED: &str = "stone.health.changed";

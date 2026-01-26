@@ -145,9 +145,14 @@ fn handle_presence_event(event_type: &str, data: &str) -> Result<()> {
         }
         event_types::STONE_TENDED => {
             let parsed: serde_json::Value = serde_json::from_str(data)?;
-            if let Some(by) = parsed.get("by").and_then(|b| b.as_str()) {
-                println!("👋 Stone tended by: {}", by);
-            }
+            let by = parsed.get("by").and_then(|b| b.as_str()).unwrap_or("unknown");
+            let from = parsed.get("from").and_then(|f| f.as_str()).unwrap_or("unknown");
+            
+            // Prominent visual feedback - adapters will show glow/pulse
+            println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("👋 TENDING STARTED");
+            println!("   From: {} on {}", by, from);
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         }
         other => {
             // Unknown event, display raw

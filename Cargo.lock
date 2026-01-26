@@ -1070,6 +1070,7 @@ dependencies = [
  "futures-util",
  "garden-build-utils",
  "garden-common",
+ "hostname",
  "local-ip-address",
  "mdns-sd",
  "once_cell",

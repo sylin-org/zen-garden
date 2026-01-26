@@ -80,6 +80,7 @@ pub fn configure(state: AppState) -> Router {
 
         // V1 API - Presence Protocol (PRESENCE-0001)
         .route("/api/v1/stone/presence/stream", get(api::v1::presence::stream_stone_presence))
+        .route("/api/v1/stone/presence/notify", post(api::v1::presence::notify_presence))
 
         // V1 API - Garden topology
         .route("/api/v1/garden", get(api::v1::garden::get_garden_v1))

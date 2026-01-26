@@ -49,3 +49,12 @@ pub struct ServiceState {
     pub state: String,       // "running", "stopped", etc.
     pub health: String,      // "healthy", "unhealthy"
 }
+
+/// Client-initiated notification (Rake → Moss → Adapters)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientNotification {
+    pub event_type: String,  // "tended", "observed", etc.
+    pub client: String,      // "rake", "lantern", etc.
+    pub from_host: Option<String>,  // Hostname or IP
+    pub message: Option<String>,    // Optional display message
+}

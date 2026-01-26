@@ -3,6 +3,7 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-26
+- Added automatic changelog update instructions for AI agents in copilot-instructions.md (when to add, what format, commit workflow)
 - Fixed syntax error in `delete_service_v1()` - Path extractor had `Path(String>` instead of `Path<String>`
 - Fixed `remove` command to actually stop and remove containers (was only removing from registry, causing auto-adoption loops)
 - Added changelog maintenance guidelines to copilot instructions for AI agents

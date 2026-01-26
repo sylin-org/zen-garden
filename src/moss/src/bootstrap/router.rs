@@ -78,6 +78,9 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
         .route("/api/v1/jobs/:job_id", get(api::v1::jobs::get_job_status))
 
+        // V1 API - Presence Protocol (PRESENCE-0001)
+        .route("/api/v1/stone/presence/stream", get(api::v1::presence::stream_stone_presence))
+
         // V1 API - Garden topology
         .route("/api/v1/garden", get(api::v1::garden::get_garden_v1))
         .route("/api/v1/garden/topology", get(api::v1::garden::get_topology_v1))

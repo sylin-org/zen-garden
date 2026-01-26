@@ -13,6 +13,7 @@ pub enum DomainEvent {
     Registry(RegistryEvent),
     Job(JobEvent),
     Discovery(DiscoveryEvent),
+    Stone(StoneEvent),
 }
 
 impl DomainEvent {
@@ -23,6 +24,7 @@ impl DomainEvent {
             DomainEvent::Registry(e) => e.timestamp(),
             DomainEvent::Job(e) => e.timestamp(),
             DomainEvent::Discovery(e) => e.timestamp(),
+            DomainEvent::Stone(e) => e.timestamp(),
         }
     }
 
@@ -33,6 +35,7 @@ impl DomainEvent {
             DomainEvent::Registry(e) => Some(e.stone_name()),
             DomainEvent::Job(e) => e.stone_name(),
             DomainEvent::Discovery(e) => Some(e.stone_name()),
+            DomainEvent::Stone(e) => Some(e.stone_name()),
         }
     }
 
@@ -381,5 +384,58 @@ mod tests {
 
         assert_eq!(event.job_id(), "job-123");
         assert_eq!(event.stone_name(), None);
+    }
+}
+
+// ============================================================================
+// Stone Events
+// ============================================================================
+
+/// Stone-level events (health, load, interaction)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event_type")]
+pub enum StoneEvent {
+    /// Stone health changed
+    HealthChanged {
+        stone_name: String,
+        old_health: String,
+        new_health: String,
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    
+    /// Stone load/metrics updated
+    LoadUpdated {
+        stone_name: String,
+        cpu_percent: f64,
+        memory_percent: f64,
+        disk_percent: f64,
+        timestamp: DateTime<Utc>,
+    },
+    
+    /// Stone was tended (admin interaction)
+    Tended {
+        stone_name: String,
+        by: String,
+        from: String,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl StoneEvent {
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            StoneEvent::HealthChanged { timestamp, .. } => *timestamp,
+            StoneEvent::LoadUpdated { timestamp, .. } => *timestamp,
+            StoneEvent::Tended { timestamp, .. } => *timestamp,
+        }
+    }
+    
+    pub fn stone_name(&self) -> &str {
+        match self {
+            StoneEvent::HealthChanged { stone_name, .. } => stone_name,
+            StoneEvent::LoadUpdated { stone_name, .. } => stone_name,
+            StoneEvent::Tended { stone_name, .. } => stone_name,
+        }
     }
 }

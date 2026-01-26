@@ -98,7 +98,7 @@ fn is_zen_verb(verb: &str) -> bool {
         // External services (zen)
         "borrow" | "return" |
         // Observation (zen)
-        "observe" | "watch" | "list" | "status" |
+        "observe" | "watch" | "presence" | "list" | "status" |
         // Context (zen)
         "tend" |
         // Pond (zen)

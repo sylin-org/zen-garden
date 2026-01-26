@@ -102,3 +102,35 @@ pub fn emit_event(state: &AppState, level: &str, message: String, job_id: Option
         _ => tracing::info!("{}", message),
     }
 }
+
+/// Emit service started event
+///
+/// Convenience wrapper for service lifecycle events.
+pub fn emit_service_started(state: &AppState, service_name: &str) {
+    emit_event(
+        state,
+        "info",
+        format!("Service {} started successfully", service_name),
+        None,
+    );
+}
+
+/// Emit service stopped event
+pub fn emit_service_stopped(state: &AppState, service_name: &str) {
+    emit_event(
+        state,
+        "info",
+        format!("Service {} stopped", service_name),
+        None,
+    );
+}
+
+/// Emit service removed event
+pub fn emit_service_removed(state: &AppState, service_name: &str) {
+    emit_event(
+        state,
+        "info",
+        format!("Service {} removed", service_name),
+        None,
+    );
+}

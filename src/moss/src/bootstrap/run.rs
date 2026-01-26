@@ -313,6 +313,19 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     start_registry_loader(state.clone());
     start_catalog_builder(state.clone(), console_printer.clone());
 
+    // Presence monitoring (PRESENCE-0001)
+    tracing::info!("Starting presence load monitor");
+    let load_monitor_state = state.clone();
+    tokio::spawn(async move {
+        crate::tasks::presence_monitor::run_load_monitor_task(load_monitor_state).await;
+    });
+
+    tracing::info!("Starting presence health monitor");
+    let health_monitor_state = state.clone();
+    tokio::spawn(async move {
+        crate::tasks::presence_monitor::run_health_monitor_task(health_monitor_state).await;
+    });
+
     // Phase 11.1: IP change handler (resolution announcements)
     // Uses AppState.announce_resolution_change() for proper SoC
     if use_static_host.is_none() {

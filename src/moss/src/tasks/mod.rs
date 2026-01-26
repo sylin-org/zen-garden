@@ -22,6 +22,7 @@ pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
 pub mod network_monitor;
+pub mod presence_monitor;
 pub mod state_provider;
 
 pub use announcer::start_periodic_announcer;

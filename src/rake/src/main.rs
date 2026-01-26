@@ -410,6 +410,25 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// Stream presence events from a Stone (PRESENCE-0001)
+    #[command(
+        long_about = "Stream real-time presence events from a stone.\n\n\
+        Displays garden-native events (service started/stopped, stone health).\n\
+        Press Ctrl+C to disconnect.\n\n\
+        Examples:\n  \
+        garden-rake presence                        # Connect to tended stone\n  \
+        garden-rake presence stone-01               # Connect to specific stone\n  \
+        garden-rake presence --at http://stone-01:7185  # Explicit endpoint"
+    )]
+    Presence {
+        /// Stone name (omit for tended stone)
+        stone: Option<String>,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
     /// Refresh (update) garden-moss or garden-rake binary on stone
     #[command(
         long_about = "Update garden-moss or garden-rake binary on a stone (development use).\n\n\
@@ -937,6 +956,10 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.push("watch".to_string());
             args.extend(parsed.args.clone());
         }
+        "presence" => {
+            args.push("presence".to_string());
+            args.extend(parsed.args.clone());
+        }
         "list" => {
             args.push("list".to_string());
             args.extend(parsed.args.clone());
@@ -1432,6 +1455,10 @@ async fn async_main() -> anyhow::Result<()> {
                 }
             };
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::Presence { stone, at } => {
+            commands::presence::presence_command(stone, at, &client, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
         }
 
         Commands::Template { command } => {

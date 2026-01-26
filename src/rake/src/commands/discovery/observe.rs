@@ -455,6 +455,32 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
     println!("{}", ui::place_value(&format!("{}        mDNS Name", indent), &mdns_name));
     println!("{}", ui::place_value(&format!("{}        IP Address", indent), ip_addr));
 
+    // === ENVIRONMENT SECTION ===
+    println!();
+    println!("{}    {}", indent, fmt.group("ENVIRONMENT"));
+    
+    // Operating System
+    if let Some(ref runtime) = caps.runtime {
+        // runtime.os format: "windows/Windows 11 Pro" or just "windows"
+        // Extract version if present, otherwise show OS family as-is
+        let os_display = if runtime.os.contains('/') {
+            let parts: Vec<&str> = runtime.os.split('/').collect();
+            if parts.len() == 2 {
+                parts[1]  // "Windows 11 Pro"
+            } else {
+                &runtime.os
+            }
+        } else {
+            &runtime.os  // "windows", "linux", etc.
+        };
+        println!("{}", ui::place_value(&format!("{}        Operating System", indent), os_display));
+        
+        // Docker (only show if available)
+        if let Some(ref docker_ver) = runtime.docker_version {
+            println!("{}", ui::place_value(&format!("{}        Docker", indent), docker_ver));
+        }
+    }
+
     // === HARDWARE SECTION ===
     println!();
     println!("{}    {}", indent, fmt.group("HARDWARE"));

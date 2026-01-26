@@ -198,11 +198,11 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Phase 10: Load ManifestRegistry (single source of truth for all manifests)
-    let sw_dir = std::path::Path::new(infra::RUNTIME_TEMPLATES_DIR);
-    let hw_dir = std::path::Path::new(infra::RUNTIME_HW_MANIFESTS_DIR);
-    let hw_dir_opt = if hw_dir.exists() { Some(hw_dir) } else { None };
+    let sw_dir = std::path::PathBuf::from(infra::runtime_manifests_dir()).join("sw");
+    let hw_dir = std::path::PathBuf::from(infra::runtime_manifests_dir()).join("hw");
+    let hw_dir_opt = if hw_dir.exists() { Some(hw_dir.as_path()) } else { None };
 
-    let manifest_registry = match infra::ManifestRegistry::load(sw_dir, hw_dir_opt) {
+    let manifest_registry = match infra::ManifestRegistry::load(&sw_dir, hw_dir_opt) {
         Ok(registry) => {
             console_printer.emit(console::ConsoleEvent::new(
                 console::EventCategory::Manifests,

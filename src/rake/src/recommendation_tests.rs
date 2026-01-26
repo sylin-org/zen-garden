@@ -31,8 +31,6 @@ fn caps_with_disk_type(disk_type: &str) -> garden_common::HardwareCapabilities {
                 disk_type: Some(disk_type.to_string()),
             }),
             storage: vec![],
-            os_version: None,
-            kernel_version: None,
             swap_mb: None,
             ai_capabilities: None,
             system_manufacturer: None,

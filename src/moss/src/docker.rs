@@ -41,6 +41,15 @@ impl DockerManager {
         self.docker.ping().await.is_ok()
     }
 
+    /// Get Docker version
+    pub async fn get_docker_version(&self) -> Result<String> {
+        let version = self.docker.version().await
+            .context("Failed to get Docker version")?;
+        
+        // Extract version string (e.g., "24.0.7")
+        Ok(version.version.unwrap_or_else(|| "unknown".to_string()))
+    }
+
     /// Stop a service container
     pub async fn stop_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
         let container_name = format!("zen-offering-{}", name);

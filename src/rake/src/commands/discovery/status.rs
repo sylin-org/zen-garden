@@ -112,12 +112,25 @@ impl Command for StatusCommand {
 
         println!("{}{}", indent, ui::place_value("MEMORY", &format!("{} GB", caps.hardware.memory.total_mb / 1024)));
 
-        // OS and Kernel
-        if let Some(ref os_ver) = caps.hardware.os_version {
-            println!("{}{}", indent, ui::place_value("OS", os_ver));
-        }
-        if let Some(ref kernel_ver) = caps.hardware.kernel_version {
-            println!("{}{}", indent, ui::place_value("KERNEL", kernel_ver));
+        // OS and Kernel (from RuntimeInfo)
+        if let Some(ref runtime) = caps.runtime {
+            // Parse runtime.os (format: "windows/Windows 11 Pro" or just "windows")
+            let os_display = if runtime.os.contains('/') {
+                let parts: Vec<&str> = runtime.os.split('/').collect();
+                parts.get(1).unwrap_or(&runtime.os.as_str()).to_string()
+            } else {
+                match runtime.os.as_str() {
+                    "windows" => "Windows".to_string(),
+                    "linux" => "Linux".to_string(),
+                    "macos" => "macOS".to_string(),
+                    other => other.to_string(),
+                }
+            };
+            println!("{}{}", indent, ui::place_value("OS", &os_display));
+            
+            if let Some(ref kernel_ver) = runtime.kernel {
+                println!("{}{}", indent, ui::place_value("KERNEL", kernel_ver));
+            }
         }
 
         // === STORAGE SECTION ===

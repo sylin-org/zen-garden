@@ -68,7 +68,13 @@ impl DetectionOrchestrator {
         &self,
         manifest: &OfferingManifest,
     ) -> Result<AggregatedDetectionResult> {
-        if manifest.detection.is_empty() {
+        // Get detection rules for current OS
+        let rules = match &manifest.detection {
+            Some(os_rules) => os_rules.get_current_os_rules(),
+            None => Vec::new(),
+        };
+
+        if rules.is_empty() {
             return Ok(AggregatedDetectionResult {
                 detected: false,
                 stable: false,
@@ -81,7 +87,7 @@ impl DetectionOrchestrator {
         // Try detection rules in order (first match wins)
         let mut methods_tried = 0;
 
-        for rule in &manifest.detection {
+        for rule in &rules {
             methods_tried += 1;
 
             let cache_key = format!("{}:{:?}", manifest.name, rule.method);

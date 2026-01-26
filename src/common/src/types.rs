@@ -96,6 +96,9 @@ pub struct DaemonHealthStatus {
     pub version: String,  // Software version (e.g., "0.1.202601231053")
     pub timestamp: String,  // ISO 8601 timestamp
     pub components: HashMap<String, ComponentHealth>,
+    // Platform information for deployment tools
+    pub os: String,  // Operating system (e.g., "windows", "linux", "macos")
+    pub architecture: String,  // CPU architecture (e.g., "x86_64", "aarch64")
     // Legacy fields for backward compatibility
     #[serde(skip_serializing)]
     pub docker_available: bool,
@@ -289,10 +292,6 @@ pub struct HardwareInventory {
     pub disk: Option<DiskCapabilities>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub storage: Vec<StorageDevice>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub os_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub kernel_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub swap_mb: Option<u64>,
 

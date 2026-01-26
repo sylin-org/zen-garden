@@ -172,11 +172,11 @@ pub async fn detect_capabilities_background(
                 gpus: vec![],
                 disk: None,
                 storage: vec![],
-                os_version: None,
-                kernel_version: None,
                 swap_mb: None,
-                ai_capabilities: None,                system_manufacturer: None,
-                system_product: None,            },
+                ai_capabilities: None,
+                system_manufacturer: None,
+                system_product: None,
+            },
             runtime: Some(RuntimeInfo {
                 docker_version: None,
                 os: std::env::consts::OS.to_string(),
@@ -255,11 +255,19 @@ pub async fn detect_capabilities_background(
             true  // detection_complete = true
         ));
 
-        // Update storage and system info fields
+        // Update storage and swap
         caps.hardware.storage = storage;
-        caps.hardware.os_version = os_version;
-        caps.hardware.kernel_version = kernel_version;
         caps.hardware.swap_mb = swap_mb;
+        
+        // Update runtime info with OS version and kernel
+        if let Some(ref mut runtime) = caps.runtime {
+            // Enhance OS string with version
+            if let Some(ref os_ver) = os_version {
+                let os_family = runtime.os.split('/').next().unwrap_or(&runtime.os);
+                runtime.os = format!("{}/{}", os_family, os_ver);
+            }
+            runtime.kernel = kernel_version;
+        }
 
         // Mark detection as complete
         caps.detection_status = DetectionStatus::Complete;

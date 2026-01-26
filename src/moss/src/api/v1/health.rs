@@ -60,6 +60,26 @@ pub async fn get_health(
     let memory_ok = memory_check.status != garden_common::CHECK_FAIL;
     let uptime_seconds = state.start_time.elapsed().as_secs();
 
+    // Platform information from capabilities
+    let caps_guard = state.capabilities.read().await;
+    let (os, architecture) = if let Some(caps) = caps_guard.as_ref() {
+        // Extract OS family from "family/version" format (e.g., "windows/Windows 11" -> "windows")
+        let os_family = caps
+            .runtime
+            .as_ref()
+            .map(|r| r.os.split('/').next().unwrap_or("unknown").to_string())
+            .unwrap_or_else(|| std::env::consts::OS.to_string());
+        
+        let arch = caps.hardware.cpu.architecture.clone();
+        (os_family, arch)
+    } else {
+        // Fallback to compile-time detection
+        (
+            std::env::consts::OS.to_string(),
+            std::env::consts::ARCH.to_string(),
+        )
+    };
+
     (
         http_status,
         Json(DaemonHealthStatus {
@@ -67,6 +87,8 @@ pub async fn get_health(
             version: crate::cli::VERSION.to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
             components,
+            os,
+            architecture,
             docker_available: docker_ok,
             disk_space_ok: disk_ok,
             memory_ok,

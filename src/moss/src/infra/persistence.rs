@@ -113,49 +113,42 @@ async fn atomic_write<T: serde::Serialize, P: AsRef<std::path::Path>>(
     }
 }
 
-/// Stone ID file path
-fn stone_id_path() -> PathBuf {
-    PathBuf::from(garden_common::names::CONFIG_DIR).join("stone-id")
-}
-
-/// Load or generate the stone ID (GUID v7)
+/// Load or generate the stone ID (hardware-based)
 ///
-/// The stone ID is a persistent, immutable identifier for this stone.
-/// It survives hostname changes, IP changes, and most upgrades.
-/// Generated once on first boot using GUID v7 (timestamp-encoded).
+/// The stone ID is a persistent, hardware-derived identifier for this stone.
+/// It survives hostname changes, IP changes, OS reinstalls, and most hardware upgrades.
+/// Uses GUIDv5 (SHA-1 namespace) derived from stable hardware characteristics.
+///
+/// ## Strategy:
+/// 1. Try to load from cache (hardware-id file)
+/// 2. Generate from hardware characteristics (motherboard UUID, machine GUID, etc.)
+/// 3. Cache the result for faster subsequent boots
+///
+/// The hardware-based approach ensures the same physical machine always gets
+/// the same stone ID, even after reinstalling the OS or deleting all Zen Garden data.
 pub async fn load_or_generate_stone_id() -> String {
-    let path = stone_id_path();
-
-    // Try to load existing stone ID
-    if let Ok(content) = tokio::fs::read_to_string(&path).await {
-        let id = content.trim().to_string();
-        if !id.is_empty() {
-            tracing::debug!(stone_id = %id, "Loaded existing stone ID");
-            return id;
-        }
+    // Check if we have a cached hardware ID
+    if let Some(cached_id) = super::hardware_id::load_cached_hardware_id().await {
+        tracing::debug!(stone_id = %cached_id, "Loaded cached hardware-based stone ID");
+        return cached_id;
     }
 
-    // Generate new stone ID (GUID v7 for timestamp ordering)
-    let new_id = uuid::Uuid::now_v7().to_string();
-    tracing::info!(stone_id = %new_id, "Generated new stone ID");
+    // Generate new hardware-based ID
+    let hw_id = super::hardware_id::generate_hardware_id().await;
+    tracing::info!(
+        stone_id = %hw_id,
+        "Generated hardware-based stone ID (will be stable for this physical machine)"
+    );
 
-    // Persist to disk
-    if let Err(e) = save_stone_id(&new_id).await {
-        tracing::warn!(error = ?e, "Failed to persist stone ID (will regenerate on restart)");
+    // Cache it for faster subsequent boots
+    if let Err(e) = super::hardware_id::save_hardware_id_cache(&hw_id).await {
+        tracing::warn!(
+            error = ?e,
+            "Failed to cache hardware ID (will regenerate on next boot, but same result)"
+        );
     }
 
-    new_id
-}
-
-/// Save stone ID to disk
-async fn save_stone_id(stone_id: &str) -> Result<()> {
-    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
-    tokio::fs::create_dir_all(&dir).await?;
-
-    let path = stone_id_path();
-    tokio::fs::write(&path, stone_id).await?;
-    tracing::debug!(path = ?path, "Persisted stone ID");
-    Ok(())
+    hw_id
 }
 
 #[cfg(test)]

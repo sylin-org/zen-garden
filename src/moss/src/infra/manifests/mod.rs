@@ -6,6 +6,6 @@
 // Re-export everything from common
 pub use garden_common::manifests::{
     HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR,
-    SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, RUNTIME_TEMPLATES_DIR,
+    SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, runtime_manifests_dir,
     ManifestRegistry, RUNTIME_MANIFESTS_DIR,
 };

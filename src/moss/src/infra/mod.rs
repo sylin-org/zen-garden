@@ -22,6 +22,7 @@ pub mod detection;
 pub mod filesystem;
 pub mod firmware;
 pub mod hardware;
+pub mod hardware_id;
 pub mod harvest;
 pub mod harvest_store;
 pub mod manifests;
@@ -40,8 +41,9 @@ pub use process::{kill_existing_moss_processes_graceful, check_moss_processes_ex
 pub use service::{install_windows_service, finalize_service_update, cleanup_after_service_update};
 pub use filesystem::FileSystem;
 pub use hardware::{detect_hardware, load_cached_capabilities, save_capabilities_cache, create_skeleton};
+pub use hardware_id::{generate_hardware_id, load_cached_hardware_id, save_hardware_id_cache};
 pub use manifests::{ManifestRegistry, SwManifests, SwEntry, HwManifests, HwEntry};
-pub use manifests::{RUNTIME_TEMPLATES_DIR, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
+pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
 pub use persistence::{load_registry, save_registry, save_registry_vec, load_offerings_cache, save_offerings_cache, load_or_generate_stone_id};
 pub use garden_common::infra::platform::{is_running_from_removable_media, shutdown_signal};
 pub use secrets::SecretsManager;

@@ -50,9 +50,11 @@ pub struct OfferingManifest {
     pub volumes: Vec<(String, String)>,
 
     // ===== Adopted Mode Configuration =====
-    /// Detection rules for adopted mode (optional)
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub detection: Vec<DetectionRule>,
+    /// Detection rules for adopted mode (OS-specific)
+    /// Structure: { "windows": [...], "linux": [...], "macos": [...] }
+    /// Moss loads only the rules for current OS
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub detection: Option<OsDetectionRules>,
 
     /// Control configuration for adopted offerings
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -74,6 +76,36 @@ pub struct OfferingManifest {
 
 fn default_modes() -> Vec<OfferingMode> {
     vec![OfferingMode::Managed]
+}
+
+/// OS-specific detection rules
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsDetectionRules {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub windows: Option<Vec<DetectionRule>>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub linux: Option<Vec<DetectionRule>>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub macos: Option<Vec<DetectionRule>>,
+}
+
+impl OsDetectionRules {
+    /// Get detection rules for the current OS
+    pub fn get_current_os_rules(&self) -> Vec<DetectionRule> {
+        #[cfg(target_os = "windows")]
+        return self.windows.clone().unwrap_or_default();
+
+        #[cfg(target_os = "linux")]
+        return self.linux.clone().unwrap_or_default();
+
+        #[cfg(target_os = "macos")]
+        return self.macos.clone().unwrap_or_default();
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        Vec::new()
+    }
 }
 
 /// Detection rule for adopted offerings
@@ -119,7 +151,7 @@ pub enum DetectionConfig {
 /// Command-based detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDetection {
-    /// Command to execute (e.g., "mongod --version")
+    /// Command to execute (e.g., "ollama --version", "mongod --version")
     pub command: String,
 
     /// Expected output pattern (regex)
@@ -230,7 +262,7 @@ mod tests {
             ports: vec![(27017, 27017)],
             environment: vec![],
             volumes: vec![],
-            detection: vec![],
+            detection: None,
             control: None,
             location: None,
             health: None,
@@ -261,16 +293,20 @@ mod tests {
             ports: vec![],
             environment: vec![],
             volumes: vec![],
-            detection: vec![DetectionRule {
-                method: DetectionMethod::Command,
-                config: DetectionConfig::Command(CommandDetection {
-                    command: "ollama --version".into(),
-                    expected_pattern: None,
-                    expected_exit_code: None,
-                }),
-                stability_threshold: None,
-                cache_ttl_secs: None,
-            }],
+            detection: Some(OsDetectionRules {
+                windows: Some(vec![DetectionRule {
+                    method: DetectionMethod::Command,
+                    config: DetectionConfig::Command(CommandDetection {
+                        command: "ollama --version".into(),
+                        expected_pattern: None,
+                        expected_exit_code: None,
+                    }),
+                    stability_threshold: None,
+                    cache_ttl_secs: None,
+                }]),
+                linux: None,
+                macos: None,
+            }),
             control: None,
             location: None,
             health: None,
@@ -295,7 +331,7 @@ mod tests {
             ports: vec![],
             environment: vec![],
             volumes: vec![],
-            detection: vec![],
+            detection: None,
             control: None,
             location: Some(LocationConfig {
                 host: "nas.local".into(),

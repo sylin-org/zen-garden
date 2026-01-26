@@ -27,10 +27,12 @@ pub async fn detect_by_command(
     config: &CommandDetection,
     timeout: Duration,
 ) -> Result<DetectionResult> {
-    tracing::debug!(command = %config.command, "Executing command detection");
+    let command = &config.command;
+
+    tracing::debug!(command = %command, os = std::env::consts::OS, "Executing command detection");
 
     // Parse command into program and args
-    let parts: Vec<&str> = config.command.split_whitespace().collect();
+    let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() {
         anyhow::bail!("Empty command");
     }
@@ -61,7 +63,7 @@ pub async fn detect_by_command(
     let actual_code = output.status.code().unwrap_or(-1);
     if actual_code != expected_code {
         tracing::debug!(
-            command = %config.command,
+            command = %command,
             expected = expected_code,
             actual = actual_code,
             "Command exit code mismatch"
@@ -84,7 +86,7 @@ pub async fn detect_by_command(
 
         if !pattern.is_match(&combined) {
             tracing::debug!(
-                command = %config.command,
+                command = %command,
                 pattern = %pattern_str,
                 "Command output pattern mismatch"
             );
@@ -99,7 +101,7 @@ pub async fn detect_by_command(
         let version = extract_version(&combined);
 
         tracing::info!(
-            command = %config.command,
+            command = %command,
             version = ?version,
             "Service detected via command"
         );
@@ -107,7 +109,7 @@ pub async fn detect_by_command(
         return Ok(DetectionResult {
             detected: true,
             version,
-            details: format!("Detected via command: {}", config.command),
+            details: format!("Detected via command: {}", command),
         });
     }
 
@@ -116,7 +118,7 @@ pub async fn detect_by_command(
     let version = extract_version(&stdout);
 
     tracing::info!(
-        command = %config.command,
+        command = %command,
         version = ?version,
         "Service detected via command"
     );
@@ -124,7 +126,7 @@ pub async fn detect_by_command(
     Ok(DetectionResult {
         detected: true,
         version,
-        details: format!("Detected via command: {}", config.command),
+        details: format!("Detected via command: {}", command),
     })
 }
 

@@ -60,8 +60,6 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_recklessly_skips_collect() {
         // Unit test would need mocked AppState

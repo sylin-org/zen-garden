@@ -41,6 +41,23 @@ pub fn join_non_empty(parts: &[&str], separator: &str) -> String {
         .join(separator)
 }
 
+/// Strip UTF-8 BOM (Byte Order Mark) from string
+///
+/// Windows editors often save JSON/text files with UTF-8 BOM (EF BB BF),
+/// which causes parsers to fail. This removes the BOM if present.
+///
+/// ## Example
+/// ```rust
+/// use garden_common::utils::strings::strip_bom;
+///
+/// let with_bom = "\u{FEFF}{\"key\": \"value\"}";
+/// let without_bom = strip_bom(with_bom);
+/// assert_eq!(without_bom, "{\"key\": \"value\"}");
+/// ```
+pub fn strip_bom(s: &str) -> &str {
+    s.trim_start_matches('\u{FEFF}')
+}
+
 /// Convert string to kebab-case (lowercase with hyphens)
 pub fn to_kebab_case(s: &str) -> String {
     s.chars()

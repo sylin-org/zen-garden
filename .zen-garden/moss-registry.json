@@ -1,0 +1,14 @@
+[
+  {
+    "name": "redis",
+    "offering": "redis",
+    "version": "latest",
+    "status": "Running",
+    "health": "Healthy",
+    "ports": {
+      "native": 6379,
+      "agnostic": null
+    },
+    "resources": null
+  }
+]

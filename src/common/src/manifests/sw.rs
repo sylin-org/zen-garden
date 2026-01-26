@@ -14,12 +14,47 @@ use std::path::Path;
 
 use super::discover_subdirectories;
 
-/// Runtime templates directory (platform-specific)
-#[cfg(target_os = "windows")]
-pub const RUNTIME_TEMPLATES_DIR: &str = "C:\\ProgramData\\ZenGarden\\templates";
-
-#[cfg(not(target_os = "windows"))]
-pub const RUNTIME_TEMPLATES_DIR: &str = "/etc/zen-garden/templates";
+/// Get runtime manifests directory (uses platform-aware paths)
+pub fn runtime_manifests_dir() -> String {
+    // 1. Check explicit override (deployment/testing)
+    if let Ok(dir) = std::env::var("GARDEN_MANIFESTS_DIR") {
+        return dir;
+    }
+    
+    // 2. Check production location ({data_dir}/manifests)
+    let production_dir = format!("{}/manifests", crate::constants::paths::data_dir());
+    if std::path::Path::new(&production_dir).exists() {
+        return production_dir;
+    }
+    
+    // 3. Dev fallback: Check if we're in repo (manifests/ exists in current or parent dirs)
+    if let Ok(current_dir) = std::env::current_dir() {
+        // Check current directory
+        let repo_manifests = current_dir.join("manifests");
+        if repo_manifests.exists() {
+            return repo_manifests.to_string_lossy().to_string();
+        }
+        
+        // Check parent (common when running from dist/windows or target/release)
+        if let Some(parent) = current_dir.parent() {
+            let parent_manifests = parent.join("manifests");
+            if parent_manifests.exists() {
+                return parent_manifests.to_string_lossy().to_string();
+            }
+            
+            // Check grandparent (for target/release -> repo root)
+            if let Some(grandparent) = parent.parent() {
+                let grandparent_manifests = grandparent.join("manifests");
+                if grandparent_manifests.exists() {
+                    return grandparent_manifests.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+    
+    // 4. Fallback to production path (will fail gracefully if not found)
+    production_dir
+}
 
 // ============================================================================
 // Service Template Types
@@ -242,16 +277,20 @@ impl SwManifests {
         let frontmatter_path = category_dir.join(format!("{}.frontmatter.json", offering_name));
         let frontmatter = if frontmatter_path.exists() {
             match std::fs::read_to_string(&frontmatter_path) {
-                Ok(json) => match serde_json::from_str::<SwFrontmatter>(&json) {
-                    Ok(fm) => Some(fm),
-                    Err(e) => {
-                        tracing::warn!(
-                            offering = offering_name,
-                            path = %frontmatter_path.display(),
-                            error = %e,
-                            "Failed to parse frontmatter"
-                        );
-                        None
+                Ok(json) => {
+                    // Strip UTF-8 BOM if present (Windows issue)
+                    let json = crate::utils::strings::strip_bom(&json);
+                    match serde_json::from_str::<SwFrontmatter>(json) {
+                        Ok(fm) => Some(fm),
+                        Err(e) => {
+                            tracing::warn!(
+                                offering = offering_name,
+                                path = ?frontmatter_path,
+                                error = %e,
+                                "Failed to parse frontmatter"
+                            );
+                            None
+                        }
                     }
                 },
                 Err(e) => {

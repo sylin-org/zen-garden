@@ -250,14 +250,40 @@ pub async fn set_hostname(name: &str) -> Result<()> {
 ///
 /// This is the source of truth for what will be announced over mDNS (`<hostname>.local`).
 pub async fn get_hostname() -> Result<String> {
-    let content = tokio::fs::read_to_string("/etc/hostname")
-        .await
-        .context("Failed to read /etc/hostname")?;
-    let hostname = content.trim().to_string();
-    if hostname.is_empty() {
-        anyhow::bail!("/etc/hostname was empty");
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: Use ComputerName from environment or hostname command
+        if let Ok(name) = std::env::var("COMPUTERNAME") {
+            if !name.is_empty() {
+                return Ok(name.to_lowercase());
+            }
+        }
+        
+        // Fallback: Use hostname command
+        match tokio::process::Command::new("hostname").output().await {
+            Ok(output) if output.status.success() => {
+                let hostname = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !hostname.is_empty() {
+                    return Ok(hostname.to_lowercase());
+                }
+            }
+            _ => {}
+        }
+        
+        anyhow::bail!("Failed to get Windows hostname");
     }
-    Ok(hostname)
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        let content = tokio::fs::read_to_string("/etc/hostname")
+            .await
+            .context("Failed to read /etc/hostname")?;
+        let hostname = content.trim().to_string();
+        if hostname.is_empty() {
+            anyhow::bail!("/etc/hostname was empty");
+        }
+        Ok(hostname)
+    }
 }
 
 /// Update /etc/hosts to reflect a hostname change.

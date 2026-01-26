@@ -1,0 +1,968 @@
+{
+  "fingerprint": {
+    "moss_version": "0.1.0.dev",
+    "capabilities_hash": "7bc5076794c67b9508817ad8e29d1ec423bfb48925499b36a9c30c39a223e6dc",
+    "templates_hash": "de3836b986da38deffe2ddb28d02ff984aa96494837db59ca092782ebe2b7c44"
+  },
+  "generated_at": "2026-01-26T03:25:49.071936900+00:00",
+  "offerings": [
+    {
+      "name": "aspire",
+      "category": "observability",
+      "description": "Aspire dashboard observability",
+      "tags": [
+        "observability",
+        "dashboard",
+        "metrics",
+        "tracing"
+      ],
+      "image": "mcr.microsoft.com/dotnet/aspire-dashboard:latest",
+      "ports": [
+        [
+          18888,
+          18888
+        ],
+        [
+          4317,
+          18889
+        ]
+      ],
+      "environment": [
+        "DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true"
+      ],
+      "volumes": [],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "authelia",
+      "category": "auth",
+      "description": "Authentication and authorization server with 2FA/SSO (Apache 2.0)",
+      "tags": [
+        "authentication",
+        "authorization",
+        "sso",
+        "2fa",
+        "totp",
+        "security"
+      ],
+      "image": "authelia/authelia:4.38",
+      "ports": [
+        [
+          9091,
+          9091
+        ]
+      ],
+      "environment": [
+        "TZ=UTC"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/authelia-config",
+          "/config"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "couchbase",
+      "category": "data",
+      "description": "Couchbase NoSQL database",
+      "tags": [
+        "database",
+        "document",
+        "nosql",
+        "cache"
+      ],
+      "image": "couchbase:community",
+      "ports": [
+        [
+          11210,
+          11210
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/couchbase-data",
+          "/opt/couchbase/var"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "elasticsearch",
+      "category": "search",
+      "description": "Elasticsearch search and analytics engine (AGPL/SSPL licensed)",
+      "tags": [
+        "search",
+        "database",
+        "document",
+        "analytics",
+        "full-text",
+        "vector"
+      ],
+      "image": "docker.elastic.co/elasticsearch/elasticsearch:8.17.0",
+      "ports": [
+        [
+          9200,
+          9200
+        ],
+        [
+          9300,
+          9300
+        ]
+      ],
+      "environment": [
+        "discovery.type=single-node",
+        "xpack.security.enabled=false",
+        "ES_JAVA_OPTS=-Xms512m -Xmx512m",
+        "cluster.name=zen-garden-es"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/elasticsearch-data",
+          "/usr/share/elasticsearch/data"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "grafana",
+      "category": "observability",
+      "description": "Grafana visualization and dashboards (AGPL v3)",
+      "tags": [
+        "monitoring",
+        "visualization",
+        "dashboards",
+        "metrics",
+        "logs",
+        "observability"
+      ],
+      "image": "grafana/grafana-oss:11.4.0",
+      "ports": [
+        [
+          3000,
+          3000
+        ]
+      ],
+      "environment": [
+        "GF_SECURITY_ADMIN_USER=admin",
+        "GF_SECURITY_ADMIN_PASSWORD=admin",
+        "GF_USERS_ALLOW_SIGN_UP=false"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/grafana-data",
+          "/var/lib/grafana"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "homepage",
+      "category": "dashboard",
+      "description": "Modern application dashboard with service integrations (GPL-3.0)",
+      "tags": [
+        "dashboard",
+        "startpage",
+        "homepage",
+        "docker",
+        "monitoring"
+      ],
+      "image": "ghcr.io/gethomepage/homepage:v0.9.13",
+      "ports": [
+        [
+          3001,
+          3000
+        ]
+      ],
+      "environment": [
+        "PUID=1000",
+        "PGID=1000"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/homepage-config",
+          "/app/config"
+        ],
+        [
+          "/var/run/docker.sock",
+          "/var/run/docker.sock"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "influxdb",
+      "category": "timeseries",
+      "description": "Time series database for metrics and IoT (MIT)",
+      "tags": [
+        "timeseries",
+        "metrics",
+        "iot",
+        "monitoring",
+        "database"
+      ],
+      "image": "influxdb:2.7-alpine",
+      "ports": [
+        [
+          8086,
+          8086
+        ]
+      ],
+      "environment": [
+        "DOCKER_INFLUXDB_INIT_MODE=setup",
+        "DOCKER_INFLUXDB_INIT_USERNAME=admin",
+        "DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword",
+        "DOCKER_INFLUXDB_INIT_ORG=zen-garden",
+        "DOCKER_INFLUXDB_INIT_BUCKET=default",
+        "DOCKER_INFLUXDB_INIT_RETENTION=7d"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/influxdb-data",
+          "/var/lib/influxdb2"
+        ],
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/influxdb-config",
+          "/etc/influxdb2"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "mariadb",
+      "category": "data",
+      "description": "MariaDB relational database (MySQL-compatible, GPL licensed)",
+      "tags": [
+        "database",
+        "relational",
+        "sql",
+        "mysql-compatible",
+        "acid"
+      ],
+      "image": "mariadb:11",
+      "ports": [
+        [
+          3306,
+          3306
+        ]
+      ],
+      "environment": [
+        "MARIADB_ROOT_PASSWORD=mariadb",
+        "MARIADB_DATABASE=zendb"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/mariadb-data",
+          "/var/lib/mysql"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "memcached",
+      "category": "cache",
+      "description": "Memcached distributed memory caching system",
+      "tags": [
+        "cache",
+        "inmemory",
+        "keyvalue",
+        "distributed"
+      ],
+      "image": "memcached:1.6",
+      "ports": [
+        [
+          11211,
+          11211
+        ]
+      ],
+      "environment": [],
+      "volumes": [],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "milvus",
+      "category": "vector",
+      "description": "Milvus vector database (standalone mode, resource-heavy)",
+      "tags": [
+        "vector",
+        "database",
+        "embeddings",
+        "ai",
+        "similarity-search",
+        "hnsw",
+        "ivf"
+      ],
+      "image": "milvusdb/milvus:v2.5.4",
+      "ports": [
+        [
+          19530,
+          19530
+        ],
+        [
+          9091,
+          9091
+        ]
+      ],
+      "environment": [
+        "ETCD_USE_EMBED=true",
+        "ETCD_DATA_DIR=/var/lib/milvus/etcd",
+        "ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml",
+        "COMMON_STORAGETYPE=local"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/milvus-data",
+          "/var/lib/milvus"
+        ]
+      ],
+      "compatibility": {
+        "decision": "fail",
+        "reason": "Milvus requires at least one SIMD instruction set: SSE4.2, AVX, AVX2, or AVX512",
+        "original_image": "milvusdb/milvus:v2.5.4",
+        "suggestion": "Use a newer x86_64 CPU with SIMD support, or switch to pgvector"
+      }
+    },
+    {
+      "name": "minio",
+      "category": "storage",
+      "description": "S3-compatible object storage (Apache 2.0)",
+      "tags": [
+        "s3",
+        "object-storage",
+        "backup",
+        "artifacts",
+        "blob"
+      ],
+      "image": "minio/minio:RELEASE.2024-12-18T13-15-44Z",
+      "ports": [
+        [
+          9000,
+          9000
+        ],
+        [
+          9001,
+          9001
+        ]
+      ],
+      "environment": [
+        "MINIO_ROOT_USER=minioadmin",
+        "MINIO_ROOT_PASSWORD=minioadmin"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/minio-data",
+          "/data"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "mongodb",
+      "category": "data",
+      "description": "MongoDB NoSQL database",
+      "tags": [
+        "database",
+        "document",
+        "nosql"
+      ],
+      "image": "mongo:7",
+      "ports": [
+        [
+          27017,
+          27017
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/mongo-data",
+          "/data/db"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "n8n",
+      "category": "automation",
+      "description": "Workflow automation platform with 400+ integrations (Sustainable Use License)",
+      "tags": [
+        "workflow",
+        "automation",
+        "integration",
+        "zapier-alternative",
+        "low-code"
+      ],
+      "image": "n8nio/n8n:1.72.1",
+      "ports": [
+        [
+          5678,
+          5678
+        ]
+      ],
+      "environment": [
+        "N8N_HOST=0.0.0.0",
+        "N8N_PORT=5678",
+        "N8N_PROTOCOL=http",
+        "WEBHOOK_URL=http://localhost:5678/",
+        "N8N_METRICS=true",
+        "N8N_RUNNERS_ENABLED=true",
+        "GENERIC_TIMEZONE=UTC"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/n8n-data",
+          "/home/node/.n8n"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "nats",
+      "category": "messaging",
+      "description": "NATS lightweight messaging (Apache 2.0)",
+      "tags": [
+        "messaging",
+        "pubsub",
+        "queue",
+        "lightweight",
+        "jetstream",
+        "edge"
+      ],
+      "image": "nats:2.10-alpine",
+      "ports": [
+        [
+          4222,
+          4222
+        ],
+        [
+          8222,
+          8222
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/nats-data",
+          "/data"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "nextcloud",
+      "category": "storage",
+      "description": "Self-hosted cloud platform for files, calendar, contacts (AGPL v3)",
+      "tags": [
+        "cloud",
+        "files",
+        "sync",
+        "calendar",
+        "contacts",
+        "collaboration"
+      ],
+      "image": "nextcloud:30-apache",
+      "ports": [
+        [
+          8080,
+          80
+        ]
+      ],
+      "environment": [
+        "MYSQL_HOST=",
+        "MYSQL_DATABASE=nextcloud",
+        "MYSQL_USER=nextcloud",
+        "MYSQL_PASSWORD=nextcloud",
+        "NEXTCLOUD_ADMIN_USER=admin",
+        "NEXTCLOUD_ADMIN_PASSWORD=admin",
+        "NEXTCLOUD_TRUSTED_DOMAINS=localhost",
+        "PHP_MEMORY_LIMIT=512M",
+        "PHP_UPLOAD_LIMIT=10G"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/nextcloud-data",
+          "/var/www/html"
+        ],
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/nextcloud-apps",
+          "/var/www/html/custom_apps"
+        ],
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/nextcloud-config",
+          "/var/www/html/config"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "ollama",
+      "category": "ai",
+      "description": "Ollama local LLM runtime (MIT licensed)",
+      "tags": [
+        "ai",
+        "llm",
+        "inference",
+        "models",
+        "gpu",
+        "cuda",
+        "local-ai"
+      ],
+      "image": "ollama/ollama:0.5",
+      "ports": [
+        [
+          11434,
+          11434
+        ]
+      ],
+      "environment": [
+        "OLLAMA_HOST=0.0.0.0:11434"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/ollama-data",
+          "/root/.ollama"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "opensearch",
+      "category": "search",
+      "description": "OpenSearch search and analytics (Apache 2.0, Linux Foundation)",
+      "tags": [
+        "search",
+        "database",
+        "document",
+        "analytics",
+        "full-text",
+        "vector",
+        "observability"
+      ],
+      "image": "opensearchproject/opensearch:2.18.0",
+      "ports": [
+        [
+          9200,
+          9200
+        ],
+        [
+          9300,
+          9300
+        ]
+      ],
+      "environment": [
+        "discovery.type=single-node",
+        "DISABLE_SECURITY_PLUGIN=true",
+        "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m",
+        "cluster.name=zen-garden-os",
+        "bootstrap.memory_lock=true"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/opensearch-data",
+          "/usr/share/opensearch/data"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "pihole",
+      "category": "networking",
+      "description": "Network-wide ad blocking DNS sinkhole (EUPL v1.2)",
+      "tags": [
+        "dns",
+        "ad-blocking",
+        "privacy",
+        "network",
+        "dhcp"
+      ],
+      "image": "pihole/pihole:2024.07.0",
+      "ports": [],
+      "environment": [
+        "TZ=UTC",
+        "WEBPASSWORD=pihole",
+        "DNSMASQ_LISTENING=all"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/pihole-data",
+          "/etc/pihole"
+        ],
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/pihole-dnsmasq",
+          "/etc/dnsmasq.d"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "postgresql",
+      "category": "data",
+      "description": "PostgreSQL relational database with pgvector extension",
+      "tags": [
+        "database",
+        "relational",
+        "sql",
+        "vector",
+        "embeddings"
+      ],
+      "image": "pgvector/pgvector:pg16",
+      "ports": [
+        [
+          5432,
+          5432
+        ]
+      ],
+      "environment": [
+        "POSTGRES_PASSWORD=postgres"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/postgres-data",
+          "/var/lib/postgresql/data"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "prometheus",
+      "category": "observability",
+      "description": "Prometheus metrics collection and alerting (Apache 2.0, CNCF)",
+      "tags": [
+        "monitoring",
+        "metrics",
+        "alerting",
+        "tsdb",
+        "observability"
+      ],
+      "image": "prom/prometheus:v2.54.0",
+      "ports": [
+        [
+          9090,
+          9090
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/prometheus-data",
+          "/prometheus"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "rabbitmq",
+      "category": "messaging",
+      "description": "RabbitMQ message broker with management UI",
+      "tags": [
+        "messaging",
+        "queue",
+        "broker",
+        "amqp",
+        "mqtt",
+        "stomp",
+        "streams"
+      ],
+      "image": "rabbitmq:3-management-alpine",
+      "ports": [
+        [
+          5672,
+          5672
+        ],
+        [
+          15672,
+          15672
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/rabbitmq-data",
+          "/var/lib/rabbitmq"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "redis",
+      "category": "cache",
+      "description": "Redis Stack in-memory data store with search, JSON, and vector capabilities",
+      "tags": [
+        "database",
+        "cache",
+        "keyvalue",
+        "inmemory",
+        "search",
+        "vector",
+        "json"
+      ],
+      "image": "redis/redis-stack:latest",
+      "ports": [
+        [
+          6379,
+          6379
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/redis-data",
+          "/data"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "registry",
+      "category": "devops",
+      "description": "Private Docker container registry (Apache 2.0)",
+      "tags": [
+        "docker",
+        "container",
+        "registry",
+        "oci",
+        "images"
+      ],
+      "image": "registry:2.8",
+      "ports": [
+        [
+          5000,
+          5000
+        ]
+      ],
+      "environment": [
+        "REGISTRY_STORAGE_DELETE_ENABLED=true",
+        "REGISTRY_HTTP_ADDR=0.0.0.0:5000"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/registry-data",
+          "/var/lib/registry"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "sqlserver",
+      "category": "data",
+      "description": "Microsoft SQL Server database",
+      "tags": [
+        "database",
+        "relational",
+        "sql",
+        "microsoft"
+      ],
+      "image": "mcr.microsoft.com/mssql/server:2022-latest",
+      "ports": [
+        [
+          1433,
+          1433
+        ]
+      ],
+      "environment": [
+        "ACCEPT_EULA=Y",
+        "MSSQL_SA_PASSWORD=YourStrong@Passw0rd"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/sqlserver-data",
+          "/var/opt/mssql"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "traefik",
+      "category": "proxy",
+      "description": "Cloud-native reverse proxy with auto-discovery (MIT)",
+      "tags": [
+        "reverse-proxy",
+        "load-balancer",
+        "ssl",
+        "letsencrypt",
+        "ingress"
+      ],
+      "image": "traefik:v3.2",
+      "ports": [
+        [
+          80,
+          80
+        ],
+        [
+          443,
+          443
+        ],
+        [
+          8080,
+          8080
+        ]
+      ],
+      "environment": [],
+      "volumes": [
+        [
+          "/var/run/docker.sock",
+          "/var/run/docker.sock"
+        ],
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/traefik-certs",
+          "/letsencrypt"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "vault",
+      "category": "secrets",
+      "description": "HashiCorp Vault secrets management (BSL licensed)",
+      "tags": [
+        "secrets",
+        "security",
+        "pki",
+        "encryption",
+        "identity"
+      ],
+      "image": "hashicorp/vault:1.18",
+      "ports": [
+        [
+          8200,
+          8200
+        ]
+      ],
+      "environment": [
+        "VAULT_DEV_ROOT_TOKEN_ID=root",
+        "VAULT_ADDR=http://127.0.0.1:8200"
+      ],
+      "volumes": [],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "weaviate",
+      "category": "vector",
+      "description": "Weaviate open-source vector database for AI applications",
+      "tags": [
+        "vector",
+        "database",
+        "embeddings",
+        "ai",
+        "search",
+        "semantic"
+      ],
+      "image": "cr.weaviate.io/semitechnologies/weaviate:1.35",
+      "ports": [
+        [
+          8080,
+          8080
+        ],
+        [
+          50051,
+          50051
+        ]
+      ],
+      "environment": [
+        "AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true",
+        "PERSISTENCE_DATA_PATH=/var/lib/weaviate",
+        "QUERY_DEFAULTS_LIMIT=25",
+        "CLUSTER_HOSTNAME=weaviate"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/weaviate-data",
+          "/var/lib/weaviate"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    },
+    {
+      "name": "wireguard",
+      "category": "networking",
+      "description": "Fast, modern VPN for secure remote access (GPL v2)",
+      "tags": [
+        "vpn",
+        "tunnel",
+        "security",
+        "remote-access",
+        "network"
+      ],
+      "image": "lscr.io/linuxserver/wireguard:1.0.20210914",
+      "ports": [],
+      "environment": [
+        "PUID=1000",
+        "PGID=1000",
+        "TZ=UTC",
+        "SERVERURL=auto",
+        "SERVERPORT=51820",
+        "PEERS=3",
+        "PEERDNS=auto",
+        "INTERNAL_SUBNET=10.13.13.0",
+        "ALLOWEDIPS=0.0.0.0/0"
+      ],
+      "volumes": [
+        [
+          "C:\\ProgramData\\ZenGarden\\volumes/wireguard-config",
+          "/config"
+        ],
+        [
+          "/lib/modules",
+          "/lib/modules"
+        ]
+      ],
+      "compatibility": {
+        "decision": "pass"
+      }
+    }
+  ]
+}

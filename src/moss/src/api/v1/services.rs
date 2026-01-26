@@ -571,6 +571,9 @@ pub async fn delete_service_v1(
         tracing::warn!(error = ?e, "Failed to persist registry after delete");
     }
 
+    // Update topology and broadcast change
+    state.sync_self_services(true).await;
+
     let ctx = SuggestionContext::from_headers(&headers, "delete_service");
     let suggestions = generate_suggestions(&ctx);
 
@@ -623,6 +626,9 @@ pub async fn destroy_service_v1(
     if let Err(e) = state.persist_registry().await {
         tracing::warn!(error = ?e, "Failed to persist registry after destroy");
     }
+
+    // Update topology and broadcast change
+    state.sync_self_services(true).await;
 
     let ctx = SuggestionContext::from_headers(&headers, "destroy_service");
     let suggestions = generate_suggestions(&ctx);

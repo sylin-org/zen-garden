@@ -8,7 +8,7 @@ use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::{error_response, AppState};
 use garden_common::metrics::system as metrics;
 use crate::domain::{placement::{PlacementRequest, PlacementResponse}, topology, TopologyEntry};
-use garden_common::{api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory, MemoryCapabilities};
+use garden_common::{api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo};
 
 /// GET /api/v1/garden - Get garden overview (all stones)
 pub async fn get_garden_v1(
@@ -150,14 +150,16 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
             gpus,
             disk,
             storage,
-            os_version,
-            kernel_version,
             swap_mb,
             ai_capabilities: None,
             system_manufacturer: None,
             system_product: None,
         },
-        runtime: None, // TODO: Add runtime info (docker version, OS, kernel)
+        runtime: Some(RuntimeInfo {
+            docker_version: None, // TODO: Detect Docker version
+            os: format!("{}/{}", std::env::consts::OS, os_version.unwrap_or_else(|| "Unknown".to_string())),
+            kernel: kernel_version,
+        }),
         detection_status: DetectionStatus::Complete, // Synchronous detection
     }
 }

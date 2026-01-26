@@ -7,6 +7,43 @@ use anyhow::Result;
 use garden_common::HardwareCapabilities;
 use std::path::PathBuf;
 
+/// Detect Docker availability and version
+///
+/// Returns version string if Docker is running and functional, None otherwise.
+/// This differentiates between:
+/// - Docker installed but not running (None)
+/// - Docker running and functional (Some("24.0.7"))
+async fn detect_docker() -> Option<String> {
+    use crate::docker::DockerManager;
+    
+    // Try to connect to Docker
+    let docker = match DockerManager::new() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::debug!(error = ?e, "Docker not available (connection failed)");
+            return None;
+        }
+    };
+    
+    // Verify Docker is actually functional by pinging it
+    if !docker.is_healthy().await {
+        tracing::debug!("Docker connected but not healthy (ping failed)");
+        return None;
+    }
+    
+    // Get Docker version
+    match docker.get_docker_version().await {
+        Ok(version) => {
+            tracing::info!(version = %version, "Docker is functional");
+            Some(version)
+        }
+        Err(e) => {
+            tracing::debug!(error = ?e, "Docker connected but version unavailable");
+            None
+        }
+    }
+}
+
 /// Detect system manufacturer from DMI/SMBIOS
 ///
 /// Linux: reads from /sys/class/dmi/id/sys_vendor
@@ -155,21 +192,30 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
         gpus,
         disk,
         storage: vec![],
-        os_version,
-        kernel_version: kernel_version.clone(),
         swap_mb,
         ai_capabilities: None,
         system_manufacturer,
         system_product,
     };
 
+    // Build OS version string for RuntimeInfo.os
+    let os_family = std::env::consts::OS;
+    let os_string = if let Some(ref ver) = os_version {
+        format!("{}/{}", os_family, ver)
+    } else {
+        os_family.to_string()
+    };
+
+    // Detect Docker (async check for functional Docker daemon)
+    let docker_version = detect_docker().await;
+
     let capabilities = HardwareCapabilities {
         stone_id: None, // Set externally after detection
         stone_name,
         hardware,
         runtime: Some(RuntimeInfo {
-            docker_version: None,
-            os: std::env::consts::OS.to_string(),
+            docker_version,
+            os: os_string,
             kernel: kernel_version,
         }),
         detection_status: DetectionStatus::Complete,
@@ -205,8 +251,6 @@ pub fn create_skeleton(stone_name: String) -> HardwareCapabilities {
         gpus: vec![],
         disk: None,
         storage: vec![],
-        os_version: None,
-        kernel_version: None,
         swap_mb: None,
         ai_capabilities: None,
         system_manufacturer: None,

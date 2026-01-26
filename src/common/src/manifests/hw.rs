@@ -219,7 +219,10 @@ impl HwManifests {
         let frontmatter_path = vendor_dir.join(format!("{}.frontmatter.json", model_name));
         let frontmatter = if frontmatter_path.exists() {
             match std::fs::read_to_string(&frontmatter_path) {
-                Ok(json) => serde_json::from_str::<HwFrontmatter>(&json).ok(),
+                Ok(json) => {
+                    let json = crate::utils::strings::strip_bom(&json);
+                    serde_json::from_str::<HwFrontmatter>(json).ok()
+                },
                 Err(_) => None,
             }
         } else {

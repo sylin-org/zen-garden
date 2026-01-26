@@ -758,8 +758,39 @@ async fn check_offering_updates(
             .rsplit_once(':')
             .unwrap_or((&template_image, "latest"));
 
+        // Special handling for "latest" tag - can't do version comparison
+        // Just check if any available version has a different digest
+        let newer_tag = if current_tag == "latest" {
+            // Get digest for current "latest"
+            let current_digest = match get_image_digest(&template_image, &config).await {
+                Ok(digest) => digest,
+                Err(e) => {
+                    tracing::warn!(service = %service.name, error = ?e, "Failed to get digest for latest tag");
+                    continue;
+                }
+            };
+            
+            // Check all available tags to find one with different digest
+            let mut found_newer = None;
+            for tag in &available_tags {
+                if tag == "latest" {
+                    continue;
+                }
+                let tag_image = format!("{}:{}", base_image, tag);
+                if let Ok(tag_digest) = get_image_digest(&tag_image, &config).await {
+                    if tag_digest != current_digest {
+                        found_newer = Some(tag.clone());
+                        break;
+                    }
+                }
+            }
+            found_newer
+        } else {
+            find_newer_version(current_tag, &available_tags)
+        };
+
         // Find newer version
-        if let Some(newer_tag) = find_newer_version(current_tag, &available_tags) {
+        if let Some(newer_tag) = newer_tag {
             // Build image references for both current and newer tags
             let current_image = template_image.clone();
             let newer_image = format!("{}:{}", base_image, newer_tag);

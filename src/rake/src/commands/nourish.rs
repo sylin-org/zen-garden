@@ -94,6 +94,11 @@ impl Command for NourishCommand {
             return Ok(());
         }
 
+        // Check if there are firmware updates
+        let has_firmware = nourishment_response.data.stones.iter().any(|stone| {
+            stone.updates.available.iter().any(|update| matches!(update, garden_common::nourishment::Update::Firmware { .. }))
+        });
+
         // Interactive selection
         if !self.auto_confirm {
             use std::io::{self, Write};
@@ -101,7 +106,9 @@ impl Command for NourishCommand {
             println!("\nApply updates:");
             println!("  [A] All updates");
             println!("  [O] Offerings only");
-            println!("  [F] Firmware only");
+            if has_firmware {
+                println!("  [F] Firmware only");
+            }
             println!("  [ESC/Q] Cancel");
             print!("\nChoice: ");
             io::stdout().flush()?;
@@ -252,7 +259,14 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
     println!("───────────────────────────────────────────────");
     if total_available > 0 {
         println!("\n⟲ = reboot required");
-        println!("Use [A] to apply all, [O] for offerings only, [F] for firmware only");
+        let has_firmware = response.stones.iter().any(|stone| {
+            stone.updates.available.iter().any(|update| matches!(update, Update::Firmware { .. }))
+        });
+        if has_firmware {
+            println!("Use [A] to apply all, [O] for offerings only, [F] for firmware only");
+        } else {
+            println!("Use [A] to apply all, [O] for offerings only");
+        }
     }
 }
 

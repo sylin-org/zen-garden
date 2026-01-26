@@ -245,6 +245,31 @@ impl AppState {
         }
     }
     
+    /// Update stone health and immediately chirp
+    /// 
+    /// Use this when stone-level status changes (not just services).
+    /// Examples: nourishing starts, nourishing completes, degraded → thriving.
+    /// 
+    /// # Parameters
+    /// - `health`: New health status (use constants: STONE_THRIVING, STONE_NOURISHING, etc.)
+    /// - `auto_chirp`: If true, broadcasts updated state immediately
+    pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
+        {
+            let mut entry = self.self_entry.write().await;
+            entry.health = health.clone();
+            entry.last_seen = chrono::Utc::now();
+        }
+        
+        tracing::debug!(health = %health, "Updated stone health");
+        
+        if auto_chirp {
+            let entry = self.self_entry.read().await.clone();
+            if let Err(e) = crate::announcement::announce(&entry).await {
+                tracing::warn!(error = ?e, "Failed to chirp after health update");
+            }
+        }
+    }
+    
     /// Get snapshot of services (read-only)
     pub async fn get_services(&self) -> Vec<ServiceInfo> {
         self.registry.read().await.clone()

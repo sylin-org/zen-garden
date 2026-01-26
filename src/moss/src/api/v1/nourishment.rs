@@ -428,6 +428,12 @@ pub async fn execute_stone(
         "Nourishment job created"
     );
 
+    // Mark stone as nourishing and chirp immediately
+    state.update_stone_health(
+        garden_common::constants::STONE_NOURISHING.to_string(),
+        true  // auto_chirp = true
+    ).await;
+
     // Create broadcast channel for status updates
     let (tx, _rx) = broadcast::channel::<String>(100);
     
@@ -520,14 +526,30 @@ async fn execute_updates_background(
         jobs.remove(&job_id);
     }
 
-    // Phase 3: Reboot if firmware updates require it
-    if needs_reboot {
-        tracing::info!(job_id = %job_id, "Nourishment complete, initiating reboot in 5s");
-        let _ = tx.send("🔄 Firmware updates require reboot. Restarting in 5 seconds...".to_string());
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        let _ = tx.send("✅ Nourishment complete. Rebooting now...".to_string());
+    // Restore stone health based on service state
+    let health_status = {
+        let registry = state.registry.read().await;
+        let has_degraded = registry.iter().any(|s| matches!(
+            s.status,
+            garden_common::ServiceStatus::Degraded
+        ));
         
-        // Trigger system reboot
+        if has_degraded {
+            garden_common::constants::STONE_DEGRADED.to_string()
+        } else {
+            garden_common::constants::STONE_THRIVING.to_string()
+        }
+    };
+    
+    // Update health and chirp
+    state.update_stone_health(health_status, true).await;
+
+    // Phase 3: Reboot immediately if firmware updates require it
+    if needs_reboot {
+        tracing::info!(job_id = %job_id, "Nourishment complete, initiating immediate reboot");
+        let _ = tx.send("🔄 Firmware updates require reboot. Rebooting now...".to_string());
+        
+        // Trigger immediate system reboot
         #[cfg(target_os = "linux")]
         {
             tracing::info!(job_id = %job_id, "Executing systemctl reboot");
@@ -548,18 +570,83 @@ async fn execute_updates_background(
 
 /// Execute offering (Docker container) update
 async fn execute_offering_update(
-    _state: &AppState,
+    state: &AppState,
     name: &str,
     tx: &broadcast::Sender<String>,
 ) -> anyhow::Result<()> {
-    // TODO V1: Implement actual Docker update
-    // - Pull new image via state.docker
-    // - Stop container
-    // - Start with new image
-    // - Verify health
+    // Mark service as updating in registry
+    {
+        let mut registry = state.registry.write().await;
+        if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
+            svc.status = garden_common::ServiceStatus::Installing;  // Reuse for now
+            // TODO V2: Use SERVICE_UPDATING constant when fully wired
+        }
+    }
     
-    let _ = tx.send(format!("    Simulating update for {}", name));
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Sync to self_entry and chirp immediately
+    state.sync_self_services(true).await;  // auto_chirp = true
+    
+    // Get the target image from the Docker service
+    let target_image = state.docker.get_service_image(name).await
+        .map_err(|e| anyhow::anyhow!("Failed to get image for service '{}': {}", name, e))?;
+    
+    // Step 1: Pull the latest image
+    let _ = tx.send(format!("    Pulling image: {}", target_image));
+    state.docker.pull_image(&target_image, None).await
+        .map_err(|e| anyhow::anyhow!("Failed to pull image '{}': {}", target_image, e))?;
+    
+    // Step 2: Stop and remove the existing container
+    let _ = tx.send(format!("    Stopping service: {}", name));
+    state.docker.stop_service(name, None).await
+        .map_err(|e| anyhow::anyhow!("Failed to stop service '{}': {}", name, e))?;
+    
+    let _ = tx.send(format!("    Removing old container: {}", name));
+    state.docker.remove_service(name, None).await
+        .map_err(|e| anyhow::anyhow!("Failed to remove service '{}': {}", name, e))?;
+    
+    // Step 3: Get compiled manifest for service configuration
+    let compiled = crate::domain::get_compiled_offering(state, name).await
+        .map_err(|e| anyhow::anyhow!("Failed to get offering config for '{}': {}", name, e))?
+        .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in catalog", name))?;
+    
+    // Step 4: Recreate the service with the new image
+    let _ = tx.send(format!("    Creating new container with image: {}", target_image));
+    state.docker.install_service(
+        name,
+        &target_image,
+        compiled.ports,
+        compiled.environment,
+        compiled.volumes,
+        None
+    ).await
+    .map_err(|e| anyhow::anyhow!("Failed to recreate service '{}': {}", name, e))?;
+    
+    // Step 4: Verify service health
+    tokio::time::sleep(Duration::from_secs(2)).await;  // Allow startup
+    match state.docker.get_service_status(name).await {
+        Ok(garden_common::ServiceStatus::Running) => {
+            let _ = tx.send(format!("    ✅ Service {} updated and running", name));
+        }
+        Ok(status) => {
+            tracing::warn!(service = %name, status = ?status, "Service not running after update");
+            let _ = tx.send(format!("    ⚠ Service {} updated but status: {:?}", name, status));
+        }
+        Err(e) => {
+            tracing::error!(service = %name, error = ?e, "Failed to verify service status");
+            let _ = tx.send(format!("    ⚠ Service {} updated but status verification failed", name));
+        }
+    }
+    
+    // Mark service as running again
+    {
+        let mut registry = state.registry.write().await;
+        if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
+            svc.status = garden_common::ServiceStatus::Running;
+        }
+    }
+    
+    // Sync and chirp completion
+    state.sync_self_services(true).await;
     
     Ok(())
 }
@@ -657,15 +744,6 @@ async fn check_offering_updates(
             Err(_) => continue,
         };
 
-        // Get the actual running image ID/SHA
-        let running_image_id = match state.docker.get_service_image_id(&service.name).await {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::warn!(service = %service.name, error = ?e, "Failed to get running image ID");
-                continue;
-            }
-        };
-
         // Query registry for available versions
         let available_tags = match query_image_tags(&template_image, &config).await {
             Ok(tags) => tags,
@@ -682,10 +760,19 @@ async fn check_offering_updates(
 
         // Find newer version
         if let Some(newer_tag) = find_newer_version(current_tag, &available_tags) {
-            // Build the newer image reference
+            // Build image references for both current and newer tags
+            let current_image = template_image.clone();
             let newer_image = format!("{}:{}", base_image, newer_tag);
 
-            // Get digest of the newer tag
+            // Get registry digest for BOTH tags
+            let current_digest = match get_image_digest(&current_image, &config).await {
+                Ok(digest) => digest,
+                Err(e) => {
+                    tracing::warn!(service = %service.name, current_tag, error = ?e, "Failed to get digest for current tag");
+                    continue;
+                }
+            };
+
             let newer_digest = match get_image_digest(&newer_image, &config).await {
                 Ok(digest) => digest,
                 Err(e) => {
@@ -694,10 +781,9 @@ async fn check_offering_updates(
                 }
             };
 
-            // Only show update if the digests are different
-            // running_image_id is like "sha256:abc123..."
-            // newer_digest is like "sha256:def456..."
-            if running_image_id != newer_digest {
+            // Only show update if the registry digests are different
+            // This handles rolling tags (e.g., "1.6" pointing to "1.6.40")
+            if current_digest != newer_digest {
                 let update = Update::Offering {
                     name: service.name.clone(),
                     current: current_tag.to_string(),

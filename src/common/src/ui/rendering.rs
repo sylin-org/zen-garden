@@ -455,6 +455,16 @@ pub fn status_indicator(status: &str, color: bool) -> String {
             bracketed
         };
     }
+    
+    // Nourishing/updating status - updates in progress
+    if status_str == "nourishing" || status_str == "updating" {
+        let bracketed = "[nourishing]".to_string();
+        return if color {
+            bracketed.yellow().to_string()
+        } else {
+            bracketed
+        };
+    }
 
     let indicator = if status_str == crate::SERVICE_RUNNING || status_str == crate::VITALITY_THRIVING {
         crate::VITALITY_THRIVING

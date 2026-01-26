@@ -295,7 +295,7 @@ pub async fn deploy_stone_v1(
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    tracing::info!(size = body.len(), "Package deploy requested");
+    tracing::info!(size = body.len(), "🎁 A gift arrives from the garden!");
 
     // Get expected hash from header
     let expected_hash = match headers.get("x-package-sha256") {

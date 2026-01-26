@@ -49,6 +49,24 @@
 //! ### Sending Announcements
 //! ```rust,ignore
 //! use garden_common::infra::communications::{p2p, announcement_types};
+//!
+//! // Use type default debounce (STONE_CHIRP: 100ms)
+//! p2p::send_announcement(announcement_types::STONE_CHIRP, &entry).await?;
+//!
+//! // Force immediate send (bypass debounce)
+//! p2p::send_announcement_immediate(announcement_types::STONE_CHIRP, &entry).await?;
+//!
+//! // Custom debounce duration
+//! p2p::send_announcement_with_debounce(
+//!     announcement_types::STONE_CHIRP,
+//!     &entry,
+//!     Duration::from_millis(50)
+//! ).await?;
+//! ```
+//!
+//! ### Original Example
+//! ```rust,ignore
+//! use garden_common::infra::communications::{p2p, announcement_types};
 //! 
 //! p2p::send_announcement(
 //!     announcement_types::DISCOVERY_RESPONSE,
@@ -62,10 +80,13 @@
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, mpsc, OnceCell};
+use tokio::sync::{broadcast, mpsc, Mutex, OnceCell};
+use tokio::time::Instant;
 
 use crate::{ports, UdpAnnouncement};
 
@@ -82,6 +103,15 @@ static UDP_RECEIVER: OnceCell<broadcast::Sender<InternalUdpEvent>> = OnceCell::c
 
 /// Singleton holder for UDP sender socket
 static UDP_SENDER: OnceCell<Arc<UdpSocket>> = OnceCell::const_new();
+
+/// Default debounce durations per announcement type
+static DEFAULT_DEBOUNCE: OnceCell<HashMap<String, Duration>> = OnceCell::const_new();
+
+/// Runtime debounce overrides (persists until cleared)
+static DEBOUNCE_OVERRIDES: OnceCell<Mutex<HashMap<String, Duration>>> = OnceCell::const_new();
+
+/// Active debounce channels per announcement type
+static DEBOUNCE_CHANNELS: OnceCell<Mutex<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>> = OnceCell::const_new();
 
 /// Subscribe to a specific announcement type (filtered)
 ///
@@ -203,6 +233,17 @@ pub async fn subscribe_to_all() -> Result<mpsc::Receiver<(String, serde_json::Va
     Ok(rx)
 }
 
+/// Initialize debounce configuration
+fn init_debounce_defaults() -> HashMap<String, Duration> {
+    use crate::infra::communications::announcement_types;
+    
+    let mut config = HashMap::new();
+    // STONE_CHIRP gets 100ms debounce to batch rapid status changes
+    config.insert(announcement_types::STONE_CHIRP.to_string(), Duration::from_millis(100));
+    // All other types default to immediate send (Duration::ZERO)
+    config
+}
+
 /// Internal: Subscribe to raw broadcast channel
 async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEvent>> {
     let tx = UDP_RECEIVER
@@ -245,10 +286,11 @@ async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEv
     Ok(tx.subscribe())
 }
 
-/// Send UDP announcement via singleton sender socket
+/// Send announcement with type-default debounce
 ///
-/// Wraps payload in `UdpAnnouncement` envelope, serializes to JSON,
-/// and broadcasts to 255.255.255.255:7184.
+/// Uses configured default for announcement type:
+/// - STONE_CHIRP: 100ms debounce (batches rapid status changes)
+/// - Others: Immediate send (Duration::ZERO)
 ///
 /// ## Arguments
 /// - `announcement_type`: Constant from `announcement_types` module
@@ -258,16 +300,171 @@ async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEv
 /// ```rust,ignore
 /// use garden_common::infra::communications::{p2p, announcement_types};
 ///
-/// let response = garden_common::DiscoveryResponse { /* ... */ };
 /// p2p::send_announcement(
-///     announcement_types::DISCOVERY_RESPONSE,
-///     &response
+///     announcement_types::STONE_CHIRP,
+///     &topology_entry
 /// ).await?;
 /// ```
 pub async fn send_announcement<T: Serialize>(
     announcement_type: &str,
     payload: &T,
 ) -> Result<()> {
+    let duration = resolve_debounce_duration(announcement_type).await;
+    send_announcement_internal(announcement_type, payload, duration).await
+}
+
+/// Send announcement immediately (bypass debounce)
+///
+/// Use for urgent updates that must be broadcast without delay.
+/// Examples: Stone going offline (GOODBYE), critical state changes.
+pub async fn send_announcement_immediate<T: Serialize>(
+    announcement_type: &str,
+    payload: &T,
+) -> Result<()> {
+    send_announcement_internal(announcement_type, payload, Duration::ZERO).await
+}
+
+/// Send announcement with custom debounce duration
+///
+/// Overrides type default for this announcement type.
+/// Override persists until cleared or process restart.
+pub async fn send_announcement_with_debounce<T: Serialize>(
+    announcement_type: &str,
+    payload: &T,
+    debounce: Duration,
+) -> Result<()> {
+    // Initialize statics on first use
+    DEBOUNCE_OVERRIDES.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
+    
+    // Cache override for this type
+    {
+        let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
+        overrides.insert(announcement_type.to_string(), debounce);
+    }
+    
+    send_announcement_internal(announcement_type, payload, debounce).await
+}
+
+/// Clear debounce override for announcement type (revert to default)
+pub async fn clear_debounce_override(announcement_type: &str) {
+    DEBOUNCE_OVERRIDES.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
+    
+    let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
+    overrides.remove(announcement_type);
+}
+
+/// Internal: Send with specified debounce duration
+async fn send_announcement_internal<T: Serialize>(
+    announcement_type: &str,
+    payload: &T,
+    debounce_duration: Duration,
+) -> Result<()> {
+    // Serialize payload
+    let payload_bytes = serde_json::to_vec(payload)
+        .context("Failed to serialize announcement payload")?;
+    
+    if debounce_duration.is_zero() {
+        // Send immediately
+        send_udp_packet(announcement_type, &payload_bytes).await
+    } else {
+        // Send through debouncer
+        let tx = get_or_create_debounce_channel(announcement_type, debounce_duration).await;
+        tx.send(payload_bytes)
+            .map_err(|_| anyhow::anyhow!("Debounce channel closed for {}", announcement_type))?;
+        Ok(())
+    }
+}
+
+/// Resolve effective debounce duration
+/// Priority: caller override > type default > immediate
+async fn resolve_debounce_duration(announcement_type: &str) -> Duration {
+    // Initialize statics on first use
+    DEBOUNCE_OVERRIDES.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
+    DEFAULT_DEBOUNCE.get_or_init(|| async { init_debounce_defaults() }).await;
+    
+    // Check for caller override
+    {
+        let overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
+        if let Some(duration) = overrides.get(announcement_type) {
+            return *duration;
+        }
+    }
+    
+    // Use type default
+    DEFAULT_DEBOUNCE.get().unwrap().get(announcement_type)
+        .copied()
+        .unwrap_or(Duration::ZERO)
+}
+
+/// Get or create debounce channel for announcement type
+async fn get_or_create_debounce_channel(
+    announcement_type: &str,
+    _debounce_duration: Duration,
+) -> mpsc::UnboundedSender<Vec<u8>> {
+    // Initialize statics on first use
+    DEBOUNCE_CHANNELS.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
+    
+    let mut channels = DEBOUNCE_CHANNELS.get().unwrap().lock().await;
+    
+    if let Some(tx) = channels.get(announcement_type) {
+        return tx.clone();
+    }
+    
+    // Create new debouncer task for this type
+    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let type_clone = announcement_type.to_string();
+    
+    let task_tx = tx.clone();
+    tokio::spawn(async move {
+        const MAX_DELAY: Duration = Duration::from_millis(500);
+        
+        while let Some(payload) = rx.recv().await {
+            let first_request = Instant::now();
+            let mut latest_payload = payload;
+            
+            // Resolve current debounce duration (may have changed via override)
+            let current_debounce = resolve_debounce_duration(&type_clone).await;
+            
+            loop {
+                tokio::select! {
+                    // Debounce period elapsed
+                    _ = tokio::time::sleep(current_debounce) => {
+                        break;
+                    }
+                    // New announcement received
+                    Some(new_payload) = rx.recv() => {
+                        latest_payload = new_payload; // Replace with newer
+                        
+                        // Check max delay cap
+                        if first_request.elapsed() >= MAX_DELAY {
+                            tracing::debug!(
+                                announcement_type = %type_clone,
+                                "Max delay reached, sending debounced announcement"
+                            );
+                            break;
+                        }
+                        // Continue debounce loop
+                    }
+                }
+            }
+            
+            // Send the final (most recent) payload
+            if let Err(e) = send_udp_packet(&type_clone, &latest_payload).await {
+                tracing::warn!(
+                    announcement_type = %type_clone,
+                    error = ?e,
+                    "Failed to send debounced announcement"
+                );
+            }
+        }
+    });
+    
+    channels.insert(announcement_type.to_string(), task_tx.clone());
+    task_tx
+}
+
+/// Internal: Send UDP packet immediately
+async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Result<()> {
     let socket = UDP_SENDER
         .get_or_init(|| async {
             match UdpSocket::bind("0.0.0.0:0").await {
@@ -288,7 +485,8 @@ pub async fn send_announcement<T: Serialize>(
 
     let announcement = UdpAnnouncement {
         announcement_type: announcement_type.to_string(),
-        data: serde_json::to_value(payload).context("Failed to serialize payload")?,
+        data: serde_json::from_slice(payload_bytes)
+            .context("Failed to deserialize payload for announcement")?,
     };
 
     let data = serde_json::to_vec(&announcement).context("Failed to serialize envelope")?;
@@ -301,7 +499,7 @@ pub async fn send_announcement<T: Serialize>(
         .with_context(|| format!("Failed to send to {}", broadcast_addr))?;
 
     tracing::trace!(
-        announcement_type,
+        announcement_type = %announcement_type,
         size = data.len(),
         "UDP announcement sent"
     );
@@ -318,34 +516,9 @@ async fn udp_receiver_loop(
 
     tracing::info!("P2P transport receiver started");
 
-    // Open log file for UDP debugging (append mode)
-    let log_path = std::path::Path::new("/tmp/moss-udp-recv.log");
-    let mut log_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .await
-        .ok();
-
-    if log_file.is_some() {
-        tracing::info!("UDP debug logging enabled: {}", log_path.display());
-    }
-
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, addr)) => {
-                // Log raw payload to file
-                if let Some(ref mut file) = log_file {
-                    let timestamp = chrono::Utc::now().to_rfc3339();
-                    let raw_str = String::from_utf8_lossy(&buf[..len]);
-                    let log_line = format!(
-                        "[{}] FROM {} ({}b): {}\n",
-                        timestamp, addr, len, raw_str
-                    );
-                    let _ = tokio::io::AsyncWriteExt::write_all(file, log_line.as_bytes()).await;
-                    let _ = tokio::io::AsyncWriteExt::flush(file).await;
-                }
-
                 if let Ok(announcement) = serde_json::from_slice::<UdpAnnouncement>(&buf[..len]) {
                     let event = InternalUdpEvent {
                         announcement_type: announcement.announcement_type.clone(),

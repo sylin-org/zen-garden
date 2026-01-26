@@ -170,6 +170,9 @@ pub const STONE_THRIVING: &str = "thriving";
 /// Stone is degraded (some service errors detected)
 pub const STONE_DEGRADED: &str = "degraded";
 
+/// Stone is being nourished (updates in progress)
+pub const STONE_NOURISHING: &str = "nourishing";
+
 // ============================================================================
 // Service Status Constants
 // ============================================================================
@@ -182,6 +185,9 @@ pub const SERVICE_STOPPED: &str = "stopped";
 
 /// Service is being installed
 pub const SERVICE_INSTALLING: &str = "installing";
+
+/// Service is being updated
+pub const SERVICE_UPDATING: &str = "updating";
 
 /// Service is in maintenance mode
 pub const SERVICE_MAINTENANCE: &str = "maintenance";

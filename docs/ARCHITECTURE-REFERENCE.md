@@ -64,6 +64,84 @@ p2p::send_announcement(
 **Why:** Prevents port conflicts (7184), enforces SoC/DDD, enables testing.  
 **Reference:** [COMM-0001](decisions/COMM-0001-p2p-transport-singleton.md)
 
+### Discovery Transport (Multicast-First)
+**UDP discovery uses multicast-first strategy to solve multi-homed system failures.**
+
+**Default Configuration:**
+- **Multicast group**: `239.255.42.99` (organization-local scope)
+- **Port**: `7184`
+- **TTL**: `1` (LAN-only, doesn't route beyond gateway)
+- **Directed broadcast fallback**: Enabled by default
+- **Limited broadcast (255.255.255.255)**: Disabled by default
+
+**Environment Variables:**
+- `DISCOVERY_PORT`: UDP port (default: 7184)
+- `DISCOVERY_MCAST_GROUP`: Multicast group IP (default: 239.255.42.99)
+- `DISCOVERY_ENABLE_BCAST_FALLBACK`: Enable directed broadcast (default: true)
+- `DISCOVERY_ENABLE_LIMITED_BCAST`: Enable 255.255.255.255 fallback (default: false)
+
+**How It Works:**
+
+1. **Sender** (per-interface sockets):
+   - Binds socket to each physical interface IP (not `0.0.0.0`)
+   - Sends to multicast group `239.255.42.99:7184`
+   - Falls back to directed broadcast (computed from IP + netmask)
+   - Example: `192.168.32.10/20` → broadcast to `192.168.47.255`
+   - Skips virtual adapters (VMware, Hyper-V, VirtualBox, Docker, WSL)
+
+2. **Receiver** (single socket, multiple joins):
+   - Binds to `0.0.0.0:7184`
+   - Joins multicast group on each physical interface
+   - Receives both multicast and broadcast packets
+
+**Why Multicast?**
+
+Limited broadcast (`255.255.255.255`) fails on multi-homed Windows 11 systems (WSL/Hyper-V adapters). The OS routes broadcast packets through the default interface, which may be a virtual adapter instead of the physical NIC. Multicast join operations explicitly specify which interface to listen on, and per-interface sender binding ensures packets egress the correct NIC.
+
+**Virtual Adapter Detection:**
+
+Skips interfaces matching:
+- Name patterns: `veth`, `virbr`, `docker`, `br-`, `vmnet`, `vboxnet`, `hyperv`, `wsl`
+- Docker bridge network: `172.17.x.x`
+- Link-local: `169.254.x.x`
+- Loopback: `127.x.x.x`
+
+**Reference:** [discovery-transport.md](discovery-transport.md)
+
+### Container Naming Convention (CRITICAL)
+**Managed offerings MUST use `zen-offering-{name}` container naming.**
+
+**Rules:**
+- ❌ **NEVER** adopt containers with other names (e.g., `my-mongo`, `user-redis`)
+- ❌ **NEVER** adopt native services as managed containers
+- ✅ **ALWAYS** check for `zen-offering-{name}` before deploying
+- ✅ **ALWAYS** deploy new managed offerings as `zen-offering-{name}`
+- ✅ **ALWAYS** adopt orphaned `zen-offering-*` containers (self-heal)
+
+**Pattern:**
+```rust
+// Before deploying managed offering
+let container_name = format!("zen-offering-{}", offering);
+
+// Check if it already exists (self-heal scenario)
+if state.docker.container_exists(&container_name).await? {
+    // Adopt existing container instead of deploying new one
+    adopt_offering_container(&state.docker, &state.manifests, offering).await?;
+    return Ok(());
+}
+
+// Deploy new container with correct name
+state.docker.create_container(
+    &container_name,  // zen-offering-mongodb
+    &image,
+    &ports,
+    &volumes,
+).await?;
+```
+
+**Why:** Prevents namespace collisions (user's containers, native services), enables safe self-heal, clear ownership boundary.  
+**Reference:** [OFFER-0002](decisions/OFFER-0002-container-namespace-collision.md)
+
 ---
 
 ## Nourishment Endpoints

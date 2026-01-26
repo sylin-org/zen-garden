@@ -341,6 +341,13 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                 };
 
                 if let Some(ip) = new_ip {
+                    // Reinitialize P2P sender sockets when network becomes available
+                    // This is critical on Linux where interfaces may not be ready at boot
+                    if matches!(event, NetworkEvent::Reconnected { .. }) {
+                        tracing::info!("Network reconnected, reinitializing P2P senders");
+                        garden_common::infra::communications::p2p::reinit_senders().await;
+                    }
+
                     // Delegate all resolution change handling to AppState
                     state_for_ip.announce_resolution_change(&ip).await;
                 }

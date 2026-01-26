@@ -408,7 +408,11 @@ async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> 
 /// 
 /// POSTs to /api/v1/stone/presence/notify to trigger stone.tended event.
 /// Adapters (Firefly, Cricket) can react with temporary glow/pulse.
-async fn notify_tending(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+/// 
+/// Used by:
+/// - Explicit tend commands
+/// - Auto-switch during dispatch when tended stone offline
+pub async fn notify_tending(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
     use garden_common::presence::ClientNotification;
     
     // Get hostname for "from" field

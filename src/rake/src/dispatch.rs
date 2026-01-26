@@ -11,6 +11,7 @@ use garden_rake::commands::Command;
 use garden_rake::context::CommandContext;
 use garden_rake::discovery;
 use garden_rake::tending;
+use garden_rake::commands::management::tend;
 use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use std::time::Duration;
 
@@ -167,6 +168,16 @@ pub async fn resolve_endpoint(
                         ui::status_indicator("success", term.supports_color),
                         stone_name
                     );
+
+                    // Notify stone of tending for visual feedback (glow/pulse)
+                    // Create minimal context for notification (fire-and-forget)
+                    let notify_ctx = CommandContext::without_endpoint(
+                        client.clone(),
+                        false, // quiet_mode
+                        false, // fresh_mode
+                        0,     // verbose
+                    );
+                    let _ = tend::notify_tending(&notify_ctx, &endpoint).await;
                 }
             }
 

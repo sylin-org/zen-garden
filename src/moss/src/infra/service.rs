@@ -9,9 +9,6 @@
 //! Future: Add Linux systemd and macOS launchd support
 
 #[cfg(target_os = "windows")]
-use crate::infra::update_transaction::{UpdateTransaction, UpdateStage};
-
-#[cfg(target_os = "windows")]
 fn log_update(msg: &str) {
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -387,31 +384,5 @@ pub async fn cleanup_updater_process() -> anyhow::Result<()> {
     log_update("=== cleanup_updater_process: COMPLETE ===");
     
     // Continue with normal startup
-    Ok(())
-}
-
-/// Helper: Recursive directory copy
-#[cfg(target_os = "windows")]
-fn copy_dir_recursive(src: &str, dst: &str) -> anyhow::Result<()> {
-    use std::path::Path;
-    
-    std::fs::create_dir_all(dst)?;
-    
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let target = Path::new(dst).join(&file_name);
-        
-        if path.is_dir() {
-            copy_dir_recursive(
-                &path.to_string_lossy(),
-                &target.to_string_lossy()
-            )?;
-        } else {
-            std::fs::copy(&path, &target)?;
-        }
-    }
-    
     Ok(())
 }

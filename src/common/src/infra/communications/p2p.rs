@@ -73,10 +73,10 @@ use if_addrs::get_if_addrs;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, mpsc, Mutex, OnceCell};
+use tokio::sync::{broadcast, mpsc, Mutex, OnceCell, RwLock};
 use tokio::time::Instant;
 
 use crate::utils::ids::generate_guidv7;
@@ -327,8 +327,8 @@ impl DedupCache {
 /// Singleton holder for UDP receiver and broadcast channel
 static UDP_RECEIVER: OnceCell<broadcast::Sender<InternalUdpEvent>> = OnceCell::const_new();
 
-/// Singleton holder for per-interface UDP sender sockets
-static UDP_SENDERS: OnceCell<Arc<Vec<InterfaceSender>>> = OnceCell::const_new();
+/// Singleton holder for per-interface UDP sender sockets (RwLock for reinitialization)
+static UDP_SENDERS: OnceLock<RwLock<Arc<Vec<InterfaceSender>>>> = OnceLock::new();
 
 /// Discovery configuration singleton
 static DISCOVERY_CONFIG: OnceCell<DiscoveryConfig> = OnceCell::const_new();
@@ -499,6 +499,83 @@ pub async fn clear_debounce_override(announcement_type: &str) {
 
     let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
     overrides.remove(announcement_type);
+}
+
+/// Reinitialize sender sockets (call when network becomes available)
+///
+/// Called by network monitor when transitioning from disconnected to connected state.
+/// Recreates per-interface sender sockets for all eligible network interfaces.
+///
+/// This is necessary because:
+/// - On Linux, network interfaces may not be ready during early boot
+/// - P2P transport initializes once at startup with no senders if no interfaces available
+/// - When network becomes available later, senders need to be recreated
+///
+/// ## Example
+/// ```rust,ignore
+/// // In network monitor reconnection handler:
+/// if was_disconnected && !now_disconnected {
+///     p2p::reinit_senders().await;
+/// }
+/// ```
+pub async fn reinit_senders() {
+    let config = DISCOVERY_CONFIG
+        .get_or_init(|| async { DiscoveryConfig::from_env() })
+        .await;
+
+    let senders_lock = UDP_SENDERS.get_or_init(|| {
+        RwLock::new(Arc::new(Vec::new()))
+    });
+
+    let mut write_guard = senders_lock.write().await;
+
+    // Re-enumerate interfaces (network is now available)
+    let interfaces = enumerate_eligible_interfaces();
+    
+    if interfaces.is_empty() {
+        tracing::warn!("reinit_senders: No eligible interfaces found after reconnection");
+        return;
+    }
+
+    tracing::info!(
+        interface_count = interfaces.len(),
+        "Reinitializing P2P sender sockets after network reconnection"
+    );
+
+    let mut interface_senders = Vec::new();
+    for iface in interfaces {
+        match create_interface_sender(&iface, config).await {
+            Ok(socket) => {
+                tracing::info!(
+                    interface = %iface.name,
+                    ip = %iface.ip,
+                    "Created sender socket (network reinitialization)"
+                );
+                interface_senders.push(InterfaceSender {
+                    interface: iface,
+                    socket: Arc::new(socket),
+                });
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    interface = %iface.name,
+                    "Failed to create sender for interface"
+                );
+            }
+        }
+    }
+
+    if interface_senders.is_empty() {
+        tracing::error!("reinit_senders: Failed to create any sender sockets");
+    } else {
+        tracing::info!(
+            sender_count = interface_senders.len(),
+            "P2P senders reinitialized successfully"
+        );
+    }
+
+    *write_guard = Arc::new(interface_senders);
 }
 
 // ===== Internal Implementation =====
@@ -686,46 +763,71 @@ async fn get_or_create_debounce_channel(
 
 /// Internal: Send UDP packet immediately via multicast + fallbacks
 async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Result<()> {
-    // Initialize senders on first use
-    let senders = UDP_SENDERS
-        .get_or_init(|| async {
-            let config = DISCOVERY_CONFIG
-                .get_or_init(|| async { DiscoveryConfig::from_env() })
-                .await;
+    // Initialize config on first use
+    let config = DISCOVERY_CONFIG
+        .get_or_init(|| async { DiscoveryConfig::from_env() })
+        .await;
 
-            let interfaces = enumerate_eligible_interfaces();
-            let mut interface_senders = Vec::new();
+    // Initialize sender sockets (lazy, with RwLock for reinitialization)
+    let senders_lock = UDP_SENDERS.get_or_init(|| {
+        RwLock::new(Arc::new(Vec::new()))
+    });
+    
+    // Try to get existing senders
+    let senders = {
+        let read_guard = senders_lock.read().await;
+        if !read_guard.is_empty() {
+            read_guard.clone()
+        } else {
+            drop(read_guard);
+            
+            // Need to initialize - acquire write lock
+            let mut write_guard = senders_lock.write().await;
+            
+            // Double-check in case another task initialized while we waited
+            if !write_guard.is_empty() {
+                write_guard.clone()
+            } else {
+                // Actually initialize
+                let interfaces = enumerate_eligible_interfaces();
+                if interfaces.is_empty() {
+                    tracing::warn!("No eligible network interfaces found for discovery");
+                }
 
-            for iface in interfaces {
-                match create_interface_sender(&iface, config).await {
-                    Ok(socket) => {
-                        tracing::debug!(
-                            interface = %iface.name,
-                            ip = %iface.ip,
-                            "Created sender socket"
-                        );
-                        interface_senders.push(InterfaceSender {
-                            interface: iface,
-                            socket: Arc::new(socket),
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = ?e,
-                            interface = %iface.name,
-                            "Failed to create sender for interface"
-                        );
+                let mut interface_senders = Vec::new();
+                for iface in interfaces {
+                    match create_interface_sender(&iface, config).await {
+                        Ok(socket) => {
+                            tracing::debug!(
+                                interface = %iface.name,
+                                ip = %iface.ip,
+                                "Created sender socket"
+                            );
+                            interface_senders.push(InterfaceSender {
+                                interface: iface,
+                                socket: Arc::new(socket),
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = ?e,
+                                interface = %iface.name,
+                                "Failed to create sender for interface"
+                            );
+                        }
                     }
                 }
-            }
 
-            if interface_senders.is_empty() {
-                tracing::error!("No sender sockets created, discovery will fail");
-            }
+                if interface_senders.is_empty() {
+                    tracing::error!("No sender sockets created, discovery will fail");
+                }
 
-            Arc::new(interface_senders)
-        })
-        .await;
+                let new_senders = Arc::new(interface_senders);
+                *write_guard = new_senders.clone();
+                new_senders
+            }
+        }
+    };
 
     let config = DISCOVERY_CONFIG.get().unwrap();
 

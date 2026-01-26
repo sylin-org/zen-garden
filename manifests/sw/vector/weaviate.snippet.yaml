@@ -1,7 +1,7 @@
 container_name: weaviate
 image: cr.weaviate.io/semitechnologies/weaviate:1.35
 ports:
-  - "8080:8080"
+  - [8080, 8080]
   - "50051:50051"
 environment:
   AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"

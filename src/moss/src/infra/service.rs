@@ -11,6 +11,18 @@
 #[cfg(target_os = "windows")]
 use crate::infra::update_transaction::{UpdateTransaction, UpdateStage};
 
+#[cfg(target_os = "windows")]
+fn log_update(msg: &str) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::Path;
+    let log_path = Path::new(&garden_common::constants::paths::data_dir()).join("moss-update.log");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(file, "[{}] {}", timestamp, msg);
+    }
+}
+
 /// Spawn Windows updater process
 ///
 /// Called by the API endpoint when a package contains garden-moss.
@@ -28,12 +40,18 @@ pub async fn spawn_windows_updater() -> anyhow::Result<()> {
     use std::process::Command;
     use anyhow::Context;
 
+    log_update("=== spawn_windows_updater: STARTED ===");
+    
     let current_exe = std::env::current_exe()
         .context("Failed to get current executable path")?;
+    log_update(&format!("Current exe: {:?}", current_exe));
+    
     let exe_dir = current_exe.parent()
         .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    log_update(&format!("Exe directory: {:?}", exe_dir));
     
     let temp_updater = exe_dir.join("garden-moss-temp.exe");
+    log_update(&format!("Temp updater path: {:?}", temp_updater));
     
     tracing::info!(
         source = ?current_exe,
@@ -42,18 +60,23 @@ pub async fn spawn_windows_updater() -> anyhow::Result<()> {
     );
     
     // Copy current executable to temp location
+    log_update("Copying current exe to temp...");
     std::fs::copy(&current_exe, &temp_updater)
         .context("Failed to copy executable to temp location")?;
+    log_update("Copy successful!");
     
     // Spawn updater process (detached, does not wait)
-    tracing::info!("Spawning updater process: garden-moss-temp.exe --finalize-update");
+    tracing::info!("Spawning updater process: garden-moss-temp.exe --update-finalize");
+    log_update("Spawning temp updater with --update-finalize");
     
-    let _child = Command::new(&temp_updater)
-        .arg("--finalize-update")
+    let child = Command::new(&temp_updater)
+        .arg("--update-finalize")
         .spawn()
         .context("Failed to spawn updater process")?;
     
+    log_update(&format!("Updater spawned with PID: {:?}", child.id()));
     tracing::info!("Updater spawned successfully, shutdown will be triggered");
+    log_update("=== spawn_windows_updater: COMPLETE ===");
     
     Ok(())
 }
@@ -196,14 +219,22 @@ pub async fn install_windows_service() -> anyhow::Result<()> {
 pub async fn finalize_service_update() -> anyhow::Result<()> {
     use std::process::Command;
 
+    log_update("=== finalize_service_update: STARTED ===");
     println!("Finalizing Moss update...");
 
     let current_exe = std::env::current_exe()?;
+    log_update(&format!("Current exe: {:?}", current_exe));
+    
     let exe_dir = current_exe.parent().ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    log_update(&format!("Exe directory: {:?}", exe_dir));
+    
     let target_exe = exe_dir.join("garden-moss.exe");
+    log_update(&format!("Target exe: {:?}", target_exe));
 
     // Wait for old process to exit (up to 30 seconds)
     println!("Waiting for old Moss process to exit...");
+    log_update("Waiting for old moss process to exit (up to 30s)...");
+    
     for attempt in 1..=60 {
         let output = Command::new("tasklist")
             .args(["/FI", "IMAGENAME eq garden-moss.exe"])
@@ -211,10 +242,12 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains("garden-moss.exe") {
+            log_update(&format!("Old process exited after attempt {}", attempt));
             break;
         }
 
         if attempt == 60 {
+            log_update("ERROR: Timeout waiting for old process to exit");
             eprintln!("Timeout waiting for old process to exit");
             return Err(anyhow::anyhow!("Old process did not exit"));
         }
@@ -223,27 +256,35 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
     }
 
     println!("Old process exited. Replacing binary...");
+    log_update("Copying temp updater to target exe...");
     std::fs::copy(&current_exe, &target_exe)?;
+    log_update("Binary replaced successfully");
     println!("✓ Binary replaced successfully");
 
     // Check if running as service
     let is_service = std::env::var("RUNNING_AS_SERVICE").is_ok();
+    log_update(&format!("Running as service: {}", is_service));
 
     if is_service {
         println!("Starting Moss service...");
-        let _ = Command::new("sc")
+        log_update("Starting ZenGardenMoss service...");
+        let output = Command::new("sc")
             .args(["start", "ZenGardenMoss"])
             .output()?;
+        log_update(&format!("Service start output: {:?}", String::from_utf8_lossy(&output.stdout)));
         println!("✓ Service start triggered");
     } else {
         println!("Launching new Moss...");
-        Command::new(&target_exe)
+        log_update("Launching new Moss with --cleanup-old...");
+        let child = Command::new(&target_exe)
             .arg("--cleanup-old")
             .spawn()?;
+        log_update(&format!("New Moss spawned with PID: {:?}", child.id()));
         println!("✓ New Moss launched");
     }
 
     println!("Update complete. This process will now exit.");
+    log_update("=== finalize_service_update: COMPLETE ===");
     Ok(())
 }
 
@@ -290,20 +331,30 @@ pub async fn cleanup_after_service_update() -> anyhow::Result<()> {
 pub async fn cleanup_updater_process() -> anyhow::Result<()> {
     use std::process::Command;
     
+    log_update("=== cleanup_updater_process: STARTED ===");
+    
     let current_exe = std::env::current_exe()?;
+    log_update(&format!("Current exe: {:?}", current_exe));
+    
     let exe_dir = current_exe.parent()
         .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    log_update(&format!("Exe directory: {:?}", exe_dir));
+    
     let temp_exe = exe_dir.join("garden-moss-temp.exe");
+    log_update(&format!("Temp exe to clean: {:?}", temp_exe));
     
     if temp_exe.exists() {
+        log_update("Temp updater exists, waiting for it to exit...");
+        
         // Wait for updater process to exit
-        for _ in 1..=40 {
+        for attempt in 1..=40 {
             let output = Command::new("tasklist")
                 .args(["/FI", "IMAGENAME eq garden-moss-temp.exe"])
                 .output()?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             if !stdout.contains("garden-moss-temp.exe") {
+                log_update(&format!("Temp process exited after attempt {}", attempt));
                 break;
             }
 
@@ -311,9 +362,15 @@ pub async fn cleanup_updater_process() -> anyhow::Result<()> {
         }
 
         // Remove temp updater
+        log_update("Removing temp updater file...");
         std::fs::remove_file(&temp_exe).ok();
+        log_update("Temp updater removed");
         tracing::info!("Cleaned up updater process");
+    } else {
+        log_update("Temp updater does not exist (already cleaned or never created)");
     }
+    
+    log_update("=== cleanup_updater_process: COMPLETE ===");
     
     // Continue with normal startup
     Ok(())

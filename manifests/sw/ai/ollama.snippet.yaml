@@ -1,7 +1,7 @@
 container_name: ollama
 image: ollama/ollama:0.5
 ports:
-  - "11434:11434"
+  - [11434, 11434]
 volumes:
   - ollama-data:/root/.ollama
 environment:

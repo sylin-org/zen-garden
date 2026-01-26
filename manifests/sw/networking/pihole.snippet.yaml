@@ -1,7 +1,7 @@
 container_name: pihole
 image: pihole/pihole:2024.07.0
 ports:
-  - "53:53/tcp"
+  - [53, 53]
   - "53:53/udp"
   - "8053:80/tcp"
 environment:

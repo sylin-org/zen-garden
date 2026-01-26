@@ -570,9 +570,25 @@ pub async fn deploy_stone_v1(
         #[cfg(target_os = "windows")]
         {
             use crate::infra::spawn_windows_updater;
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::path::Path;
+            
+            // Log to update file
+            let log_path = Path::new(&garden_common::constants::paths::data_dir()).join("moss-update.log");
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let _ = writeln!(file, "[{}] API deploy_stone_v1: Package contains moss, triggering Windows updater", timestamp);
+            }
             
             if let Err(e) = spawn_windows_updater().await {
                 tracing::error!(error = ?e, "Failed to spawn updater");
+                
+                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                    let _ = writeln!(file, "[{}] API deploy_stone_v1: ERROR - Failed to spawn updater: {}", timestamp, e);
+                }
+                
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({
@@ -581,6 +597,11 @@ pub async fn deploy_stone_v1(
                         "error": format!("{}", e),
                     })),
                 );
+            }
+            
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let _ = writeln!(file, "[{}] API deploy_stone_v1: Updater spawned successfully, triggering shutdown", timestamp);
             }
             
             // Shutdown will be triggered after updater spawns

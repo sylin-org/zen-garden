@@ -69,7 +69,8 @@ $ErrorActionPreference = "Stop"
 # Detect if running on Windows (works in both Windows PowerShell 5.x and PowerShell Core 6+)
 $RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)) {
     $IsWindows
-} else {
+}
+else {
     $env:OS -eq "Windows_NT"
 }
 
@@ -79,7 +80,7 @@ $LINUX_DIR = Join-Path $DIST_DIR "linux"
 $IMAGE_NAME = "zen-garden-builder:latest"
 
 Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Distribution Build                   ║" -ForegroundColor Cyan
+Write-Host "║   Zen Garden Distribution Build                    ║" -ForegroundColor Cyan
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 # Detect platform (handle Windows PowerShell which lacks $PSVersionTable.Platform)
@@ -117,11 +118,13 @@ if ($UseDocker) {
     # Check Docker availability
     try {
         docker version | Out-Null
-    } catch {
+    }
+    catch {
         Write-Host "✗ Docker not available." -ForegroundColor Red
         if ($RunningOnWindows) {
             Write-Host "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/" -ForegroundColor Yellow
-        } else {
+        }
+        else {
             Write-Host "  Install Docker Engine or use -Native flag for native build" -ForegroundColor Yellow
         }
         exit 1
@@ -135,7 +138,8 @@ if ($UseDocker) {
         Write-Host "  ✓ Using existing image: $IMAGE_NAME" -ForegroundColor Green
         Write-Host "    (Use -ForceRebuild to recreate)" -ForegroundColor DarkGray
         Write-Host ""
-    } else {
+    }
+    else {
         Write-Host "Build Container:" -ForegroundColor Yellow
         Write-Host "  $(if ($ForceRebuild) { 'Rebuilding' } else { 'Creating' }) image: $IMAGE_NAME"
         
@@ -144,7 +148,8 @@ if ($UseDocker) {
             docker build -f Dockerfile.build -t $IMAGE_NAME . --quiet
             if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
             Write-Host "  ✓ Image ready`n" -ForegroundColor Green
-        } finally {
+        }
+        finally {
             Pop-Location
         }
     }
@@ -153,9 +158,11 @@ if ($UseDocker) {
     # Priority: DebugBuild > Fast > Release
     $buildProfile = if ($DebugBuild) {
         "debug"
-    } elseif ($Fast) {
+    }
+    elseif ($Fast) {
         "fast-release"  # Custom profile in Cargo.toml
-    } else {
+    }
+    else {
         "release"
     }
 
@@ -173,9 +180,10 @@ if ($UseDocker) {
     
     # Determine volume mount path (Windows uses /drive/path format)
     if ($RunningOnWindows) {
-        $driveLetter = $WORKSPACE_ROOT.Substring(0,1).ToLower()
+        $driveLetter = $WORKSPACE_ROOT.Substring(0, 1).ToLower()
         $unixPath = "/$driveLetter" + $WORKSPACE_ROOT.Substring(2).Replace('\', '/')
-    } else {
+    }
+    else {
         $unixPath = $WORKSPACE_ROOT
     }
     
@@ -195,9 +203,11 @@ if ($UseDocker) {
         $buildArgs = @("cargo", "build", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
-        } elseif ($buildProfile -eq "fast-release") {
+        }
+        elseif ($buildProfile -eq "fast-release") {
             $buildArgs += @("--profile", "fast-release")
-        } else {
+        }
+        else {
             $buildArgs += "--release"
         }
         $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake")
@@ -210,11 +220,13 @@ if ($UseDocker) {
         
         if ($existingContainer -eq $containerName) {
             Write-Host "  → Using running container: $containerName" -ForegroundColor DarkGray
-        } elseif ($stoppedContainer -eq $containerName) {
+        }
+        elseif ($stoppedContainer -eq $containerName) {
             Write-Host "  → Starting existing container: $containerName" -ForegroundColor DarkGray
             docker start $containerName | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Failed to start container" }
-        } else {
+        }
+        else {
             Write-Host "  → Creating new container: $containerName" -ForegroundColor DarkGray
             
             docker run -d `
@@ -267,11 +279,13 @@ if ($UseDocker) {
         
         Write-Host "  ✓ Linux binaries built`n" -ForegroundColor Green
         
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     
-} else {
+}
+else {
     # Native Linux build
     Write-Host "Building binaries natively..." -ForegroundColor Cyan
 
@@ -279,9 +293,11 @@ if ($UseDocker) {
     # Priority: DebugBuild > Fast > Release
     $buildProfile = if ($DebugBuild) {
         "debug"
-    } elseif ($Fast) {
+    }
+    elseif ($Fast) {
         "fast-release"  # Custom profile in Cargo.toml
-    } else {
+    }
+    else {
         "release"
     }
 
@@ -326,9 +342,11 @@ if ($UseDocker) {
         $buildArgs = @("build", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
-        } elseif ($buildProfile -eq "fast-release") {
+        }
+        elseif ($buildProfile -eq "fast-release") {
             $buildArgs += @("--profile", "fast-release")
-        } else {
+        }
+        else {
             $buildArgs += "--release"
         }
         $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake")
@@ -349,7 +367,8 @@ if ($UseDocker) {
         
         Write-Host "  ✓ Binaries built`n" -ForegroundColor Green
         
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -367,7 +386,8 @@ if ($artifacts) {
         $sizeMB = [math]::Round($_.Length / 1MB, 2)
         $sizeStr = if ($sizeMB -lt 1) {
             "$([math]::Round($_.Length / 1KB, 0)) KB"
-        } else {
+        }
+        else {
             "$sizeMB MB"
         }
         
@@ -378,10 +398,12 @@ if ($artifacts) {
                 $fileType = docker run --rm -v "${LINUX_DIR}:/check" $IMAGE_NAME file "/check/$($_.Name)" 2>$null
                 $isLinuxBinary = $fileType -match "ELF.*Linux"
                 $marker = if ($isLinuxBinary) { "✓" } else { "?" }
-            } catch {
+            }
+            catch {
                 $marker = "-"
             }
-        } elseif ($IsLinuxHost) {
+        }
+        elseif ($IsLinuxHost) {
             $fileType = file $_.FullName 2>$null
             $isLinuxBinary = $fileType -match "ELF"
             $marker = if ($isLinuxBinary) { "✓" } else { "?" }
@@ -389,7 +411,8 @@ if ($artifacts) {
         
         Write-Host ("  {0} {1,-20} {2,10}" -f $marker, $_.Name, $sizeStr) -ForegroundColor $(if ($marker -eq "✓") { "Green" } else { "White" })
     }
-} else {
+}
+else {
     Write-Host "  (no artifacts found)" -ForegroundColor DarkGray
 }
 

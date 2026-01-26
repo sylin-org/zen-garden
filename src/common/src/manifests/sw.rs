@@ -90,7 +90,7 @@ struct ComposeFile {
 struct ServiceConfig {
     image: String,
     #[serde(default)]
-    ports: Vec<String>,
+    ports: Vec<(u16, u16)>,
     #[serde(default)]
     environment: Option<serde_yaml::Value>,
     #[serde(default)]
@@ -429,26 +429,8 @@ impl SwEntry {
         config: ServiceConfig,
         compatibility: Option<CompatibilityRules>,
     ) -> ServiceTemplate {
-        // Parse ports (format: "host:container" or "container")
-        let ports = config
-            .ports
-            .iter()
-            .filter_map(|p| {
-                let parts: Vec<&str> = p.split(':').collect();
-                match parts.len() {
-                    2 => {
-                        let host = parts[0].parse::<u16>().ok()?;
-                        let container = parts[1].parse::<u16>().ok()?;
-                        Some((host, container))
-                    }
-                    1 => {
-                        let port = parts[0].parse::<u16>().ok()?;
-                        Some((port, port))
-                    }
-                    _ => None,
-                }
-            })
-            .collect();
+        // Ports are already tuples (host, container)
+        let ports = config.ports;
 
         // Parse environment variables (support both list and map formats)
         let environment = match &config.environment {

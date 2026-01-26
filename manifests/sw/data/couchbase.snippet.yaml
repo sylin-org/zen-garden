@@ -7,7 +7,7 @@ ports:
   - [8094, 8094]
   - [8095, 8095]
   - [8096, 8096]
-  - "11210:11210"
+  - [11210, 11210]
 volumes:
   - couchbase-data:/opt/couchbase/var
 healthcheck:

@@ -1,24 +1,54 @@
 ﻿# Changelog
 
+All notable changes to Zen Garden will be documented in this file.
+
 ## 2026-01-26
 - Fixed syntax error in `delete_service_v1()` - Path extractor had `Path(String>` instead of `Path<String>`
 - Fixed `remove` command to actually stop and remove containers (was only removing from registry, causing auto-adoption loops)
-- Added changelog maintenance guidelines to copilot instructions
+- Added changelog maintenance guidelines to copilot instructions for AI agents
 
 ## 2026-01-25
-- Implemented multicast-first UDP discovery transport with directed broadcast fallback
-- Added per-interface sender sockets to solve multi-homed Windows 11 discovery failures
-- Added virtual adapter detection to skip Docker/WSL/Hyper-V interfaces
+- Implemented multicast-first UDP discovery (239.255.42.99:7184) with directed broadcast fallback to solve multi-homed Windows 11 failures
+- Added per-interface sender sockets to prevent OS routing packets through wrong interfaces (WSL/Hyper-V)
+- Added virtual adapter detection and filtering (skips veth, docker, vmnet, vboxnet, hyperv, wsl interfaces)
+- Added configurable discovery transport via environment variables (DISCOVERY_PORT, DISCOVERY_MCAST_GROUP, DISCOVERY_ENABLE_BCAST_FALLBACK)
+- Reduced topology offline threshold from 90s to 45s (1.5 chirp cycles) for faster stale stone detection
+- Added automatic topology maintenance task (runs every 30s, marks stale stones offline, evicts old entries)
+- Fixed topology cache accumulating duplicate stone entries with different IDs
+
+## Unreleased (Rake UI/UX Improvements)
+- Added progressive discovery display - stones appear as discovered with response times, not after timeout
+- Added streaming progress updates for container installations via SSE polling (500ms interval, 5min timeout)
+- Changed status indicators to garden vitality language: `[thriving]`, `[dormant]`, `[needs attention]` (was `[OK]`, `[stopped]`, `[ERROR]`)
+- Standardized spatial prepositions: "on" (hosting), "at" (targeting), "present on" (topology)
+- Added wall-clock timestamps `[HH:MM:SS]` to Watch command for timeline correlation
+- Added confirmation prompts to destructive operations (remove, uproot) with `--force` bypass
+- Deprecated `status` command (use `observe` or `tend` instead) - will be removed in future release
+- **BREAKING**: Removed `context` command (use `tend` instead for same functionality)
+- **BREAKING**: Changed `discover_all_moss()` to callback-based streaming API instead of returning `Vec<String>`
+
+## Technical Debt / Architecture
+- Added `if-addrs = "0.13"` dependency for network interface enumeration
+- Refactored p2p.rs (~1000 lines) - complete rewrite of UDP transport layer
+- Added P2P transport singleton pattern to prevent port conflicts (all UDP via centralized subsystem)
+- Added `NetworkInterface::compute_broadcast()` for correct directed broadcast calculation (supports /16, /20, /24, etc.)
+- Changed `UDP_SENDER` static to `UDP_SENDERS` vec for per-interface sockets
+- Changed `create_reusable_udp_socket()` to `create_multicast_receiver()` with multicast group joins on all interfaces
+- Added 5 unit tests for broadcast computation and virtual interface detection
+
+## Environment Variables
+- `DISCOVERY_PORT` - UDP port for discovery (default: 7184)
+- `DISCOVERY_MCAST_GROUP` - Multicast group address (default: 239.255.42.99)
+- `DISCOVERY_ENABLE_BCAST_FALLBACK` - Enable directed broadcast fallback (default: true)
+- `DISCOVERY_ENABLE_LIMITED_BCAST` - Enable 255.255.255.255 fallback (default: false)
 
 ---
 
-# Detailed Implementation Reports
-
-## P2P Discovery Transport - Multicast-First Implementation
-
-**Date**: 2026-01-25  
-**Status**: ✅ COMPLETE  
-**Scope**: Complete refactoring of UDP discovery transport  
+For detailed implementation reports, see:
+- [docs/discovery-transport.md](discovery-transport.md) - Multicast-first design
+- [docs/ARCHITECTURE-REFERENCE.md](ARCHITECTURE-REFERENCE.md) - Discovery transport section
+- [decisions/COMM-0001-p2p-transport-singleton.md](decisions/COMM-0001-p2p-transport-singleton.md)
+- [decisions/COMM-0002-p2p-pipeline-spec.md](decisions/COMM-0002-p2p-pipeline-spec.md)  
 
 ---
 

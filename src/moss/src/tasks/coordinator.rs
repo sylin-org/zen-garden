@@ -27,6 +27,29 @@ use crate::{
 };
 use crate::tasks::network_monitor::{NetworkMonitor, NetworkEvent};
 
+/// Start topology maintenance task
+///
+/// Periodically marks stale stones as offline and evicts old offline stones.
+/// Runs every 30 seconds (aligns with stone chirp interval).
+pub fn start_topology_maintenance(topology_cache: TopologyCache) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+        interval.tick().await; // Skip first immediate tick
+
+        loop {
+            interval.tick().await;
+            let (marked, evicted) = crate::domain::topology::maintain_topology(&topology_cache).await;
+            if marked > 0 || evicted > 0 {
+                tracing::debug!(
+                    marked_offline = marked,
+                    evicted = evicted,
+                    "Topology maintenance complete"
+                );
+            }
+        }
+    });
+}
+
 /// Start UDP discovery listener with topology cache integration
 ///
 /// Enables stone discovery via UDP broadcast.
@@ -389,6 +412,9 @@ pub async fn start_all_background_tasks(
     config: Option<infra::MossConfig>,
 ) {
     let console = state.console.clone();
+
+    // Start topology maintenance (mark stale offline, evict old)
+    start_topology_maintenance(state.topology_cache.clone());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(

@@ -23,7 +23,8 @@ use tokio::sync::RwLock;
 const MAX_OFFLINE_STONES: usize = 64;
 
 /// Threshold for marking a stone as offline (seconds since last seen)
-const OFFLINE_THRESHOLD_SECS: i64 = 90;
+/// Stones chirp every 30s, so 45s = 1.5 chirp cycles (tolerates 1 missed chirp)
+const OFFLINE_THRESHOLD_SECS: i64 = 45;
 
 /// TTL for offline stones before eviction (hours)
 const OFFLINE_EVICTION_HOURS: i64 = 24;
@@ -227,8 +228,6 @@ mod tests {
 
     /// Helper to create a minimal TopologyEntry for testing
     fn make_entry(stone_id: &str, stone_name: &str, endpoint: &str, version: &str) -> TopologyEntry {
-        use garden_common::{TopologyServiceEntry, HardwareCapabilities};
-        
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
@@ -246,8 +245,6 @@ mod tests {
 
     /// Helper to create a TopologyEntry with MAC for testing
     fn make_entry_with_mac(stone_id: &str, stone_name: &str, endpoint: &str, version: &str, mac: Option<&str>) -> TopologyEntry {
-        use garden_common::{TopologyServiceEntry, HardwareCapabilities};
-        
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),

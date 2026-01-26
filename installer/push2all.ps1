@@ -353,14 +353,23 @@ function Discover-AllStones {
     
     $requestBytes = [System.Text.Encoding]::UTF8.GetBytes($announcement)
     
-    # Send broadcast
+    # Send to multicast group (239.255.42.99) - matches multicast-first discovery
+    # Also send to limited broadcast as fallback for older moss versions
+    $multicastGroup = [System.Net.IPAddress]::Parse("239.255.42.99")
+    $multicastEndpoint = New-Object System.Net.IPEndPoint($multicastGroup, 7184)
     $broadcastEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Broadcast, 7184)
-    $sent = $udpClient.Send($requestBytes, $requestBytes.Length, $broadcastEndpoint)
+    
+    # Send multicast (primary)
+    $sent1 = $udpClient.Send($requestBytes, $requestBytes.Length, $multicastEndpoint)
+    # Send broadcast (fallback for older versions)
+    $sent2 = $udpClient.Send($requestBytes, $requestBytes.Length, $broadcastEndpoint)
+    
     $boundAddr = if ($lanIP) { $lanIP } else { "0.0.0.0" }
-    Write-Status "   Sent broadcast: $sent bytes from $boundAddr to 255.255.255.255:7184"
+    Write-Status "   Sent discovery: multicast $sent1 bytes + broadcast $sent2 bytes from $boundAddr"
     
     # Collect responses with shorter individual timeout but keep trying for full duration
     [System.Collections.ArrayList]$stones = @()
+    $seenStones = @{}  # Deduplication: track by stone_name
     $remoteEP = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
     
     $udpClient.Client.ReceiveTimeout = 1000  # 1 second timeout per receive attempt
@@ -375,6 +384,12 @@ function Discover-AllStones {
             # Check if this is a discovery_response (field is "type" not "announcement_type")
             if ($envelope.type -eq "discovery_response") {
                 $response = $envelope.data
+                
+                # Deduplicate by stone_name (same stone may respond to both multicast and broadcast)
+                if ($seenStones.ContainsKey($response.stone_name)) {
+                    continue
+                }
+                $seenStones[$response.stone_name] = $true
                 
                 # Override port if specified
                 $endpoint = $response.stone_endpoint

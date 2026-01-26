@@ -9,7 +9,7 @@ use garden_moss::infra::kill_existing_moss_processes_graceful;
 #[cfg(target_os = "windows")]
 use garden_moss::Commands;
 #[cfg(target_os = "windows")]
-use garden_moss::infra::{install_windows_service, finalize_service_update, cleanup_after_service_update};
+use garden_moss::infra::{install_windows_service, finalize_service_update, cleanup_after_service_update, cleanup_updater_process};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -32,6 +32,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     if cli.cleanup_old {
         return cleanup_after_service_update().await;
+    }
+
+    #[cfg(target_os = "windows")]
+    if cli.cleanup_updater {
+        return cleanup_updater_process().await;
     }
 
     // Load and merge configuration (CLI > Env > File > Defaults)

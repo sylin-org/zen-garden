@@ -30,6 +30,8 @@ pub mod persistence;
 pub mod process;
 pub mod secrets;
 pub mod service;
+#[cfg(target_os = "windows")]
+pub mod update_transaction;
 
 pub use api_helpers::{error_response, error_codes};
 pub use auth::NoAuth;
@@ -38,7 +40,7 @@ pub use container::ContainerRuntime;
 pub use garden_common::infra::network::get_local_ip;
 pub use process::{kill_existing_moss_processes_graceful, check_moss_processes_exist, kill_existing_moss_processes};
 #[cfg(target_os = "windows")]
-pub use service::{install_windows_service, finalize_service_update, cleanup_after_service_update};
+pub use service::{install_windows_service, finalize_service_update, cleanup_after_service_update, spawn_windows_updater, cleanup_updater_process};
 pub use filesystem::FileSystem;
 pub use hardware::{detect_hardware, load_cached_capabilities, save_capabilities_cache, create_skeleton};
 pub use hardware_id::{generate_hardware_id, load_cached_hardware_id, save_hardware_id_cache};

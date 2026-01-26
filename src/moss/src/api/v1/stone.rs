@@ -565,8 +565,33 @@ pub async fn deploy_stone_v1(
     tracing::info!(path = %validated_dir, "Package validated and staged");
 
     if contains_moss {
-        tracing::info!("Package contains garden-moss, initiating graceful shutdown for upgrade");
-        state.shutdown_tx.notify_one();
+        tracing::info!("Package contains garden-moss, initiating upgrade sequence");
+        
+        #[cfg(target_os = "windows")]
+        {
+            use crate::infra::spawn_windows_updater;
+            
+            if let Err(e) = spawn_windows_updater().await {
+                tracing::error!(error = ?e, "Failed to spawn updater");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "status": "error",
+                        "message": "Failed to spawn updater process",
+                        "error": format!("{}", e),
+                    })),
+                );
+            }
+            
+            // Shutdown will be triggered after updater spawns
+            state.shutdown_tx.notify_one();
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Linux: systemd ExecStartPre handles binary installation
+            state.shutdown_tx.notify_one();
+        }
 
         (
             StatusCode::ACCEPTED,

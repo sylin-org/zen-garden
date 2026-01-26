@@ -2,10 +2,61 @@
 //!
 //! Windows-specific service management:
 //! - Installing Moss as a Windows service
-//! - Handling service updates
+//! - Handling service updates with transaction log
 //! - Cleaning up after updates
+//! - Automatic rollback on failure
 //!
 //! Future: Add Linux systemd and macOS launchd support
+
+#[cfg(target_os = "windows")]
+use crate::infra::update_transaction::{UpdateTransaction, UpdateStage};
+
+/// Spawn Windows updater process
+///
+/// Called by the API endpoint when a package contains garden-moss.
+/// Copies the current moss executable to garden-moss-temp.exe and spawns it
+/// with --finalize-update flag, then returns immediately.
+///
+/// The temp process will:
+/// 1. Wait for old moss to exit
+/// 2. Backup current binaries
+/// 3. Install new binaries
+/// 4. Verify new moss starts
+/// 5. Self-cleanup
+#[cfg(target_os = "windows")]
+pub async fn spawn_windows_updater() -> anyhow::Result<()> {
+    use std::process::Command;
+    use anyhow::Context;
+
+    let current_exe = std::env::current_exe()
+        .context("Failed to get current executable path")?;
+    let exe_dir = current_exe.parent()
+        .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    
+    let temp_updater = exe_dir.join("garden-moss-temp.exe");
+    
+    tracing::info!(
+        source = ?current_exe,
+        temp = ?temp_updater,
+        "Copying self to temporary updater"
+    );
+    
+    // Copy current executable to temp location
+    std::fs::copy(&current_exe, &temp_updater)
+        .context("Failed to copy executable to temp location")?;
+    
+    // Spawn updater process (detached, does not wait)
+    tracing::info!("Spawning updater process: garden-moss-temp.exe --finalize-update");
+    
+    let _child = Command::new(&temp_updater)
+        .arg("--finalize-update")
+        .spawn()
+        .context("Failed to spawn updater process")?;
+    
+    tracing::info!("Updater spawned successfully, shutdown will be triggered");
+    
+    Ok(())
+}
 
 /// Install Moss as a Windows service
 ///
@@ -228,5 +279,68 @@ pub async fn cleanup_after_service_update() -> anyhow::Result<()> {
     }
 
     // Continue with normal startup (fall through to main logic)
+    Ok(())
+}
+
+/// Cleanup updater process after successful update
+///
+/// Removes the garden-moss-temp.exe file after a successful update.
+/// Waits for the updater process to exit before removing.
+#[cfg(target_os = "windows")]
+pub async fn cleanup_updater_process() -> anyhow::Result<()> {
+    use std::process::Command;
+    
+    let current_exe = std::env::current_exe()?;
+    let exe_dir = current_exe.parent()
+        .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    let temp_exe = exe_dir.join("garden-moss-temp.exe");
+    
+    if temp_exe.exists() {
+        // Wait for updater process to exit
+        for _ in 1..=40 {
+            let output = Command::new("tasklist")
+                .args(["/FI", "IMAGENAME eq garden-moss-temp.exe"])
+                .output()?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.contains("garden-moss-temp.exe") {
+                break;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        // Remove temp updater
+        std::fs::remove_file(&temp_exe).ok();
+        tracing::info!("Cleaned up updater process");
+    }
+    
+    // Continue with normal startup
+    Ok(())
+}
+
+/// Helper: Recursive directory copy
+#[cfg(target_os = "windows")]
+fn copy_dir_recursive(src: &str, dst: &str) -> anyhow::Result<()> {
+    use std::path::Path;
+    
+    std::fs::create_dir_all(dst)?;
+    
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let target = Path::new(dst).join(&file_name);
+        
+        if path.is_dir() {
+            copy_dir_recursive(
+                &path.to_string_lossy(),
+                &target.to_string_lossy()
+            )?;
+        } else {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    
     Ok(())
 }

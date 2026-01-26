@@ -45,6 +45,11 @@ pub struct Cli {
     /// Internal: Cleanup old binary after update (used during self-update)
     #[arg(long, hide = true)]
     pub cleanup_old: bool,
+
+    /// Internal: Cleanup updater process after successful update (Windows only)
+    #[arg(long, hide = true)]
+    #[cfg(target_os = "windows")]
+    pub cleanup_updater: bool,
 }
 
 #[derive(clap::Subcommand)]

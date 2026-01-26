@@ -3,6 +3,12 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-26
+- **Implemented Windows self-update (Phase 1)**: spawn-temp-process pattern for package-based updates
+  - Added `spawn_windows_updater()` to copy moss → garden-moss-temp.exe and spawn --finalize-update
+  - Updated deploy_stone_v1 API to call Windows updater before shutdown
+  - Added `--cleanup-updater` CLI flag for post-update cleanup
+  - Added `cleanup_updater_process()` to remove temp binary after successful update
+  - Added `update_transaction.rs` module for future transaction log implementation (Phase 2)
 - Fixed Windows paths to maintain consistent manifest structure: `.zen-garden/manifests/{hw|sw}` (was using separate hw-manifests/, templates/ dirs)
 - Windows self-update implementation designed: spawn-temp-process pattern with transaction log, rollback safety, automatic recovery
 - Windows deployment analysis complete: identified missing self-update mechanism (Linux has systemd ExecStartPre scripts, Windows had none)

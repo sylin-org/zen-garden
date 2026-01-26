@@ -546,7 +546,7 @@ pub async fn nourish_service_v1(
 /// Use POST /api/v1/services/:service/destroy for complete destruction (uproot).
 pub async fn delete_service_v1(
     State(state): State<AppState>,
-    Path(service): Path(String>,
+    Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut registry = state.registry.write().await;

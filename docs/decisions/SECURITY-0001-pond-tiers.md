@@ -1,13 +1,14 @@
 ﻿---
-status: Accepted
+status: Superseded
 date: 2026-01-15
+superseded-by: SECURITY-0004-tier2-deferral.md
 ---
 
 # SECURITY-0001: Pond Two-Tier Security Model
 
 ## Status
 
-**Accepted** - Tier 1 (Garden Pond) implemented, Tier 2 (Deep Pond) planned Q3-Q4 2026
+**Superseded** - Tier 1 approved for implementation. Tier 2 deferred indefinitely (see [SECURITY-0004](SECURITY-0004-tier2-deferral.md)).
 
 ## Context
 

@@ -79,6 +79,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{broadcast, mpsc, Mutex, OnceCell};
 use tokio::time::Instant;
 
+use crate::utils::ids::generate_guidv7;
 use crate::{ports, UdpAnnouncement};
 
 // ===== Configuration =====
@@ -281,6 +282,46 @@ struct InternalUdpEvent {
 struct InterfaceSender {
     interface: NetworkInterface,
     socket: Arc<UdpSocket>,
+}
+
+// ===== Deduplication =====
+
+/// TTL for dedup cache entries (5 seconds)
+/// This is sufficient to handle multicast/broadcast race conditions
+/// where the same message may arrive via different paths within milliseconds.
+const DEDUP_TTL: Duration = Duration::from_secs(5);
+
+/// Deduplication cache to prevent processing the same message multiple times
+/// when it arrives via both multicast and broadcast paths.
+struct DedupCache {
+    seen: HashMap<String, Instant>,
+}
+
+impl DedupCache {
+    fn new() -> Self {
+        Self {
+            seen: HashMap::new(),
+        }
+    }
+
+    /// Check if message ID is a duplicate. Returns true if seen before (skip processing).
+    /// Performs lazy cleanup of expired entries on each call.
+    fn is_duplicate(&mut self, msg_id: &str) -> bool {
+        let now = Instant::now();
+
+        // Lazy cleanup: remove entries older than TTL
+        self.seen
+            .retain(|_, ts| now.duration_since(*ts) < DEDUP_TTL);
+
+        // Check if already seen
+        if self.seen.contains_key(msg_id) {
+            return true; // Duplicate
+        }
+
+        // Mark as seen
+        self.seen.insert(msg_id.to_string(), now);
+        false
+    }
 }
 
 /// Singleton holder for UDP receiver and broadcast channel
@@ -688,8 +729,10 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
 
     let config = DISCOVERY_CONFIG.get().unwrap();
 
-    // Build announcement envelope
+    // Build announcement envelope with dedup ID
+    let msg_id = generate_guidv7();
     let announcement = UdpAnnouncement {
+        msg_id: Some(msg_id.clone()),
         announcement_type: announcement_type.to_string(),
         data: serde_json::from_slice(payload_bytes)
             .context("Failed to deserialize payload for announcement")?,
@@ -779,6 +822,7 @@ async fn udp_receiver_loop(
     socket: UdpSocket,
 ) -> Result<()> {
     let mut buf = [0u8; 4096];
+    let mut dedup_cache = DedupCache::new();
 
     tracing::info!("P2P transport receiver started");
 
@@ -786,6 +830,18 @@ async fn udp_receiver_loop(
         match socket.recv_from(&mut buf).await {
             Ok((len, addr)) => {
                 if let Ok(announcement) = serde_json::from_slice::<UdpAnnouncement>(&buf[..len]) {
+                    // Deduplicate if msg_id is present
+                    if let Some(ref msg_id) = announcement.msg_id {
+                        if dedup_cache.is_duplicate(msg_id) {
+                            tracing::trace!(
+                                msg_id = %msg_id,
+                                source = ?addr,
+                                "Duplicate message ignored"
+                            );
+                            continue;
+                        }
+                    }
+
                     let event = InternalUdpEvent {
                         announcement_type: announcement.announcement_type.clone(),
                         payload: announcement.data,
@@ -795,6 +851,7 @@ async fn udp_receiver_loop(
                     tracing::trace!(
                         announcement_type = %event.announcement_type,
                         source = ?addr,
+                        msg_id = ?announcement.msg_id,
                         "UDP event received"
                     );
 
@@ -906,7 +963,7 @@ async fn create_multicast_receiver(addr: &str, config: &DiscoveryConfig) -> Resu
 /// Create sender socket bound to specific interface
 async fn create_interface_sender(
     iface: &NetworkInterface,
-    config: &DiscoveryConfig,
+    _config: &DiscoveryConfig,
 ) -> Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
 

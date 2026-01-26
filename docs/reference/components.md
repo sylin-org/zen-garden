@@ -128,18 +128,20 @@ HTTP directory service (port 7184) for cross-subnet discovery and Windows compat
 
 ### Pond (Optional)
 
-mTLS security layer for authentication and encryption.
+Encrypted communication layer for Stone-to-Stone traffic.
 
-**Tiers**:
-- **Garden Pond (Tier 1)**: Basic encryption, home lab focus
-- **Deep Pond (Tier 2)**: Enterprise hardening with defense-in-depth. Audit logs, certificate rotation, multi-admin approval, compliance features.
+**Security model**: P2P shared-secret. All pond members hold the complete keypair. Any member can invite new stones. Cornerstone is ceremonial (not a control point).
 
 **Components**:
-- **Keystone**: Encrypted file with CA keypair
-- **Cornerstone**: First Stone with certificate authority
-- **Certificate binding**: mTLS authentication for all connections
+- **Keystone**: Encrypted file with CA keypair (shared secret)
+- **Cornerstone**: Stone that initialized the pond
+- **Encrypted UDP**: XChaCha20-Poly1305 for all pond traffic
 
-→ See: [security/overview.md](../security/overview.md)
+**Admission**: TOTP-based Bluetooth-style pairing (6-character code, 5-minute window)
+
+**Revocation**: Drain only (all-or-nothing reset)
+
+→ See: [specs/POND-0001-protocol.md](../specs/POND-0001-protocol.md), [security/overview.md](../security/overview.md)
 
 ---
 

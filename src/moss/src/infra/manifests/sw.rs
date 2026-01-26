@@ -16,7 +16,10 @@ use super::discover_subdirectories;
 
 /// Runtime templates directory (platform-specific)
 #[cfg(target_os = "windows")]
-pub const RUNTIME_TEMPLATES_DIR: &str = "C:\\ProgramData\\ZenGarden\\templates";
+#[cfg(target_os = "linux")]
+pub const RUNTIME_TEMPLATES_DIR: &str = "/etc/zen-garden/templates";
+#[cfg(target_os = "windows")]
+pub const RUNTIME_TEMPLATES_DIR: &str = ".zen-garden/templates";
 
 #[cfg(not(target_os = "windows"))]
 pub const RUNTIME_TEMPLATES_DIR: &str = "/etc/zen-garden/templates";
@@ -442,7 +445,7 @@ impl SwEntry {
                     } else {
                         // Named volume: use platform-specific base path
                         #[cfg(target_os = "windows")]
-                        let base = "C:\\ProgramData\\ZenGarden\\volumes";
+                        let base = ".zen-garden/volumes";
                         #[cfg(not(target_os = "windows"))]
                         let base = "/var/lib/zen-garden/volumes";
 

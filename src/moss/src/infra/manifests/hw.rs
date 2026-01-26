@@ -15,7 +15,10 @@ use super::discover_subdirectories;
 
 /// Runtime hardware manifests directory (platform-specific)
 #[cfg(target_os = "windows")]
-pub const RUNTIME_HW_MANIFESTS_DIR: &str = "C:\\ProgramData\\ZenGarden\\hw-manifests";
+#[cfg(target_os = "linux")]
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = "/etc/zen-garden/hw-manifests";
+#[cfg(target_os = "windows")]
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = ".zen-garden/hw-manifests";
 
 #[cfg(not(target_os = "windows"))]
 pub const RUNTIME_HW_MANIFESTS_DIR: &str = "/var/lib/zen-garden/hw-manifests";

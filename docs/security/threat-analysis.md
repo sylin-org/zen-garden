@@ -5,6 +5,8 @@
 **Purpose**: Understand specific attack vectors and security defenses  
 **Audience**: Security, Maintainer
 
+> **Note**: This analysis was written during design phase. "Tier 2" references document theoretical enterprise enhancements that were evaluated and deferred. See [SECURITY-0004](../decisions/SECURITY-0004-tier2-deferral.md) for deferral rationale. Current implementation is shared-secret P2P model (no certificates, no Tier 2 features).
+
 ---
 
 ## Contents
@@ -22,23 +24,21 @@
 
 ### Summary Table
 
-| Vulnerability              | Tier 1    | Tier 2      | Status                        |
-| -------------------------- | --------- | ----------- | ----------------------------- |
-| Config propagation exploit | ⚠️ MEDIUM | 🔴 CRITICAL | P0 Fix: Safety net            |
-| Predictable election       | 🟢 LOW    | 🟡 HIGH     | P0 Fix: Random salt           |
-| Time oracle attack         | 🟢 LOW    | 🔴 CRITICAL | P0 Fix: Timestamp validation  |
-| MAC spoofing               | 🟡 MEDIUM | 🟡 HIGH     | P1 Fix: Fingerprinting        |
-| Missing cert revocation    | 🟡 HIGH   | 🔴 CRITICAL | P0 Fix: Short-lived certs     |
-| Keystone dictionary attack   | 🟡 MEDIUM | 🔴 CRITICAL | P1 Fix: Passphrase entropy    |
-| Used codes desync          | 🟡 MEDIUM | 🟡 HIGH     | P0 Fix: Timestamp + broadcast |
-| Stone impersonation        | 🟡 HIGH   | 🔴 CRITICAL | P0 Fix: CN binding            |
-| Join flood DoS             | 🟢 LOW    | 🟡 MEDIUM   | P1 Fix: Rate limiting         |
-| Split-brain                | 🟢 LOW    | 🟡 HIGH     | P1 Fix: Partition detection   |
-| Audit log tampering        | 🟢 LOW    | 🔴 CRITICAL | P1 Fix: Signed logs           |
-| Bearer token replay        | 🟢 LOW    | 🟡 MEDIUM   | P0 Fix: Nonce tracking        |
-| mDNS flooding              | 🟢 LOW    | 🟢 LOW      | P2 Fix: Signature filtering   |
+| Vulnerability              | Severity  | Status                        |
+| -------------------------- | --------- | ----------------------------- |
+| Config propagation exploit | ⚠️ MEDIUM | P0 Fix: Safety net            |
+| Predictable election       | 🟢 LOW    | P0 Fix: Random salt           |
+| Time oracle attack         | 🟢 LOW    | P0 Fix: Timestamp validation  |
+| MAC spoofing               | 🟡 MEDIUM | P1 Fix: Fingerprinting        |
+| Keystone dictionary attack | 🟡 MEDIUM | P1 Fix: Passphrase entropy    |
+| Used codes desync          | 🟡 MEDIUM | P0 Fix: Timestamp + broadcast |
+| Stone impersonation        | 🟡 MEDIUM | P0 Fix: Signature binding     |
+| Join flood DoS             | 🟢 LOW    | P1 Fix: Rate limiting         |
+| Split-brain                | 🟢 LOW    | P1 Fix: Partition detection   |
+| Bearer token replay        | 🟢 LOW    | P0 Fix: Nonce tracking        |
+| mDNS flooding              | 🟢 LOW    | P2 Fix: Signature filtering   |
 
-**Reclassification rationale**: Home lab threat model (Tier 1) differs from enterprise (Tier 2). Trusted admin, physical security, and simplified recovery make many CRITICAL enterprise vulnerabilities LOW/MEDIUM for home labs.
+**Threat model**: Home lab environment with trusted admin, physical security, and simplified recovery. See [Design Decisions](../specs/POND-0001-protocol.md#design-decisions) for full rationale.
 
 ---
 
@@ -46,7 +46,7 @@
 
 ### 1. Configuration Propagation Exploit
 
-**Severity**: Medium (Tier 1), Critical (Tier 2)  
+**Severity**: Medium  
 **Attack Vector**: Malicious administrator changes security config  
 **Impact**: Weakened security, unauthorized access
 

@@ -10,11 +10,10 @@
 ## Contents
 
 - [Security Philosophy](#security-philosophy)
-- [Threat Models](#threat-models)
+- [Threat Model](#threat-model)
 - [Pond Security](#pond-security)
 - [What Pond Protects](#what-pond-protects)
 - [What Pond Does NOT Protect](#what-pond-does-not-protect)
-- [Security Tiers](#security-tiers)
 - [When to Use Pond](#when-to-use-pond)
 
 ---
@@ -40,9 +39,9 @@ Every security feature includes:
 
 ---
 
-## Threat Models
+## Threat Model
 
-### Home Lab Reality (Tier 1 Target)
+### Home Lab Reality
 
 **Environment**:
 - Solo admin or small trusted team
@@ -69,32 +68,11 @@ Every security feature includes:
 
 **Philosophy**: Protect against accidents and common attacks, not nation-states.
 
-### Enterprise Reality (Tier 2 Target)
-
-**Environment**:
-- Multiple administrators (untrusted)
-- 10+ Stones, potentially multi-tenant
-- Compliance requirements (GDPR, SOC2, HIPAA)
-- Hostile network possible
-
-**Additional Threats**:
-
-| Threat               | Likelihood | Impact   | Mitigation Priority         |
-| -------------------- | ---------- | -------- | --------------------------- |
-| Insider threat       | HIGH       | Critical | **P0** - Multi-sig, audit   |
-| APT attacks          | MEDIUM     | Critical | **P0** - Defense in depth   |
-| Lateral movement     | MEDIUM     | Critical | **P0** - Segmentation       |
-| Compliance violation | HIGH       | Critical | **P0** - Audit, encryption  |
-| Supply chain         | LOW        | Critical | **P1** - Attestation        |
-| Data breach          | MEDIUM     | Critical | **P0** - Encryption at rest |
-
-**Philosophy**: Defense in depth, compliance-first, insider threat mitigation.
-
 ---
 
 ## Pond Security
 
-**Pond** - Optional security layer connecting Stones with mutual TLS (mTLS) authentication.
+**Pond** - Optional security layer for encrypted Stone-to-Stone communication using P2P shared-secret model.
 
 **Philosophy**: "Set your stones, make sure everything is working, fill the pond."
 
@@ -120,13 +98,13 @@ Bluetooth Pairing          →  Pond Join
 
 ### Components
 
-**Keystone** - Encrypted file containing Pond CA (certificate authority) keypair. Cornerstone holds the Keystone and uses it to issue certificates to joining Stones.
+**Keystone** - Encrypted file containing Pond CA keypair (shared secret). All pond members hold the complete keypair (P2P trust model).
 
-**Cornerstone** - First Stone in a Pond with certificate authority. Only one Cornerstone per Pond. Issues certificates during Stone admission.
+**Cornerstone** - Stone that initialized the pond (ran `place keystone`). Ceremonial role—not a control point. Any pond member can invite new stones.
 
-**mTLS Certificates** - Each Stone receives a short-lived certificate (1 hour TTL) for authentication. Auto-renewed every 30 minutes.
+**Encrypted UDP** - All pond traffic uses XChaCha20-Poly1305 encryption. Strong, fast, modern cryptography (same primitives as WireGuard).
 
-**TOTP Codes** - Time-based one-time passwords for Stone admission. 6 characters, 5-minute TTL, validated locally (never transmitted).
+**TOTP Codes** - Time-based one-time passwords for Stone admission. 6 characters, 5-minute window, validated locally (never transmitted).
 
 ---
 
@@ -134,38 +112,37 @@ Bluetooth Pairing          →  Pond Join
 
 ### ✅ Protection Provided
 
-**1. Authentication** - Verify Stone identity (prevent rogue devices)
+**1. Encryption** - Protect traffic from network sniffing
 ```
-Without Pond: Any device can announce "I offer MongoDB"
-With Pond: Only Stones with valid certificates trusted
-```
-
-**2. Encryption** - Protect traffic from network sniffing
-```
-Without Pond: mDNS announcements plaintext, HTTP traffic visible
-With Pond: mTLS encryption for all inter-Stone communication
+Without Pond: UDP announcements plaintext, traffic visible
+With Pond: XChaCha20-Poly1305 encryption for all inter-Stone communication
 ```
 
-**3. Authorization** - Control which Stones can join Garden
+**2. Admission Control** - Control which Stones can join Garden
 ```
 Without Pond: Any device on network can join automatically
 With Pond: Administrator approves each Stone (TOTP code)
 ```
 
-**4. Tamper Detection** - Detect certificate mismatch or manipulation
+**3. Authentication** - Verify Stone identity (prevent rogue devices)
 ```
-Certificate CN binding: Identity extracted from mTLS, not headers
-Mismatch triggers alert + audit log entry
+Without Pond: Any device can announce "I offer MongoDB"
+With Pond: Only Stones with valid pond credentials trusted
+```
+
+**4. Outsider Detection** - Identify non-member stones
+```
+Stones without pond credentials receive "join_required" signal
+Clear indication of which stones need invitation
 ```
 
 **5. Visual Security Status** - Understand security posture at a glance
 ```bash
 garden-rake status --security
 
-Pond Status: Active (Garden Pond - Tier 1)
+Pond Status: Active
 Cornerstone: stone-01
 Stones: 4 joined, 0 pending
-Certificates: All valid, expires in 28 min (auto-renew at 30 min)
 Last Audit: 2 events (last 24h) - view with 'audit show'
 ```
 
@@ -175,95 +152,41 @@ Last Audit: 2 events (last 24h) - view with 'audit show'
 
 ### ❌ Not Protected
 
-**1. Physical Access** - If attacker has physical access to Cornerstone:
+**1. Physical Access** - If attacker has physical access to any pond stone:
 ```
 Risk: Extract Keystone file, brute-force weak passphrase
-Mitigation: Strong passphrase (20+ chars), hardware encryption (Tier 2)
+Mitigation: Strong passphrase (20+ chars), Argon2id key derivation
 ```
 
 **2. Time Manipulation** - If attacker controls network time (NTP):
 ```
 Risk: TOTP replay attacks (valid codes reused)
-Mitigation: Used codes tracking (Tier 1), NTP consensus (Tier 2)
+Mitigation: Used codes tracking, timestamp validation
 ```
 
 **3. Malware on Stone** - If attacker compromises Stone OS:
 ```
-Risk: Extract private key, issue fake certificates
-Mitigation: OS hardening, container isolation, TPM (Tier 2)
+Risk: Extract private key, impersonate stone
+Mitigation: OS hardening, container isolation
 ```
 
 **4. Network Partition** - If network splits (split-brain):
 ```
-Risk: Temporary inconsistency, duplicate Cornerstones possible
-Mitigation: Read-only mode during partition, quorum voting (Tier 2)
+Risk: Temporary inconsistency
+Mitigation: Read-only mode during partition
 ```
 
 **5. Nation-State Attacks** - Advanced persistent threats (APT):
 ```
-Scope: Out of scope for Tier 1 (home lab focus)
-Consideration: Tier 2 adds defense in depth, but not APT-proof
+Scope: Out of scope (home lab focus)
+Reality: Home labs are not APT targets
 ```
 
----
-
-## Security Tiers
-
-### Tier 1: Garden Pond (Default)
-
-**Target**: Home labs, small teams (2-10 Stones)  
-**Complexity**: Low (zero config)  
-**Effort**: 1 week implementation  
-**Security Rating**: 7/10  
-**Philosophy**: Frictionless, protect against accidents
-
-**Features**:
-- Short-lived certificates (1 hour TTL, auto-renew)
-- TOTP admission (6-character codes, 5-minute TTL)
-- Encrypted join requests (Ed25519)
-- Visual security feedback
-- Local audit logs (SQLite, 30-day retention)
-- Simple time sync (single NTP source)
-
-**Suitable for**:
-- Home labs with trusted users
-- Development environments
-- Small teams (2-5 people)
-- Non-sensitive data
-- Physical security assumed
-
-→ See: [pond-setup.md](pond-setup.md)
-
-**CLI**: `garden-rake place keystone`
-
-### Tier 2: Deep Pond (Enterprise)
-
-**Target**: Enterprise, compliance requirements  
-**Complexity**: High (TPM, quorum, multi-admin)  
-**Effort**: 8 weeks implementation  
-**Security Rating**: 9.5/10  
-**Philosophy**: Defense in depth, compliance-first
-
-**Additional Features** (beyond Tier 1):
-- Hardware security (TPM 2.0 required)
-- Multi-signature approvals (3+ admins)
-- NTP consensus (multiple time sources)
-- Partition quorum enforcement
-- Advanced audit logging (distributed, immutable)
-- Certificate pinning
-- Rate limiting with fingerprinting
-- Keystone rotation protocols
-
-**Suitable for**:
-- Enterprises (10+ Stones)
-- Compliance needs (GDPR, SOC2, HIPAA)
-- Multi-tenant environments
-- Sensitive data (PII, financial, medical)
-- Untrusted networks
-
-**CLI**: `garden-rake place keystone deep`
-
-→ See: [../specs/security.md](../specs/security.md) (full specification)
+**6. Insider Attack** - If trusted admin goes rogue:
+```
+Risk: Full access to all systems (shared-secret model)
+Mitigation: This is the trust model. Use Drain if trust is broken.
+```
 
 ---
 
@@ -273,8 +196,6 @@ Consideration: Tier 2 adds defense in depth, but not APT-proof
 
 ✅ **Running production workloads** - Sensitive data, uptime requirements  
 ✅ **On untrusted networks** - Public WiFi, shared office networks  
-✅ **Multiple administrators** - Need access control and audit trails  
-✅ **Compliance requirements** - GDPR, SOC2, HIPAA mandates encryption  
 ✅ **Rogue device risk** - Open network where unknown devices can join
 
 ### Don't Need Pond When...
@@ -292,16 +213,16 @@ Consideration: Tier 2 adds defense in depth, but not APT-proof
 2. Validate discovery and services working
 3. Enable Pond when ready: `garden-rake place keystone`
 4. Existing services continue (zero downtime)
-5. New operations require certificates (automatic)
+5. All pond traffic encrypted automatically
 
 ---
 
 ## Related Documentation
 
 - **[Pond Setup Guide](pond-setup.md)** - Enable Pond, join Stones
+- **[Pond Protocol Specification](../specs/POND-0001-protocol.md)** - Complete protocol design
 - **[Threat Analysis](threat-analysis.md)** - Detailed attack scenarios
-- **[Security Specification](../specs/security.md)** - Complete technical design
 
 ---
 
-**Last Updated**: 2026-01-18
+**Last Updated**: 2026-01-26

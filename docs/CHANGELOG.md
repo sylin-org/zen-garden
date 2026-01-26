@@ -3,6 +3,25 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-26
+- Fixed Windows paths to maintain consistent manifest structure: `.zen-garden/manifests/{hw|sw}` (was using separate hw-manifests/, templates/ dirs)
+- Windows self-update implementation designed: spawn-temp-process pattern with transaction log, rollback safety, automatic recovery
+- Windows deployment analysis complete: identified missing self-update mechanism (Linux has systemd ExecStartPre scripts, Windows had none)
+- Added UDP message deduplication in p2p.rs - GUIDv7 msg_id with 5s TTL cache to prevent duplicate processing from multicast/broadcast multi-path delivery
+- Added `docs/reference/cost-analysis.md` - realistic cost comparison: Zen Garden on 3× Dell Wyse 5070s vs AWS/Azure (~90% savings)
+- Added `docs/philosophy/staying-focused.md` - north star document to prevent scope creep and maintain focus on core mission (e-waste reclamation, small business ownership, removing barriers)
+- **Documentation cleanup**: Removed all Tier 2/Deep Pond references from foundational documentation
+- Rewrote POND-0001 protocol spec: removed certificates, resurrection, individual revocation (Tier 2 features)
+- Updated glossary.md: new definitions for Pond, Keystone, Cornerstone, Stone Admission, Drain aligned with P2P model
+- Rewrote security/overview.md: removed Security Tiers section, simplified to single threat model
+- Rewrote security/pond-setup.md: removed certificate management, added baptism/drain workflows
+- Updated security/threat-analysis.md: added note about Tier 2 references being historical, simplified vuln matrix
+- Updated maintainers.md: removed Mode 3 Deep Pond section, simplified threat model
+- Updated roadmap.md: removed Tiers table (Open Garden/Garden Pond/Deep Pond)
+- Added SECURITY-0004 decision: Tier 2 (Deep Pond) deferred until real demand exists
+- Updated POND-0001 with Design Decisions section documenting unicast baptism, Tier 1 security value, shared secret rationale
+- Changed baptism protocol from broadcast to unicast direct delivery (topology-based, per-stone addressing)
+- Updated SECURITY-0001 status to Superseded (Tier 2 timeline removed)
+- Added POND-0001 protocol specification for Pond security layer (baptism, invitation, drain protocols)
 - Updated roadmap.md to reflect completed Phase 1 (discovery, topology, nourishment v0 all implemented)
 - Optimized copilot-instructions.md for AI consumption - removed verbosity, emojis, conversational language (50% reduction)
 - Added automatic changelog update instructions for AI agents in copilot-instructions.md (when to add, what format, commit workflow)

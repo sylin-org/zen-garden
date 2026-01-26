@@ -179,13 +179,11 @@ Things we're explicitly not building:
 - **Certificate binding**: mTLS for all Stone-to-Stone traffic
 - **Admission control**: New Stones require approval
 
-### Tiers
+### Security
 
-| Tier | Name | Use Case |
-|------|------|----------|
-| 0 | Open Garden | Default. Plaintext. Trusted LAN. |
-| 1 | Garden Pond | Basic mTLS. Home lab with guests. |
-| 2 | Deep Pond | Enterprise hardening. Audit logs. |
+- **Encrypted UDP**: XChaCha20-Poly1305 for all pond traffic
+- **TOTP invitation**: Bluetooth-pairing style device admission
+- **Admission control**: New Stones require approval
 
 ---
 

@@ -86,11 +86,14 @@
 
 ## Security
 
-**Pond** - Security model connecting Stones with mTLS certificates. Provides authentication (verify Stone identity) and encryption (protect traffic).  
-→ See: [security/overview.md](security/overview.md)
+**Pond** - Optional security layer for encrypted Stone-to-Stone communication. Uses shared-secret P2P model with Ed25519/X25519 cryptography. Prevents network sniffing and rogue device admission.  
+→ See: [security/overview.md](security/overview.md), [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md)
 
-**Keystone** - Encrypted file containing Pond CA (certificate authority) keypair. Cornerstone holds the Keystone and uses it to issue certificates to joining Stones. Protected using best available method: TPM 2.0 (hardware-backed), vTPM (hypervisor-backed), or passphrase encryption (software-backed).  
+**Keystone** - Encrypted file containing Pond CA keypair (shared secret). All pond members hold the complete keypair (P2P trust model). Protected using best available method: TPM 2.0 (hardware-backed), vTPM (hypervisor-backed), or passphrase encryption (software-backed).  
 → See: [security/pond-setup.md](security/pond-setup.md), [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
+
+**Cornerstone** - Stone that initialized the pond (ran `place keystone`). Ceremonial role—not a control point. Any pond member can invite new stones.  
+→ See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md)
 
 **TPM (Trusted Platform Module)** - Hardware security chip for cryptographic operations. Zen Garden auto-detects TPM 2.0 and seals Keystone in hardware when available. Provides physical tamper resistance and boot attestation.  
 → See: [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
@@ -101,14 +104,11 @@
 - **Software-backed**: Passphrase encryption (AES-256-GCM fallback)  
 → See: [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
 
-**Garden Pond** (Tier 1) - Basic Pond security for home labs. Prevents network sniffing and rogue devices. Assumes trusted operators and physical security. Created with: `garden-rake place keystone`  
-→ See: [decisions/SECURITY-0001-pond-tiers.md](decisions/SECURITY-0001-pond-tiers.md)
+**Stone Admission** - Process of joining a Stone to a Pond. Uses TOTP-based Bluetooth-style pairing (6-character code, 5-minute window). Any pond member can invite new stones.  
+→ See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md#invitation-protocol)
 
-**Deep Pond** (Tier 2) - Enterprise-grade Pond security with additional layers. Adds audit logging, certificate rotation, multi-admin approval, and compliance features. The keystone rests deeper, providing defense-in-depth. Created with: `garden-rake place keystone deep`  
-→ See: [decisions/SECURITY-0001-pond-tiers.md](decisions/SECURITY-0001-pond-tiers.md)
-
-**Stone Admission** - Process of joining a Stone to a Pond. Cornerstone verifies Stone authenticity (via TOTP or challenge-response) and issues certificate.  
-→ See: [archive/proposals/totp-admission.md](archive/proposals/totp-admission.md)
+**Drain** - Emergency pond reset. Destroys pond credentials on all stones, reverting garden to open mode. Only form of revocation (all-or-nothing).  
+→ See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md#revocation-drain)
 
 ---
 

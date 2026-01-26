@@ -682,19 +682,7 @@ docker stats
 
 ---
 
-#### 3. Pond Multi-Signature (Tier 2)
-
-**Status:** Planned Phase 2 (Q3-Q4 2026), design in progress.
-
-**Reason:** Enterprise security requirements (insider threat mitigation) still being validated with security team.
-
-**Current:** Tier 1 (Garden Pond, single admin) stable. Tier 2 (Deep Pond, multi-sig) evolving.
-
-**Source:** [SECURITY-SPEC.md § Tier 2 Hardening](SECURITY-SPEC.md#tier-2-hardening-enterprise)
-
----
-
-#### 4. Service Template Schema
+#### 3. Service Template Schema
 
 **Status:** Stable fields defined, but schema may gain optional fields.
 
@@ -821,33 +809,15 @@ garden-rake pond token --validity 1h
 
 ---
 
-#### Mode 3: Deep Pond (Tier 2, Planned)
-
-**State:** Multi-signature required for sensitive operations (add Stone, drain pond).
-
-**HTTP API:** Some operations require multiple bearer tokens (co-signing).
-
-**Implementation:** Phase 2 (Q3-Q4 2026), design in progress.
-
-**When required:** Enterprise, untrusted admins, compliance (SOC2, HIPAA).
-
-**Source:** [SECURITY-SPEC.md § Tier 2 Hardening](SECURITY-SPEC.md#tier-2-hardening-enterprise)
-
----
-
 ### Threat Model Summary
 
-**Tier 1 (Home Lab):**
-- Threats addressed: Network sniffing, user mistakes, physical theft (passphrase)
-- Threats NOT addressed: Insider attack (single admin trusted), nation-state adversaries
-- Accepted risks: Single admin can break things, weak passphrase extraction possible
+**Threats addressed:** Network sniffing, user mistakes, physical theft (passphrase protection)
 
-**Tier 2 (Enterprise):**
-- Threats addressed: Insider attack (multi-sig), lateral movement (segmentation), compliance violations (audit logs)
-- Threats NOT addressed: Nation-state adversaries, zero-day exploits, supply chain attacks (defense-in-depth recommended)
-- Accepted risks: Multi-sig increases complexity, recovery harder if admins unavailable
+**Threats NOT addressed:** Insider attack (single admin trusted), nation-state adversaries
 
-**Full threat analysis:** [SECURITY-SPEC.md § Threat Models](SECURITY-SPEC.md#threat-models)
+**Accepted risks:** Single admin can break things, weak passphrase extraction possible
+
+**Full threat analysis:** [POND-0001-protocol.md § Design Decisions](../specs/POND-0001-protocol.md#design-decisions)
 
 ---
 
@@ -855,32 +825,24 @@ garden-rake pond token --validity 1h
 
 **Regular tasks:**
 ```bash
-# 1. Check certificate expiration (monthly)
-garden-rake pond status --certificates
-# Warns if certificates expire within 30 days
-
-# 2. Rotate bearer tokens (weekly for automation, manually for operators)
+# 1. Rotate bearer tokens (weekly for automation, manually for operators)
 garden-rake pond token --revoke <old-token> --issue-new
 
-# 3. Audit Stone membership (quarterly)
+# 2. Audit Stone membership (quarterly)
 garden-rake pond list-stones
 # Verify all Stones authorized, remove decommissioned Stones
 
-# 4. Backup Keystone (after each Stone addition)
+# 3. Backup Keystone (after each Stone addition)
 sudo cp /var/lib/zen-garden/keystone.enc ~/backups/keystone-$(date +%Y%m%d).enc
 # Store off-site (encrypted, passphrase separate)
 ```
 
 **Incident response:**
 ```bash
-# Stone compromised (suspected)
-garden-rake pond revoke stone-03 --reason "suspected compromise"
-# Revokes certificate, Stone removed from pond, must re-join with new certificate
-
 # Pond CA compromised (catastrophic)
 garden-rake pond drain --yes-i-am-sure
-# Destroys Pond CA, all Stones revert to no-pond mode
-# Requires full re-initialization (new CA, new certificates)
+# Destroys Pond CA, all Stones revert to open-garden mode
+# Requires full re-initialization (new CA, re-invite all stones)
 ```
 
 ---
@@ -897,13 +859,13 @@ garden-rake pond drain --yes-i-am-sure
 - **MOSS-0001**: Persistent Registry and Adoption (in-memory vs disk-backed registry)
 - **OFFER-0001**: Offering Taxonomy (databases, queues, storage, compute)
 - **RAKE-0010**: Endpoint Resolution (cached vs fresh discovery)
+- **SECURITY-0004**: Tier 2 Deferral (why enterprise features were evaluated and rejected)
 
 ### ADRs to Create (Implied by Docs)
 
 **Source:** [API-V1-DUAL-LAYER-DESIGN.md](API-V1-DUAL-LAYER-DESIGN.md), [SECURITY-SPEC.md § Pond Architecture](SECURITY-SPEC.md#pond-security-architecture), [TECHNICAL-SPEC.md § mDNS Discovery](TECHNICAL-SPEC.md#mdns-discovery)
 
 - **API-0001**: Dual-Layer API Design (Offerings vs Services, progressive disclosure)
-- **SECURITY-0001**: Pond Two-Tier Model (Garden Pond vs Deep Pond, threat models)
 - **MDNS-0001**: Single Service Type (`_koan-stone._tcp.local.` for all Stones, TXT record differentiation)
 - **PROTO-0001**: Connection String Format (`zen-garden:` URI scheme, stability commitment)
 - **STATE-0001**: Stateless Moss Architecture (no disk persistence, eventual consistency)

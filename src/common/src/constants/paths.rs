@@ -56,3 +56,10 @@ pub fn ceremony_journal_dir() -> String {
         format!("{}/ceremonies", data_dir())
     })
 }
+
+/// Get staging directory for package deployments
+pub fn staging_dir() -> String {
+    std::env::var("GARDEN_STAGING_DIR").unwrap_or_else(|_| {
+        format!("{}/staging", data_dir())
+    })
+}

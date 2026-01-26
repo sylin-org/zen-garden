@@ -48,11 +48,14 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 /// Runtime manifests directory for multi-mode offerings (adoption/borrowing)
-#[cfg(target_os = "windows")]
-pub const RUNTIME_MANIFESTS_DIR: &str = "C:\\ProgramData\\ZenGarden\\manifests";
-
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub const RUNTIME_MANIFESTS_DIR: &str = "/etc/zen-garden/manifests";
+
+#[cfg(target_os = "windows")]
+pub const RUNTIME_MANIFESTS_DIR: &str = ".zen-garden/manifests";
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub const RUNTIME_MANIFESTS_DIR: &str = ".zen-garden/manifests";
 
 /// Single source of truth for all manifests
 ///

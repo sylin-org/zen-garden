@@ -416,12 +416,18 @@ pub struct DiscoveryResponse {
 /// # Example
 /// ```ignore
 /// let announcement = UdpAnnouncement {
+///     msg_id: Some(generate_guidv7()),
 ///     announcement_type: announcement_types::STONE_CHIRP.to_string(),
 ///     data: serde_json::to_value(&chirp_payload)?,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UdpAnnouncement {
+    /// Optional message ID for deduplication (GUIDv7)
+    /// When present, receivers will deduplicate messages with same ID within 5s window.
+    /// This handles multi-path delivery (multicast + broadcast arriving separately).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_id: Option<String>,
     /// Announcement type discriminator
     #[serde(rename = "type")]
     pub announcement_type: String,

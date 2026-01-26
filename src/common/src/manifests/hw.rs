@@ -14,11 +14,15 @@ use std::path::Path;
 use super::discover_subdirectories;
 
 /// Runtime hardware manifests directory (platform-specific)
-#[cfg(target_os = "windows")]
-pub const RUNTIME_HW_MANIFESTS_DIR: &str = "C:\\ProgramData\\ZenGarden\\hw-manifests";
+/// Maintains manifests/hw structure on all platforms
+#[cfg(target_os = "linux")]
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = "/etc/zen-garden/manifests/hw";
 
-#[cfg(not(target_os = "windows"))]
-pub const RUNTIME_HW_MANIFESTS_DIR: &str = "/var/lib/zen-garden/hw-manifests";
+#[cfg(target_os = "windows")]
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = ".zen-garden/manifests/hw";
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = ".zen-garden/manifests/hw";
 
 /// Collection of all hardware manifests
 #[derive(Debug)]

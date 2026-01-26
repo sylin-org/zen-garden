@@ -17,7 +17,8 @@ These documents are the single source of truth for their respective topics. When
 
 ### Technical Specifications
 - **[technical.md](../specs/technical.md)** - 2500+ line comprehensive development reference: architecture, glossary, Moss daemon, Rake CLI, service templates, mDNS discovery, implementation roadmap
-- **[security.md](../specs/security.md)** - Security design: threat models (home lab vs enterprise), Pond architecture (Bluetooth pairing model, two-keypair system), Tier 1 vs Tier 2, cryptographic design
+- **[POND-0001-protocol.md](../specs/POND-0001-protocol.md)** - Pond security protocol: P2P shared-secret model, baptism, invitation, drain protocols, encrypted UDP (XChaCha20-Poly1305)
+- **[security/overview.md](../security/overview.md)** - Security philosophy, threat model, what Pond protects
 - **[connection-strings.md](../reference/connection-strings.md)** - Technical API reference: connection string protocol, mDNS announcement, Lantern HTTP API, TXT record schema, service types, error handling
 
 ### API & Protocol
@@ -159,16 +160,16 @@ These documents are the single source of truth for their respective topics. When
    *Source*: meta/mission.md § The Material Constraint Reality
 
 2. **Not Multi-Tenant**: Home lab / small trusted team focus (single admin or trusted group)  
-   *Source*: specs/security.md § Home Lab Reality (Tier 1 Target)
+   *Source*: security/overview.md § Threat Model
 
 3. **Not Enterprise Orchestration**: Simple for solo admins, not competing with Kubernetes complexity  
    *Source*: specs/technical.md § Design Philosophy
 
-4. **Not Production-First**: Optimized for home labs, self-hosters, educators (enterprise is Tier 2 optional hardening)  
-   *Source*: specs/security.md § Security Tiers
+4. **Not Production-First**: Optimized for home labs, self-hosters, educators  
+   *Source*: security/overview.md § Security Philosophy
 
 5. **Not Nation-State Secure**: Threat model is accidents > attacks, not APT/nation-state adversaries  
-   *Source*: specs/security.md § Threat Models
+   *Source*: security/overview.md § Threat Model
 
 ### Environmental & Social Commitments
 
@@ -252,11 +253,11 @@ These documents are the single source of truth for their respective topics. When
 
 ### Security & Authentication
 
-**Threat Models**: [security.md § Threat Models](../specs/security.md#threat-models)  
-**Pond Architecture**: [security.md § Pond Security Architecture](../specs/security.md#pond-security-architecture)  
-**Bluetooth Pairing Model**: [security.md § Bluetooth Pairing Model](../specs/security.md#bluetooth-pairing-model)  
-**Cryptography**: [security.md § Cryptographic Design](../specs/security.md#cryptographic-design)  
-**Security Tiers**: [security.md § Security Tiers](../specs/security.md#security-tiers) (Tier 1: Garden Pond, Tier 2: Deep Pond)
+**Threat Models**: [security/overview.md](../security/overview.md#threat-model)  
+**Pond Protocol**: [POND-0001-protocol.md](../specs/POND-0001-protocol.md) (P2P shared-secret, encrypted UDP)  
+**Pond Setup Guide**: [security/pond-setup.md](../security/pond-setup.md)  
+**Cryptography**: Ed25519, X25519 + XChaCha20-Poly1305, BLAKE3  
+**Keystone Protection**: [SECURITY-0003](../decisions/SECURITY-0003-keystone-protection-tiers.md) (TPM/vTPM/passphrase auto-detection)
 
 ### Discovery & Networking
 

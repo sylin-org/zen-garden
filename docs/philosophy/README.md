@@ -36,6 +36,7 @@ Optional boundaries, explicit trust. Why security is opt-in. The "fill the pond 
 
 ## Additional Essays
 
+- [Staying Focused](staying-focused.md) — The mission, the user, what we don't add
 - [Joy in Infrastructure](joy-in-infrastructure.md) — Design principles for cultivating delight
 - [Empirical Specification](empirical-specification.md) — How we specify without over-specifying
 

@@ -142,17 +142,10 @@ pub async fn upgrade_stone_v1(
     );
 
     // Determine target path based on component
-    // Write to root-owned staging directory to avoid permission conflicts with SSH deployments
-    // SSH deployments write to /home/stone/bin (stone-owned)
-    // HTTP API deployments write to /var/lib/zen-garden/staging (root-owned)
-    // moss-update-helper.sh checks both locations
-    let staging_dir = if cfg!(windows) {
-        std::env::var("GARDEN_STAGING_DIR")
-            .unwrap_or_else(|_| "C:\\ProgramData\\ZenGarden\\staging".to_string())
-    } else {
-        std::env::var("GARDEN_STAGING_DIR")
-            .unwrap_or_else(|_| "/var/lib/zen-garden/staging".to_string())
-    };
+    // Write to staging directory
+    // HTTP API deployments write to GARDEN_STAGING_DIR (default: /var/lib/zen-garden/staging on Linux, .zen-garden/staging on Windows)
+    // moss-update-helper.sh checks this location on Linux
+    let staging_dir = garden_common::constants::paths::staging_dir();
 
     let target_path = match payload.component.as_str() {
         MOSS_BINARY => {
@@ -347,13 +340,7 @@ pub async fn deploy_stone_v1(
     tracing::info!(hash = %actual_hash, size = body.len(), "Package checksum verified");
 
     // Extract and validate package
-    let staging_base = if cfg!(windows) {
-        std::env::var("GARDEN_STAGING_DIR")
-            .unwrap_or_else(|_| "C:\\ProgramData\\ZenGarden\\staging".to_string())
-    } else {
-        std::env::var("GARDEN_STAGING_DIR")
-            .unwrap_or_else(|_| "/var/lib/zen-garden/staging".to_string())
-    };
+    let staging_base = garden_common::constants::paths::staging_dir();
 
     // Create temporary extraction directory
     let temp_dir = format!("{}/extract-{}", staging_base, actual_hash[..8].to_string());

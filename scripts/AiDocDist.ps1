@@ -35,6 +35,17 @@ Write-Host ""
 # Create output directory
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
+# Clean up old distribution files
+Write-Host "Cleaning up old distribution files..." -ForegroundColor Yellow
+$oldFiles = Get-ChildItem -Path $OutputDir -Filter "*.md" -File
+if ($oldFiles.Count -gt 0) {
+    $oldFiles | Remove-Item -Force
+    Write-Host "  Removed $($oldFiles.Count) old files" -ForegroundColor Gray
+} else {
+    Write-Host "  No old files to remove" -ForegroundColor Gray
+}
+Write-Host ""
+
 function Strip-Frontmatter {
     param([string]$Content)
 
@@ -52,6 +63,44 @@ function Extract-Title {
     }
 
     return $Fallback -replace '-', ' ' | ForEach-Object { (Get-Culture).TextInfo.ToTitleCase($_) }
+}
+
+function Transform-Links {
+    param([string]$Content)
+
+    # Map docs/ paths to consolidated files
+    $linkMap = @{
+        'docs/guides/'      = 'zen-garden-guides-all.md#'
+        'docs/philosophy/'  = 'zen-garden-philosophy-all.md#'
+        'docs/reference/'   = 'zen-garden-reference-all.md#'
+        'docs/specs/'       = 'zen-garden-specs-all.md#'
+        'docs/security/'    = 'zen-garden-security-all.md#'
+        'docs/ops/'         = 'zen-garden-ops-all.md#'
+        'docs/decisions/'   = 'zen-garden-decisions-all.md'
+        'docs/proposals/'   = 'zen-garden-proposals-all.md#'
+        'docs/refactoring/' = 'zen-garden-refactoring-all.md#'
+        'docs/README.md'    = 'zen-garden-distribution-readme.md'
+    }
+
+    # Transform [Text](docs/folder/file.md) → [Text](zen-garden-folder-all.md#file)
+    foreach ($pattern in $linkMap.Keys) {
+        $replacement = $linkMap[$pattern]
+        
+        if ($pattern -eq 'docs/README.md') {
+            $Content = $Content -replace '\]\(docs/README\.md\)', "]($replacement)"
+        }
+        elseif ($pattern -eq 'docs/decisions/') {
+            # Decisions folder link without specific file
+            $Content = $Content -replace '\]\(docs/decisions/\)', "]($replacement)"
+        }
+        else {
+            # Extract filename and create anchor: docs/guides/file.md → zen-garden-guides-all.md#file
+            $escaped = [regex]::Escape($pattern)
+            $Content = $Content -replace "\]\($escaped([^/)]+)\.md\)", "]($replacement`$1)"
+        }
+    }
+
+    return $Content
 }
 
 function Get-TargetName {
@@ -141,48 +190,64 @@ $processedFiles += Merge-FolderFiles -FolderPath "decisions" -Output "$Namespace
     -Title "Zen Garden Architecture Decision Records" `
     -Description "Complete collection of all architectural decisions made for the Zen Garden project."
 
-Write-Host "`n2. Consolidating Proposals (archive/proposals/)..." -ForegroundColor Cyan
-$processedFiles += Merge-FolderFiles -FolderPath "archive/proposals" -Output "$Namespace-proposals-all.md" `
+Write-Host "`n2. Consolidating Proposals (proposals/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "proposals" -Output "$Namespace-proposals-all.md" `
+    -Title "Zen Garden Proposals" `
+    -Description "Feature proposals and design specifications for future development." `
+    -Recursive
+
+Write-Host "`n3. Consolidating Archived Proposals (archive/proposals/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "archive/proposals" -Output "$Namespace-proposals-archived.md" `
     -Title "Zen Garden Proposals (Archived)" `
     -Description "Archived collection of feature proposals and design evaluations." `
     -Recursive
 
-Write-Host "`n3. Consolidating Guides (guides/)..." -ForegroundColor Cyan
+Write-Host "`n4. Consolidating Implementation Reports (archive/implementation-reports/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "archive/implementation-reports" -Output "$Namespace-implementation-reports.md" `
+    -Title "Zen Garden Implementation Reports" `
+    -Description "Archived implementation reports documenting completed feature deliveries and refactoring status."
+
+Write-Host "`n5. Consolidating Guides (guides/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "guides" -Output "$Namespace-guides-all.md" `
     -Title "Zen Garden Guides" `
     -Description "Operational guides for installation, hardware setup, service configuration, and troubleshooting."
 
-Write-Host "`n4. Consolidating Reference (reference/)..." -ForegroundColor Cyan
+Write-Host "`n6. Consolidating Reference (reference/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "reference" -Output "$Namespace-reference-all.md" `
     -Title "Zen Garden Reference" `
     -Description "Complete API, configuration, and technical reference documentation." `
     -Recursive
 
-Write-Host "`n5. Consolidating Specifications (specs/)..." -ForegroundColor Cyan
+Write-Host "`n7. Consolidating Specifications (specs/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "specs" -Output "$Namespace-specs-all.md" `
     -Title "Zen Garden Specifications" `
     -Description "Technical specifications for all Zen Garden components."
 
-Write-Host "`n6. Consolidating Security (security/)..." -ForegroundColor Cyan
+Write-Host "`n8. Consolidating Security (security/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "security" -Output "$Namespace-security-all.md" `
     -Title "Zen Garden Security" `
     -Description "Security model, threat analysis, and Pond setup documentation."
 
-Write-Host "`n7. Consolidating Operations (ops/)..." -ForegroundColor Cyan
+Write-Host "`n9. Consolidating Operations (ops/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "ops" -Output "$Namespace-ops-all.md" `
     -Title "Zen Garden Operations" `
     -Description "Build, deployment, release, and maintenance documentation."
 
-Write-Host "`n8. Consolidating Philosophy (philosophy/)..." -ForegroundColor Cyan
+Write-Host "`n10. Consolidating Philosophy (philosophy/)..." -ForegroundColor Cyan
 $processedFiles += Merge-FolderFiles -FolderPath "philosophy" -Output "$Namespace-philosophy-all.md" `
     -Title "Zen Garden Philosophy" `
     -Description "Core philosophical essays and design principles that guide Zen Garden development."
+
+Write-Host "`n11. Consolidating Refactoring (refactoring/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "refactoring" -Output "$Namespace-refactoring-all.md" `
+    -Title "Zen Garden Refactoring Plans" `
+    -Description "Technical refactoring plans and analysis documents for codebase improvements."
 
 # ============================================================================
 # ROOT-LEVEL DOCS FILES (not in subfolders)
 # ============================================================================
 
-Write-Host "`n9. Processing root-level docs files..." -ForegroundColor Cyan
+Write-Host "`n12. Processing root-level docs files..." -ForegroundColor Cyan
 
 $docsPath = Join-Path $RootDir $SourceRoot
 $rootFiles = Get-ChildItem -Path $docsPath -Filter "*.md" -File |
@@ -193,6 +258,7 @@ foreach ($file in $rootFiles) {
 
     $content = Get-Content $file.FullName -Raw -Encoding UTF8
     $content = Strip-Frontmatter $content
+    $content = Transform-Links $content
 
     $targetPath = Join-Path $OutputDir $targetName
     Set-Content -Path $targetPath -Value $content -Encoding UTF8
@@ -204,20 +270,22 @@ foreach ($file in $rootFiles) {
 # SPECIAL FILES (outside docs/)
 # ============================================================================
 
-Write-Host "`n10. Processing special files..." -ForegroundColor Cyan
+Write-Host "`n13. Processing special files..." -ForegroundColor Cyan
 
 # Main README
 $readmePath = Join-Path $RootDir "README.md"
 if (Test-Path $readmePath) {
     $content = Get-Content $readmePath -Raw -Encoding UTF8
-    Set-Content -Path (Join-Path $OutputDir "$Namespace-readme.md") -Value $content -Encoding UTF8
-    Write-Host "  $Namespace-readme.md" -ForegroundColor Green
+    $content = Transform-Links $content
+    Set-Content -Path (Join-Path $OutputDir "README.md") -Value $content -Encoding UTF8
+    Write-Host "  README.md" -ForegroundColor Green
 }
 
 # Rake changelog
 $changelogPath = Join-Path $RootDir "src/rake/CHANGELOG.md"
 if (Test-Path $changelogPath) {
     $content = Get-Content $changelogPath -Raw -Encoding UTF8
+    $content = Transform-Links $content
     Set-Content -Path (Join-Path $OutputDir "$Namespace-changelog.md") -Value $content -Encoding UTF8
     Write-Host "  $Namespace-changelog.md" -ForegroundColor Green
 }
@@ -226,6 +294,7 @@ if (Test-Path $changelogPath) {
 $testsPath = Join-Path $RootDir "tests/README.md"
 if (Test-Path $testsPath) {
     $content = Get-Content $testsPath -Raw -Encoding UTF8
+    $content = Transform-Links $content
     Set-Content -Path (Join-Path $OutputDir "$Namespace-tests.md") -Value $content -Encoding UTF8
     Write-Host "  $Namespace-tests.md" -ForegroundColor Green
 }
@@ -269,7 +338,7 @@ if (Test-Path $installerPath) {
 # METADATA FILES
 # ============================================================================
 
-Write-Host "`n11. Generating distribution metadata..." -ForegroundColor Cyan
+Write-Host "`n14. Generating distribution metadata..." -ForegroundColor Cyan
 
 $files = Get-ChildItem -Path $OutputDir -Filter "*.md" | Sort-Object Name
 
@@ -305,8 +374,11 @@ Categories:
 - security-all - Security model and threat analysis
 - ops-all - Operations, releases, and build guides
 - decisions-all - All architectural decision records (ADRs)
-- proposals-all - Archived feature proposals
+- proposals-all - Active feature proposals
+- proposals-archived - Archived feature proposals
+- implementation-reports - Archived implementation and delivery reports
 - philosophy-all - Core philosophical essays
+- refactoring-all - Refactoring plans and analysis
 
 ## File Count
 

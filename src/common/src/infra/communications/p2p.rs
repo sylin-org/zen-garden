@@ -1,12 +1,46 @@
-﻿//! P2P Transport Layer - UDP Communication Infrastructure
+﻿//! P2P Transport Layer - UDP Discovery Infrastructure
 //!
 //! **SHARED INFRASTRUCTURE** - Used by moss, rake, and lantern
 //!
-//! This module owns ALL UDP communication on port 7184. Applications should:
+//! This module owns ALL UDP communication for stone discovery. Applications should:
 //! - ✅ Use `subscribe_to_announcement(type)` for filtered events
 //! - ✅ Use `send_announcement(type, payload)` for outbound messages
 //! - ❌ NEVER create bespoke UDP sockets
 //! - ❌ NEVER call `UdpSocket::bind()` directly
+//!
+//! ## Discovery Transport Strategy
+//!
+//! **Multicast-first** (primary):
+//! - Group: `239.255.42.99` (configurable via `DISCOVERY_MCAST_GROUP`)
+//! - Port: `7184` (configurable via `DISCOVERY_PORT`)
+//! - TTL: `1` (LAN-only, doesn't route)
+//! - Receiver joins multicast on ALL eligible interfaces
+//!
+//! **Directed broadcast fallback** (secondary):
+//! - Computes subnet broadcast per interface (e.g., `192.168.32.10/20` → `192.168.47.255`)
+//! - Sends from socket bound to each interface IP
+//! - Enabled by default (`DISCOVERY_ENABLE_BCAST_FALLBACK=true`)
+//!
+//! **Limited broadcast legacy** (tertiary, disabled by default):
+//! - `255.255.255.255` as last resort
+//! - Controlled by `DISCOVERY_ENABLE_LIMITED_BCAST=false`
+//!
+//! ## Why Multicast?
+//!
+//! Solves multi-homed Windows 11 discovery failures (WSL/Hyper-V vEthernet adapters).
+//! Limited broadcast (`255.255.255.255`) egresses via default route interface, which may be
+//! a virtual adapter instead of the physical NIC. Multicast join operations explicitly
+//! specify which interface to listen on, and per-interface sender binding ensures packets
+//! egress the correct NIC.
+//!
+//! See: `docs/discovery-transport.md` for full rationale.
+//!
+//! ## Configuration
+//!
+//! - `DISCOVERY_PORT`: UDP port (default: 7184)
+//! - `DISCOVERY_MCAST_GROUP`: Multicast group IP (default: 239.255.42.99)
+//! - `DISCOVERY_ENABLE_BCAST_FALLBACK`: Enable directed broadcast (default: true)
+//! - `DISCOVERY_ENABLE_LIMITED_BCAST`: Enable 255.255.255.255 fallback (default: false)
 //!
 //! ## Architecture
 //!
@@ -20,68 +54,25 @@
 //! ┌────────────────▼─────────────────────────┐
 //! │ P2P Transport (common)                   │
 //! │ - Receiver: 0.0.0.0:7184                │
-//! │ - Sender: ephemeral port                │
+//! │   • Joins multicast on each interface   │
+//! │ - Sender: per-interface sockets         │
+//! │   • Multicast to 239.255.42.99          │
+//! │   • Directed broadcast per subnet       │
 //! │ - Validates UdpAnnouncement envelopes   │
-//! │ - Broadcasts to filtered subscribers    │
+//! │ - Routes to filtered subscribers        │
 //! └──────────────────────────────────────────┘
-//! ```
-//!
-//! ## Usage
-//!
-//! ### Filtered Subscription (Recommended)
-//! ```rust,ignore
-//! use garden_common::infra::communications::p2p;
-//! use garden_common::infra::communications::announcement_types;
-//!
-//! let mut rx = p2p::subscribe_to_announcement(announcement_types::DISCOVERY_REQUEST).await?;
-//! 
-//! loop {
-//!     match rx.recv().await {
-//!         Some((payload, source)) => {
-//!             let request: garden_common::DiscoveryRequest = serde_json::from_value(payload)?;
-//!             // Handle request...
-//!         },
-//!         None => break,
-//!     }
-//! }
-//! ```
-//!
-//! ### Sending Announcements
-//! ```rust,ignore
-//! use garden_common::infra::communications::{p2p, announcement_types};
-//!
-//! // Use type default debounce (STONE_CHIRP: 100ms)
-//! p2p::send_announcement(announcement_types::STONE_CHIRP, &entry).await?;
-//!
-//! // Force immediate send (bypass debounce)
-//! p2p::send_announcement_immediate(announcement_types::STONE_CHIRP, &entry).await?;
-//!
-//! // Custom debounce duration
-//! p2p::send_announcement_with_debounce(
-//!     announcement_types::STONE_CHIRP,
-//!     &entry,
-//!     Duration::from_millis(50)
-//! ).await?;
-//! ```
-//!
-//! ### Original Example
-//! ```rust,ignore
-//! use garden_common::infra::communications::{p2p, announcement_types};
-//! 
-//! p2p::send_announcement(
-//!     announcement_types::DISCOVERY_RESPONSE,
-//!     &response
-//! ).await?;
 //! ```
 //!
 //! ## References
 //! - [COMM-0001](../../../../docs/decisions/COMM-0001-p2p-transport-singleton.md)
 //! - [COMM-0002](../../../../docs/decisions/COMM-0002-p2p-pipeline-spec.md)
+//! - [discovery-transport.md](../../../../docs/discovery-transport.md)
 
 use anyhow::{Context, Result};
+use if_addrs::get_if_addrs;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -89,6 +80,193 @@ use tokio::sync::{broadcast, mpsc, Mutex, OnceCell};
 use tokio::time::Instant;
 
 use crate::{ports, UdpAnnouncement};
+
+// ===== Configuration =====
+
+/// Discovery transport configuration from environment
+#[derive(Debug, Clone)]
+struct DiscoveryConfig {
+    /// UDP port for discovery (default: 7184)
+    port: u16,
+    /// Multicast group address (default: 239.255.42.99)
+    mcast_group: Ipv4Addr,
+    /// Enable directed broadcast fallback (default: true)
+    enable_bcast_fallback: bool,
+    /// Enable limited broadcast (255.255.255.255) fallback (default: false)
+    enable_limited_bcast: bool,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            port: ports::DISCOVERY_UDP,
+            mcast_group: Ipv4Addr::new(239, 255, 42, 99),
+            enable_bcast_fallback: true,
+            enable_limited_bcast: false,
+        }
+    }
+}
+
+impl DiscoveryConfig {
+    /// Load configuration from environment variables
+    fn from_env() -> Self {
+        let mut config = Self::default();
+
+        if let Ok(port_str) = std::env::var("DISCOVERY_PORT") {
+            if let Ok(port) = port_str.parse() {
+                config.port = port;
+            }
+        }
+
+        if let Ok(group_str) = std::env::var("DISCOVERY_MCAST_GROUP") {
+            if let Ok(group) = group_str.parse() {
+                config.mcast_group = group;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DISCOVERY_ENABLE_BCAST_FALLBACK") {
+            config.enable_bcast_fallback = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("DISCOVERY_ENABLE_LIMITED_BCAST") {
+            config.enable_limited_bcast = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+
+        config
+    }
+}
+
+// ===== Interface Management =====
+
+/// Network interface information
+#[derive(Debug, Clone)]
+struct NetworkInterface {
+    name: String,
+    ip: Ipv4Addr,
+    netmask: Option<Ipv4Addr>,
+    broadcast: Option<Ipv4Addr>,
+}
+
+impl NetworkInterface {
+    /// Compute directed broadcast address from IP and netmask
+    fn compute_broadcast(&self) -> Option<Ipv4Addr> {
+        if let Some(netmask) = self.netmask {
+            let ip_octets = self.ip.octets();
+            let mask_octets = netmask.octets();
+            let broadcast = [
+                ip_octets[0] | !mask_octets[0],
+                ip_octets[1] | !mask_octets[1],
+                ip_octets[2] | !mask_octets[2],
+                ip_octets[3] | !mask_octets[3],
+            ];
+            Some(Ipv4Addr::from(broadcast))
+        } else {
+            None
+        }
+    }
+}
+
+/// Check if interface name or address suggests a virtual adapter
+fn is_virtual_interface(name: &str, ip: &Ipv4Addr) -> bool {
+    let name_lower = name.to_lowercase();
+
+    // Virtual adapter name patterns
+    let virtual_patterns = [
+        "veth",      // Linux virtual Ethernet
+        "virbr",     // libvirt bridge
+        "docker",    // Docker bridge
+        "br-",       // Linux bridge
+        "vmnet",     // VMware
+        "vboxnet",   // VirtualBox
+        "hyperv",    // Hyper-V
+        "wsl",       // WSL adapter
+    ];
+
+    for pattern in &virtual_patterns {
+        if name_lower.contains(pattern) {
+            return true;
+        }
+    }
+
+    // Docker default bridge network
+    if ip.octets()[..2] == [172, 17] {
+        return true;
+    }
+
+    false
+}
+
+/// Enumerate eligible network interfaces for discovery
+fn enumerate_eligible_interfaces() -> Vec<NetworkInterface> {
+    let Ok(interfaces) = get_if_addrs() else {
+        tracing::warn!("Failed to enumerate network interfaces");
+        return Vec::new();
+    };
+
+    let mut eligible = Vec::new();
+
+    for iface in interfaces {
+        // Only IPv4
+        let if_addrs::IfAddr::V4(ref v4_addr) = iface.addr else {
+            continue;
+        };
+
+        let ipv4 = v4_addr.ip;
+
+        // Skip loopback
+        if ipv4.is_loopback() {
+            continue;
+        }
+
+        // Skip link-local (169.254.x.x)
+        if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+            continue;
+        }
+
+        // Skip virtual adapters
+        if is_virtual_interface(&iface.name, &ipv4) {
+            tracing::debug!(
+                interface = %iface.name,
+                ip = %ipv4,
+                "Skipping virtual interface"
+            );
+            continue;
+        }
+
+        // Extract netmask from V4 address
+        let netmask = Some(v4_addr.netmask);
+
+        // Compute broadcast address
+        let temp_iface = NetworkInterface {
+            name: iface.name.clone(),
+            ip: ipv4,
+            netmask,
+            broadcast: None,
+        };
+        let broadcast = temp_iface.compute_broadcast();
+
+        eligible.push(NetworkInterface {
+            name: iface.name,
+            ip: ipv4,
+            netmask,
+            broadcast,
+        });
+    }
+
+    if eligible.is_empty() {
+        tracing::warn!("No eligible network interfaces found for discovery");
+    } else {
+        tracing::debug!(
+            count = eligible.len(),
+            interfaces = ?eligible.iter().map(|i| format!("{}({})", i.name, i.ip)).collect::<Vec<_>>(),
+            "Enumerated eligible interfaces"
+        );
+    }
+
+    eligible
+}
+
+// ===== Core Types =====
 
 /// Internal event dispatched from UDP receiver
 #[derive(Debug, Clone)]
@@ -98,11 +276,21 @@ struct InternalUdpEvent {
     source: SocketAddr,
 }
 
+/// Per-interface sender socket
+#[derive(Debug)]
+struct InterfaceSender {
+    interface: NetworkInterface,
+    socket: Arc<UdpSocket>,
+}
+
 /// Singleton holder for UDP receiver and broadcast channel
 static UDP_RECEIVER: OnceCell<broadcast::Sender<InternalUdpEvent>> = OnceCell::const_new();
 
-/// Singleton holder for UDP sender socket
-static UDP_SENDER: OnceCell<Arc<UdpSocket>> = OnceCell::const_new();
+/// Singleton holder for per-interface UDP sender sockets
+static UDP_SENDERS: OnceCell<Arc<Vec<InterfaceSender>>> = OnceCell::const_new();
+
+/// Discovery configuration singleton
+static DISCOVERY_CONFIG: OnceCell<DiscoveryConfig> = OnceCell::const_new();
 
 /// Default debounce durations per announcement type
 static DEFAULT_DEBOUNCE: OnceCell<HashMap<String, Duration>> = OnceCell::const_new();
@@ -111,7 +299,10 @@ static DEFAULT_DEBOUNCE: OnceCell<HashMap<String, Duration>> = OnceCell::const_n
 static DEBOUNCE_OVERRIDES: OnceCell<Mutex<HashMap<String, Duration>>> = OnceCell::const_new();
 
 /// Active debounce channels per announcement type
-static DEBOUNCE_CHANNELS: OnceCell<Mutex<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>> = OnceCell::const_new();
+static DEBOUNCE_CHANNELS: OnceCell<Mutex<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>> =
+    OnceCell::const_new();
+
+// ===== Public API =====
 
 /// Subscribe to a specific announcement type (filtered)
 ///
@@ -129,7 +320,7 @@ static DEBOUNCE_CHANNELS: OnceCell<Mutex<HashMap<String, mpsc::UnboundedSender<V
 /// use garden_common::infra::communications::{p2p, announcement_types};
 ///
 /// let mut rx = p2p::subscribe_to_announcement(announcement_types::DISCOVERY_REQUEST).await?;
-/// 
+///
 /// loop {
 ///     match rx.recv().await {
 ///         Some((payload, source)) => {
@@ -183,27 +374,8 @@ pub async fn subscribe_to_announcement(
 /// Returns a broadcast receiver for ALL announcement types.
 /// Use this only when a handler needs multiple types (e.g., coordinator).
 /// Most consumers should use `subscribe_to_announcement()` instead.
-///
-/// ## Example
-/// ```rust,ignore
-/// use garden_common::infra::communications::{p2p, announcement_types};
-/// 
-/// let mut rx = p2p::subscribe_to_all().await?;
-/// 
-/// loop {
-///     match rx.recv().await {
-///         Some((announcement_type, payload, source)) => {
-///             match announcement_type.as_str() {
-///                 announcement_types::STONE_CHIRP => { /* handle */ },
-///                 announcement_types::STONE_GOODBYE => { /* handle */ },
-///                 _ => {},
-///             }
-///         },
-///         None => break,
-///     }
-/// }
-/// ```
-pub async fn subscribe_to_all() -> Result<mpsc::Receiver<(String, serde_json::Value, SocketAddr)>> {
+pub async fn subscribe_to_all(
+) -> Result<mpsc::Receiver<(String, serde_json::Value, SocketAddr)>> {
     let mut broadcast_rx = subscribe_to_all_internal().await?;
 
     let (tx, rx) = mpsc::channel(100);
@@ -233,13 +405,73 @@ pub async fn subscribe_to_all() -> Result<mpsc::Receiver<(String, serde_json::Va
     Ok(rx)
 }
 
+/// Send announcement with type-default debounce
+///
+/// Uses configured default for announcement type:
+/// - STONE_CHIRP: 100ms debounce (batches rapid status changes)
+/// - Others: Immediate send (Duration::ZERO)
+pub async fn send_announcement<T: Serialize>(
+    announcement_type: &str,
+    payload: &T,
+) -> Result<()> {
+    let duration = resolve_debounce_duration(announcement_type).await;
+    send_announcement_internal(announcement_type, payload, duration).await
+}
+
+/// Send announcement immediately (bypass debounce)
+///
+/// Use for urgent updates that must be broadcast without delay.
+pub async fn send_announcement_immediate<T: Serialize>(
+    announcement_type: &str,
+    payload: &T,
+) -> Result<()> {
+    send_announcement_internal(announcement_type, payload, Duration::ZERO).await
+}
+
+/// Send announcement with custom debounce duration
+///
+/// Overrides type default for this announcement type.
+pub async fn send_announcement_with_debounce<T: Serialize>(
+    announcement_type: &str,
+    payload: &T,
+    debounce: Duration,
+) -> Result<()> {
+    // Initialize statics on first use
+    DEBOUNCE_OVERRIDES
+        .get_or_init(|| async { Mutex::new(HashMap::new()) })
+        .await;
+
+    // Cache override for this type
+    {
+        let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
+        overrides.insert(announcement_type.to_string(), debounce);
+    }
+
+    send_announcement_internal(announcement_type, payload, debounce).await
+}
+
+/// Clear debounce override for announcement type (revert to default)
+pub async fn clear_debounce_override(announcement_type: &str) {
+    DEBOUNCE_OVERRIDES
+        .get_or_init(|| async { Mutex::new(HashMap::new()) })
+        .await;
+
+    let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
+    overrides.remove(announcement_type);
+}
+
+// ===== Internal Implementation =====
+
 /// Initialize debounce configuration
 fn init_debounce_defaults() -> HashMap<String, Duration> {
     use crate::infra::communications::announcement_types;
-    
+
     let mut config = HashMap::new();
     // STONE_CHIRP gets 100ms debounce to batch rapid status changes
-    config.insert(announcement_types::STONE_CHIRP.to_string(), Duration::from_millis(100));
+    config.insert(
+        announcement_types::STONE_CHIRP.to_string(),
+        Duration::from_millis(100),
+    );
     // All other types default to immediate send (Duration::ZERO)
     config
 }
@@ -248,24 +480,30 @@ fn init_debounce_defaults() -> HashMap<String, Duration> {
 async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEvent>> {
     let tx = UDP_RECEIVER
         .get_or_init(|| async {
+            // Initialize config
+            let config = DISCOVERY_CONFIG
+                .get_or_init(|| async { DiscoveryConfig::from_env() })
+                .await;
+
             // Create broadcast channel with capacity for 100 events
             let (tx, _rx) = broadcast::channel(100);
             let broadcast_tx = tx.clone();
 
-            // Bind socket
-            let addr = format!("0.0.0.0:{}", ports::DISCOVERY_UDP);
-            let socket = match create_reusable_udp_socket(&addr).await {
+            // Bind receiver socket
+            let addr = format!("0.0.0.0:{}", config.port);
+            let socket = match create_multicast_receiver(&addr, config).await {
                 Ok(s) => {
                     tracing::info!(
-                        port = ports::DISCOVERY_UDP,
-                        "P2P transport receiver bound"
+                        port = config.port,
+                        mcast_group = %config.mcast_group,
+                        "P2P transport receiver bound with multicast"
                     );
                     s
                 }
                 Err(e) => {
                     tracing::error!(
                         error = ?e,
-                        port = ports::DISCOVERY_UDP,
+                        port = config.port,
                         "Failed to bind P2P receiver"
                     );
                     return tx;
@@ -286,73 +524,6 @@ async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEv
     Ok(tx.subscribe())
 }
 
-/// Send announcement with type-default debounce
-///
-/// Uses configured default for announcement type:
-/// - STONE_CHIRP: 100ms debounce (batches rapid status changes)
-/// - Others: Immediate send (Duration::ZERO)
-///
-/// ## Arguments
-/// - `announcement_type`: Constant from `announcement_types` module
-/// - `payload`: Serializable payload struct
-///
-/// ## Example
-/// ```rust,ignore
-/// use garden_common::infra::communications::{p2p, announcement_types};
-///
-/// p2p::send_announcement(
-///     announcement_types::STONE_CHIRP,
-///     &topology_entry
-/// ).await?;
-/// ```
-pub async fn send_announcement<T: Serialize>(
-    announcement_type: &str,
-    payload: &T,
-) -> Result<()> {
-    let duration = resolve_debounce_duration(announcement_type).await;
-    send_announcement_internal(announcement_type, payload, duration).await
-}
-
-/// Send announcement immediately (bypass debounce)
-///
-/// Use for urgent updates that must be broadcast without delay.
-/// Examples: Stone going offline (GOODBYE), critical state changes.
-pub async fn send_announcement_immediate<T: Serialize>(
-    announcement_type: &str,
-    payload: &T,
-) -> Result<()> {
-    send_announcement_internal(announcement_type, payload, Duration::ZERO).await
-}
-
-/// Send announcement with custom debounce duration
-///
-/// Overrides type default for this announcement type.
-/// Override persists until cleared or process restart.
-pub async fn send_announcement_with_debounce<T: Serialize>(
-    announcement_type: &str,
-    payload: &T,
-    debounce: Duration,
-) -> Result<()> {
-    // Initialize statics on first use
-    DEBOUNCE_OVERRIDES.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
-    
-    // Cache override for this type
-    {
-        let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
-        overrides.insert(announcement_type.to_string(), debounce);
-    }
-    
-    send_announcement_internal(announcement_type, payload, debounce).await
-}
-
-/// Clear debounce override for announcement type (revert to default)
-pub async fn clear_debounce_override(announcement_type: &str) {
-    DEBOUNCE_OVERRIDES.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
-    
-    let mut overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
-    overrides.remove(announcement_type);
-}
-
 /// Internal: Send with specified debounce duration
 async fn send_announcement_internal<T: Serialize>(
     announcement_type: &str,
@@ -360,28 +531,32 @@ async fn send_announcement_internal<T: Serialize>(
     debounce_duration: Duration,
 ) -> Result<()> {
     // Serialize payload
-    let payload_bytes = serde_json::to_vec(payload)
-        .context("Failed to serialize announcement payload")?;
-    
+    let payload_bytes =
+        serde_json::to_vec(payload).context("Failed to serialize announcement payload")?;
+
     if debounce_duration.is_zero() {
         // Send immediately
         send_udp_packet(announcement_type, &payload_bytes).await
     } else {
         // Send through debouncer
         let tx = get_or_create_debounce_channel(announcement_type, debounce_duration).await;
-        tx.send(payload_bytes)
-            .map_err(|_| anyhow::anyhow!("Debounce channel closed for {}", announcement_type))?;
+        tx.send(payload_bytes).map_err(|_| {
+            anyhow::anyhow!("Debounce channel closed for {}", announcement_type)
+        })?;
         Ok(())
     }
 }
 
 /// Resolve effective debounce duration
-/// Priority: caller override > type default > immediate
 async fn resolve_debounce_duration(announcement_type: &str) -> Duration {
     // Initialize statics on first use
-    DEBOUNCE_OVERRIDES.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
-    DEFAULT_DEBOUNCE.get_or_init(|| async { init_debounce_defaults() }).await;
-    
+    DEBOUNCE_OVERRIDES
+        .get_or_init(|| async { Mutex::new(HashMap::new()) })
+        .await;
+    DEFAULT_DEBOUNCE
+        .get_or_init(|| async { init_debounce_defaults() })
+        .await;
+
     // Check for caller override
     {
         let overrides = DEBOUNCE_OVERRIDES.get().unwrap().lock().await;
@@ -389,9 +564,12 @@ async fn resolve_debounce_duration(announcement_type: &str) -> Duration {
             return *duration;
         }
     }
-    
+
     // Use type default
-    DEFAULT_DEBOUNCE.get().unwrap().get(announcement_type)
+    DEFAULT_DEBOUNCE
+        .get()
+        .unwrap()
+        .get(announcement_type)
         .copied()
         .unwrap_or(Duration::ZERO)
 }
@@ -402,29 +580,31 @@ async fn get_or_create_debounce_channel(
     _debounce_duration: Duration,
 ) -> mpsc::UnboundedSender<Vec<u8>> {
     // Initialize statics on first use
-    DEBOUNCE_CHANNELS.get_or_init(|| async { Mutex::new(HashMap::new()) }).await;
-    
+    DEBOUNCE_CHANNELS
+        .get_or_init(|| async { Mutex::new(HashMap::new()) })
+        .await;
+
     let mut channels = DEBOUNCE_CHANNELS.get().unwrap().lock().await;
-    
+
     if let Some(tx) = channels.get(announcement_type) {
         return tx.clone();
     }
-    
+
     // Create new debouncer task for this type
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let type_clone = announcement_type.to_string();
-    
+
     let task_tx = tx.clone();
     tokio::spawn(async move {
         const MAX_DELAY: Duration = Duration::from_millis(500);
-        
+
         while let Some(payload) = rx.recv().await {
             let first_request = Instant::now();
             let mut latest_payload = payload;
-            
+
             // Resolve current debounce duration (may have changed via override)
             let current_debounce = resolve_debounce_duration(&type_clone).await;
-            
+
             loop {
                 tokio::select! {
                     // Debounce period elapsed
@@ -434,7 +614,7 @@ async fn get_or_create_debounce_channel(
                     // New announcement received
                     Some(new_payload) = rx.recv() => {
                         latest_payload = new_payload; // Replace with newer
-                        
+
                         // Check max delay cap
                         if first_request.elapsed() >= MAX_DELAY {
                             tracing::debug!(
@@ -447,7 +627,7 @@ async fn get_or_create_debounce_channel(
                     }
                 }
             }
-            
+
             // Send the final (most recent) payload
             if let Err(e) = send_udp_packet(&type_clone, &latest_payload).await {
                 tracing::warn!(
@@ -458,31 +638,57 @@ async fn get_or_create_debounce_channel(
             }
         }
     });
-    
+
     channels.insert(announcement_type.to_string(), task_tx.clone());
     task_tx
 }
 
-/// Internal: Send UDP packet immediately
+/// Internal: Send UDP packet immediately via multicast + fallbacks
 async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Result<()> {
-    let socket = UDP_SENDER
+    // Initialize senders on first use
+    let senders = UDP_SENDERS
         .get_or_init(|| async {
-            match UdpSocket::bind("0.0.0.0:0").await {
-                Ok(s) => {
-                    if let Err(e) = s.set_broadcast(true) {
-                        tracing::warn!(error = ?e, "Failed to set broadcast on sender");
+            let config = DISCOVERY_CONFIG
+                .get_or_init(|| async { DiscoveryConfig::from_env() })
+                .await;
+
+            let interfaces = enumerate_eligible_interfaces();
+            let mut interface_senders = Vec::new();
+
+            for iface in interfaces {
+                match create_interface_sender(&iface, config).await {
+                    Ok(socket) => {
+                        tracing::debug!(
+                            interface = %iface.name,
+                            ip = %iface.ip,
+                            "Created sender socket"
+                        );
+                        interface_senders.push(InterfaceSender {
+                            interface: iface,
+                            socket: Arc::new(socket),
+                        });
                     }
-                    tracing::debug!("P2P sender socket created");
-                    Arc::new(s)
-                }
-                Err(e) => {
-                    tracing::error!(error = ?e, "Failed to create P2P sender");
-                    panic!("Cannot initialize P2P sender: {}", e);
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            interface = %iface.name,
+                            "Failed to create sender for interface"
+                        );
+                    }
                 }
             }
+
+            if interface_senders.is_empty() {
+                tracing::error!("No sender sockets created, discovery will fail");
+            }
+
+            Arc::new(interface_senders)
         })
         .await;
 
+    let config = DISCOVERY_CONFIG.get().unwrap();
+
+    // Build announcement envelope
     let announcement = UdpAnnouncement {
         announcement_type: announcement_type.to_string(),
         data: serde_json::from_slice(payload_bytes)
@@ -491,20 +697,80 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
 
     let data = serde_json::to_vec(&announcement).context("Failed to serialize envelope")?;
 
-    let broadcast_addr = format!("255.255.255.255:{}", ports::DISCOVERY_UDP);
+    let mut sent_count = 0;
 
-    socket
-        .send_to(&data, &broadcast_addr)
-        .await
-        .with_context(|| format!("Failed to send to {}", broadcast_addr))?;
+    // Send via each interface
+    for sender in senders.iter() {
+        // 1. Send to multicast group
+        let mcast_addr = SocketAddr::new(IpAddr::V4(config.mcast_group), config.port);
+        match sender.socket.send_to(&data, &mcast_addr).await {
+            Ok(_) => {
+                sent_count += 1;
+                tracing::trace!(
+                    interface = %sender.interface.name,
+                    target = %mcast_addr,
+                    "Multicast sent"
+                );
+            }
+            Err(e) => {
+                tracing::debug!(
+                    error = ?e,
+                    interface = %sender.interface.name,
+                    "Multicast send failed"
+                );
+            }
+        }
 
-    tracing::trace!(
-        announcement_type = %announcement_type,
-        size = data.len(),
-        "UDP announcement sent"
-    );
+        // 2. Directed broadcast fallback (if enabled)
+        if config.enable_bcast_fallback {
+            if let Some(bcast_ip) = sender.interface.broadcast {
+                let bcast_addr = SocketAddr::new(IpAddr::V4(bcast_ip), config.port);
+                match sender.socket.send_to(&data, &bcast_addr).await {
+                    Ok(_) => {
+                        sent_count += 1;
+                        tracing::trace!(
+                            interface = %sender.interface.name,
+                            target = %bcast_addr,
+                            "Directed broadcast sent"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            error = ?e,
+                            interface = %sender.interface.name,
+                            "Directed broadcast failed"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
-    Ok(())
+    // 3. Limited broadcast fallback (if enabled and no other sends succeeded)
+    if config.enable_limited_bcast && sent_count == 0 {
+        tracing::warn!("Falling back to limited broadcast (255.255.255.255)");
+        if let Some(sender) = senders.first() {
+            let limited_bcast = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+                config.port,
+            );
+            sender.socket.send_to(&data, &limited_bcast).await.ok();
+        }
+    }
+
+    if sent_count > 0 {
+        tracing::trace!(
+            announcement_type = %announcement_type,
+            size = data.len(),
+            sent_count,
+            "UDP announcement sent"
+        );
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to send announcement on any interface"
+        ))
+    }
 }
 
 /// Internal UDP receiver loop
@@ -545,25 +811,27 @@ async fn udp_receiver_loop(
     }
 }
 
-/// Create UDP socket with SO_REUSEADDR and platform-specific fixes
-async fn create_reusable_udp_socket(addr: &str) -> Result<UdpSocket> {
+// ===== Socket Creation =====
+
+/// Create UDP receiver with multicast joins on all eligible interfaces
+async fn create_multicast_receiver(addr: &str, config: &DiscoveryConfig) -> Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
-    
+
     let socket_addr: std::net::SocketAddr = addr.parse()?;
     let domain = if socket_addr.is_ipv4() {
         Domain::IPV4
     } else {
         Domain::IPV6
     };
-    
+
     let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-    
+
     // Enable SO_REUSEADDR for port reuse
     socket.set_reuse_address(true)?;
-    
+
     // Enable broadcast (required to receive broadcast packets!)
     socket.set_broadcast(true)?;
-    
+
     // Windows: Disable WSAECONNRESET from ICMP port unreachable
     #[cfg(windows)]
     {
@@ -589,9 +857,145 @@ async fn create_reusable_udp_socket(addr: &str) -> Result<UdpSocket> {
             }
         }
     }
-    
+
     socket.bind(&socket_addr.into())?;
     socket.set_nonblocking(true)?;
-    
+
+    let udp_socket = UdpSocket::from_std(socket.into())?;
+
+    // Join multicast group on all eligible interfaces
+    let interfaces = enumerate_eligible_interfaces();
+    let mut join_count = 0;
+
+    for iface in interfaces {
+        match udp_socket
+            .join_multicast_v4(config.mcast_group, iface.ip)
+        {
+            Ok(_) => {
+                join_count += 1;
+                tracing::debug!(
+                    interface = %iface.name,
+                    ip = %iface.ip,
+                    mcast_group = %config.mcast_group,
+                    "Joined multicast group"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    interface = %iface.name,
+                    "Failed to join multicast"
+                );
+            }
+        }
+    }
+
+    if join_count == 0 {
+        tracing::warn!("Failed to join multicast on any interface");
+    } else {
+        tracing::info!(
+            join_count,
+            mcast_group = %config.mcast_group,
+            "Multicast joins complete"
+        );
+    }
+
+    Ok(udp_socket)
+}
+
+/// Create sender socket bound to specific interface
+async fn create_interface_sender(
+    iface: &NetworkInterface,
+    config: &DiscoveryConfig,
+) -> Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+
+    // Enable broadcast
+    socket.set_broadcast(true)?;
+
+    // Set multicast TTL
+    socket.set_multicast_ttl_v4(1)?;
+
+    // Bind to specific interface IP (not 0.0.0.0!)
+    let bind_addr = SocketAddr::new(IpAddr::V4(iface.ip), 0); // Ephemeral port
+    socket.bind(&bind_addr.into())?;
+
+    // Set multicast interface
+    socket.set_multicast_if_v4(&iface.ip)?;
+
+    socket.set_nonblocking(true)?;
+
     Ok(UdpSocket::from_std(socket.into())?)
+}
+
+// ===== Tests =====
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_broadcast_slash_24() {
+        let iface = NetworkInterface {
+            name: "eth0".to_string(),
+            ip: Ipv4Addr::new(192, 168, 1, 10),
+            netmask: Some(Ipv4Addr::new(255, 255, 255, 0)),
+            broadcast: None,
+        };
+
+        let bcast = iface.compute_broadcast().unwrap();
+        assert_eq!(bcast, Ipv4Addr::new(192, 168, 1, 255));
+    }
+
+    #[test]
+    fn test_compute_broadcast_slash_20() {
+        let iface = NetworkInterface {
+            name: "eth0".to_string(),
+            ip: Ipv4Addr::new(192, 168, 32, 10),
+            netmask: Some(Ipv4Addr::new(255, 255, 240, 0)),
+            broadcast: None,
+        };
+
+        let bcast = iface.compute_broadcast().unwrap();
+        assert_eq!(bcast, Ipv4Addr::new(192, 168, 47, 255));
+    }
+
+    #[test]
+    fn test_compute_broadcast_slash_16() {
+        let iface = NetworkInterface {
+            name: "eth0".to_string(),
+            ip: Ipv4Addr::new(10, 0, 5, 100),
+            netmask: Some(Ipv4Addr::new(255, 255, 0, 0)),
+            broadcast: None,
+        };
+
+        let bcast = iface.compute_broadcast().unwrap();
+        assert_eq!(bcast, Ipv4Addr::new(10, 0, 255, 255));
+    }
+
+    #[test]
+    fn test_is_virtual_interface() {
+        assert!(is_virtual_interface("veth0", &Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(is_virtual_interface("docker0", &Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(is_virtual_interface("vmnet1", &Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(is_virtual_interface(
+            "eth0",
+            &Ipv4Addr::new(172, 17, 0, 1)
+        )); // Docker bridge
+        assert!(!is_virtual_interface(
+            "eth0",
+            &Ipv4Addr::new(192, 168, 1, 1)
+        ));
+    }
+
+    #[test]
+    fn test_discovery_config_defaults() {
+        let config = DiscoveryConfig::default();
+        assert_eq!(config.port, 7184);
+        assert_eq!(config.mcast_group, Ipv4Addr::new(239, 255, 42, 99));
+        assert!(config.enable_bcast_fallback);
+        assert!(!config.enable_limited_bcast);
+    }
 }

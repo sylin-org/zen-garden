@@ -11,6 +11,7 @@ members = [
   "src/moss",
   "src/rake",
   "src/cricket",
+  "src/adapter-sdk",
   "src/build-utils",
 ]
 resolver = "2"

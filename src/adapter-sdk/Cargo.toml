@@ -1,0 +1,40 @@
+﻿[package]
+name = "garden-adapter-sdk"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "SDK for building Zen Garden adapters"
+
+[lib]
+name = "garden_adapter_sdk"
+path = "src/lib.rs"
+
+[dependencies]
+garden-common = { path = "../common" }
+
+# Core
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Async trait (stable async trait support)
+async-trait = "0.1"
+
+# HTTP server
+axum.workspace = true
+
+# HTTP client (for SSE)
+reqwest = { workspace = true, features = ["stream"] }
+futures-util = "0.3"
+
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

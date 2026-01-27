@@ -7,6 +7,8 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y \
     musl-tools \
     file \
+    libasound2-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Source code is mounted as a volume at runtime via -v flag

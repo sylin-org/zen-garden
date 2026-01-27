@@ -192,6 +192,7 @@ if ($UseDocker) {
         Write-Host "  → Building garden-moss (Linux daemon)..."
         Write-Host "  → Building garden-lantern (Linux service registry)..."
         Write-Host "  → Building garden-rake (Linux CLI)..."
+        Write-Host "  → Building garden-cricket (Audio adapter)..."
         
         # Generate build number if not already set by parent script
         if (-not $env:CARGO_BUILD_NUMBER) {
@@ -274,6 +275,7 @@ if ($UseDocker) {
         docker cp "${containerName}:/build/target/${buildProfile}/garden-lantern" "$LINUX_DIR\garden-lantern"
         docker cp "${containerName}:/build/target/${buildProfile}/garden-moss" "$LINUX_DIR\garden-moss"
         docker cp "${containerName}:/build/target/${buildProfile}/garden-rake" "$LINUX_DIR\garden-rake"
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-cricket" "$LINUX_DIR\garden-cricket"
         
         if ($LASTEXITCODE -ne 0) { throw "Failed to copy binaries from container" }
         
@@ -338,6 +340,7 @@ else {
         Write-Host "  → Building garden-moss (Linux daemon)..."
         Write-Host "  → Building garden-lantern (Linux service registry)..."
         Write-Host "  → Building garden-rake (Linux CLI)..."
+        Write-Host "  → Building garden-cricket (Audio adapter)..."
 
         $buildArgs = @("build", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
@@ -349,7 +352,7 @@ else {
         else {
             $buildArgs += "--release"
         }
-        $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake")
+        $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake", "--bin", "garden-cricket")
 
         cargo @buildArgs
         
@@ -360,10 +363,12 @@ else {
         Copy-Item "$srcDir/garden-lantern" "$LINUX_DIR/garden-lantern-$version" -Force
         Copy-Item "$srcDir/garden-moss" "$LINUX_DIR/garden-moss-$version" -Force
         Copy-Item "$srcDir/garden-rake" "$LINUX_DIR/garden-rake-$version" -Force
+        Copy-Item "$srcDir/garden-cricket" "$LINUX_DIR/garden-cricket-$version" -Force
         # Also create unversioned copies for convenience
         Copy-Item "$LINUX_DIR/garden-lantern-$version" "$LINUX_DIR/garden-lantern" -Force
         Copy-Item "$LINUX_DIR/garden-moss-$version" "$LINUX_DIR/garden-moss" -Force
         Copy-Item "$LINUX_DIR/garden-rake-$version" "$LINUX_DIR/garden-rake" -Force
+        Copy-Item "$LINUX_DIR/garden-cricket-$version" "$LINUX_DIR/garden-cricket" -Force
         
         Write-Host "  ✓ Binaries built`n" -ForegroundColor Green
         

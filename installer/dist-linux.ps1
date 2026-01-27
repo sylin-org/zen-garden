@@ -103,8 +103,16 @@ if (-not $SkipPackage) {
     
     # Copy binaries
     Get-ChildItem $LINUX_DIR -File | ForEach-Object {
-        Copy-Item $_.FullName (Join-Path $packageDir "bin")
-        Write-Host "  + bin/$($_.Name)" -ForegroundColor DarkGray
+        # Adapters go to adapters/, everything else to bin/
+        if ($_.BaseName -like "*cricket*") {
+            $adaptersDir = Join-Path $packageDir "adapters"
+            New-Item -ItemType Directory -Path $adaptersDir -Force | Out-Null
+            Copy-Item $_.FullName $adaptersDir
+            Write-Host "  + adapters/$($_.Name)" -ForegroundColor DarkGray
+        } else {
+            Copy-Item $_.FullName (Join-Path $packageDir "bin")
+            Write-Host "  + bin/$($_.Name)" -ForegroundColor DarkGray
+        }
     }
     
     # Copy manifests
@@ -132,8 +140,9 @@ if (-not $SkipPackage) {
     $components = @{}
     Get-ChildItem $LINUX_DIR -File | ForEach-Object {
         $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+        $pathPrefix = if ($_.BaseName -like "*cricket*") { "adapters" } else { "bin" }
         $components[$_.BaseName] = @{
-            path = "bin/$($_.Name)"
+            path = "$pathPrefix/$($_.Name)"
             sha256 = $hash
             size = $_.Length
             required = $_.BaseName -in @("garden-moss", "garden-rake")

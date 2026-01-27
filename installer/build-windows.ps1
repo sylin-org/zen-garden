@@ -166,6 +166,13 @@ try {
 
     if ($LASTEXITCODE -ne 0) { throw "garden-rake.exe build failed" }
     
+    Write-Host "  → Building garden-cricket.exe (Audio adapter)..."
+    $buildArgs = @("build") + $commonArgs + @("--bin", "garden-cricket", "--target", "x86_64-pc-windows-msvc")
+
+    cargo @buildArgs
+
+    if ($LASTEXITCODE -ne 0) { throw "garden-cricket.exe build failed" }
+    
     # Copy binaries from target to dist/windows/
     $srcDir = Join-Path $WORKSPACE_ROOT "target\x86_64-pc-windows-msvc\$buildProfile"
     
@@ -180,6 +187,9 @@ try {
     
     Copy-Item "$srcDir\garden-rake.exe" "$WINDOWS_DIR\garden-rake.exe" -Force
     Write-Host "  ✓ garden-rake.exe built" -ForegroundColor Green
+    
+    Copy-Item "$srcDir\garden-cricket.exe" "$WINDOWS_DIR\garden-cricket.exe" -Force
+    Write-Host "  ✓ garden-cricket.exe built" -ForegroundColor Green
     
     Write-Host "`n✓ Windows binaries built`n" -ForegroundColor Green
     

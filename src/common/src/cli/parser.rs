@@ -127,6 +127,8 @@ fn is_normative_verb(verb: &str) -> bool {
         "ceremonies" | "console" | "context" | "pond" | "events" | "jobs" |
         // Admin/utility (normative)
         "help" | "browse-commands" |
+        // Developer tools (normative)
+        "api" | "locate" |
         // Installation (normative)
         "install-service"
     )

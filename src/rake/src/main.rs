@@ -755,6 +755,34 @@ enum Commands {
         #[arg(long)]
         normative: bool,
     },
+
+    /// Display Moss HTTP API reference
+    #[command(
+        long_about = "Query and display Moss HTTP API documentation.\n\n\
+        Fetches live API manifest from Moss and displays formatted endpoint reference.\n\n\
+        Examples:\n  \
+        garden-rake api                                 # Show all endpoints by category\n  \
+        garden-rake api --category offerings            # Show offerings API only\n  \
+        garden-rake api /api/v1/services                # Detailed docs for endpoint\n  \
+        garden-rake api --examples                      # Include curl examples\n  \
+        garden-rake api /api/v1/stone/presence/stream   # SSE endpoint docs"
+    )]
+    Api {
+        /// Specific endpoint path to show details for
+        endpoint: Option<String>,
+
+        /// Filter by API category (health, offerings, services, stone, garden, admin)
+        #[arg(long)]
+        category: Option<String>,
+
+        /// Show curl examples
+        #[arg(long)]
+        examples: bool,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1077,6 +1105,13 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.push("hey".to_string());
             args.extend(parsed.args.clone());
         }
+        
+        // === DEVELOPER TOOLS ===
+        "api" => {
+            args.push("api".to_string());
+            args.extend(parsed.args.clone());
+        }
+        
         _ => {
             return Err(anyhow::anyhow!("Unknown zen verb: {}", parsed.verb));
         }
@@ -1606,6 +1641,10 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::BrowseCommands { name, category, zen, normative } => {
             let cmd = commands::local::BrowseCommand::new(name, category, zen, normative);
             dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
+        }
+
+        Commands::Api { endpoint, category, examples, at } => {
+            commands::api::execute_api_command(at, category, endpoint, examples).await?;
         }
 
         Commands::Refresh { component, from, at } => {

@@ -8,6 +8,7 @@ pub mod events;
 pub mod garden;
 pub mod health;
 pub mod jobs;
+pub mod manifest;
 pub mod metrics;
 pub mod nourishment;
 pub mod offerings;

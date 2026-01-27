@@ -25,6 +25,7 @@
 
 pub mod help;
 pub mod hey;
+pub mod api;
 
 // Command categories (to be extracted incrementally)
 pub mod admin;

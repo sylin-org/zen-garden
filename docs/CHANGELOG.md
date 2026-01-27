@@ -3,6 +3,12 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-27
+- **API Manifest system** - structured endpoint documentation like CommandManifest for adapters
+  - Created `garden_common::api_manifest` module with EndpointSpec, ApiManifest types
+  - New endpoint: `GET /api/v1/manifest` returns live API documentation from Moss
+  - New command: `garden-rake api` displays formatted API reference with curl examples
+  - Usage: `garden-rake api`, `garden-rake api --category offerings`, `garden-rake api /api/v1/services`
+  - Single source of truth for endpoint metadata (method, path, params, examples, notes)
 - **Driver specification v2.0** - comprehensive rewrite with real-world scenarios and DX improvements
   - Added multicast-first transport architecture (239.255.42.99), directed broadcast fallback
   - Real-world scenarios: app startup, hardware failure reconnect, topology dashboard, cross-subnet

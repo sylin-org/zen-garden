@@ -81,6 +81,9 @@ pub mod cmd {
     
     // Adapters
     pub const HEY: &str = "hey";
+    
+    // Developer Tools
+    pub const API: &str = "api";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1852,6 +1855,73 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "presence"],
     });
 
+    // === DEVELOPER TOOLS ===
+    
+    manifest.add(CommandDef {
+        name: cmd::API,
+        zen_name: "api",
+        normative_name: None,
+        category: CommandCategory::Discovery,
+        description: "Display Moss HTTP API reference",
+        long_description: "Query and display Moss HTTP API documentation.\n\n\
+            Fetches live API manifest from Moss and displays formatted endpoint reference\n\
+            with methods, paths, parameters, and curl examples.\n\n\
+            Filter by category (health, offerings, services, stone, garden, admin) or\n\
+            view detailed documentation for a specific endpoint path.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "endpoint",
+                zen_syntax: "<endpoint>",
+                normative_syntax: None,
+                description: "Specific endpoint path to show details for (e.g., /api/v1/services)",
+                required: false,
+            },
+            CommandParam {
+                name: "category",
+                zen_syntax: "--category <name>",
+                normative_syntax: None,
+                description: "Filter by API category (health, offerings, services, stone, garden, events, admin)",
+                required: false,
+            },
+            CommandParam {
+                name: "examples",
+                zen_syntax: "--examples",
+                normative_syntax: None,
+                description: "Show curl examples for each endpoint",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Show all endpoints by category",
+                zen_syntax: Some("garden-rake api"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Show only offerings API",
+                zen_syntax: Some("garden-rake api --category offerings"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Detailed docs for specific endpoint",
+                zen_syntax: Some("garden-rake api /api/v1/services"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Include curl examples",
+                zen_syntax: Some("garden-rake api --examples"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "SSE endpoint documentation",
+                zen_syntax: Some("garden-rake api /api/v1/stone/presence/stream"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["hey", "observe"],
+    });
+
     manifest
 });
 
@@ -1878,6 +1948,8 @@ pub fn validate_manifest() {
         "election",
         // Adapters
         "hey",
+        // Developer Tools
+        "api",
     ];
 
     for cmd_name in expected_commands {

@@ -165,7 +165,6 @@ fn create_capabilities_skeleton(stone_id: &str, stone_name: &str) -> HardwareCap
             memory: MemoryCapabilities { total_mb: 0 },
             gpus: vec![],  // CRITICAL: Must be present, even if empty
             disk: None,
-            storage: vec![],
             swap_mb: None,
             ai_capabilities: None,
             system_manufacturer: None,

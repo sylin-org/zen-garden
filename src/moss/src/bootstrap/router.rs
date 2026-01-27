@@ -82,6 +82,14 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/presence/stream", get(api::v1::presence::stream_stone_presence))
         .route("/api/v1/stone/presence/notify", post(api::v1::presence::notify_presence))
 
+        // V1 API - Adapter registry
+        .route("/api/v1/stone/adapters", get(api::v1::adapters::get_adapters))
+        .route("/api/v1/stone/adapters/refresh", post(api::v1::adapters::refresh_adapters))
+        .route("/api/v1/stone/adapters/:id", get(api::v1::adapters::get_adapter_manifest))
+        .route("/api/v1/stone/adapters/:id/command", post(api::v1::adapters::send_adapter_command))
+        .route("/api/v1/stone/adapters/:id/up", post(api::v1::adapters::start_adapter))
+        .route("/api/v1/stone/adapters/:id/down", post(api::v1::adapters::stop_adapter))
+
         // V1 API - Garden topology
         .route("/api/v1/garden", get(api::v1::garden::get_garden_v1))
         .route("/api/v1/garden/topology", get(api::v1::garden::get_topology_v1))

@@ -1,0 +1,71 @@
+﻿# Zen Tech - Digital Tune
+# Clean digital audio feedback for garden presence
+
+name: zen-tech
+version: "1.0.0"
+description: Clean digital cues for garden stone presence
+author: Zen Garden Team
+license: CC0
+
+# Fallback sound when a mapped resource is not found
+fallback: _shared/loading-chime.mp3
+
+events:
+  # Stone presence events
+  stone-online:
+    resource: samples/beep-positive.mp3
+    channel: foreground
+    debounce_ms: 5000
+
+  stone-offline:
+    resource: samples/beep-oops.mp3
+    channel: foreground
+    debounce_ms: 5000
+
+  stone-heartbeat:
+    resource: samples/light-ping-hits.mp3
+    channel: ambient
+    debounce_ms: 60000
+
+  # Service events
+  service-started:
+    resource: samples/success-synth.mp3
+    channel: midground
+    debounce_ms: 2000
+
+  service-stopped:
+    resource: samples/telephone-dock-beep.mp3
+    channel: midground
+    debounce_ms: 2000
+
+  service-error:
+    resource: samples/alert-short.mp3
+    channel: foreground
+    debounce_ms: 1000
+
+  # Garden events
+  garden-healthy:
+    resource: samples/ambient-bell.mp3
+    channel: background
+    looping: true
+
+  garden-warning:
+    resource: samples/beep-sound-onoff.mp3
+    channel: background
+
+  # Update events
+  updates-available:
+    resource: samples/computer-chimes.mp3
+    channel: foreground
+    debounce_ms: 300000  # 5 min
+
+  update-complete:
+    resource: samples/wind-chime-single-04.mp3
+    channel: foreground
+
+  # Ambient background
+  ambient-crickets:
+    resource: samples/wind-chime-tinkling.mp3
+    channel: ambient
+    looping: true
+    volume: 0.3

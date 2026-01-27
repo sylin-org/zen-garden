@@ -262,6 +262,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         harvest_store,
         nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
         election_service: election_service_placeholder,
+        system_resources: Arc::new(RwLock::new(None)),
+        adapter_registry: Arc::new(infra::AdapterRegistry::new().await),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -312,6 +314,23 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     start_hardware_detection(stone_name.clone(), capabilities_arc.clone(), console_printer.clone(), state.clone());
     start_registry_loader(state.clone());
     start_catalog_builder(state.clone(), console_printer.clone());
+
+    // System metrics collector (feeds presence protocol and health monitors)
+    tracing::info!("Starting system metrics collector");
+    let metrics_collector_state = state.clone();
+    tokio::spawn(async move {
+        crate::tasks::run_metrics_collector(metrics_collector_state).await;
+    });
+
+    // Adapter registry scan (discover adapters in {data_dir}/adapters/)
+    tracing::info!("Scanning adapter registry");
+    let adapter_scan_state = state.clone();
+    tokio::spawn(async move {
+        match adapter_scan_state.adapter_registry.scan().await {
+            Ok(count) => tracing::info!(count = count, "Adapter scan complete"),
+            Err(e) => tracing::warn!(error = ?e, "Adapter scan failed"),
+        }
+    });
 
     // Presence monitoring (PRESENCE-0001)
     tracing::info!("Starting presence load monitor");

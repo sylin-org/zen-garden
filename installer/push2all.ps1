@@ -56,6 +56,10 @@
 .EXAMPLE
     .\push2all.ps1 -SkipBuild -Method SSH
     Deploy via SSH without rebuilding binaries
+
+.EXAMPLE
+    .\push2all.ps1 -Y
+    Deploy with all default options (no prompts)
 #>
 
 param(
@@ -70,7 +74,9 @@ param(
     [string]$PublishMode = '',  # What to publish: Package (full), MossRake (legacy), MossOnly - empty prompts menu
     [switch]$ForceSSH,  # Emergency mode: Stop service, copy directly to /usr/local/bin, restart (bypasses validation)
     [string]$SSHUser = 'stone',  # SSH username
-    [string]$SSHPassword = 'stone'  # SSH password
+    [string]$SSHPassword = 'stone',  # SSH password
+    [Alias("Y")]
+    [switch]$Yes  # Accept all defaults (non-interactive mode)
 )
 
 $ErrorActionPreference = "Stop"
@@ -114,77 +120,92 @@ function Read-SingleKey {
 # Show build menu if not explicitly specified
 $shouldBuild = $false
 if (-not $SkipBuild -and -not $Build) {
-    Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║  Build Binaries?                                   ║" -ForegroundColor Cyan
-    Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+    if ($Yes) {
+        # Auto-accept default: don't build
+        $shouldBuild = $false
+    } else {
+        Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+        Write-Host "║  Build Binaries?                                   ║" -ForegroundColor Cyan
+        Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
-    Write-Host "  [1] Yes, build now" -ForegroundColor White
-    Write-Host "      Compiles latest code for all platforms" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [2] No, use existing binaries (default)" -ForegroundColor White
-    Write-Host "      Uses binaries from previous build" -ForegroundColor Gray
-    Write-Host ""
+        Write-Host "  [1] Yes, build now" -ForegroundColor White
+        Write-Host "      Compiles latest code for all platforms" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [2] No, use existing binaries (default)" -ForegroundColor White
+        Write-Host "      Uses binaries from previous build" -ForegroundColor Gray
+        Write-Host ""
 
-    $buildChoice = Read-SingleKey -ValidKeys @("1", "2") -DefaultKey "2"
+        $buildChoice = Read-SingleKey -ValidKeys @("1", "2") -DefaultKey "2"
 
-    $shouldBuild = ($buildChoice -eq "1")
-    Write-Host ""
+        $shouldBuild = ($buildChoice -eq "1")
+        Write-Host ""
+    }
 } elseif ($Build) {
     $shouldBuild = $true
 }
 
 # Show deployment method menu if not specified
 if ([string]::IsNullOrEmpty($Method)) {
-    Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║  Select Deployment Method (applies to all stones)  ║" -ForegroundColor Cyan
-    Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+    if ($Yes) {
+        # Auto-accept default: HTTP
+        $Method = "HTTP"
+    } else {
+        Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+        Write-Host "║  Select Deployment Method (applies to all stones)  ║" -ForegroundColor Cyan
+        Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
-    Write-Host "  [1] HTTP API (default)" -ForegroundColor White
-    Write-Host "      Uses /api/v1/stone/upgrade endpoint" -ForegroundColor Gray
-    Write-Host "      Requires moss API to be working" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [2] SSH File Transfer" -ForegroundColor White
-    Write-Host "      Direct file copy via SSH + service restart" -ForegroundColor Gray
-    Write-Host "      Fallback when API is unavailable" -ForegroundColor Gray
-    Write-Host ""
+        Write-Host "  [1] HTTP API (default)" -ForegroundColor White
+        Write-Host "      Uses /api/v1/stone/upgrade endpoint" -ForegroundColor Gray
+        Write-Host "      Requires moss API to be working" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [2] SSH File Transfer" -ForegroundColor White
+        Write-Host "      Direct file copy via SSH + service restart" -ForegroundColor Gray
+        Write-Host "      Fallback when API is unavailable" -ForegroundColor Gray
+        Write-Host ""
 
-    $choice = Read-SingleKey -ValidKeys @("1", "2") -DefaultKey "1"
+        $choice = Read-SingleKey -ValidKeys @("1", "2") -DefaultKey "1"
 
-    switch ($choice) {
-        "2" { $Method = "SSH" }
-        default { $Method = "HTTP" }
+        switch ($choice) {
+            "2" { $Method = "SSH" }
+            default { $Method = "HTTP" }
+        }
+
+        Write-Host ""
     }
-
-    Write-Host ""
 }
 
 # Show "What to publish?" menu if not specified
 if ([string]::IsNullOrEmpty($PublishMode)) {
-    Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║  What to Publish?                                  ║" -ForegroundColor Cyan
-    Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+    if ($Yes) {
+        # Auto-accept default: Package
+        $PublishMode = "Package"
+    } else {
+        Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+        Write-Host "║  What to Publish?                                  ║" -ForegroundColor Cyan
+        Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
-    Write-Host "  [1] Full Package (default)" -ForegroundColor White
-    Write-Host "      Complete deployment package with all binaries" -ForegroundColor Gray
-    Write-Host "      Uses /api/v1/stone/deploy endpoint" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [2] moss + rake" -ForegroundColor White
-    Write-Host "      Individual binary deployment (legacy)" -ForegroundColor Gray
-    Write-Host "      Uses /api/v1/stone/upgrade endpoint" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [3] just moss" -ForegroundColor White
-    Write-Host "      Deploy only the moss daemon" -ForegroundColor Gray
-    Write-Host ""
+        Write-Host "  [1] Full Package (default)" -ForegroundColor White
+        Write-Host "      Complete deployment package with all binaries" -ForegroundColor Gray
+        Write-Host "      Uses /api/v1/stone/deploy endpoint" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [2] moss + rake" -ForegroundColor White
+        Write-Host "      Individual binary deployment (legacy)" -ForegroundColor Gray
+        Write-Host "      Uses /api/v1/stone/upgrade endpoint" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [3] just moss" -ForegroundColor White
+        Write-Host "      Deploy only the moss daemon" -ForegroundColor Gray
+        Write-Host ""
 
-    $publishChoice = Read-SingleKey -ValidKeys @("1", "2", "3") -DefaultKey "1"
+        $publishChoice = Read-SingleKey -ValidKeys @("1", "2", "3") -DefaultKey "1"
 
-    switch ($publishChoice) {
-        "2" { $PublishMode = "MossRake" }
-        "3" { $PublishMode = "MossOnly" }
-        default { $PublishMode = "Package" }
+        switch ($publishChoice) {
+            "2" { $PublishMode = "MossRake" }
+            "3" { $PublishMode = "MossOnly" }
+            default { $PublishMode = "Package" }
+        }
+
+        Write-Host ""
     }
-
-    Write-Host ""
 }
 
 # Build release binaries if requested

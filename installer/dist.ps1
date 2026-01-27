@@ -168,8 +168,7 @@ $packagesMoved = 0
 
 # Move Linux package
 if ($builtPlatforms -contains "linux") {
-    $linuxStaging = $config.staging.linux -replace '\$\{TEMP\}', $env:TEMP
-    $linuxPackage = Get-ChildItem $linuxStaging -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $linuxPackage = Get-ChildItem $config.staging.linux -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
     
     if ($linuxPackage) {
         Move-Item $linuxPackage.FullName $config.packages.outputDir -Force
@@ -177,14 +176,13 @@ if ($builtPlatforms -contains "linux") {
         Write-Host "  ✓ $($linuxPackage.Name) ($sizeMB MB)" -ForegroundColor Green
         $packagesMoved++
     } else {
-        Write-Warning "Linux package not found in staging"
+        Write-Warning "Linux package not found in staging: $($config.staging.linux)"
     }
 }
 
 # Move Windows package
 if ($builtPlatforms -contains "windows") {
-    $windowsStaging = $config.staging.windows -replace '\$\{TEMP\}', $env:TEMP
-    $windowsPackage = Get-ChildItem $windowsStaging -Filter "*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $windowsPackage = Get-ChildItem $config.staging.windows -Filter "*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
     
     if ($windowsPackage) {
         Move-Item $windowsPackage.FullName $config.packages.outputDir -Force
@@ -192,13 +190,14 @@ if ($builtPlatforms -contains "windows") {
         Write-Host "  ✓ $($windowsPackage.Name) ($sizeMB MB)" -ForegroundColor Green
         $packagesMoved++
     } else {
-        Write-Warning "Windows package not found in staging"
+        Write-Warning "Windows package not found in staging: $($config.staging.windows)"
     }
 }
 
 if ($packagesMoved -eq 0) {
-    Write-Host "⚠️  No packages found to consolidate" -ForegroundColor Yellow
-    exit 1
+    Write-Host "⚠️  No packages found to consolidate (binaries built but not packaged)" -ForegroundColor Yellow
+} else {
+    Write-Host "`nPackages moved to: $($config.packages.outputDir)" -ForegroundColor Green
 }
 
 # Summary
@@ -206,6 +205,16 @@ Write-Host "`n╔═════════════════════
 Write-Host "║  Distribution Complete                             ║" -ForegroundColor Green
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
 Write-Host "Version: $version" -ForegroundColor Green
-Write-Host "Packages: $packagesMoved created" -ForegroundColor Green
+Write-Host "Platforms Built: $($builtPlatforms -join ', ')" -ForegroundColor Green
+if ($packagesMoved -gt 0) {
+    Write-Host "Packages: $packagesMoved created" -ForegroundColor Green
+}
+Write-Host "`nBinaries available in:" -ForegroundColor Cyan
+if ($builtPlatforms -contains "linux") {
+    Write-Host "  Linux: $($config.workspace.dist)/linux" -ForegroundColor Gray
+}
+if ($builtPlatforms -contains "windows") {
+    Write-Host "  Windows: $($config.workspace.dist)/windows" -ForegroundColor Gray
+}
 Write-Host "Location: $($config.packages.outputDir)" -ForegroundColor DarkGray
 Write-Host ""

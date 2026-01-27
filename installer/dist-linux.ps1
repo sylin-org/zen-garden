@@ -11,9 +11,6 @@
 .PARAMETER Version
     Version string (e.g., "0.1.202601251234")
 
-.PARAMETER Description
-    Version description
-
 .PARAMETER DebugBuild
     Build debug binaries
 
@@ -37,9 +34,6 @@
 param(
     [Parameter(Mandatory)]
     [string]$Version,
-    
-    [Parameter(Mandatory)]
-    [string]$Description,
     
     [switch]$DebugBuild,
     [switch]$Release,
@@ -143,7 +137,6 @@ if (-not $SkipPackage) {
         architecture = "amd64"
         created = (Get-Date).ToUniversalTime().ToString("o")
         components = $components
-        notes = $Description
     }
     $manifest | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $packageDir "package.json") -Encoding UTF8
     

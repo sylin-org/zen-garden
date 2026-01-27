@@ -23,6 +23,8 @@ function Get-DistConfig {
     $config.workspace.root = Resolve-ConfigPath $config.workspace.root $configDir
     $config.workspace.dist = Resolve-ConfigPath $config.workspace.dist $configDir
     $config.packages.outputDir = Resolve-ConfigPath $config.packages.outputDir $configDir
+    $config.staging.linux = Resolve-ConfigPath $config.staging.linux $configDir
+    $config.staging.windows = Resolve-ConfigPath $config.staging.windows $configDir
     
     return $config
 }

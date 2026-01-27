@@ -9,8 +9,8 @@
   },
   
   "staging": {
-    "linux": "${TEMP}/zen-garden-staging-linux",
-    "windows": "${TEMP}/zen-garden-staging-windows"
+    "linux": "../dist/staging/linux",
+    "windows": "../dist/staging/windows"
   },
   
   "packages": {
@@ -93,13 +93,13 @@
   },
   
   "linux": {
-    "buildScript": "build-linux.ps1",
+    "buildScript": "dist-linux.ps1",
     "distDir": "../dist/linux",
     "architecture": "amd64"
   },
   
   "windows": {
-    "buildScript": "build-windows.ps1",
+    "buildScript": "dist-windows.ps1",
     "distDir": "../dist/windows",
     "architecture": "amd64"
   }

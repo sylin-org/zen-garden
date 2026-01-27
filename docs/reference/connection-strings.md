@@ -96,7 +96,7 @@ client = MongoClient(uri)
 
 **Generic HTTP (current):**
 ```bash
-curl http://lantern:3000/api/resolve?service=mongodb
+curl http://lantern:7186/api/resolve?service=mongodb
 # {"uri": "mongodb://stone-01:27017", "healthy": true}
 ```
 
@@ -153,7 +153,7 @@ offering=mongodb, version=7.0.4, port=27017, capabilities=auth,ssl, priority=100
 
 HTTP directory service for Windows clients and cross-subnet discovery.
 
-**Base URL:** `http://lantern:3000/api`
+**Base URL:** `http://lantern:7186/api`
 
 ### Endpoints
 
@@ -468,10 +468,10 @@ Moss collects and exposes comprehensive resource metrics for both host systems a
 **Via HTTP API:**
 ```bash
 # Get stone resources
-curl http://stone-01:3001/info | jq '.resources'
+curl http://stone-01:7185/info | jq '.resources'
 
 # Get container resources
-curl http://stone-01:3001/api/services | jq '.[].resources'
+curl http://stone-01:7185/api/services | jq '.[].resources'
 ```
 
 **Via garden-rake observe:**
@@ -486,12 +486,12 @@ garden-rake observe --offering mongodb,redis
 **Integration Examples:**
 ```bash
 # Export to monitoring tool
-curl http://stone-01:3001/api/services | \
+curl http://stone-01:7185/api/services | \
   jq -r '.[] | "\(.name),\(.resources.cpu_percent),\(.resources.memory_bytes)"' | \
   logger -t zen-garden-metrics
 
 # Check if any service exceeds 80% memory
-curl -s http://stone-01:3001/api/services | \
+curl -s http://stone-01:7185/api/services | \
   jq '.[] | select(.resources.memory_percent > 80) | .name'
 ```
 

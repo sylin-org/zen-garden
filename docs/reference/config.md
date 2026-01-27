@@ -82,7 +82,7 @@ notepad moss.toml
 ### 1. Use All Defaults
 ```bash
 ./garden-moss
-# Result: stone_name="stone-01", port=3001, log_level="info"
+# Result: stone_name="stone-01", port=7185, log_level="info"
 ```
 
 ### 2. Override with Environment Variables
@@ -192,6 +192,6 @@ WARN Failed to parse config file path=/etc/zen-garden/garden-moss.toml error="TO
 
 ### Port already in use
 ```
-ERROR Failed to bind to 0.0.0.0:3001: address already in use
+ERROR Failed to bind to 0.0.0.0:7185: address already in use
 ```
 **Solution:** Use `--force` flag to kill existing moss instances, or change the port.

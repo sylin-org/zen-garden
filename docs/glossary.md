@@ -188,7 +188,7 @@
 | Pond       | mTLS security layer                        | Security     |
 | Keystone   | Encrypted CA keypair file                  | Security     |
 | Cornerstone| First Stone with CA authority              | Security     |
-| Lantern    | Optional HTTP directory (port 7184)        | Discovery    |
+| Lantern    | Optional HTTP directory (port 7186)        | Discovery    |
 | Set        | Logical namespace (database/schema/prefix) | Services     |
 | E-waste    | Repurposed obsolete hardware               | Mission      |
 

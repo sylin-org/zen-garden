@@ -3,6 +3,17 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-27
+- **Driver specification v2.0** - comprehensive rewrite with real-world scenarios and DX improvements
+  - Added multicast-first transport architecture (239.255.42.99), directed broadcast fallback
+  - Real-world scenarios: app startup, hardware failure reconnect, topology dashboard, cross-subnet
+  - Complete implementation examples: Python discovery, tending with fallback, resilient requests
+  - Type definitions: TypeScript interfaces for all API types (discovery, services, hardware, topology)
+  - Troubleshooting guide: firewall, multicast, multi-homed systems (WSL/Hyper-V), slow discovery
+- **Documentation consistency fixes** - updated 6 docs with correct ports and election delay formula
+  - Ports: 3001→7185 (Moss), 3004→7184 (discovery), 3000→7186 (Lantern), 3002→7186 (Lantern)
+  - Election delay: corrected `* 10` (0-2550ms) to `* 30` (0-7650ms) per implementation
+  - Updated format string: `stone_name + request_id` → `election:{stone_id}:{request_id}`
+  - Affected: discovery.md, moss-daemon-lifecycle.md, rake-commands.md, config.md, connection-strings.md, glossary.md, ports.md
 - **garden-adapter-sdk crate** - shared infrastructure for adapters (DDD/SoC)
   - Created `src/adapter-sdk/` with CommandHandler trait, AdapterRuntime, SSE client
   - Adapters focus on domain logic only, SDK handles: HTTP server, shutdown, signals

@@ -178,8 +178,9 @@ Resolve `zen-garden:mongodb` or `zen-garden:database` to a native connection str
    - Query: `GET localhost:7185/api/garden/stones`
    - Latency: <1ms (zero discovery overhead)
 
-2. **UDP broadcast discovery** (Windows-compatible)
-   - Broadcast: UDP 255.255.255.255:3004
+2. **UDP multicast/broadcast discovery** (Windows-compatible)
+   - Multicast: UDP 239.255.42.99:7184 (primary)
+   - Fallback: Directed broadcast on each interface
    - Response: Unicast with Stone topology
    - Latency: <100ms
 
@@ -222,7 +223,7 @@ Resolve `zen-garden:mongodb` or `zen-garden:database` to a native connection str
 **1. Rake broadcasts request:**
 
 ```json
-UDP 255.255.255.255:3004
+UDP 239.255.42.99:7184 (multicast) or 255.255.255.255:7184 (broadcast fallback)
 {
   "discover": "moss",
   "request_id": "01933b83-1234-7abc-9000-abcdef123456",
@@ -230,23 +231,26 @@ UDP 255.255.255.255:3004
 }
 ```
 
+> **Note:** Zen Garden uses multicast-first transport. See [discovery-transport.md](../discovery-transport.md) for details on multi-homed system support.
+
 **2. All Moss daemons calculate election delay:**
 
 ```rust
 // Election algorithm (prevents reply storm)
-let hash = blake3::hash(format!("{}{}", stone_name, request_id).as_bytes());
-let delay_ms = (hash.as_bytes()[0] as u64) * 10; // 0-2550ms
+let input = format!("election:{}:{}", stone_id, request_id);
+let hash = blake3::hash(input.as_bytes());
+let delay_ms = (hash.as_bytes()[0] as u64) * 30; // 0-7650ms
 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
 ```
 
 **3. First responder unicast to requester:**
 
 ```json
-UDP <requester-ip>:3005
+UDP <requester-ip>
 {
   "stone_name": "stone-01",
   "stone_endpoint": "http://10.0.1.10:7185",
-  "lantern_endpoint": "http://10.0.1.5:7184",
+  "lantern_endpoint": "http://10.0.1.5:7186",
   "moss_version": "0.1.0"
 }
 ```
@@ -270,7 +274,7 @@ GET http://10.0.1.10:7185/api/garden/stones
 ```toml
 # /etc/zen-garden/garden-moss.toml
 [discovery]
-udp_broadcast_port = 3004
+udp_broadcast_port = 7184
 udp_broadcast_timeout = 3000  # ms
 udp_broadcast_retry = 3
 election_hash_algorithm = "blake3"

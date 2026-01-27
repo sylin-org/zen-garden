@@ -38,41 +38,43 @@ note: "Authoritative port registry for all Zen Garden services."
 
 ### 7184 - P2P Discovery (UDP)
 
-**Current Name:** "UDP port 3004"  
-**Function:** Peer-to-peer stone discovery via broadcast messages  
+**Current Name:** "UDP port 7184 (Discovery)"  
+**Function:** Peer-to-peer stone discovery via multicast + broadcast  
 **Listeners:** All moss instances  
 **Message Types:**
 - `DiscoveryRequest` - Broadcast from rake to find available stones
 - `DiscoveryResponse` - Unicast response from moss with stone capabilities
+- `StoneChirp` - Periodic state broadcast (30s interval)
 
 **Implementation Files:**
-- Listener: `src/linux/moss/src/discovery.rs` - `udp_listener()` function
-- Sender: `src/windows/garden-rake/src/discovery.rs` - `discover_moss()` function
+- Listener: `src/moss/src/tasks/discovery.rs` - P2P transport subscriber
+- Sender: `src/rake/src/discovery.rs` - `discover_moss()` function
+- Transport: `src/common/src/infra/communications/p2p.rs` - Multicast + broadcast
 
 **Example Traffic:**
 ```
-Rake → 255.255.255.255:7184 (broadcast)
-  {"request_id": "uuid", "requester": "rake-client"}
+Rake → 239.255.42.99:7184 (multicast) or 255.255.255.255:7184 (broadcast fallback)
+  {"discover": "moss", "request_id": "uuid", "requester": "rake-client"}
 
 Moss → Rake IP:ephemeral (unicast)
-  {"stone_name": "stone-01", "stone_endpoint": "http://192.168.1.100:7185"}
+  {"stone_id": "01936e8a-...", "stone_name": "stone-01", "stone_endpoint": "http://192.168.1.100:7185"}
 ```
 
 ---
 
 ### 7185 - Garden-Moss HTTP API (TCP)
 
-**Current Name:** "Port 3001"  
+**Current Name:** "HTTP port 7185 (Moss API)"  
 **Function:** Primary stone management HTTP API  
 **Protocol:** HTTP/1.1  
 **Endpoints:**
 - `/health` - Liveness probe
 - `/capabilities` - Hardware capabilities query
 - `/metrics` - Prometheus metrics
-- `/api/services` - List running offerings
-- `/api/operations/offer/:offering` - Start new service
-- `/api/operations/remove/:target` - Stop service
-- `/admin/shutdown` - Graceful daemon shutdown
+- `/api/v1/services` - List running services
+- `/api/v1/offerings` - List/install offerings
+- `/api/v1/stone/adapters` - Adapter management
+- `/api/v1/garden/topology` - Cross-stone topology
 
 **Configuration Priority:**
 1. CLI argument: `garden-moss --port 7185`

@@ -149,15 +149,15 @@ pub fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::CommandResult;
+    use garden_common::command_manifest::CommandResponse;
     use async_trait::async_trait;
 
     struct TestHandler;
 
     #[async_trait]
     impl CommandHandler for TestHandler {
-        async fn handle(&self, _args: &[String]) -> CommandResult {
-            CommandResult::success("OK")
+        async fn handle(&self, _args: &[String]) -> CommandResponse {
+            CommandResponse::success("OK")
         }
     }
 

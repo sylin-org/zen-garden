@@ -439,7 +439,7 @@ GET /info
 stone-01-moss._moss._tcp.local.
 TXT: stone_name=stone-01
      version=0.1.0
-     api_port=3001
+     api_port=7185
      health=healthy
 ```
 
@@ -657,7 +657,7 @@ For each service:
 
 ```
 UDP broadcast to network (port 7184)
-Message: "LANTERN_GATHER http://lantern-host:3000/gather"
+Message: "LANTERN_GATHER http://lantern-host:7186/gather"
 ```
 
 ### Lifecycle Broadcasts
@@ -746,9 +746,9 @@ UDP broadcast to network (port 7184)
 When Moss receives discovery broadcast:
 
 1. Parse request: `{ "discover": "moss", "request_id": "uuid", "requester": "rake-cli" }`
-2. Calculate election delay: `blake3::hash(stone_name + request_id)[0] * 10` ms
-3. Wait for delay (0-2550ms range, deterministic but unpredictable)
-4. Send unicast UDP response to requester IP:3005
+2. Calculate election delay: `blake3::hash(format!("election:{}:{}", stone_id, request_id))[0] * 30` ms
+3. Wait for delay (0-7650ms range, deterministic but unpredictable)
+4. Send unicast UDP response to requester
 
 ### Response Payload
 
@@ -756,14 +756,14 @@ When Moss receives discovery broadcast:
 {
   "stone_name": "stone-01",
   "stone_endpoint": "http://stone-01.local:7185",
-  "lantern_endpoint": "http://stone-09.local:3002",
+  "lantern_endpoint": "http://stone-09.local:7186",
   "moss_version": "0.1.0"
 }
 ```
 
 ### Election Algorithm
 
-Use BLAKE3 hash of `stone_name + request_id` to calculate deterministic delay (0-2550ms).
+Use BLAKE3 hash of `election:{stone_id}:{request_id}` to calculate deterministic delay (0-7650ms).
 
 **Properties:**
 

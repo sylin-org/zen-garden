@@ -79,7 +79,7 @@ Rake runs on developer machine (no local Moss):
    - **Benefit:** Zero-config discovery on Unix-like systems
 
 4. **Lantern HTTP** (directory fallback)
-   - Query `GET http://lantern:3000/api/resolve`
+   - Query `GET http://lantern:7186/api/resolve`
    - Used when no Moss accessible directly
    - **Benefit:** Works across subnets, centralized directory
 
@@ -100,13 +100,14 @@ Rake runs on developer machine (no local Moss):
 
 **Purpose:** Enable auto-discovery on Windows without mDNS browse or Lantern dependency
 
-**Port:** 3004 (Rake discovery broadcasts)
+**Port:** 7184 (Rake discovery via multicast + broadcast fallback)
 
 ### Protocol Flow
 
 ```
-1. Rake broadcasts discovery request
-   UDP broadcast to 255.255.255.255:3004
+1. Rake sends discovery request
+   UDP multicast to 239.255.42.99:7184 (primary)
+   Fallback: Directed broadcast per interface
    {
      "discover": "moss",
      "request_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -114,16 +115,16 @@ Rake runs on developer machine (no local Moss):
    }
 
 2. All Moss instances receive broadcast
-   Calculate election delay using blake3 hash:
-   let hash = blake3::hash(format!("{}{}", stone_name, request_id));
-   let delay_ms = (hash[0] as u64) * 10;  // Range: 0-2550ms
+   Calculate election delay using BLAKE3 hash:
+   let hash = blake3::hash(format!("election:{}:{}", stone_id, request_id));
+   let delay_ms = (hash[0] as u64) * 30;  // Range: 0-7650ms
 
 3. First responder (lowest hash) replies
-   UDP unicast back to requester IP:3005
+   UDP unicast back to requester
    {
      "stone_name": "stone-01",
      "stone_endpoint": "http://stone-01.local:7185",
-     "lantern_endpoint": "http://stone-09.local:3002",
+     "lantern_endpoint": "http://stone-09.local:7186",
      "moss_version": "0.1.0"
    }
 

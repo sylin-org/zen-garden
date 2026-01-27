@@ -120,17 +120,18 @@ async fn handle_health<H: CommandHandler>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use garden_common::command_manifest::CommandResponse;
     use async_trait::async_trait;
 
     struct TestHandler;
 
     #[async_trait]
     impl CommandHandler for TestHandler {
-        async fn handle(&self, args: &[String]) -> CommandResult {
+        async fn handle(&self, args: &[String]) -> CommandResponse {
             match args.first().map(|s| s.as_str()) {
-                Some("hello") => CommandResult::success("Hello!"),
-                Some(cmd) => CommandResult::error(format!("Unknown: {}", cmd)),
-                None => CommandResult::error("No command"),
+                Some("hello") => CommandResponse::success("Hello!"),
+                Some(cmd) => CommandResponse::error(format!("Unknown: {}", cmd)),
+                None => CommandResponse::error("No command"),
             }
         }
     }

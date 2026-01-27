@@ -3,6 +3,45 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-26
+- **Adapter port ledger system** - Moss-managed persistent port assignments (base 7187, range 7187-7199)
+  - Created PortLedger: load/save to `{data_dir}/adapter-ports.json`, incremental assignment from base 7187
+  - Moss passes `--port {assigned}` to adapters during both `--dump-commands` and runtime startup
+  - Command routing: Rake → Moss:7185/api/v1/stone/adapters/{id}/command → Adapter:{assigned_port}/command
+  - Removed computed port logic from command_manifest, Cricket now requires port from Moss
+  - Tested end-to-end: Cricket assigned 7187, plays audio via `hey tell cricket play stone-online`
+- **Adapter registry & service discovery** - adapters auto-discovered via `--dump-commands` protocol
+  - Added `adapters_dir()` path function: `{data_dir}/adapters/`
+  - Added `CommandManifest::check_dump_commands()` helper for adapter main.rs
+  - Created `infra/adapters.rs`: scans adapters folder, spawns `--dump-commands`, caches manifests
+  - Updated Moss API: GET /stone/adapters, GET /stone/adapters/:id, POST :id/command, POST refresh
+  - Updated Rake hey.rs: fetches CommandManifest from Moss, displays rich help with examples
+  - Cricket now implements `--dump-commands` (6 commands: select, volume, list, show, play, stop)
+- **Cricket audio adapter implemented** - full adapter framework and Cricket crate with 180 CC0 samples
+  - Expanded audio library: 42 → 180 samples (5x growth, emphasis on notifications as requested)
+  - Added garden_common::adapter module: AdapterCommandRequest/Response, AdapterManifest types
+  - Added Moss endpoints: GET /api/v1/stone/adapters, POST /api/v1/stone/presence/command
+  - Created garden-cricket crate: 4-channel mixer (rodio), tune system (zen-garden/mr-robot/lo-fi-ops)
+  - Created Rake hey-tell command: natural language adapter control (`hey cricket, play zen-garden`)
+  - Implemented SSE client for presence stream, command server (port 7188), mixer with Send+Sync safety
+  - Attribution maintained: full credit in attribution-extended.json despite CC0 license
+- **Cricket & Adapter Framework specs complete** - universal service communication layer designed
+  - Created ADAPTER-COMMAND-PROTOCOL.md: synchronous command flow via Moss proxy (5s timeout)
+  - Created ADAPTER-SERVICE-REGISTRY.md: service registration, manifests, lifecycle management
+  - Created HEY-TELL-SYNTAX.md: Rake command grammar (`garden-rake hey tell {adapter} {cmd}`)
+  - Created CRICKET-SPEC.md: Cricket implementation details (rodio, 4-channel mixer, tune system)
+  - Created audio-sample-library.json: 52 CC0 samples from Freesound.org for official tunes
+- **Cricket audio adapter proposal complete** - comprehensive spec with 6-expert specialist team assessment
+  - Created CRICKET-0001-audio-adapter-spec.md: full design (4-layer audio, event mappings, config schema)
+  - Created CRICKET-IMPLEMENTATION-ROADMAP.md: 3-phase build plan (6-8 weeks to v0.1.0)
+  - Created CRICKET-EXECUTIVE-SUMMARY.md: stakeholder reference document
+  - Validated against PRESENCE-0001: zero protocol deviations, pure consumer pattern
+  - Objective alignment confirmed: "make home lab infrastructure feel intimate, tactile, and real"
+- **METRICS-0001: Unified storage metrics** - eliminated deprecated StorageDevice struct, detect_storage() function, and HardwareCapabilities.storage field
+  - Removed ~200 lines of redundant storage detection code (detect_storage_windows/linux functions)
+  - Changed StoneResources.disk (single DiskMetrics) to storage (Vec<StorageMetrics>)  
+  - All storage data now from live metrics (30s refresh), no stale boot-time usage percentages
+  - Handles hot-swap drives naturally (storage inventory refreshes every 30s)
+  - Fixed observe/status commands: removed stale static storage display, replaced by live /metrics endpoint (future work)
 - Fixed Windows self-update cleanup: corrected temp filename (garden-moss-new.exe → garden-moss-temp.exe) with logging
 - Fixed 38 manifest snippet files: converted port format from strings to tuples ([host, container])
 - Fixed ServiceConfig struct: changed ports from Vec<String> to Vec<(u16, u16)> for direct tuple deserialization

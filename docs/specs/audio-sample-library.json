@@ -1,0 +1,555 @@
+﻿{
+  "$schema": "./sample-library.schema.json",
+  "version": "1.0.0",
+  "generated": "2026-01-26",
+  "license": "CC0-1.0",
+  "source": "Freesound.org",
+  "note": "All samples are CC0 (Creative Commons Zero) - Public Domain",
+  
+  "categories": {
+    "ambient_nature": {
+      "description": "Natural ambient sounds for background/ambient channels",
+      "samples": [
+        {
+          "id": "fs-521843",
+          "name": "Outdoors_Night_CricketsLoop",
+          "author": "MrFossy",
+          "url": "https://freesound.org/people/MrFossy/sounds/521843/",
+          "duration": "0:09",
+          "format": "wav",
+          "tags": ["crickets", "night", "loop", "nature"],
+          "use_case": "zen-garden ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-648470",
+          "name": "Nebraska Crickets",
+          "author": "rifualk",
+          "url": "https://freesound.org/people/rifualk/sounds/648470/",
+          "duration": "0:56",
+          "format": "wav",
+          "tags": ["crickets", "ambient", "night", "atmosphere"],
+          "use_case": "zen-garden ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-210540",
+          "name": "crickets.wav",
+          "author": "Sclolex",
+          "url": "https://freesound.org/people/Sclolex/sounds/210540/",
+          "duration": "0:38",
+          "format": "wav",
+          "tags": ["crickets", "night", "insects", "ambient"],
+          "use_case": "zen-garden ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-167304",
+          "name": "Night_crickets_Loopable",
+          "author": "2887679652",
+          "url": "https://freesound.org/people/2887679652/sounds/167304/",
+          "duration": "0:30",
+          "format": "wav",
+          "tags": ["crickets", "night", "loopable"],
+          "use_case": "zen-garden ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-482118",
+          "name": "Ambience_Night_Loop_Stereo",
+          "author": "Nox_Sound",
+          "url": "https://freesound.org/people/Nox_Sound/sounds/482118/",
+          "duration": "0:19",
+          "format": "wav",
+          "tags": ["night", "crickets", "birds", "calm"],
+          "use_case": "zen-garden ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-248103",
+          "name": "Night Ambiance",
+          "author": "DidntGoToFilmSchool",
+          "url": "https://freesound.org/people/DidntGoToFilmSchool/sounds/248103/",
+          "duration": "0:19",
+          "format": "aiff",
+          "tags": ["crickets", "night", "ambient", "atmosphere"],
+          "use_case": "zen-garden ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-450537",
+          "name": "Amazon jungle night crickets",
+          "author": "kyles",
+          "url": "https://freesound.org/people/kyles/sounds/450537/",
+          "duration": "3:49",
+          "format": "flac",
+          "tags": ["jungle", "crickets", "night", "Amazon"],
+          "use_case": "zen-garden ambient layer (tropical variant)",
+          "loopable": true
+        },
+        {
+          "id": "fs-323426",
+          "name": "light rain and crickets",
+          "author": "seth-m",
+          "url": "https://freesound.org/people/seth-m/sounds/323426/",
+          "duration": "0:07",
+          "format": "wav",
+          "tags": ["rain", "crickets", "ambient"],
+          "use_case": "zen-garden ambient layer (rain variant)",
+          "loopable": true
+        },
+        {
+          "id": "fs-830253",
+          "name": "Afternoon Woods in October",
+          "author": "NickTayloe",
+          "url": "https://freesound.org/people/NickTayloe/sounds/830253/",
+          "duration": "10:17",
+          "format": "wav",
+          "tags": ["woods", "autumn", "ambient", "birds"],
+          "use_case": "zen-garden background layer",
+          "loopable": true
+        }
+      ]
+    },
+    
+    "synth_pads": {
+      "description": "Synthesizer pads for background/ambient electronic soundscapes",
+      "samples": [
+        {
+          "id": "fs-831745",
+          "name": "Synth Ambient Pad note C4 #003",
+          "author": "bassimat",
+          "url": "https://freesound.org/people/bassimat/sounds/831745/",
+          "duration": "0:18",
+          "format": "wav",
+          "tags": ["synth", "ambient", "pad", "cinematic"],
+          "use_case": "mr-robot background layer",
+          "loopable": false
+        },
+        {
+          "id": "fs-517397",
+          "name": "Mugician_Synth_Jam_1_Ambient",
+          "author": "RutgerMuller",
+          "url": "https://freesound.org/people/RutgerMuller/sounds/517397/",
+          "duration": "3:39",
+          "format": "aiff",
+          "tags": ["ambient", "drone", "electronic", "pad"],
+          "use_case": "mr-robot background layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-683324",
+          "name": "Aeons Whisper Pad",
+          "author": "LogicMoon",
+          "url": "https://freesound.org/people/LogicMoon/sounds/683324/",
+          "duration": "1:18",
+          "format": "wav",
+          "tags": ["ambient", "atmospheric", "cinematic", "dreamy"],
+          "use_case": "mr-robot ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-611305",
+          "name": "New York Cyberpunk",
+          "author": "szegvari",
+          "url": "https://freesound.org/people/szegvari/sounds/611305/",
+          "duration": "1:08",
+          "format": "wav",
+          "tags": ["cyberpunk", "synth", "drums", "retro"],
+          "use_case": "mr-robot background layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-807232",
+          "name": "Timeless Ambient Pad Progression",
+          "author": "CVLTIV8R",
+          "url": "https://freesound.org/people/CVLTIV8R/sounds/807232/",
+          "duration": "1:04",
+          "format": "wav",
+          "tags": ["ambient", "pad", "chill", "spacey"],
+          "use_case": "lo-fi-ops ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-467316",
+          "name": "Light Waves Pad Loop 128bpm",
+          "author": "Karma-Ron",
+          "url": "https://freesound.org/people/Karma-Ron/sounds/467316/",
+          "duration": "3:32",
+          "format": "wav",
+          "tags": ["ambient", "dreamy", "mystic", "loop"],
+          "use_case": "lo-fi-ops background layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-663683",
+          "name": "The Great Beyond",
+          "author": "Orboram",
+          "url": "https://freesound.org/people/Orboram/sounds/663683/",
+          "duration": "5:00",
+          "format": "wav",
+          "tags": ["ambient", "drone", "cinematic", "dark"],
+          "use_case": "mr-robot ambient layer (dark variant)",
+          "loopable": true
+        },
+        {
+          "id": "fs-623062",
+          "name": "Dark Pad Synth Synthwave Drone",
+          "author": "szegvari",
+          "url": "https://freesound.org/people/szegvari/sounds/623062/",
+          "duration": "1:39",
+          "format": "wav",
+          "tags": ["dark", "synth", "synthwave", "cinematic"],
+          "use_case": "mr-robot background layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-829769",
+          "name": "Phase Drone FX EA-1",
+          "author": "CVLTIV8R",
+          "url": "https://freesound.org/people/CVLTIV8R/sounds/829769/",
+          "duration": "0:07",
+          "format": "wav",
+          "tags": ["drone", "ambient", "creepy", "atmosphere"],
+          "use_case": "mr-robot midground layer",
+          "loopable": true
+        }
+      ]
+    },
+    
+    "notifications_success": {
+      "description": "Positive notification sounds for successful operations",
+      "samples": [
+        {
+          "id": "fs-380482",
+          "name": "Chime Notification",
+          "author": "Jofae",
+          "url": "https://freesound.org/people/Jofae/sounds/380482/",
+          "duration": "0:00.3",
+          "format": "wav",
+          "tags": ["notification", "chime", "alert"],
+          "use_case": "offering.stopped.running event",
+          "loopable": false
+        },
+        {
+          "id": "fs-351879",
+          "name": "Computer Chimes - Notification",
+          "author": "marlonnnnnn",
+          "url": "https://freesound.org/people/marlonnnnnn/sounds/351879/",
+          "duration": "0:01.5",
+          "format": "aiff",
+          "tags": ["computer", "chime", "notification"],
+          "use_case": "deployment.success event",
+          "loopable": false
+        },
+        {
+          "id": "fs-538554",
+          "name": "Success",
+          "author": "Sjonas88",
+          "url": "https://freesound.org/people/Sjonas88/sounds/538554/",
+          "duration": "0:04",
+          "format": "wav",
+          "tags": ["success", "synth", "chord"],
+          "use_case": "deployment.success event",
+          "loopable": false
+        },
+        {
+          "id": "fs-404358",
+          "name": "Success.wav",
+          "author": "Kagateni",
+          "url": "https://freesound.org/people/Kagateni/sounds/404358/",
+          "duration": "0:03.7",
+          "format": "wav",
+          "tags": ["success", "digital", "electronic"],
+          "use_case": "deployment.success event",
+          "loopable": false
+        },
+        {
+          "id": "fs-253887",
+          "name": "positive_beeps",
+          "author": "themusicalnomad",
+          "url": "https://freesound.org/people/themusicalnomad/sounds/253887/",
+          "duration": "0:00.8",
+          "format": "wav",
+          "tags": ["beep", "positive", "correct"],
+          "use_case": "offering state change (positive)",
+          "loopable": false
+        },
+        {
+          "id": "fs-330046",
+          "name": "Beep 03 Positive",
+          "author": "PaulMorek",
+          "url": "https://freesound.org/people/PaulMorek/sounds/330046/",
+          "duration": "0:01",
+          "format": "wav",
+          "tags": ["beep", "positive", "ui"],
+          "use_case": "offering state change (positive)",
+          "loopable": false
+        },
+        {
+          "id": "fs-570265",
+          "name": "point-in-space-2",
+          "author": "bluetshirt",
+          "url": "https://freesound.org/people/bluetshirt/sounds/570265/",
+          "duration": "0:01.7",
+          "format": "ogg",
+          "tags": ["notification", "chime", "pleasant"],
+          "use_case": "general positive notification",
+          "loopable": false
+        },
+        {
+          "id": "fs-198416",
+          "name": "ambientBell",
+          "author": "Divinux",
+          "url": "https://freesound.org/people/Divinux/sounds/198416/",
+          "duration": "0:20",
+          "format": "wav",
+          "tags": ["bell", "ambient", "calm", "chime"],
+          "use_case": "zen-garden calm notification",
+          "loopable": false
+        },
+        {
+          "id": "fs-715597",
+          "name": "Light ping hits",
+          "author": "xkeril",
+          "url": "https://freesound.org/people/xkeril/sounds/715597/",
+          "duration": "0:06.6",
+          "format": "wav",
+          "tags": ["bell", "ping", "chime", "ding"],
+          "use_case": "series of notification pings",
+          "loopable": false
+        }
+      ]
+    },
+    
+    "notifications_error": {
+      "description": "Error/warning notification sounds",
+      "samples": [
+        {
+          "id": "fs-325112",
+          "name": "success (hall reverb)",
+          "author": "fisch12345",
+          "url": "https://freesound.org/people/fisch12345/sounds/325112/",
+          "duration": "0:06.8",
+          "format": "wav",
+          "tags": ["alert", "beep", "hall"],
+          "use_case": "offering.error event (dramatic)",
+          "loopable": false
+        },
+        {
+          "id": "fs-428320",
+          "name": "Low beep",
+          "author": "krzysiunet",
+          "url": "https://freesound.org/people/krzysiunet/sounds/428320/",
+          "duration": "0:00.3",
+          "format": "wav",
+          "tags": ["beep", "low", "voice"],
+          "use_case": "subtle error notification",
+          "loopable": false
+        },
+        {
+          "id": "fs-625753",
+          "name": "On/Off sounds (with variation)",
+          "author": "Teh_Bucket",
+          "url": "https://freesound.org/people/Teh_Bucket/sounds/625753/",
+          "duration": "0:23",
+          "format": "wav",
+          "tags": ["enable", "disable", "effect", "ui"],
+          "use_case": "adapter on/off events",
+          "loopable": false
+        }
+      ]
+    },
+    
+    "glitch_digital": {
+      "description": "Digital glitch sounds for mr-robot tune",
+      "samples": [
+        {
+          "id": "fs-349900",
+          "name": "Digital Glitches",
+          "author": "dotY21",
+          "url": "https://freesound.org/people/dotY21/sounds/349900/",
+          "duration": "0:06.7",
+          "format": "wav",
+          "tags": ["digital", "glitch", "electronic"],
+          "use_case": "mr-robot midground layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-458065",
+          "name": "Digital Glitch_v1",
+          "author": "tadaizm",
+          "url": "https://freesound.org/people/tadaizm/sounds/458065/",
+          "duration": "0:00.4",
+          "format": "wav",
+          "tags": ["digital", "glitch", "transition"],
+          "use_case": "mr-robot transition sound",
+          "loopable": false
+        },
+        {
+          "id": "fs-735025",
+          "name": "Digital Glitching 04",
+          "author": "vladislavzh",
+          "url": "https://freesound.org/people/vladislavzh/sounds/735025/",
+          "duration": "0:55",
+          "format": "wav",
+          "tags": ["digital", "glitch", "noise", "harsh"],
+          "use_case": "mr-robot ambient texture",
+          "loopable": true
+        },
+        {
+          "id": "fs-813131",
+          "name": "Electroglitxxch - FX",
+          "author": "CVLTIV8R",
+          "url": "https://freesound.org/people/CVLTIV8R/sounds/813131/",
+          "duration": "0:10",
+          "format": "wav",
+          "tags": ["glitch", "alien", "digital", "effect"],
+          "use_case": "mr-robot spike event",
+          "loopable": false
+        },
+        {
+          "id": "fs-371603",
+          "name": "Odd glitch",
+          "author": "JacksonMiller0",
+          "url": "https://freesound.org/people/JacksonMiller0/sounds/371603/",
+          "duration": "0:02.6",
+          "format": "wav",
+          "tags": ["glitch", "digital", "error"],
+          "use_case": "mr-robot error notification",
+          "loopable": false
+        },
+        {
+          "id": "fs-777133",
+          "name": "Digital Glitch Disaster Explosion",
+          "author": "DanJFilms",
+          "url": "https://freesound.org/people/DanJFilms/sounds/777133/",
+          "duration": "0:07.6",
+          "format": "wav",
+          "tags": ["glitch", "explosion", "digital"],
+          "use_case": "mr-robot critical error",
+          "loopable": false
+        }
+      ]
+    },
+    
+    "vinyl_lofi": {
+      "description": "Vinyl crackle and lo-fi textures for lo-fi-ops tune",
+      "samples": [
+        {
+          "id": "fs-493122",
+          "name": "Vinyl Crackle 1",
+          "author": "scottyhigh20",
+          "url": "https://freesound.org/people/scottyhigh20/sounds/493122/",
+          "duration": "0:29",
+          "format": "wav",
+          "tags": ["vinyl", "crackle", "record"],
+          "use_case": "lo-fi-ops background texture",
+          "loopable": true
+        },
+        {
+          "id": "fs-266786",
+          "name": "Vinyl snap, crackle and pop redux",
+          "author": "deleted_user_2906614",
+          "url": "https://freesound.org/people/deleted_user_2906614/sounds/266786/",
+          "duration": "1:02",
+          "format": "wav",
+          "tags": ["vinyl", "crackle", "pop", "noise"],
+          "use_case": "lo-fi-ops background texture",
+          "loopable": true
+        },
+        {
+          "id": "fs-531438",
+          "name": "CRACKLE (6)",
+          "author": "DefySolipsis",
+          "url": "https://freesound.org/people/DefySolipsis/sounds/531438/",
+          "duration": "0:41",
+          "format": "wav",
+          "tags": ["vinyl", "crackle", "ambient", "lofi"],
+          "use_case": "lo-fi-ops ambient layer",
+          "loopable": true
+        },
+        {
+          "id": "fs-637931",
+          "name": "vinyl record crackle nice stereo",
+          "author": "kyles",
+          "url": "https://freesound.org/people/kyles/sounds/637931/",
+          "duration": "1:14",
+          "format": "flac",
+          "tags": ["vinyl", "crackle", "stereo"],
+          "use_case": "lo-fi-ops background texture",
+          "loopable": true
+        },
+        {
+          "id": "fs-456284",
+          "name": "Vinyl Surface Noise 02",
+          "author": "Stratocube",
+          "url": "https://freesound.org/people/Stratocube/sounds/456284/",
+          "duration": "0:01.6",
+          "format": "wav",
+          "tags": ["vinyl", "crackle", "subtle"],
+          "use_case": "lo-fi-ops light texture",
+          "loopable": true
+        },
+        {
+          "id": "fs-398813",
+          "name": "vinyl - out 04",
+          "author": "Anthousai",
+          "url": "https://freesound.org/people/Anthousai/sounds/398813/",
+          "duration": "0:06",
+          "format": "wav",
+          "tags": ["vinyl", "crackle", "lofi"],
+          "use_case": "lo-fi-ops ambient texture",
+          "loopable": true
+        },
+        {
+          "id": "fs-464396",
+          "name": "FX_Vinyl_Crackle",
+          "author": "michael_grinnell",
+          "url": "https://freesound.org/people/michael_grinnell/sounds/464396/",
+          "duration": "1:25",
+          "format": "wav",
+          "tags": ["vinyl", "crackle", "atmosphere"],
+          "use_case": "lo-fi-ops extended texture",
+          "loopable": true
+        }
+      ]
+    }
+  },
+  
+  "tune_recommendations": {
+    "zen-garden": {
+      "description": "Calm ambient soundscape with nature sounds",
+      "background": ["fs-210540", "fs-648470"],
+      "ambient": ["fs-482118", "fs-167304"],
+      "midground": [],
+      "foreground": ["fs-198416", "fs-380482", "fs-253887"]
+    },
+    "mr-robot": {
+      "description": "Industrial/tech atmosphere with glitch sounds",
+      "background": ["fs-611305", "fs-623062"],
+      "ambient": ["fs-663683", "fs-683324"],
+      "midground": ["fs-349900", "fs-735025", "fs-829769"],
+      "foreground": ["fs-458065", "fs-371603", "fs-777133", "fs-813131"]
+    },
+    "lo-fi-ops": {
+      "description": "Chill lo-fi beats with vinyl crackle",
+      "background": ["fs-493122", "fs-266786", "fs-467316"],
+      "ambient": ["fs-531438", "fs-637931", "fs-807232"],
+      "midground": ["fs-456284"],
+      "foreground": ["fs-538554", "fs-351879", "fs-330046"]
+    }
+  },
+  
+  "attribution_template": "Sound \"{name}\" by {author} from Freesound.org (CC0 1.0 Universal)",
+  
+  "total_samples": 52,
+  "total_categories": 5,
+  
+  "download_instructions": {
+    "note": "Samples can be downloaded directly from Freesound.org URLs",
+    "format_preference": "OGG Vorbis @ 192kbps VBR for most samples",
+    "short_samples": "WAV @ 48kHz 16-bit for samples under 1 second",
+    "api_docs": "https://freesound.org/docs/api/"
+  }
+}

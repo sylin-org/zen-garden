@@ -450,11 +450,17 @@ async fn send_adapter_command(
         
         Ok(())
     } else {
-        let body: serde_json::Value = response.json().await.unwrap_or_default();
-        let msg = body.get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or("Unknown error");
-        anyhow::bail!("{}: {}", status, msg)
+        // Parse CommandResponse structure (status, message, suggestions)
+        let body: CommandResponse = response.json().await.unwrap_or_else(|_| {
+            CommandResponse::error("Unknown error")
+        });
+        
+        // Show suggestions if available
+        for suggestion in &body.suggestions {
+            eprintln!("  → {}", suggestion);
+        }
+        
+        anyhow::bail!("{}: {}", status, body.message)
     }
 }
 

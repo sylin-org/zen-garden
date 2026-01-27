@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 garden-common = { path = "../common" }
+garden-adapter-sdk = { path = "../adapter-sdk" }
 
 # Core
 anyhow.workspace = true
@@ -26,7 +27,6 @@ serde_yaml = "0.9"
 
 # HTTP client for SSE
 reqwest = { workspace = true, features = ["stream"] }
-axum.workspace = true
 futures-util = "0.3"
 tokio-stream = "0.1"
 

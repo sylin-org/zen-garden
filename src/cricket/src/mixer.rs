@@ -6,6 +6,58 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
 
+/// Initialize system audio on Linux (unmute and set volume)
+/// This ensures the ALSA master volume is set when Cricket starts
+#[cfg(target_os = "linux")]
+pub fn init_system_audio(volume_percent: u8) -> Result<()> {
+    use std::process::Command;
+    
+    let volume = volume_percent.min(100);
+    tracing::info!(volume = volume, "Initializing system audio");
+    
+    // Unmute master
+    match Command::new("amixer")
+        .args(["set", "Master", "unmute"])
+        .output()
+    {
+        Ok(output) => {
+            if !output.status.success() {
+                tracing::warn!("Failed to unmute Master: {}", String::from_utf8_lossy(&output.stderr));
+            }
+        }
+        Err(e) => {
+            tracing::warn!("amixer not available for unmute: {}", e);
+        }
+    }
+    
+    // Set volume percentage
+    let volume_arg = format!("{}%", volume);
+    match Command::new("amixer")
+        .args(["set", "Master", &volume_arg])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                tracing::info!("System audio initialized: Master at {}%, unmuted", volume);
+            } else {
+                tracing::warn!("Failed to set Master volume: {}", String::from_utf8_lossy(&output.stderr));
+            }
+        }
+        Err(e) => {
+            tracing::warn!("amixer not available for volume: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+
+/// No-op on non-Linux platforms
+#[cfg(not(target_os = "linux"))]
+pub fn init_system_audio(_volume_percent: u8) -> Result<()> {
+    tracing::debug!("System audio init skipped (not Linux)");
+    Ok(())
+}
+
 /// Channel identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {

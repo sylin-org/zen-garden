@@ -52,6 +52,11 @@ impl CommandResponse {
         }
     }
     
+    /// Create success response with details (alias for success_with_output)
+    pub fn success_with_details(message: impl Into<String>, details: impl Into<String>) -> Self {
+        Self::success_with_output(message, details)
+    }
+    
     /// Create error response
     pub fn error(message: impl Into<String>) -> Self {
         Self {
@@ -60,6 +65,16 @@ impl CommandResponse {
             message: message.into(),
             suggestions: Vec::new(),
         }
+    }
+    
+    /// Create not found error (semantic alias for error)
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::error(message)
+    }
+    
+    /// Create internal error (semantic alias for error)
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self::error(message)
     }
     
     /// Create warning response

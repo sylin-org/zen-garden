@@ -5,18 +5,20 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
-use garden_common::command_manifest::{
-    check_dump_commands, CommandArg, CommandDef, CommandManifest,
+use garden_adapter_sdk::{
+    check_dump_commands, AdapterRuntime, CommandArg, CommandDef, CommandManifest,
 };
 
-mod mixer;
+mod events;
+mod handler;
 mod manifest;
-mod sse;
-mod command;
+mod mixer;
 mod test_mode;
 
-use mixer::Mixer;
+use events::CricketEventHandler;
+use handler::CricketHandler;
 use manifest::TuneManager;
+use mixer::Mixer;
 
 /// Build Cricket's command manifest
 fn build_manifest() -> CommandManifest {
@@ -60,8 +62,8 @@ fn build_manifest() -> CommandManifest {
         CommandDef::new("play", "Play an event sound")
             .arg(CommandArg::required_string("event", "Event name to play"))
             .long_desc("Triggers the sound for a specific event from the current tune. Useful for testing.")
-            .example("Play stone arrival sound", "hey tell cricket play stone:arrive")
-            .example("Play deployment success", "hey tell cricket play deploy:success")
+            .example("Play stone online sound", "hey tell cricket play stone-online")
+            .example("Play service started", "hey tell cricket play service-started")
             .see_also("select"),
     )
     .command(
@@ -136,13 +138,8 @@ async fn main() -> Result<()> {
     // This is used by Moss adapter registry to discover Cricket's commands
     check_dump_commands(&build_manifest());
     
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-        )
-        .init();
+    // Initialize tracing (from SDK)
+    garden_adapter_sdk::runtime::init_tracing();
     
     let cli = Cli::parse();
     
@@ -175,7 +172,10 @@ async fn main() -> Result<()> {
     let port = cli.port
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss when starting adapter)"))?;
     
-    // Initialize components
+    // Initialize system audio (unmute, set volume) on Linux
+    mixer::init_system_audio(50)?;
+    
+    // Initialize domain components
     let mixer = Arc::new(Mixer::new(cli.volume as f32 / 100.0)?);
     let tune_manager = Arc::new(TuneManager::new(Some(&tunes_dir))?);
     
@@ -190,31 +190,22 @@ async fn main() -> Result<()> {
         "Starting Garden Cricket"
     );
     
-    // Start command server (for hey-tell commands)
-    let cmd_handle = command::start_server(
-        port,
-        Arc::clone(&mixer),
-        Arc::clone(&tune_manager),
-    ).await?;
-    
-    // Start SSE client (presence events)
-    let sse_handle = sse::start_client(
-        &stone,
-        Arc::clone(&mixer),
-        Arc::clone(&tune_manager),
-    ).await;
-    
-    tracing::info!("Cricket running. Press Ctrl+C to stop.");
-    
-    // Wait for shutdown
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Shutting down Cricket");
-    
-    // Cleanup
-    cmd_handle.abort();
-    sse_handle.abort();
-    
-    Ok(())
+    // Create handlers
+    let command_handler = CricketHandler::new(Arc::clone(&mixer), Arc::clone(&tune_manager));
+    let event_handler = CricketEventHandler::new(Arc::clone(&mixer), Arc::clone(&tune_manager));
+
+    // Build and run adapter using SDK runtime
+    let config = garden_adapter_sdk::AdapterConfig {
+        stone: Some(stone),
+        port: Some(port),
+        dump_commands: false,
+    };
+
+    AdapterRuntime::new(config, "cricket")
+        .command_handler(command_handler)
+        .event_handler(event_handler)
+        .run()
+        .await
 }
 
 /// Resolve tunes directory with fallbacks

@@ -63,3 +63,11 @@ pub fn staging_dir() -> String {
         format!("{}/staging", data_dir())
     })
 }
+
+/// Get adapters/services directory
+/// Contains subdirectories with adapter executables
+pub fn adapters_dir() -> String {
+    std::env::var("GARDEN_ADAPTERS_DIR").unwrap_or_else(|_| {
+        format!("{}/adapters", data_dir())
+    })
+}

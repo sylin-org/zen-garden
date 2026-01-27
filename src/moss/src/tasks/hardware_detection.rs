@@ -143,8 +143,21 @@ pub async fn detect_capabilities_background(
         .unwrap_or(0);
 
     let disk = resources.as_ref().map(|r| DiskCapabilities {
-        total_gb: r.disk.total_bytes / 1024 / 1024 / 1024,
-        disk_type: metrics::detect_disk_type_for_mount(&r.disk.path),
+        // Use primary storage mount for disk capabilities summary
+        total_gb: r.storage.iter()
+            .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+            .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
+            .map(|s| s.total_gb)
+            .unwrap_or(0),
+        disk_type: r.storage.iter()
+            .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+            .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
+            .map(|s| match &s.disk_type {
+                garden_common::DiskType::NVMe => "NVMe".to_string(),
+                garden_common::DiskType::SSD => "SSD".to_string(),
+                garden_common::DiskType::HDD => "HDD".to_string(),
+                garden_common::DiskType::Unknown => "Unknown".to_string(),
+            }),
     });
 
     tracing::info!("CPU detection complete: {} cores", cpu_cores);
@@ -171,7 +184,6 @@ pub async fn detect_capabilities_background(
                 memory: MemoryCapabilities { total_mb: 0 },
                 gpus: vec![],
                 disk: None,
-                storage: vec![],
                 swap_mb: None,
                 ai_capabilities: None,
                 system_manufacturer: None,
@@ -233,15 +245,15 @@ pub async fn detect_capabilities_background(
         format!("[CAPABILITY DETECTION] Found {} GPU(s)", gpu_count)
     ));
 
-    // === PHASE 3: Storage, OS, Kernel, Swap Detection ===
-    tracing::info!("Detecting storage and system information...");
-    let storage = metrics::detect_storage();
+    // === PHASE 3: OS, Kernel, Swap Detection ===
+    // Note: Storage inventory moved to live metrics (METRICS-0001)
+    tracing::info!("Detecting system information...");
     let os_version = metrics::detect_os_version();
     let kernel_version = metrics::detect_kernel_version();
     let swap_mb = metrics::detect_swap();
     tracing::info!("System information detection complete");
 
-    // Update complete capabilities incrementally (update GPU + storage + system info fields)
+    // Update complete capabilities incrementally (update GPU + system info fields)
     let complete_caps = {
         let mut guard = caps_arc.write().await;
         let mut caps = guard.take().expect("capabilities should exist after CPU phase");
@@ -255,8 +267,7 @@ pub async fn detect_capabilities_background(
             true  // detection_complete = true
         ));
 
-        // Update storage and swap
-        caps.hardware.storage = storage;
+        // Update swap (storage moved to live metrics)
         caps.hardware.swap_mb = swap_mb;
         
         // Update runtime info with OS version and kernel

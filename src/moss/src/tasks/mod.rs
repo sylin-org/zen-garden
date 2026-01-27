@@ -21,6 +21,7 @@ pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
+pub mod metrics_collector;
 pub mod network_monitor;
 pub mod presence_monitor;
 pub mod state_provider;
@@ -40,4 +41,5 @@ pub use health_monitor::health_monitor_task;
 pub use job_executors::{
     install_service_task, install_batch_task,
 };
+pub use metrics_collector::run_metrics_collector;
 pub use network_monitor::{NetworkMonitor, NetworkMonitorConfig, NetworkEvent};

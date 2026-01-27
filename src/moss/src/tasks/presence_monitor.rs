@@ -18,10 +18,26 @@ pub async fn run_load_monitor_task(state: AppState) {
     loop {
         interval.tick().await;
         
-        // TODO: Real system metrics (sysinfo crate?)
-        let cpu_percent = 25.0;
-        let memory_percent = 45.0;
-        let disk_percent = 60.0;
+        // Get real system metrics from shared cache
+        let (cpu_percent, memory_percent, disk_percent) = {
+            let resources = state.system_resources.read().await;
+            if let Some(ref res) = *resources {
+                // Use primary mount point for load summary
+                let primary_disk = res.storage.iter()
+                    .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
+                    .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
+                    .map(|s| s.used_percent)
+                    .unwrap_or(0.0);
+                
+                (
+                    res.cpu.usage_percent,
+                    res.memory.used_percent,
+                    primary_disk,
+                )
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        };
         
         // Emit to event stream
         let moss_event = MossEvent {

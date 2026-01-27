@@ -125,13 +125,20 @@ pub enum DiskType {
     Unknown,
 }
 
+/// Storage metrics (live data, collected every 30s)
+/// 
+/// Replaces separate static inventory + dynamic usage approach.
+/// Contains both device info and current usage in one structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageDevice {
-    pub identifier: String,  // e.g., "sda", "nvme0n1", "C:"
-    pub size_gb: u64,
-    pub disk_type: DiskType,
-    pub partition_count: usize,
+pub struct StorageMetrics {
+    pub identifier: String,      // e.g., "sda", "nvme0n1", "C:"
+    pub mount_point: String,      // e.g., "/", "/data", "C:\"
+    pub total_gb: u64,
+    pub used_gb: u64,
+    pub available_gb: u64,
     pub used_percent: f32,
+    pub disk_type: DiskType,
+    pub filesystem: String,       // e.g., "ext4", "NTFS"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,11 +180,15 @@ pub struct GpuInfo {
     pub ai_runtimes: Vec<String>,
 }
 
+/// Live system resources (collected every 5s for CPU/memory, 30s for storage)
+/// 
+/// This is the single source of truth for runtime metrics.
+/// Storage inventory included here due to semi-dynamic nature (hot-swap, mounts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoneResources {
     pub cpu: CpuMetrics,
     pub memory: MemoryMetrics,
-    pub disk: DiskMetrics,
+    pub storage: Vec<StorageMetrics>,  // All mounted disks with live usage
     pub uptime_seconds: u64,
     pub uptime_friendly: String,
 }
@@ -290,8 +301,6 @@ pub struct HardwareInventory {
     pub gpus: Vec<GpuInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk: Option<DiskCapabilities>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub storage: Vec<StorageDevice>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub swap_mb: Option<u64>,
 

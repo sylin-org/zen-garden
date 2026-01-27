@@ -112,7 +112,9 @@ fn is_zen_verb(verb: &str) -> bool {
         // Discovery/aliases (zen)
         "explore" | "touch" | "garden" |
         // Test/Diagnostic (zen)
-        "election"
+        "election" |
+        // Adapters (zen)
+        "hey"
     )
 }
 

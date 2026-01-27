@@ -24,6 +24,8 @@ pub mod ui;
 pub mod detection;
 pub mod console;
 pub mod presence;
+pub mod adapter;
+pub mod command_manifest;
 
 // Re-export commonly used items
 pub use types::*;

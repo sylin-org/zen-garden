@@ -30,6 +30,7 @@ impl Channel {
 /// Mixer state for a single channel
 struct ChannelState {
     sink: Sink,
+    #[allow(dead_code)]
     volume: f32,
 }
 
@@ -61,6 +62,7 @@ impl Mixer {
     }
     
     /// Play sample on channel from file path
+    #[allow(dead_code)]
     pub async fn play(&self, channel: Channel, sample_path: &str, looping: bool) -> Result<()> {
         let file = std::fs::File::open(sample_path)?;
         let source = rodio::Decoder::new(std::io::BufReader::new(file))?;
@@ -133,6 +135,7 @@ impl Mixer {
     }
     
     /// Set channel volume
+    #[allow(dead_code)]
     pub async fn set_channel_volume(&self, channel: Channel, volume: f32) {
         let idx = channel as usize;
         let mut channels = self.channels.write().await;

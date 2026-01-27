@@ -98,6 +98,7 @@ impl PortLedger {
     }
     
     /// Get port for an adapter (if assigned)
+    #[allow(dead_code)]
     fn get(&self, adapter_id: &str) -> Option<u16> {
         self.assignments.get(adapter_id).copied()
     }

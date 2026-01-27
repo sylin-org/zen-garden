@@ -116,6 +116,7 @@ async fn connect_and_listen(
 /// Parsed SSE event
 struct SseEvent {
     event_type: String,
+    #[allow(dead_code)]
     data: String,
 }
 

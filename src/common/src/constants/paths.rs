@@ -68,6 +68,13 @@ pub fn staging_dir() -> String {
 /// Contains subdirectories with adapter executables
 pub fn adapters_dir() -> String {
     std::env::var("GARDEN_ADAPTERS_DIR").unwrap_or_else(|_| {
-        format!("{}/adapters", data_dir())
+        #[cfg(target_os = "windows")]
+        {
+            ".zen-garden\\adapters".to_string()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            "/usr/local/bin/adapters".to_string()
+        }
     })
 }

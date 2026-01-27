@@ -3,11 +3,10 @@
 
 use anyhow::{Context, Result};
 use crossterm::{
-    cursor::MoveTo,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    style::Color,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::io::{stdout, Write};
 use std::sync::Arc;

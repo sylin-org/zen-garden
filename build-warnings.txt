@@ -1,0 +1,95 @@
+    Blocking waiting for file lock on build directory
+   Compiling garden-moss v0.1.0 (F:\Replica\NAS\Files\repo\github\zen-garden\src\moss)
+   Compiling garden-rake v0.1.0 (F:\Replica\NAS\Files\repo\github\zen-garden\src\rake)
+   Compiling garden-lantern v0.1.0 (F:\Replica\NAS\Files\repo\github\zen-garden\src\lantern)
+warning: unused imports: `ClearType`, `Clear`, `Print`, `ResetColor`, `SetForegroundColor`, and `cursor::MoveTo`
+  --> src\cricket\src\test_mode.rs:6:5
+   |
+ 6 |     cursor::MoveTo,
+   |     ^^^^^^^^^^^^^^
+...
+ 9 |     style::{Color, Print, ResetColor, SetForegroundColor},
+   |                    ^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+10 |     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+   |                                                   ^^^^^  ^^^^^^^^^
+   |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+  --> src\cricket\src\main.rs:16:1
+   |
+16 | mod test_mode;
+   | ^^^^^^^^^^^^^^
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `volume` is never read
+  --> src\cricket\src\mixer.rs:33:5
+   |
+31 | struct ChannelState {
+   |        ------------ field in this struct
+32 |     sink: Sink,
+33 |     volume: f32,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `play` and `set_channel_volume` are never used
+   --> src\cricket\src\mixer.rs:64:18
+    |
+ 48 | impl Mixer {
+    | ---------- methods in this implementation
+...
+ 64 |     pub async fn play(&self, channel: Channel, sample_path: &str, looping: bool) -> Result<()> {
+    |                  ^^^^
+...
+136 |     pub async fn set_channel_volume(&self, channel: Channel, volume: f32) {
+    |                  ^^^^^^^^^^^^^^^^^^
+
+warning: field `fs_tunes_dir` is never read
+  --> src\cricket\src\manifest.rs:98:5
+   |
+96 | pub struct TuneManager {
+   |            ----------- field in this struct
+97 |     /// Optional filesystem tunes directory
+98 |     fs_tunes_dir: Option<PathBuf>,
+   |     ^^^^^^^^^^^^
+
+warning: methods `get_loaded_tune`, `get_audio_cursor`, `fs_tunes_dir`, and `reload` are never used
+   --> src\cricket\src\manifest.rs:253:12
+    |
+105 | impl TuneManager {
+    | ---------------- methods in this implementation
+...
+253 |     pub fn get_loaded_tune(&self, name: &str) -> Option<&LoadedTune> {
+    |            ^^^^^^^^^^^^^^^
+...
+343 |     pub fn get_audio_cursor(&self, tune_name: &str, resource: &str) -> Option<Cursor<Vec<u8>>> {
+    |            ^^^^^^^^^^^^^^^^
+...
+349 |     pub fn fs_tunes_dir(&self) -> Option<&Path> {
+    |            ^^^^^^^^^^^^
+...
+354 |     pub fn reload(&mut self) -> Result<()> {
+    |            ^^^^^^
+
+warning: field `data` is never read
+   --> src\cricket\src\sse.rs:119:5
+    |
+117 | struct SseEvent {
+    |        -------- field in this struct
+118 |     event_type: String,
+119 |     data: String,
+    |     ^^^^
+
+warning: `garden-cricket` (bin "garden-cricket") generated 6 warnings (run `cargo fix --bin "garden-cricket" -p garden-cricket` to apply 1 suggestion)
+warning: method `get` is never used
+   --> src\moss\src\infra\adapters.rs:101:8
+    |
+ 48 | impl PortLedger {
+    | --------------- method in this implementation
+...
+101 |     fn get(&self, adapter_id: &str) -> Option<u16> {
+    |        ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `garden-moss` (lib) generated 1 warning
+    Finished `dev` profile [optimized + debuginfo] target(s) in 26.84s

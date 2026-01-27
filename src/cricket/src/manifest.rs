@@ -95,6 +95,7 @@ pub struct TuneSummary {
 /// Manages tune manifests (embedded + filesystem)
 pub struct TuneManager {
     /// Optional filesystem tunes directory
+    #[allow(dead_code)]
     fs_tunes_dir: Option<PathBuf>,
     /// All loaded tunes (embedded + filesystem merged)
     tunes: HashMap<String, LoadedTune>,
@@ -250,6 +251,7 @@ impl TuneManager {
     }
     
     /// Get loaded tune with source info
+    #[allow(dead_code)]
     pub fn get_loaded_tune(&self, name: &str) -> Option<&LoadedTune> {
         self.tunes.get(name)
     }
@@ -340,17 +342,20 @@ impl TuneManager {
     }
     
     /// Get a Cursor for audio playback (works for both sources)
+    #[allow(dead_code)]
     pub fn get_audio_cursor(&self, tune_name: &str, resource: &str) -> Option<Cursor<Vec<u8>>> {
         self.resolve_resource_bytes(tune_name, resource)
             .map(Cursor::new)
     }
     
     /// Get filesystem tunes directory (if set)
+    #[allow(dead_code)]
     pub fn fs_tunes_dir(&self) -> Option<&Path> {
         self.fs_tunes_dir.as_deref()
     }
     
     /// Reload filesystem tunes (keeps embedded, refreshes fs)
+    #[allow(dead_code)]
     pub fn reload(&mut self) -> Result<()> {
         // Reload embedded
         let mut tunes = Self::load_embedded_tunes()?;

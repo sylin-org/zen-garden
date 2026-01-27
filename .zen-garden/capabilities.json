@@ -39,31 +39,9 @@
       }
     ],
     "disk": {
-      "total_gb": 0
+      "total_gb": 930,
+      "disk_type": "Unknown"
     },
-    "storage": [
-      {
-        "identifier": "Disk 1",
-        "size_gb": 1000,
-        "disk_type": "ssd",
-        "partition_count": 5,
-        "used_percent": 81.76667
-      },
-      {
-        "identifier": "Disk 0",
-        "size_gb": 1000,
-        "disk_type": "ssd",
-        "partition_count": 2,
-        "used_percent": 80.7
-      },
-      {
-        "identifier": "Disk 2",
-        "size_gb": 1024,
-        "disk_type": "ssd",
-        "partition_count": 2,
-        "used_percent": 74.4
-      }
-    ],
     "swap_mb": 15872,
     "ai_capabilities": {
       "runtimes": [

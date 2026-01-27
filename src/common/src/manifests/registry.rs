@@ -191,6 +191,34 @@ impl ManifestRegistry {
             offering_manifests: HashMap::new(),
         }
     }
+    
+    /// Create registry from pre-loaded SwManifests (for overlay loading)
+    /// 
+    /// Use this when SwManifests was loaded with custom logic (e.g., embedded + overlay).
+    /// Hardware manifests and offering manifests are loaded from filesystem.
+    pub fn from_sw_manifests(sw: SwManifests, hw_dir: Option<&Path>) -> Result<Self> {
+        let hw = if let Some(dir) = hw_dir {
+            HwManifests::load(dir)
+                .with_context(|| format!("Failed to load hardware manifests from {}", dir.display()))?
+        } else {
+            HwManifests::empty()
+        };
+
+        // Load offering manifests (for adoption/borrowing)
+        let manifests_dir = Path::new(RUNTIME_MANIFESTS_DIR);
+        let offering_manifests = Self::load_offering_manifests(manifests_dir);
+
+        tracing::info!(
+            sw_count = sw.entries.len(),
+            sw_categories = sw.categories.len(),
+            hw_count = hw.entries.len(),
+            hw_vendors = hw.vendors.len(),
+            offering_count = offering_manifests.len(),
+            "ManifestRegistry created from pre-loaded SwManifests"
+        );
+
+        Ok(Self { sw, hw, offering_manifests })
+    }
 
     /// Get total count of all manifests
     pub fn total_count(&self) -> usize {

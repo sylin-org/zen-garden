@@ -33,6 +33,7 @@ pub fn configure(state: AppState) -> Router {
         // V1 API - Offerings (Human Layer)
         .route("/api/v1/offerings", get(api::v1::offerings::list_offerings_v1))
         .route("/api/v1/offerings", post(api::v1::offerings::plant_offering_v1))
+        .route("/api/v1/offerings/search", get(api::v1::offerings::search_offerings_v1))
         .route("/api/v1/offerings/:name", get(api::v1::offerings::get_offering_v1))
         .route("/api/v1/offerings/:name", delete(api::v1::offerings::take_away_offering_v1))
         .route("/api/v1/offerings/:name/manifest", get(api::v1::offerings::get_offering_manifest_v1))

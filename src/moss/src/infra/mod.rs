@@ -21,6 +21,7 @@ pub mod ceremony_journal;
 pub mod config;
 pub mod container;
 pub mod detection;
+pub mod embedded;
 pub mod filesystem;
 pub mod firmware;
 pub mod hardware;
@@ -56,3 +57,9 @@ pub use garden_common::infra::archive::{Archiver, ArchiveInfo, create_archive, e
 pub use ceremony_journal::CeremonyJournal;
 pub use harvest_store::HarvestStore;
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
+pub use embedded::{
+    EmbeddedManifests, EmbeddedAdapters, 
+    read_manifest_overlay, manifest_exists, list_all_manifests,
+    load_sw_manifests_with_overlay,
+    AssetSource, ManifestSource,
+};

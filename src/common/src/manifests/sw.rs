@@ -22,32 +22,26 @@ pub fn runtime_manifests_dir() -> String {
     }
     
     // 2. Check production location ({data_dir}/manifests)
+    // At runtime, Moss extracts embedded manifests to this location
     let production_dir = format!("{}/manifests", crate::constants::paths::data_dir());
     if std::path::Path::new(&production_dir).exists() {
         return production_dir;
     }
     
-    // 3. Dev fallback: Check if we're in repo (manifests/ exists in current or parent dirs)
+    // 3. Dev fallback: Check embedded manifests location in repo
     if let Ok(current_dir) = std::env::current_dir() {
-        // Check current directory
-        let repo_manifests = current_dir.join("manifests");
-        if repo_manifests.exists() {
-            return repo_manifests.to_string_lossy().to_string();
-        }
+        // Common dev paths for embedded manifests (relative to cargo workspace)
+        let dev_paths = [
+            "src/moss/embedded/manifests",
+            "../moss/embedded/manifests",
+            "../../moss/embedded/manifests",
+            "../../../moss/embedded/manifests",
+        ];
         
-        // Check parent (common when running from dist/windows or target/release)
-        if let Some(parent) = current_dir.parent() {
-            let parent_manifests = parent.join("manifests");
-            if parent_manifests.exists() {
-                return parent_manifests.to_string_lossy().to_string();
-            }
-            
-            // Check grandparent (for target/release -> repo root)
-            if let Some(grandparent) = parent.parent() {
-                let grandparent_manifests = grandparent.join("manifests");
-                if grandparent_manifests.exists() {
-                    return grandparent_manifests.to_string_lossy().to_string();
-                }
+        for relative_path in dev_paths {
+            let path = current_dir.join(relative_path);
+            if path.exists() {
+                return path.to_string_lossy().to_string();
             }
         }
     }
@@ -355,6 +349,86 @@ impl SwManifests {
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+    
+    /// Insert or update an entry (for overlay pattern)
+    /// 
+    /// Returns true if this was an update (entry already existed), false if new
+    pub fn upsert_entry(&mut self, entry: SwEntry) -> bool {
+        let existed = self.entries.contains_key(&entry.name);
+        
+        // Update categories if needed
+        if !self.categories.contains(&entry.category) {
+            self.categories.push(entry.category.clone());
+            self.categories.sort();
+        }
+        
+        self.entries.insert(entry.name.clone(), entry);
+        existed
+    }
+    
+    /// Load entry from raw content (for embedded assets)
+    /// 
+    /// This allows loading without filesystem access - the caller provides:
+    /// - relative_path: e.g., "sw/data/mongodb.snippet.yaml"
+    /// - snippet_content: the raw YAML content
+    /// - compatibility_content: optional compatibility YAML
+    /// - frontmatter_content: optional frontmatter JSON
+    pub fn load_entry_from_content(
+        relative_path: &str,
+        snippet_content: &str,
+        compatibility_content: Option<&str>,
+        frontmatter_content: Option<&str>,
+    ) -> Result<SwEntry> {
+        // Parse path: "sw/{category}/{name}.snippet.yaml"
+        let parts: Vec<&str> = relative_path.split('/').collect();
+        if parts.len() < 3 {
+            anyhow::bail!("Invalid manifest path format: {}", relative_path);
+        }
+        
+        // Extract category and name from path
+        let category = parts[1].to_string();
+        let filename = parts.last().unwrap();
+        let name = filename.trim_end_matches(".snippet.yaml").to_string();
+        
+        // Parse compatibility (optional)
+        let compatibility = compatibility_content.and_then(|yaml| {
+            match serde_yaml::from_str::<CompatibilityRules>(yaml) {
+                Ok(rules) => Some(rules),
+                Err(e) => {
+                    tracing::warn!(
+                        offering = %name,
+                        error = %e,
+                        "Failed to parse embedded compatibility rules"
+                    );
+                    None
+                }
+            }
+        });
+        
+        // Parse frontmatter (optional)
+        let frontmatter = frontmatter_content.and_then(|json| {
+            let json = crate::utils::strings::strip_bom(json);
+            match serde_json::from_str::<SwFrontmatter>(json) {
+                Ok(fm) => Some(fm),
+                Err(e) => {
+                    tracing::warn!(
+                        offering = %name,
+                        error = %e,
+                        "Failed to parse embedded frontmatter"
+                    );
+                    None
+                }
+            }
+        });
+        
+        Ok(SwEntry {
+            name,
+            category,
+            snippet_yaml: snippet_content.to_string(),
+            compatibility,
+            frontmatter,
+        })
     }
 }
 

@@ -43,11 +43,7 @@ pub struct OfferingCompatibility {
     pub suggestion: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct TaxonomyDictionary {
-    #[serde(default)]
-    pub map: std::collections::HashMap<String, String>,
-}
+// TaxonomyDictionary moved to garden_common::offerings - search is server-side
 
 #[derive(Debug, serde::Deserialize)]
 pub struct PlacementResponse {
@@ -121,70 +117,11 @@ pub struct OfferCommand {
 // Taxonomy / Search Functions
 // ============================================================================
 
-fn load_taxonomy_dictionary() -> TaxonomyDictionary {
-    // Repo-owned dictionary (compiled into rake) so query behavior is stable and portable.
-    let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../manifests/taxonomy.dictionary.yaml"));
-    serde_yaml::from_str::<TaxonomyDictionary>(raw).unwrap_or(TaxonomyDictionary {
-        map: Default::default(),
-    })
-}
+// NOTE: Taxonomy dictionary and scoring logic have been moved to Moss.
+// Rake is a thin shell - it calls Moss search API and displays results.
 
-pub fn normalize_tokens(raw: &str, dict: &TaxonomyDictionary) -> Vec<String> {
-    raw.split([',', ' ', '\t', '\n', '\r'])
-        .map(|t| t.trim().to_lowercase())
-        .filter(|t| !t.is_empty())
-        .map(|t| dict.map.get(&t).cloned().unwrap_or(t))
-        .collect()
-}
-
-pub fn token_matches_category(token: &str, category: &str) -> bool {
-    let token = token.to_lowercase();
-    let category = category.to_lowercase();
-
-    match token.as_str() {
-        // user intent -> canonical category
-        "database" => matches!(category.as_str(), "data" | "cache" | "search" | "vector"),
-        "vector" => category == "vector",
-        "messaging" => category == "messaging",
-        "observability" => category == "observability",
-        "secrets" => category == "secrets",
-        "cache" => category == "cache",
-        "search" => category == "search",
-        // direct category match
-        _ => token == category,
-    }
-}
-
-pub fn offering_relevance_score(tokens: &[String], offering: &OfferingEntry) -> i32 {
-    let name_lc = offering.name.to_lowercase();
-    let desc_lc = offering.description.to_lowercase();
-    let tags_lc = offering
-        .tags
-        .iter()
-        .map(|t| t.to_lowercase())
-        .collect::<std::collections::HashSet<_>>();
-
-    let mut score = 0i32;
-    for token in tokens {
-        let t = token.as_str();
-        if token_matches_category(t, &offering.category) {
-            score += 10;
-        }
-        if tags_lc.contains(t) {
-            score += 6;
-        }
-        if name_lc == t {
-            score += 8;
-        } else if name_lc.contains(t) {
-            score += 2;
-        }
-        if desc_lc.contains(t) {
-            score += 1;
-        }
-    }
-    score
-}
-
+/// Stone preference scoring for ranking stones in garden-wide search.
+/// This remains in Rake because it's about stone selection, not offering matching.
 pub fn stone_prefer_score(prefer: &[String], caps: Option<&HardwareCapabilities>) -> i32 {
     let Some(caps) = caps else { return 0; };
     let disk_type = caps
@@ -260,6 +197,40 @@ async fn fetch_offering_info_json(
     Ok(api_response.data)
 }
 
+/// Search offerings via Moss API. All taxonomy/scoring logic is server-side.
+async fn fetch_search_results(
+    client: &reqwest::Client,
+    endpoint: &str,
+    query: &str,
+    prefer: &[String],
+    limit: usize,
+) -> Result<garden_common::offerings::OfferingSearchResponse> {
+    let moss = GardenHttpClient::new(client, endpoint);
+    
+    // Build query string
+    let prefer_str = if prefer.is_empty() {
+        String::new()
+    } else {
+        format!("&prefer={}", prefer.join(","))
+    };
+    let path = format!("/api/v1/offerings/search?q={}&limit={}{}", 
+        urlencoding::encode(query), limit, prefer_str);
+    
+    let response = moss.get_raw(&path).await?;
+    
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        anyhow::bail!("This stone's moss does not support offering search. Upgrade moss and retry.");
+    }
+    
+    if response.status() == reqwest::StatusCode::BAD_REQUEST {
+        anyhow::bail!("Search query is empty or invalid");
+    }
+    
+    let api_response: GardenApiResponse<garden_common::offerings::OfferingSearchResponse> = 
+        response.error_for_status()?.json().await?;
+    Ok(api_response.data)
+}
+
 async fn refresh_offerings_index(
     client: &reqwest::Client,
     endpoint: &str,
@@ -295,12 +266,7 @@ async fn refresh_offerings_index(
 // Display Functions
 // ============================================================================
 
-fn format_offering_flag(compat: &OfferingCompatibility) -> &'static str {
-    match compat.decision.as_str() {
-        garden_common::COMPAT_FALLBACK | garden_common::COMPAT_FAIL => "(!)",
-        _ => "",
-    }
-}
+// format_offering_flag removed - search results now use direct compatibility comparison
 
 fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
     let mut table = ui::TableBuilder::new()
@@ -498,40 +464,23 @@ async fn print_offer_query_recommendations(
     query: &str,
     prefer: &[String],
 ) -> Result<()> {
-    let dict = load_taxonomy_dictionary();
-    let tokens = normalize_tokens(query, &dict);
-    if tokens.is_empty() {
-        anyhow::bail!("Query is empty");
-    }
-
-    let offerings = fetch_offerings(client, endpoint).await?;
-    let mut ranked = offerings
-        .into_iter()
-        .filter(|o| o.compatibility.decision.as_str() != garden_common::COMPAT_FAIL)
-        .map(|o| {
-            let s = offering_relevance_score(&tokens, &o);
-            (s, o)
-        })
-        .filter(|(s, _)| *s > 0)
-        .collect::<Vec<_>>();
-
-    ranked.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then_with(|| a.name.cmp(&b.name)));
+    // All search logic is server-side in Moss - Rake is a thin client
+    let results = fetch_search_results(client, endpoint, query, prefer, 3).await?;
 
     println!("Query: {}", query);
     if !prefer.is_empty() {
         println!("Prefer: {}", prefer.join(", "));
     }
 
-    if ranked.is_empty() {
+    if results.results.is_empty() {
         println!("No matching offerings found on this stone.");
         return Ok(());
     }
 
     println!("Top recommendations:");
-    for (idx, (_score, o)) in ranked.into_iter().take(3).enumerate() {
-        let flag = format_offering_flag(&o.compatibility);
-        let prefix = if flag.is_empty() { "" } else { "(!) " };
-        println!("  {}. {} - {}{}", idx + 1, o.name, prefix, o.description);
+    for (idx, o) in results.results.iter().enumerate() {
+        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK { "(!) " } else { "" };
+        println!("  {}. {} - {}{}", idx + 1, o.name, flag, o.description);
         println!("     Run: garden-rake offer {} --at {}", o.name, endpoint);
     }
 
@@ -543,18 +492,12 @@ async fn print_offer_anywhere_recommendations(
     query: &str,
     prefer: &[String],
 ) -> Result<()> {
-    let dict = load_taxonomy_dictionary();
-    let tokens = normalize_tokens(query, &dict);
-    if tokens.is_empty() {
-        anyhow::bail!("Query is empty");
-    }
-
     // Collect endpoints using streaming API
     let mut endpoints = Vec::new();
     let _ = discovery::discover_all_moss_stream(
         std::time::Duration::from_secs(2),
         |response, _instant| {
-            endpoints.push(response.stone_endpoint.clone());
+            endpoints.push((response.stone_name.clone(), response.stone_endpoint.clone()));
         },
     );
 
@@ -562,35 +505,30 @@ async fn print_offer_anywhere_recommendations(
         anyhow::bail!("No stones discovered");
     }
 
-    let mut candidates: Vec<(i32, String, String, OfferingEntry)> = Vec::new();
-    for ep in endpoints {
+    // Query each stone's search API and aggregate results
+    let mut candidates: Vec<(i32, String, String, garden_common::offerings::OfferingSearchResult)> = Vec::new();
+    
+    for (stone_name, ep) in endpoints {
+        // Get stone hardware capabilities for preference scoring
         let caps = fetch_capabilities(client, &ep).await.ok();
         let stone_bonus = stone_prefer_score(prefer, caps.as_ref());
-        let stone_name = caps
-            .as_ref()
-            .map(|c| c.stone_name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string());
-
-        let offerings = match fetch_offerings(client, &ep).await {
-            Ok(o) => o,
+        
+        // Call search API on this stone
+        let results = match fetch_search_results(client, &ep, query, prefer, 10).await {
+            Ok(r) => r,
             Err(_) => continue,
         };
-
-        for o in offerings.into_iter().filter(|o| o.compatibility.decision.as_str() != garden_common::COMPAT_FAIL) {
-            let rel = offering_relevance_score(&tokens, &o);
-            if rel <= 0 {
-                continue;
-            }
-            let combined = rel * 100 + stone_bonus;
+        
+        for o in results.results {
+            let combined = o.score * 100 + stone_bonus;
             candidates.push((combined, stone_name.clone(), ep.clone(), o));
         }
     }
 
-    candidates.sort_by(|(sa, an, ae, ao), (sb, bn, be, bo)| {
+    candidates.sort_by(|(sa, an, ae, _), (sb, bn, be, _)| {
         sb.cmp(sa)
             .then_with(|| an.cmp(bn))
             .then_with(|| ae.cmp(be))
-            .then_with(|| ao.name.cmp(&bo.name))
     });
 
     println!("Query: {}", query);
@@ -605,9 +543,8 @@ async fn print_offer_anywhere_recommendations(
 
     println!("Top recommendations across stones:");
     for (idx, (_score, stone_name, ep, o)) in candidates.into_iter().take(3).enumerate() {
-        let flag = format_offering_flag(&o.compatibility);
-        let prefix = if flag.is_empty() { "" } else { "(!) " };
-        println!("  {}. {} @ {} - {}{}", idx + 1, o.name, stone_name, prefix, o.description);
+        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK { "(!) " } else { "" };
+        println!("  {}. {} @ {} - {}{}", idx + 1, o.name, stone_name, flag, o.description);
         println!("     Run: garden-rake offer {} --at {}", o.name, ep);
     }
 
@@ -622,6 +559,7 @@ async fn print_alternatives_for_failed_install(
 ) -> Result<Option<String>> {
     let info = fetch_offering_info_json(client, endpoint, offering).await?;
 
+    // Build search query from offering's category and tags
     let mut seed_tokens: Vec<String> = Vec::new();
     if let Some(category) = info.get("category").and_then(|v| v.as_str()) {
         seed_tokens.push(category.to_string());
@@ -632,53 +570,42 @@ async fn print_alternatives_for_failed_install(
         }
     }
 
-    let dict = load_taxonomy_dictionary();
-    let mut normalized = Vec::new();
-    for t in seed_tokens {
-        for nt in normalize_tokens(&t, &dict) {
-            if !normalized.contains(&nt) {
-                normalized.push(nt);
-            }
-        }
-    }
-
-    if normalized.is_empty() {
+    if seed_tokens.is_empty() {
         return Ok(None);
     }
 
-    let offerings = fetch_offerings(client, endpoint).await?;
-    let mut ranked = offerings
-        .into_iter()
-        .filter(|o| o.compatibility.decision.as_str() != "fail")
+    let query = seed_tokens.join(" ");
+    
+    // Use Moss search API to find alternatives
+    let results = match fetch_search_results(client, endpoint, &query, prefer, 5).await {
+        Ok(r) => r,
+        Err(_) => return Ok(Some(query)),
+    };
+    
+    // Filter out the original offering from results
+    let alternatives: Vec<_> = results.results.iter()
         .filter(|o| o.name != offering)
-        .map(|o| {
-            let s = offering_relevance_score(&normalized, &o);
-            (s, o)
-        })
-        .filter(|(s, _)| *s > 0)
-        .collect::<Vec<_>>();
-
-    ranked.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then_with(|| a.name.cmp(&b.name)));
-    if ranked.is_empty() {
-        return Ok(Some(normalized.join(",")));
+        .take(3)
+        .collect();
+    
+    if alternatives.is_empty() {
+        return Ok(Some(query));
     }
 
     println!("\nAlternatives:");
-    for (idx, (_score, o)) in ranked.into_iter().take(3).enumerate() {
-        let flag = format_offering_flag(&o.compatibility);
-        let prefix = if flag.is_empty() { "" } else { "(!) " };
-        println!("  {}. {} - {}{}", idx + 1, o.name, prefix, o.description);
+    for (idx, o) in alternatives.iter().enumerate() {
+        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK { "(!) " } else { "" };
+        println!("  {}. {} - {}{}", idx + 1, o.name, flag, o.description);
         println!("     Run: garden-rake offer {} --at {}", o.name, endpoint);
     }
 
-    let q = normalized.join(",");
     if !prefer.is_empty() {
-        println!("\nTo search across stones: garden-rake offer {} --at anywhere --prefer {}", q, prefer.join(","));
+        println!("\nTo search across stones: garden-rake offer {} --at anywhere --prefer {}", query, prefer.join(","));
     } else {
-        println!("\nTo search across stones: garden-rake offer {} --at anywhere", q);
+        println!("\nTo search across stones: garden-rake offer {} --at anywhere", query);
     }
 
-    Ok(Some(q))
+    Ok(Some(query))
 }
 
 // ============================================================================

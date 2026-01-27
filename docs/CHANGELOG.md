@@ -2,6 +2,19 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-01-27
+- **Embedded asset framework for Moss** - manifests and adapters compiled into binary for portability
+  - Added `rust-embed` v8 dependency to Moss for compile-time asset embedding
+  - Created `src/moss/embedded/manifests/` - moved manifests from repo root for binary embedding
+  - Created `src/moss/src/infra/embedded.rs` - overlay loading (filesystem > embedded), asset extraction
+  - Taxonomy dictionary loading via embedded assets with filesystem overlay
+- **Search API moved to Moss** - Rake is now a thin client, all search logic server-side
+  - Added `GET /api/v1/offerings/search?q={query}&prefer={prefs}&limit={n}` endpoint to Moss
+  - Created `garden_common::offerings` module: TaxonomyDictionary, OfferingSearchResponse types
+  - Moved `normalize_tokens()`, `token_matches_category()`, `offering_relevance_score()` to Moss
+  - Rake now calls Moss search API instead of local scoring - removed 60+ lines of search logic
+  - Tests for scoring functions moved from Rake to Moss
+
 ## 2026-01-26
 - **Adapter port ledger system** - Moss-managed persistent port assignments (base 7187, range 7187-7199)
   - Created PortLedger: load/save to `{data_dir}/adapter-ports.json`, incremental assignment from base 7187

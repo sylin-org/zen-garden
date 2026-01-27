@@ -184,11 +184,14 @@ pub fn load_categories<P: AsRef<Path>>(manifests_dir: P) -> Result<CategoryRegis
 /// Returns a static reference for subsequent calls.
 pub fn get_category_registry() -> &'static CategoryRegistry {
     CATEGORY_REGISTRY.get_or_init(|| {
-        // Try common manifest locations
+        // Try common manifest locations:
+        // 1. Runtime extracted location
+        // 2. Dev paths (relative to cargo workspace)
         let paths = [
-            "manifests",
-            "../manifests",
-            "../../manifests",
+            ".zen-garden/manifests",
+            "src/moss/embedded/manifests",
+            "../moss/embedded/manifests",
+            "../../moss/embedded/manifests",
         ];
 
         for path in paths {

@@ -218,6 +218,28 @@ state.docker.create_container(
 
 ---
 
+## Offerings Endpoints
+
+**Stone endpoints** (Rake → Moss):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/offerings` | List all offerings (installed + available) |
+| GET | `/api/v1/offerings/search?q={query}` | Search offerings with taxonomy normalization |
+| GET | `/api/v1/offerings/:name` | Get offering details |
+| POST | `/api/v1/offerings` | Plant (install) an offering |
+| DELETE | `/api/v1/offerings/:name` | Take away (uninstall) an offering |
+| POST | `/api/v1/offerings/refresh` | Refresh offerings catalog from disk |
+| POST | `/api/v1/offerings/heal` | Self-heal by adopting orphaned containers |
+
+**Search query parameters**:
+- `q` - Free-form query (e.g., "nosql database", "vector store")
+- `prefer` - Hardware preferences, comma-separated (e.g., "ssd,nvme")
+- `limit` - Max results (default: 5, max: 50)
+
+**Search architecture**: All taxonomy/scoring logic runs server-side in Moss. Rake is a thin client that calls the search API and displays results.
+
+---
+
 ## Nourishment Endpoints
 
 **Garden endpoints** (Rake → tended Moss, orchestrated):
@@ -297,6 +319,12 @@ src/moss/src/
 - `CommandParameter` - Parameter definition (name, type, required, description)
 - `CommandExample` - Usage example (command, description, expected output)
 - Helper: `check_dump_commands()` - Outputs manifest and exits (for adapters)
+
+### Offering Search → `common/src/offerings.rs`
+- `TaxonomyDictionary` - Synonym mapping for search normalization (nosql → mongodb)
+- `OfferingSearchRequest` - Query, prefer, limit parameters
+- `OfferingSearchResponse` - Query tokens and ranked results
+- `OfferingSearchResult` - Single offering with score and compatibility
 
 ### Phase 1 Utils → `common/src/utils/`
 | Module | Functions |

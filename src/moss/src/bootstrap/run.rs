@@ -198,18 +198,32 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Phase 10: Load ManifestRegistry (single source of truth for all manifests)
-    let sw_dir = std::path::PathBuf::from(infra::runtime_manifests_dir()).join("sw");
-    let hw_dir = std::path::PathBuf::from(infra::runtime_manifests_dir()).join("hw");
+    // Uses overlay pattern: embedded assets first, filesystem overlays on top
+    let manifests_dir = std::path::PathBuf::from(infra::runtime_manifests_dir());
+    let hw_dir = manifests_dir.join("hw");
     let hw_dir_opt = if hw_dir.exists() { Some(hw_dir.as_path()) } else { None };
 
-    let manifest_registry = match infra::ManifestRegistry::load(&sw_dir, hw_dir_opt) {
-        Ok(registry) => {
-            console_printer.emit(console::ConsoleEvent::new(
-                console::EventCategory::Manifests,
-                console::EventStatus::Loaded,
-                format!("{} sw, {} hw manifests", registry.sw.entries.len(), registry.hw.entries.len()),
-            ));
-            Arc::new(registry)
+    let manifest_registry = match infra::load_sw_manifests_with_overlay(&manifests_dir) {
+        Ok(sw_manifests) => {
+            match infra::ManifestRegistry::from_sw_manifests(sw_manifests, hw_dir_opt) {
+                Ok(registry) => {
+                    console_printer.emit(console::ConsoleEvent::new(
+                        console::EventCategory::Manifests,
+                        console::EventStatus::Loaded,
+                        format!("{} sw, {} hw manifests", registry.sw.entries.len(), registry.hw.entries.len()),
+                    ));
+                    Arc::new(registry)
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, "Failed to create manifest registry, using empty");
+                    console_printer.emit(console::ConsoleEvent::new(
+                        console::EventCategory::Manifests,
+                        console::EventStatus::Invalid,
+                        "Using empty registry".to_string(),
+                    ));
+                    Arc::new(infra::ManifestRegistry::empty())
+                }
+            }
         }
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to load manifest registry, using empty");

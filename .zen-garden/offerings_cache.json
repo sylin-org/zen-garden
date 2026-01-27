@@ -2,9 +2,9 @@
   "fingerprint": {
     "moss_version": "0.1.0.dev",
     "capabilities_hash": "7bc5076794c67b9508817ad8e29d1ec423bfb48925499b36a9c30c39a223e6dc",
-    "templates_hash": "de3836b986da38deffe2ddb28d02ff984aa96494837db59ca092782ebe2b7c44"
+    "templates_hash": "670f6f83c03168af33ba319b10829a2e52ccab0ba378d8be73296f4eb17f538e"
   },
-  "generated_at": "2026-01-26T03:25:49.071936900+00:00",
+  "generated_at": "2026-01-27T04:32:57.459877800+00:00",
   "offerings": [
     {
       "name": "aspire",
@@ -79,6 +79,30 @@
       ],
       "image": "couchbase:community",
       "ports": [
+        [
+          8091,
+          8091
+        ],
+        [
+          8092,
+          8092
+        ],
+        [
+          8093,
+          8093
+        ],
+        [
+          8094,
+          8094
+        ],
+        [
+          8095,
+          8095
+        ],
+        [
+          8096,
+          8096
+        ],
         [
           11210,
           11210
@@ -610,7 +634,16 @@
         "dhcp"
       ],
       "image": "pihole/pihole:2024.07.0",
-      "ports": [],
+      "ports": [
+        [
+          53,
+          53
+        ],
+        [
+          8053,
+          80
+        ]
+      ],
       "environment": [
         "TZ=UTC",
         "WEBPASSWORD=pihole",
@@ -938,7 +971,12 @@
         "network"
       ],
       "image": "lscr.io/linuxserver/wireguard:1.0.20210914",
-      "ports": [],
+      "ports": [
+        [
+          51820,
+          51820
+        ]
+      ],
       "environment": [
         "PUID=1000",
         "PGID=1000",

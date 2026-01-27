@@ -10,10 +10,14 @@ use axum::{
     Json,
 };
 use crate::api::responses::ApiResponse;
+use garden_common::offerings::{
+    OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{error_codes, error_response, AppState};
+use crate::infra::embedded::EmbeddedManifests;
 
 /// Query parameters for filtering offerings
 #[derive(Debug, Deserialize)]
@@ -326,4 +330,194 @@ fn simplify_health(status: &garden_common::ServiceStatus) -> String {
     }
 }
 
-// Utility functions removed - add back if needed for uptime display
+// ============================================================================
+// Offering Search (moved from Rake - Moss does all search logic)
+// ============================================================================
+
+/// Query parameters for search endpoint
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    /// Free-form search query (e.g., "nosql database", "vector store")
+    pub q: String,
+    /// Optional hardware preferences (comma-separated, e.g., "ssd,nvme")
+    #[serde(default)]
+    pub prefer: Option<String>,
+    /// Maximum results to return (default: 5)
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// GET /api/v1/offerings/search?q={query}&prefer={prefs}&limit={n}
+/// Search offerings using taxonomy dictionary and relevance scoring.
+/// All search logic runs server-side; Rake is a thin client.
+pub async fn search_offerings_v1(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<(StatusCode, Json<ApiResponse<OfferingSearchResponse>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+    let dict = load_taxonomy_dictionary();
+    let tokens = normalize_tokens(&query.q, &dict);
+    
+    if tokens.is_empty() {
+        let mut details = HashMap::new();
+        details.insert("query".to_string(), serde_json::json!(query.q));
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_REQUEST,
+            "Search query is empty after normalization".to_string(),
+            Some(details),
+        ));
+    }
+    
+    // Parse prefer preferences (reserved for future stone hardware preference scoring)
+    let _prefer: Vec<String> = query
+        .prefer
+        .as_ref()
+        .map(|p| p.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    
+    let limit = query.limit.unwrap_or(5).min(50); // Cap at 50
+    
+    // Get offerings from index
+    let idx_guard = state.offerings_index.read().await;
+    let offerings_index = idx_guard.as_ref().ok_or_else(|| {
+        error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "INDEX_UNAVAILABLE",
+            "Offerings catalog not yet loaded".to_string(),
+            None,
+        )
+    })?;
+    
+    let total_offerings = offerings_index.offerings.len();
+    
+    // Score and rank offerings
+    let mut ranked: Vec<(i32, &crate::domain::offerings::CompiledOffering)> = offerings_index
+        .offerings
+        .iter()
+        .filter(|o| o.compatibility.decision.as_str() != garden_common::COMPAT_FAIL)
+        .map(|o| {
+            let score = offering_relevance_score(&tokens, o);
+            (score, o)
+        })
+        .filter(|(s, _)| *s > 0)
+        .collect();
+    
+    ranked.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then_with(|| a.name.cmp(&b.name)));
+    
+    // Convert to response format
+    let results: Vec<OfferingSearchResult> = ranked
+        .into_iter()
+        .take(limit)
+        .map(|(score, o)| OfferingSearchResult {
+            name: o.name.clone(),
+            category: o.category.clone(),
+            description: o.description.clone(),
+            tags: o.tags.clone(),
+            image: o.image.clone(),
+            score,
+            compatibility: o.compatibility.decision.clone(),
+            compatibility_reason: o.compatibility.reason.clone(),
+        })
+        .collect();
+    
+    Ok((
+        StatusCode::OK,
+        Json(ApiResponse {
+            data: OfferingSearchResponse {
+                query: query.q,
+                tokens,
+                results,
+                total_offerings,
+            },
+            suggestions: None,
+        }),
+    ))
+}
+
+/// Load taxonomy dictionary from embedded manifests or filesystem.
+fn load_taxonomy_dictionary() -> TaxonomyDictionary {
+    // Try filesystem first (overlay pattern)
+    let data_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir());
+    let fs_path = data_dir.join("manifests").join("taxonomy.dictionary.yaml");
+    
+    if fs_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&fs_path) {
+            if let Ok(dict) = serde_yaml::from_str::<TaxonomyDictionary>(&content) {
+                tracing::debug!("Loaded taxonomy dictionary from filesystem: {:?}", fs_path);
+                return dict;
+            }
+        }
+    }
+    
+    // Fall back to embedded
+    if let Some(content) = EmbeddedManifests::get_string("taxonomy.dictionary.yaml") {
+        if let Ok(dict) = serde_yaml::from_str::<TaxonomyDictionary>(&content) {
+            tracing::debug!("Loaded taxonomy dictionary from embedded assets");
+            return dict;
+        }
+    }
+    
+    tracing::warn!("Failed to load taxonomy dictionary, using empty");
+    TaxonomyDictionary::default()
+}
+
+/// Normalize search tokens using taxonomy dictionary.
+/// Splits query, lowercases, and maps synonyms (e.g., "nosql" → "mongodb").
+fn normalize_tokens(raw: &str, dict: &TaxonomyDictionary) -> Vec<String> {
+    raw.split([',', ' ', '\t', '\n', '\r'])
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .map(|t| dict.map.get(&t).cloned().unwrap_or(t))
+        .collect()
+}
+
+/// Check if a token matches a category (with intent mapping).
+fn token_matches_category(token: &str, category: &str) -> bool {
+    let token = token.to_lowercase();
+    let category = category.to_lowercase();
+
+    match token.as_str() {
+        // User intent → canonical category
+        "database" => matches!(category.as_str(), "data" | "cache" | "search" | "vector"),
+        "vector" => category == "vector",
+        "messaging" => category == "messaging",
+        "observability" => category == "observability",
+        "secrets" => category == "secrets",
+        "cache" => category == "cache",
+        "search" => category == "search",
+        // Direct category match
+        _ => token == category,
+    }
+}
+
+/// Calculate relevance score for an offering against search tokens.
+fn offering_relevance_score(tokens: &[String], offering: &crate::domain::offerings::CompiledOffering) -> i32 {
+    let name_lc = offering.name.to_lowercase();
+    let desc_lc = offering.description.to_lowercase();
+    let tags_lc: HashSet<String> = offering
+        .tags
+        .iter()
+        .map(|t| t.to_lowercase())
+        .collect();
+
+    let mut score = 0i32;
+    for token in tokens {
+        let t = token.as_str();
+        if token_matches_category(t, &offering.category) {
+            score += 10;
+        }
+        if tags_lc.contains(t) {
+            score += 6;
+        }
+        if name_lc == t {
+            score += 8;
+        } else if name_lc.contains(t) {
+            score += 2;
+        }
+        if desc_lc.contains(t) {
+            score += 1;
+        }
+    }
+    score
+}
+

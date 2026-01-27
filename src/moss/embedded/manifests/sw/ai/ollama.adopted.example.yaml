@@ -1,0 +1,66 @@
+﻿# Ollama - OS-Aware Adopted Mode Configuration
+#
+# This manifest configures Ollama for "adopted" mode, meaning Moss
+# will detect and monitor a native Ollama installation rather than
+# deploying it in a container.
+#
+# IMPORTANT: This requires Ollama to be installed natively on the host:
+#   Windows: Download from https://ollama.com/download/windows
+#   Linux:   curl -fsSL https://ollama.com/install.sh | sh
+#   macOS:   Download from https://ollama.com/download/mac
+
+---
+# Frontmatter (metadata)
+name: ollama
+description: Ollama local LLM runtime (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - llm
+  - inference
+  - models
+  - gpu
+  - cuda
+  - local-ai
+
+# Detection rules (OS-aware)
+detection:
+  # Method 1: HTTP probe (works on all OSes)
+  - method: http_probe
+    config:
+      url: http://localhost:11434/api/tags
+      expected_status: 200
+      timeout_ms: 3000
+    stability_threshold: 2
+    cache_ttl_secs: 300
+
+  # Method 2: Command detection (OS-specific commands)
+  - method: command
+    config:
+      # Windows: Use PowerShell to check if Ollama service is running
+      command_windows: powershell -Command "Get-Service -Name 'Ollama' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status"
+      # Linux: Check systemd service status
+      command_linux: systemctl is-active ollama
+      # macOS: Check launchd service
+      command_macos: launchctl list | grep ollama
+      # Fallback: Try to get version (works if ollama is in PATH)
+      command: ollama --version
+      expected_pattern: "ollama version"
+      expected_exit_code: 0
+    stability_threshold: 2
+    cache_ttl_secs: 300
+
+# Control configuration
+control:
+  level: monitor  # Can't reliably start/stop native service cross-platform
+  health_check_url: http://localhost:11434/api/tags
+
+# Connection template (for services that need to connect to Ollama)
+connection_template: |
+  {
+    "base_url": "http://{{ host }}:{{ port }}",
+    "api_endpoint": "http://{{ host }}:{{ port }}/api",
+    "models_endpoint": "http://{{ host }}:{{ port }}/api/tags"
+  }

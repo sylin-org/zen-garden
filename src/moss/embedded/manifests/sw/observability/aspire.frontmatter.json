@@ -1,0 +1,8 @@
+﻿{
+  "name": "aspire",
+  "description": "Aspire dashboard observability",
+  "category": "observability",
+  "tags": ["observability", "dashboard", "metrics", "tracing"],
+  "port": 18888,
+  "volumes": []
+}

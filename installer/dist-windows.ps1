@@ -52,10 +52,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Import config module
+Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
+
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
 $WINDOWS_DIR = Join-Path $DIST_DIR "windows"
-$MANIFESTS_DIR = Join-Path $WORKSPACE_ROOT "manifests"
+
+# Load configuration
+$config = Get-DistConfig -ConfigPath (Join-Path $PSScriptRoot "dist.json")
 
 # Set environment variables for build
 $env:GARDEN_VERSION = $Version
@@ -143,49 +148,44 @@ if ($LASTEXITCODE -ne 0) {
 if (-not $SkipPackage) {
     Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
     
-    # Use temp staging area instead of dist/packages directly
-    $stagingDir = Join-Path $env:TEMP "zen-garden-staging-windows"
+    # Use local staging area
+    $stagingDir = Join-Path $DIST_DIR "staging\windows"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
     
     $packageName = "zen-garden-$Version-windows-amd64"
-    $packageDir = Join-Path $env:TEMP $packageName
+    $packageDir = Join-Path $stagingDir $packageName
     $zipPath = Join-Path $stagingDir "$packageName.zip"
     
     # Clean and create package directory
     if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $packageDir "bin") -Force | Out-Null
     
-    # Copy binaries (adapters go in bin\adapters\{adapter_id}\ subdirectories)
-    Get-ChildItem $WINDOWS_DIR -File | ForEach-Object {
-        if ($_.BaseName -like "*cricket*") {
-            $cricketDir = Join-Path (Join-Path (Join-Path $packageDir "bin") "adapters") "cricket"
-            New-Item -ItemType Directory -Path $cricketDir -Force | Out-Null
-            Copy-Item $_.FullName $cricketDir
-            Write-Host "  + bin\adapters\cricket\$($_.Name)" -ForegroundColor DarkGray
-        } else {
-            Copy-Item $_.FullName (Join-Path $packageDir "bin")
-            Write-Host "  + bin\$($_.Name)" -ForegroundColor DarkGray
-        }
+    # Copy binaries from config
+    $binaries = Get-PlatformBinaries -Config $config -Platform "windows"
+    foreach ($binary in $binaries) {
+        Copy-BinaryToStaging -SourceDir $WINDOWS_DIR -StagingRoot $packageDir -Binary $binary -Platform "windows" | Out-Null
     }
     
-    # Copy manifests
-    if (Test-Path $MANIFESTS_DIR) {
-        Copy-Item $MANIFESTS_DIR (Join-Path $packageDir "manifests") -Recurse
-        $manifestCount = (Get-ChildItem (Join-Path $packageDir "manifests") -Recurse -File).Count
-        Write-Host "  + $manifestCount manifests" -ForegroundColor DarkGray
+    # Copy assets from config
+    $assets = Get-PlatformAssets -Config $config -Platform "windows"
+    foreach ($asset in $assets) {
+        Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
     }
     
     # Create package manifest
     $components = @{}
-    Get-ChildItem $WINDOWS_DIR -File | ForEach-Object {
-        $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-        $pathPrefix = if ($_.BaseName -like "*cricket*") { "bin\adapters\cricket" } else { "bin" }
-        $components[$_.BaseName] = @{
-            path = "$pathPrefix\$($_.Name)"
-            sha256 = $hash
-            size = $_.Length
-            required = $_.BaseName -in @("garden-moss", "garden-rake")
+    foreach ($binary in $binaries) {
+        $sourceFilename = $binary.Source + ".exe"
+        $sourcePath = Join-Path $WINDOWS_DIR $sourceFilename
+        if (Test-Path $sourcePath) {
+            $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = $binary.Destination + $sourceFilename
+            $components[$binary.Source] = @{
+                path = $relativePath
+                sha256 = $hash
+                size = (Get-Item $sourcePath).Length
+                required = $binary.Required
+            }
         }
     }
     

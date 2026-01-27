@@ -155,40 +155,58 @@ if ($buildErrors.Count -eq 0 -and -not $SkipPackages) {
     Write-Host "`nConsolidating packages..." -ForegroundColor Cyan
     
     $packagesDir = Join-Path $DIST_DIR "packages"
-    $linuxStagingDir = Join-Path $env:TEMP "zen-garden-staging-linux"
-    $windowsStagingDir = Join-Path $env:TEMP "zen-garden-staging-windows"
+    $linuxStagingDir = Join-Path $DIST_DIR "staging\linux"
+    $windowsStagingDir = Join-Path $DIST_DIR "staging\windows"
     
-    # Clean dist/packages directory
-    if (Test-Path $packagesDir) {
-        Write-Host "  Cleaning old packages..." -ForegroundColor DarkGray
-        Remove-Item $packagesDir -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $packagesDir | Out-Null
-    
-    # Move staged packages to final location
-    $packagesMoved = 0
+    # Collect staged packages
+    $stagedPackages = @()
     if (-not $SkipLinux -and (Test-Path $linuxStagingDir)) {
-        Get-ChildItem $linuxStagingDir -File | ForEach-Object {
-            Move-Item $_.FullName $packagesDir -Force
-            $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "  ✓ $($_.Name) ($sizeMB MB)" -ForegroundColor Green
-            $packagesMoved++
-        }
-        Remove-Item $linuxStagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        $stagedPackages += @(Get-ChildItem $linuxStagingDir -File -ErrorAction SilentlyContinue)
     }
-    
     if (-not $SkipWindows -and (Test-Path $windowsStagingDir)) {
-        Get-ChildItem $windowsStagingDir -File | ForEach-Object {
-            Move-Item $_.FullName $packagesDir -Force
-            $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "  ✓ $($_.Name) ($sizeMB MB)" -ForegroundColor Green
-            $packagesMoved++
-        }
-        Remove-Item $windowsStagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        $stagedPackages += @(Get-ChildItem $windowsStagingDir -File -ErrorAction SilentlyContinue)
     }
     
-    if ($packagesMoved -gt 0) {
-        Write-Host "`n✓ $packagesMoved package(s) ready in dist/packages" -ForegroundColor Green
+    # Only clean and consolidate if we have new packages
+    if ($stagedPackages.Count -gt 0) {
+        # Clean dist/packages directory (remove all old packages)
+        if (Test-Path $packagesDir) {
+            $oldPackages = @(Get-ChildItem $packagesDir -File -ErrorAction SilentlyContinue)
+            if ($oldPackages.Count -gt 0) {
+                Write-Host "  Cleaning $($oldPackages.Count) old package(s)..." -ForegroundColor DarkGray
+                Remove-Item $packagesDir\* -Recurse -Force -ErrorAction Stop
+            }
+        } else {
+            New-Item -ItemType Directory -Force -Path $packagesDir | Out-Null
+        }
+        
+        # Move staged packages to final location
+        $packagesMoved = 0
+        if (-not $SkipLinux -and (Test-Path $linuxStagingDir)) {
+            Get-ChildItem $linuxStagingDir -File | ForEach-Object {
+                Move-Item $_.FullName $packagesDir -Force
+                $sizeMB = [math]::Round($_.Length / 1MB, 2)
+                Write-Host "  ✓ $($_.Name) ($sizeMB MB)" -ForegroundColor Green
+                $packagesMoved++
+            }
+            Remove-Item $linuxStagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        if (-not $SkipWindows -and (Test-Path $windowsStagingDir)) {
+            Get-ChildItem $windowsStagingDir -File | ForEach-Object {
+                Move-Item $_.FullName $packagesDir -Force
+                $sizeMB = [math]::Round($_.Length / 1MB, 2)
+                Write-Host "  ✓ $($_.Name) ($sizeMB MB)" -ForegroundColor Green
+                $packagesMoved++
+            }
+            Remove-Item $windowsStagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        if ($packagesMoved -gt 0) {
+            Write-Host "`n✓ $packagesMoved package(s) ready in dist/packages" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  No new packages to consolidate" -ForegroundColor Yellow
     }
 }
 

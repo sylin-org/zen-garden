@@ -1,0 +1,106 @@
+﻿{
+  "$schema": "./dist.schema.json",
+  "version": "1.0",
+  "description": "Zen Garden distribution build configuration",
+  
+  "workspace": {
+    "root": "..",
+    "dist": "../dist"
+  },
+  
+  "staging": {
+    "linux": "${TEMP}/zen-garden-staging-linux",
+    "windows": "${TEMP}/zen-garden-staging-windows"
+  },
+  
+  "packages": {
+    "outputDir": "../dist/packages",
+    "format": {
+      "linux": "tar.gz",
+      "windows": "zip"
+    }
+  },
+  
+  "binaries": {
+    "moss": {
+      "source": "garden-moss",
+      "destination": "bin/",
+      "required": true,
+      "platforms": ["linux", "windows"]
+    },
+    "rake": {
+      "source": "garden-rake",
+      "destination": "bin/",
+      "required": true,
+      "platforms": ["linux", "windows"]
+    },
+    "lantern": {
+      "source": "garden-lantern",
+      "destination": "bin/",
+      "required": false,
+      "platforms": ["linux", "windows"]
+    },
+    "cricket": {
+      "source": "garden-cricket",
+      "destination": "bin/adapters/cricket/",
+      "required": false,
+      "platforms": ["linux", "windows"]
+    }
+  },
+
+  "dependencies": {
+    "linux": {
+      "cricket": {
+        "apt": ["libasound2t64 | libasound2"],
+        "reason": "ALSA audio library for sound playback"
+      }
+    }
+  },
+
+  "assets": {
+    "manifests": {
+      "source": "manifests",
+      "destination": "manifests/",
+      "recursive": true,
+      "platforms": ["linux", "windows"]
+    },
+    "scripts": {
+      "source": "installer",
+      "destination": "scripts/",
+      "files": [
+        "garden-upgrade.sh",
+        "moss-update-helper.sh"
+      ],
+      "lineEndings": "lf",
+      "platforms": ["linux"]
+    }
+  },
+  
+  "build": {
+    "profiles": {
+      "debug": {
+        "cargo": "--profile dev"
+      },
+      "fast-release": {
+        "cargo": "--profile fast-release"
+      },
+      "release": {
+        "cargo": "--release"
+      }
+    },
+    "defaultProfile": "fast-release",
+    "jobs": 0
+  },
+  
+  "linux": {
+    "buildScript": "build-linux.ps1",
+    "distDir": "../dist/linux",
+    "architecture": "amd64"
+  },
+  
+  "windows": {
+    "buildScript": "build-windows.ps1",
+    "distDir": "../dist/windows",
+    "architecture": "amd64"
+  }
+}

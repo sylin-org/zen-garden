@@ -186,7 +186,6 @@ mod tests {
                 memory: MemoryCapabilities { total_mb: memory_mb },
                 gpus: vec![],
                 disk: None,
-                storage: vec![],
                 swap_mb: None,
                 ai_capabilities: None,
                 system_manufacturer: None,

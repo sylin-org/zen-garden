@@ -18,20 +18,37 @@ use garden_common::{HealthCheck, ComponentHealth};
 pub fn check_disk_health() -> HealthCheck {
     match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
-            let available_percent = (resources.disk.available_bytes as f32 / resources.disk.total_bytes as f32) * 100.0;
-            if available_percent < 10.0 {
-                HealthCheck {
-                    status: garden_common::CHECK_WARN.to_string(),
-                    message: Some(format!(
-                        "Low disk space: {:.1}% free ({} available)",
-                        available_percent,
-                        resources.disk.available_friendly
-                    )),
-                }
-            } else {
-                HealthCheck {
-                    status: garden_common::CHECK_PASS.to_string(),
-                    message: None,
+            // Find primary storage mount
+            let primary = resources.storage.iter()
+                .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+                .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
+            
+            match primary {
+                Some(disk) => {
+                    let available_percent = disk.used_percent;
+                    let free_percent = 100.0 - available_percent;
+                    
+                    if free_percent < 10.0 {
+                        HealthCheck {
+                            status: garden_common::CHECK_WARN.to_string(),
+                            message: Some(format!(
+                                "Low disk space: {:.1}% free ({} GB available)",
+                                free_percent,
+                                disk.available_gb
+                            )),
+                        }
+                    } else {
+                        HealthCheck {
+                            status: garden_common::CHECK_PASS.to_string(),
+                            message: None,
+                        }
+                    }
+                },
+                None => {
+                    HealthCheck {
+                        status: garden_common::CHECK_WARN.to_string(),
+                        message: Some("No storage devices found".to_string()),
+                    }
                 }
             }
         }
@@ -85,21 +102,31 @@ pub fn build_disk_component() -> ComponentHealth {
 
     match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
-            let total_gb = resources.disk.total_bytes as f64 / 1_073_741_824.0;
-            let free_gb = resources.disk.available_bytes as f64 / 1_073_741_824.0;
-            let usage_percent = resources.disk.used_percent;
+            // Use primary mount point (root or largest)
+            let primary = resources.storage.iter()
+                .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
+                .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
+            
+            if let Some(disk) = primary {
+                let total_gb = disk.total_gb as f64;
+                let free_gb = disk.available_gb as f64;
+                let usage_percent = disk.used_percent;
 
-            details.insert("free_gb".to_string(), serde_json::json!(format!("{:.1}", free_gb)));
-            details.insert("total_gb".to_string(), serde_json::json!(format!("{:.1}", total_gb)));
-            details.insert("usage_percent".to_string(), serde_json::json!(format!("{:.2}", usage_percent)));
+                details.insert("free_gb".to_string(), serde_json::json!(format!("{:.1}", free_gb)));
+                details.insert("total_gb".to_string(), serde_json::json!(format!("{:.1}", total_gb)));
+                details.insert("usage_percent".to_string(), serde_json::json!(format!("{:.2}", usage_percent)));
 
-            // Thresholds: >95% unhealthy, >90% degraded, else healthy
-            if usage_percent > 95.0 {
-                ComponentHealth::unhealthy(details)
-            } else if usage_percent > 90.0 {
-                ComponentHealth::degraded(details)
+                // Thresholds: >95% unhealthy, >90% degraded, else healthy
+                if usage_percent > 95.0 {
+                    ComponentHealth::unhealthy(details)
+                } else if usage_percent > 90.0 {
+                    ComponentHealth::degraded(details)
+                } else {
+                    ComponentHealth::healthy(details)
+                }
             } else {
-                ComponentHealth::healthy(details)
+                details.insert("error".to_string(), serde_json::json!("No storage found"));
+                ComponentHealth::unhealthy(details)
             }
         }
         Err(_) => {

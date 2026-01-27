@@ -29,23 +29,17 @@ pub fn get_local_metrics() -> Result<StoneMetrics> {
     let (_, _, architecture) = garden_common::metrics::system::get_cpu_info()
         .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
     
-    let storage_type_str = garden_common::metrics::system::detect_disk_type_for_mount(&resources.disk.path);
-    let storage_type = storage_type_str
-        .as_ref()
-        .map(|s| parse_disk_type(s))
+    // Find primary storage mount
+    let primary = resources.storage.iter()
+        .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+        .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
+    
+    let storage_type = primary
+        .map(|s| &s.disk_type)
+        .cloned()
         .unwrap_or(DiskType::Unknown);
     
     Ok(normalize_metrics(&resources, &architecture, &storage_type))
-}
-
-/// Parse disk type string to DiskType enum
-fn parse_disk_type(s: &str) -> DiskType {
-    match s.to_lowercase().as_str() {
-        "nvme" => DiskType::NVMe,
-        "ssd" => DiskType::SSD,
-        "hdd" => DiskType::HDD,
-        _ => DiskType::Unknown,
-    }
 }
 
 /// Fetch metrics from remote stone via HTTP
@@ -91,17 +85,20 @@ pub async fn fetch_stone_metrics(
     let architecture = fetch_architecture(&client, base).await
         .unwrap_or_else(|_| std::env::consts::ARCH.to_string());
 
-    // Detect storage type from disk path
-    let storage_type = garden_common::metrics::system::detect_disk_type_for_mount(&snapshot.disk.path)
-        .map(|s| parse_disk_type(&s))
-        .unwrap_or(DiskType::Unknown);
+    // MetricsSnapshot uses old disk field for backward compat
+    let storage_type = DiskType::Unknown;  // Type not available in MetricsSnapshot
+
+    let (storage_free_gb, storage_total_gb) = (
+        snapshot.disk.available_bytes / 1024 / 1024 / 1024,
+        snapshot.disk.total_bytes / 1024 / 1024 / 1024,
+    );
 
     Ok(StoneMetrics {
         memory_free_mb: snapshot.memory.available_bytes / 1024 / 1024,
         memory_total_mb: snapshot.memory.total_bytes / 1024 / 1024,
         cpu_load_percent: snapshot.cpu.usage_percent as u8,
-        storage_free_gb: snapshot.disk.available_bytes / 1024 / 1024 / 1024,
-        storage_total_gb: snapshot.disk.total_bytes / 1024 / 1024 / 1024,
+        storage_free_gb,
+        storage_total_gb,
         storage_type,
         architecture,
     })
@@ -149,12 +146,21 @@ pub fn normalize_metrics(
     architecture: &str,
     storage_type: &DiskType,
 ) -> StoneMetrics {
+    // Find primary storage mount
+    let primary = resources.storage.iter()
+        .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+        .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
+
+    let (storage_free_gb, storage_total_gb) = primary
+        .map(|s| (s.available_gb, s.total_gb))
+        .unwrap_or((0, 0));
+
     StoneMetrics {
         memory_free_mb: resources.memory.available_bytes / 1024 / 1024,
         memory_total_mb: resources.memory.total_bytes / 1024 / 1024,
         cpu_load_percent: resources.cpu.usage_percent as u8,
-        storage_free_gb: resources.disk.available_bytes / 1024 / 1024 / 1024,
-        storage_total_gb: resources.disk.total_bytes / 1024 / 1024 / 1024,
+        storage_free_gb,
+        storage_total_gb,
         storage_type: storage_type.clone(),
         architecture: architecture.to_string(),
     }
@@ -163,7 +169,7 @@ pub fn normalize_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics};
+    use garden_common::{CpuMetrics, MemoryMetrics, StorageMetrics, DiskType};
 
     fn make_test_resources() -> StoneResources {
         StoneResources {
@@ -181,16 +187,16 @@ mod tests {
                 used_friendly: "16 GB".to_string(),
                 available_friendly: "16 GB".to_string(),
             },
-            disk: DiskMetrics {
-                path: "/".to_string(),
-                total_bytes: 500 * 1024 * 1024 * 1024, // 500 GB
-                used_bytes: 250 * 1024 * 1024 * 1024,  // 250 GB used
-                available_bytes: 250 * 1024 * 1024 * 1024, // 250 GB free
+            storage: vec![StorageMetrics {
+                identifier: "sda".to_string(),
+                mount_point: "/".to_string(),
+                total_gb: 500,
+                used_gb: 250,
+                available_gb: 250,
                 used_percent: 50.0,
-                total_friendly: "500 GB".to_string(),
-                used_friendly: "250 GB".to_string(),
-                available_friendly: "250 GB".to_string(),
-            },
+                disk_type: DiskType::SSD,
+                filesystem: "ext4".to_string(),
+            }],
             uptime_seconds: 10000,
             uptime_friendly: "2h 46m".to_string(),
         }
@@ -227,16 +233,16 @@ mod tests {
                 used_friendly: "6 GB".to_string(),
                 available_friendly: "2 GB".to_string(),
             },
-            disk: DiskMetrics {
-                path: "/data".to_string(),
-                total_bytes: 1000 * 1024 * 1024 * 1024,
-                used_bytes: 900 * 1024 * 1024 * 1024,
-                available_bytes: 100 * 1024 * 1024 * 1024,
+            storage: vec![StorageMetrics {
+                identifier: "nvme0n1".to_string(),
+                mount_point: "/data".to_string(),
+                total_gb: 1000,
+                used_gb: 900,
+                available_gb: 100,
                 used_percent: 90.0,
-                total_friendly: "1000 GB".to_string(),
-                used_friendly: "900 GB".to_string(),
-                available_friendly: "100 GB".to_string(),
-            },
+                disk_type: DiskType::NVMe,
+                filesystem: "xfs".to_string(),
+            }],
             uptime_seconds: 5000,
             uptime_friendly: "1h 23m".to_string(),
         };

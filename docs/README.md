@@ -50,6 +50,9 @@ Step-by-step instructions for operators:
 | [First Stone](guides/first-stone.md) | Set up your first Stone from hardware to running service |
 | [Hardware Selection](guides/hardware.md) | Choose appropriate hardware for different workloads |
 | [Managing Offerings](guides/offering-services.md) | Plant, upgrade, rest, wake, and take away services |
+| [Using Adapters](guides/adapters.md) | Control Cricket, Firefly, and OLED adapters for physical presence |
+| [Creating Tunes](guides/how-to-create-a-tune.md) | Write YAML configurations for Cricket audio adapter |
+| [Adapter Development](guides/adapter-development.md) | Build custom adapters in any language |
 | [Troubleshooting](guides/troubleshooting.md) | Common problems and solutions |
 
 ---
@@ -61,11 +64,15 @@ Technical specifications for implementers:
 | Spec | Description |
 |------|-------------|
 | [Moss Daemon Lifecycle](specs/moss-daemon-lifecycle.md) | 14-phase startup, HTTP API, Docker Compose integration |
-| [Rake Commands](specs/rake-commands.md) | CLI tool design, hot cache, command taxonomy |
+| [Rake Commands](specs/rake-commands.md) | CLI tool design, hot cache, command taxonomy, adapter control |
 | [Discovery Protocol](specs/discovery.md) | mDNS announcement, TXT records, connection strings |
 | [Service Offerings](specs/offerings.md) | Template format, taxonomy, query system |
 | [Security](specs/security.md) | Pond mTLS, certificate management, threat model |
-| [HTTP API](specs/api-v1.md) | REST endpoints, request/response formats |
+| [HTTP API](specs/api-v1.md) | REST endpoints, adapter management, request/response formats |
+| [Adapter Command Protocol](specs/ADAPTER-COMMAND-PROTOCOL.md) | Synchronous command flow, port assignment, timeout handling |
+| [Adapter Service Registry](specs/ADAPTER-SERVICE-REGISTRY.md) | Discovery protocol, manifest format, lifecycle management |
+| [Hey-Tell Syntax](specs/HEY-TELL-SYNTAX.md) | Rake command grammar for adapter control |
+| [Cricket Specification](specs/CRICKET-SPEC.md) | Audio adapter implementation, 4-channel mixer, tune system |
 
 ---
 

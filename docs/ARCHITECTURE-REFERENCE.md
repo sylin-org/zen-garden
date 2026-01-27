@@ -64,6 +64,54 @@ p2p::send_announcement(
 **Why:** Prevents port conflicts (7184), enforces SoC/DDD, enables testing.  
 **Reference:** [COMM-0001](decisions/COMM-0001-p2p-transport-singleton.md)
 
+### Adapter Framework (CRITICAL)
+**Moss manages adapters via port ledger and command routing.**
+
+**Port Assignment:**
+- Base port: 7187 (ASCII sum "moss adapter" = 1187 + 6000)
+- Range: 7187-7199 (13 adapters max)
+- Ledger: `{data_dir}/adapter-ports.json` - persistent HashMap<adapter_id, port>
+- Assignment: Incremental (7187, 7188, 7189...) via `PortLedger::get_or_assign()`
+
+**Adapter Discovery Protocol:**
+1. Moss scans `{data_dir}/adapters/` directory for executables
+2. For each adapter: `{executable} --dump-commands --port {assigned_port}`
+3. Adapter outputs JSON CommandManifest to stdout
+4. Moss caches manifest and starts adapter with `--stone {endpoint} --port {assigned_port}`
+
+**Command Routing:**
+```
+Rake → POST /api/v1/stone/adapters/{id}/command
+  → Moss forwards to http://127.0.0.1:{assigned_port}/command
+  → Adapter executes and returns result (5s timeout)
+```
+
+**Rules:**
+- ❌ **NEVER** hardcode adapter ports (use ledger)
+- ❌ **NEVER** adopt non-adapter ports (ledger is source of truth)
+- ✅ **ALWAYS** pass `--port` during `--dump-commands` and startup
+- ✅ **ALWAYS** route commands through Moss (never direct to adapters)
+
+**Pattern:**
+```rust
+// Adapter registration (infra/adapters.rs)
+let port = port_ledger.get_or_assign(&adapter_id).await?;
+invoke_dump_commands(&executable, port).await?;
+
+// Adapter startup
+spawn_adapter(&executable, &stone_endpoint, port).await?;
+
+// Command forwarding (api/v1/adapters.rs)
+let url = format!("http://127.0.0.1:{}/command", adapter.port);
+let response = client.post(&url)
+    .json(&command_request)
+    .timeout(Duration::from_millis(ADAPTER_COMMAND_TIMEOUT_MS))
+    .send().await?;
+```
+
+**Why:** Centralizes port management, prevents port conflicts, enables adapter hot-reload.  
+**Reference:** [ADAPTER-COMMAND-PROTOCOL](specs/ADAPTER-COMMAND-PROTOCOL.md), [ADAPTER-SERVICE-REGISTRY](specs/ADAPTER-SERVICE-REGISTRY.md)
+
 ### Discovery Transport (Multicast-First)
 **UDP discovery uses multicast-first strategy to solve multi-homed system failures.**
 
@@ -144,6 +192,32 @@ state.docker.create_container(
 
 ---
 
+## Adapter Endpoints
+
+**Stone adapter endpoints:**
+| Method | Endpoint | Purpose |
+|--------|----------|---------|  
+| GET | `/api/v1/stone/adapters` | List registered adapters with status/PIDs |
+| GET | `/api/v1/stone/adapters/:id` | Get specific adapter details and manifest |
+| POST | `/api/v1/stone/adapters/:id/command` | Forward command to adapter (5s timeout) |
+| POST | `/api/v1/stone/adapters/:id/up` | Start adapter process |
+| POST | `/api/v1/stone/adapters/:id/down` | Stop adapter process |
+| POST | `/api/v1/stone/adapters/refresh` | Rescan adapters directory and reload manifests |
+
+**Command forwarding flow:**
+1. Rake → `POST /api/v1/stone/adapters/cricket/command` with `{"args": ["play", "stone-online"]}`
+2. Moss looks up Cricket's assigned port (7187) from ledger
+3. Moss forwards to `http://127.0.0.1:7187/command` with timeout
+4. Cricket executes command, returns JSON response
+5. Moss proxies response back to Rake
+
+**Adapters (current):**
+- **Cricket** (7187): Audio adapter with 4-channel mixer, 180 CC0 samples, tune system
+- **Firefly** (planned): LED control adapter for visual presence indicators
+- **OLED** (planned): Display adapter for Stone status screens
+
+---
+
 ## Nourishment Endpoints
 
 **Garden endpoints** (Rake → tended Moss, orchestrated):
@@ -200,6 +274,7 @@ src/moss/src/
 ### Paths → `common/src/constants/paths.rs`
 - `data_dir()` → `/var/lib/zen-garden` (Linux) or `.zen-garden` (Windows)
 - `config_dir()` → `/etc/zen-garden` (Linux) or `.zen-garden` (Windows)
+- `adapters_dir()` → `{data_dir}/adapters/` (adapter executables)
 - `harvest_dir()`, `stored_dir()`, `stone_home()`, `stone_user()`, `first_run_flag()`
 
 ### Network → `common/src/constants/mod.rs`
@@ -207,9 +282,21 @@ src/moss/src/
 
 ### Timeouts → `common/src/constants/timeouts.rs`
 - `DISCOVERY_TIMEOUT_MS = 3000`, `HTTP_REQUEST_TIMEOUT_MS = 30000`
+- `ADAPTER_COMMAND_TIMEOUT_MS = 5000` (command forwarding timeout)
 
 ### Limits → `common/src/constants/limits.rs`
 - `MAX_OFFERING_NAME_LENGTH = 64`, `MAX_SERVICES_PER_STONE = 100`
+
+### Adapter Types → `common/src/adapter.rs`
+- `AdapterCommandRequest` - Command forwarding request (args: Vec<String>)
+- `AdapterCommandResponse` - Command result (success: bool, output: String)
+- `AdapterManifest` - Adapter metadata (name, version, description, port)
+
+### Command Manifest → `common/src/command_manifest/`
+- `CommandManifest` - Full adapter command manifest
+- `CommandParameter` - Parameter definition (name, type, required, description)
+- `CommandExample` - Usage example (command, description, expected output)
+- Helper: `check_dump_commands()` - Outputs manifest and exits (for adapters)
 
 ### Phase 1 Utils → `common/src/utils/`
 | Module | Functions |

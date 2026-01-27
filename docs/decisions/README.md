@@ -26,6 +26,18 @@ canonical: true
   - **Rationale**: Version compatibility policies for service offerings
   - **Impact**: Clear upgrade/downgrade rules, semantic versioning for offerings
 
+### Adapters
+- **[CRICKET-0001](CRICKET-0001-audio-adapter-spec.md)**: Cricket Audio Adapter Specification
+  - **Status**: Accepted (2026-01-26)
+  - **Rationale**: Sonify infrastructure with 4-channel mixer and tune system
+  - **Impact**: Physical presence feedback, event-to-audio mapping, 180 CC0 samples
+
+### Metrics
+- **[METRICS-0001](METRICS-0001-unified-storage-metrics.md)**: Unified Storage Metrics
+  - **Status**: Accepted (2026-01-26)
+  - **Rationale**: Eliminate duplicate storage detection, use live metrics only
+  - **Impact**: Removed ~200 lines of redundant code, hot-swap drive support, 30s refresh
+
 ### Lantern (Registry)
 - **[LANTERN-0001](LANTERN-0001-service-registry-architecture.md)**: Service Registry Architecture
   - **Status**: Accepted

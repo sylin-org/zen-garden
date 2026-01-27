@@ -98,6 +98,78 @@ POST   /api/v1/offerings:refresh           # Refresh catalog from disk
 ### Services API (Technical Layer)
 
 **Target:** Operators, troubleshooting, DevOps, advanced automation  
+
+---
+
+## Adapter Management API
+
+**Target:** Adapter control and command routing  
+**Philosophy:** Extend Stone capabilities with pluggable services
+
+### Adapter Operations
+
+```http
+GET  /api/v1/stone/adapters                # List all registered adapters
+GET  /api/v1/stone/adapters/{id}           # Get adapter details and manifest
+POST /api/v1/stone/adapters/{id}/command   # Forward command to adapter (5s timeout)
+POST /api/v1/stone/adapters/{id}/up        # Start adapter process
+POST /api/v1/stone/adapters/{id}/down      # Stop adapter process
+POST /api/v1/stone/adapters/refresh        # Rescan adapter directory
+```
+
+**GET /api/v1/stone/adapters response:**
+```json
+{
+  "adapters": [
+    {
+      "id": "cricket",
+      "name": "Cricket Audio Adapter",
+      "version": "0.1.0",
+      "port": 7187,
+      "running": true,
+      "pid": 12345,
+      "commands": 6
+    }
+  ]
+}
+```
+
+**POST /api/v1/stone/adapters/cricket/command:**
+```json
+// Request
+{
+  "args": ["play", "stone-online"]
+}
+
+// Response (200 OK)
+{
+  "success": true,
+  "output": "Playing: stone-online.mp3 on foreground channel"
+}
+
+// Response (500 Internal Server Error) - timeout/connection failure
+{
+  "success": false,
+  "output": "Failed to connect to adapter on port 7187"
+}
+```
+
+**Architecture:**
+- Adapters bind HTTP servers on assigned ports (7187-7199)
+- Moss maintains port ledger in `{data_dir}/adapter-ports.json`
+- Commands routed: Rake → Moss → Adapter (localhost)
+- Adapters receive presence events via SSE subscription to Moss
+
+**Reference:**
+- [ADAPTER-COMMAND-PROTOCOL.md](ADAPTER-COMMAND-PROTOCOL.md)
+- [ADAPTER-SERVICE-REGISTRY.md](ADAPTER-SERVICE-REGISTRY.md)
+- [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md)
+
+---
+
+### Services API (Technical Layer)
+
+**Target:** Operators, troubleshooting, DevOps, advanced automation  
 **Philosophy:** Expose container reality, provide full control, enable debugging
 
 #### Manifest Operations

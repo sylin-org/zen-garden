@@ -111,10 +111,26 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     // Compute stone state
     let uptime = state.start_time.elapsed().as_secs();
     
-    // TODO: Real metrics from system monitor
-    let cpu_percent = 25.0;
-    let memory_percent = 45.0;
-    let disk_percent = 60.0;
+    // Get real metrics from system monitor (fallback to zeros if not yet collected)
+    let (cpu_percent, memory_percent, disk_percent) = {
+        let resources = state.system_resources.read().await;
+        if let Some(ref res) = *resources {
+            // Use primary mount point (root or largest disk) for summary disk %
+            let primary_disk_percent = res.storage.iter()
+                .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
+                .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
+                .map(|s| s.used_percent as f64)
+                .unwrap_or(0.0);
+            
+            (
+                res.cpu.usage_percent as f64,
+                res.memory.used_percent as f64,
+                primary_disk_percent,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        }
+    };
     
     let health = compute_health(cpu_percent, memory_percent);
     

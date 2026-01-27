@@ -18,7 +18,7 @@ use crate::infra::{CeremonyJournal, HarvestStore, ManifestRegistry};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
-use garden_common::{HardwareCapabilities, ServiceInfo};
+use garden_common::{HardwareCapabilities, ServiceInfo, StoneResources};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -146,6 +146,12 @@ pub struct AppState {
 
     /// Election service for distributed elections (testing)
     pub election_service: Arc<crate::tasks::election_service::ElectionService>,
+
+    /// System metrics cache (CPU/memory/disk usage, updated every 5s)
+    pub system_resources: Arc<RwLock<Option<StoneResources>>>,
+
+    /// Adapter registry (external adapters like Cricket, Firefly)
+    pub adapter_registry: Arc<crate::infra::AdapterRegistry>,
 }
 
 impl AppState {

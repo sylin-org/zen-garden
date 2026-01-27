@@ -708,6 +708,27 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// Send commands to adapters (Cricket, Firefly, etc.)
+    #[command(
+        long_about = "Communicate with Zen Garden adapters.\n\n\
+        Adapters extend Moss with additional capabilities like audio feedback (Cricket),\n\
+        LED displays (Firefly), and more.\n\n\
+        Examples:\n  \
+        garden-rake hey tell                     # List adapters\n  \
+        garden-rake hey tell cricket?            # Show cricket commands\n  \
+        garden-rake hey tell cricket select mr-robot\n  \
+        garden-rake hey stone-01 tell cricket volume 50"
+    )]
+    Hey {
+        /// Raw arguments passed to adapter subsystem
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
     /// Browse command directory (interactive command reference)
     #[command(
         long_about = "Browse the command directory with descriptions and examples.\n\n\
@@ -1048,6 +1069,12 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
         // === TEST/DIAGNOSTIC ===
         "election" => {
             args.push("election".to_string());
+            args.extend(parsed.args.clone());
+        }
+        
+        // === ADAPTERS ===
+        "hey" => {
+            args.push("hey".to_string());
             args.extend(parsed.args.clone());
         }
         _ => {
@@ -1569,6 +1596,11 @@ async fn async_main() -> anyhow::Result<()> {
             let target = stone.or(at);
             let cmd = commands::admin::StirCommand::new(quiet_mode);
             dispatch::dispatch(&cmd, &client, target, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::Hey { args, at } => {
+            let cmd = commands::hey::HeyTellCommand { args };
+            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
         }
 
         Commands::BrowseCommands { name, category, zen, normative } => {

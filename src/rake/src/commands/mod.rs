@@ -24,6 +24,7 @@
 //! - `management/` - tend, reconcile, refresh, pond, place, invite, lift, make
 
 pub mod help;
+pub mod hey;
 
 // Command categories (to be extracted incrementally)
 pub mod admin;

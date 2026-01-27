@@ -133,33 +133,6 @@ impl Command for StatusCommand {
             }
         }
 
-        // === STORAGE SECTION ===
-        if !caps.hardware.storage.is_empty() {
-            println!();
-            println!(
-                "{}",
-                ui::section_header_v2("STORAGE", false, ctx.term.supports_color)
-            );
-            for disk in &caps.hardware.storage {
-                let disk_type_str = match disk.disk_type {
-                    garden_common::DiskType::NVMe => "NVMe",
-                    garden_common::DiskType::SSD => "SSD",
-                    garden_common::DiskType::HDD => "HDD",
-                    garden_common::DiskType::Unknown => "Unknown",
-                };
-                let partition_info = if disk.partition_count == 1 {
-                    "1 partition".to_string()
-                } else {
-                    format!("{} partitions", disk.partition_count)
-                };
-                let value = format!(
-                    "{} GB {} ({}, {:.0}% used)",
-                    disk.size_gb, disk_type_str, partition_info, disk.used_percent
-                );
-                println!("{}{}", indent, ui::place_value(&disk.identifier, &value));
-            }
-        }
-
         // === AI SECTION === (replaces GPU section)
         // Only show devices that have AI runtime or AI-relevant capabilities
         let ai_devices: Vec<&garden_common::GpuInfo> = caps

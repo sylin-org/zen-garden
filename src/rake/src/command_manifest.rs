@@ -77,6 +77,10 @@ pub mod cmd {
     
     // Test/Diagnostic
     pub const ELECTION: &str = "election";
+    pub const PRESENCE: &str = "presence";
+    
+    // Adapters
+    pub const HEY: &str = "hey";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +97,8 @@ pub enum CommandCategory {
     System,
     /// Pond security commands: place, invite, lift
     Pond,
+    /// Adapter commands: hey tell
+    Adapter,
 }
 
 impl CommandCategory {
@@ -104,6 +110,7 @@ impl CommandCategory {
             Self::Management => "Management",
             Self::System => "System",
             Self::Pond => "Pond",
+            Self::Adapter => "Adapter",
         }
     }
 }
@@ -1751,6 +1758,100 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "status"],
     });
 
+    manifest.add(CommandDef {
+        name: cmd::PRESENCE,
+        zen_name: "presence",
+        normative_name: None,
+        category: CommandCategory::Discovery,
+        description: "Monitor stone presence events in real-time",
+        long_description: "Subscribe to stone presence protocol events via Server-Sent Events (SSE).\n\n\
+            Displays real-time events from the stone including:\n\
+            - Stone lifecycle: boot, shutdown, tending\n\
+            - Offering state changes: up, down, maintenance\n\
+            - Service events: adoption, removal\n\n\
+            Optional filtering by event category (service, stone, offering, ceremony, nourishment, etc.)",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "categories",
+                zen_syntax: "--categories <types>",
+                normative_syntax: None,
+                description: "Filter by event categories (comma-separated: service,stone,offering,ceremony,nourishment,firmware)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Monitor all presence events",
+                zen_syntax: Some("garden-rake presence"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Monitor only service and stone events",
+                zen_syntax: Some("garden-rake presence --categories service,stone"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Monitor offering state changes",
+                zen_syntax: Some("garden-rake presence --categories offering"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["watch", "observe"],
+    });
+
+    // === ADAPTER COMMANDS ===
+    
+    manifest.add(CommandDef {
+        name: "hey",
+        zen_name: "hey",
+        normative_name: None,
+        category: CommandCategory::Adapter,
+        description: "Communicate with adapters (Cricket, Firefly, etc.)",
+        long_description: "Send commands to registered Zen Garden adapters.\n\n\
+            Adapters extend Moss with additional capabilities like audio feedback (Cricket),\n\
+            LED displays (Firefly), and more. Use 'hey tell' to interact with them.\n\n\
+            Rake passes commands through to Moss, which forwards them to the adapter.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "tell",
+                zen_syntax: "tell <adapter> [args...]",
+                normative_syntax: None,
+                description: "Send command to adapter with raw arguments",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "List all registered adapters",
+                zen_syntax: Some("garden-rake hey tell"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Show adapter commands",
+                zen_syntax: Some("garden-rake hey tell cricket?"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Change Cricket tune",
+                zen_syntax: Some("garden-rake hey tell cricket select mr-robot"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Set Cricket volume",
+                zen_syntax: Some("garden-rake hey tell cricket volume 50"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Send command to specific stone",
+                zen_syntax: Some("garden-rake hey stone-01 tell cricket volume 80"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["watch", "presence"],
+    });
+
     manifest
 });
 
@@ -1760,7 +1861,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
 pub fn validate_manifest() {
     let expected_commands = vec![
         // Discovery
-        "observe", "watch", "list", "status", "find",
+        "observe", "watch", "list", "status", "find", "presence",
         // Lifecycle
         "offer", "rest", "wake", "remove", "uproot", "nourish",
         // Adoption
@@ -1775,6 +1876,8 @@ pub fn validate_manifest() {
         "pond", "place", "invite", "lift",
         // Test/Diagnostic
         "election",
+        // Adapters
+        "hey",
     ];
 
     for cmd_name in expected_commands {

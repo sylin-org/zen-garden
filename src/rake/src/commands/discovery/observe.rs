@@ -488,24 +488,6 @@ fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Ve
     println!("{}", ui::place_value(&format!("{}        CPU Cores", indent), &format!("{} cores", caps.hardware.cpu.cores)));
     println!("{}", ui::place_value(&format!("{}        Memory", indent), &format!("{} GB", caps.hardware.memory.total_mb / 1024)));
 
-    // Storage
-    if !caps.hardware.storage.is_empty() {
-        if let Some(largest) = caps.hardware.storage.iter().max_by_key(|d| d.size_gb) {
-            let disk_type_str = match largest.disk_type {
-                garden_common::DiskType::NVMe => "NVMe",
-                garden_common::DiskType::SSD => "SSD",
-                garden_common::DiskType::HDD => "HDD",
-                garden_common::DiskType::Unknown => "",
-            };
-            let storage_value = if disk_type_str.is_empty() {
-                format!("{} GB ({:.0}% used)", largest.size_gb, largest.used_percent)
-            } else {
-                format!("{} GB {} ({:.0}% used)", largest.size_gb, disk_type_str, largest.used_percent)
-            };
-            println!("{}", ui::place_value(&format!("{}        Storage", indent), &storage_value));
-        }
-    }
-
     // AI capabilities
     if let Some(ref ai_caps) = caps.hardware.ai_capabilities {
         if ai_caps.gpu_count > 0 {

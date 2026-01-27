@@ -509,36 +509,59 @@ pub async fn deploy_stone_v1(
         );
     }
 
-    let mut contains_moss = false;
-    match std::fs::read_dir(&bin_dir) {
-        Ok(entries) => {
+    // Helper function to recursively copy directory
+    fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+        if !dest.exists() {
+            std::fs::create_dir_all(dest)?;
+        }
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let dest_path = dest.join(entry.file_name());
+            if entry_path.is_dir() {
+                copy_dir_recursive(&entry_path, &dest_path)?;
+            } else {
+                std::fs::copy(&entry_path, &dest_path)?;
+            }
+        }
+        Ok(())
+    }
+    
+    // Copy bin/ directory recursively (includes adapters subdirectories)
+    let validated_bin_dir = std::path::Path::new(&validated_dir).join("bin");
+    if let Err(e) = copy_dir_recursive(&bin_dir, &validated_bin_dir) {
+        tracing::error!(error = ?e, "Failed to copy bin directory");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::remove_dir_all(&validated_dir);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "status": "error",
+                "message": "Failed to copy binaries",
+            })),
+        );
+    }
+    
+    // Log what was copied and check for moss
+    fn log_staged_files(dir: &std::path::Path, base: &std::path::Path) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.filter_map(|e| e.ok()) {
-                let file_name = entry.file_name();
-                let name = file_name.to_string_lossy();
-                if name.starts_with("garden-moss") {
-                    contains_moss = true;
-                }
-                let dest = format!("{}/bin/{}", validated_dir, name);
-                if let Err(e) = std::fs::copy(entry.path(), &dest) {
-                    tracing::error!(error = ?e, file = %name, "Failed to copy binary");
+                let path = entry.path();
+                if path.is_dir() {
+                    log_staged_files(&path, base);
                 } else {
-                    tracing::info!(file = %name, "Staged validated binary");
+                    if let Ok(rel_path) = path.strip_prefix(base) {
+                        tracing::info!(file = %rel_path.display(), "Staged validated binary");
+                    }
                 }
             }
         }
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to read bin directory");
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            let _ = std::fs::remove_dir_all(&validated_dir);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "status": "error",
-                    "message": "Failed to read binaries",
-                })),
-            );
-        }
     }
+    log_staged_files(&validated_bin_dir, &validated_bin_dir);
+    
+    // Check if moss is included
+    let moss_path = validated_bin_dir.join("garden-moss");
+    let contains_moss = moss_path.exists();
 
     // Copy scripts if present
     let scripts_dir = package_dir.join("scripts");
@@ -556,6 +579,17 @@ pub async fn deploy_stone_v1(
                     tracing::info!(file = %name, "Staged validated script");
                 }
             }
+        }
+    }
+
+    // Copy dependencies.json if present (for adapter dependency installation)
+    let deps_file = package_dir.join("dependencies.json");
+    if deps_file.exists() {
+        let dest = format!("{}/dependencies.json", validated_dir);
+        if let Err(e) = std::fs::copy(&deps_file, &dest) {
+            tracing::warn!(error = ?e, "Failed to copy dependencies.json");
+        } else {
+            tracing::info!("Staged dependencies.json");
         }
     }
 

@@ -433,6 +433,51 @@ impl AdapterRegistry {
         
         Ok(())
     }
+    
+    /// Stop all running adapters
+    /// 
+    /// Used during package deployment to ensure clean upgrade.
+    /// Attempts graceful HTTP shutdown first, then force kills.
+    pub async fn stop_all(&self) -> Vec<(String, Result<()>)> {
+        let adapter_ids: Vec<String> = {
+            let adapters = self.adapters.read().await;
+            adapters.keys().cloned().collect()
+        };
+        
+        let mut results = Vec::new();
+        
+        for id in adapter_ids {
+            if self.is_running(&id).await {
+                info!(adapter = %id, "Stopping adapter for upgrade");
+                
+                // Try graceful HTTP shutdown first
+                if let Some(port) = self.get_port(&id).await {
+                    let shutdown_url = format!("http://127.0.0.1:{}/shutdown", port);
+                    match reqwest::Client::new()
+                        .post(&shutdown_url)
+                        .timeout(std::time::Duration::from_secs(2))
+                        .send()
+                        .await
+                    {
+                        Ok(response) if response.status().is_success() => {
+                            info!(adapter = %id, "Graceful shutdown via HTTP");
+                            // Give it a moment to clean up
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        }
+                        Ok(_) | Err(_) => {
+                            debug!(adapter = %id, "HTTP shutdown failed, will force stop");
+                        }
+                    }
+                }
+                
+                // Force stop if still running
+                let result = self.stop(&id).await;
+                results.push((id, result));
+            }
+        }
+        
+        results
+    }
 }
 
 /// Check if a process is alive by PID

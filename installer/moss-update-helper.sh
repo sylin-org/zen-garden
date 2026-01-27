@@ -1,102 +1,109 @@
 #!/bin/bash
-# moss-update-helper.sh - Check for staged binaries before Moss starts
+# moss-update-helper.sh - Process pending upgrades before Moss starts
 #
 # This script runs as ExecStartPre in the systemd unit (before garden-upgrade.sh).
-# It checks if there are staged binaries from a previous upgrade attempt.
-# The actual installation is handled by garden-upgrade.sh.
+# It processes pending-upgrade.tar.gz packages deployed via push2all.ps1.
+#
+# Flow:
+# 1. push2all.ps1 uploads package to /var/lib/zen-garden/staging/pending-upgrade.tar.gz
+# 2. On next Moss restart, this script extracts and installs the package
+# 3. garden-upgrade.sh handles validated/ staging (for API-based upgrades)
 
 set -euo pipefail
 
-STAGING_DIR="/var/lib/zen-garden/staging/validated"
+# Configuration
+STAGING_DIR="/var/lib/zen-garden/staging"
+PACKAGE_FILE="$STAGING_DIR/pending-upgrade.tar.gz"
+TARGET_DIR="/usr/local/bin"
 
 log() {
     echo "[moss-update-helper] $1"
 }
 
-log "Starting update check..."
-
-# Check if we have staged binaries
-if [[ -d "$STAGING_DIR/bin" ]]; then
-    log "Found staged binaries - will be installed by garden-upgrade.sh"
-else
-    log "No staged binaries found"
-fi
-
-exit 0
-                return 0
-            else
-                log "ERROR: Failed to copy ${staged_path} to ${target_path}"
-                rm -f "$staged_path"
-                return 1
-            fi
+# Install dependencies from dependencies.json file
+install_adapter_dependencies() {
+    local deps_file="$1"
+    
+    if [[ ! -f "$deps_file" ]]; then
+        log "No dependencies file found"
+        return 0
+    fi
+    
+    log "Processing dependencies from $(basename "$deps_file")..."
+    
+    # Check if jq is available for JSON parsing
+    if ! command -v jq &>/dev/null; then
+        log "WARNING: jq not installed, cannot process dependencies"
+        return 0
+    fi
+    
+    # Get list of adapters with apt dependencies
+    local adapters
+    adapters=$(jq -r '.linux | keys[]' "$deps_file" 2>/dev/null) || return 0
+    
+    for adapter in $adapters; do
+        local adapter_binary="$TARGET_DIR/adapters/$adapter/garden-$adapter"
+        
+        # Only install dependencies if the adapter binary exists
+        if [[ -f "$adapter_binary" ]]; then
+            # Get apt packages for this adapter
+            local packages
+            packages=$(jq -r ".linux.\"$adapter\".apt // [] | .[]" "$deps_file" 2>/dev/null)
+            local reason
+            reason=$(jq -r ".linux.\"$adapter\".reason // \"required dependency\"" "$deps_file" 2>/dev/null)
+            
+            for pkg_spec in $packages; do
+                # Handle alternative packages (pkg1 | pkg2)
+                local installed=false
+                # Split on | and try each package
+                for pkg in $(echo "$pkg_spec" | tr '|' ' '); do
+                    pkg=$(echo "$pkg" | xargs) # trim whitespace
+                    if dpkg -s "$pkg" >/dev/null 2>&1; then
+                        installed=true
+                        break
+                    fi
+                done
+                
+                if [[ "$installed" == "false" ]]; then
+                    # Try to install alternatives in order
+                    for pkg in $(echo "$pkg_spec" | tr '|' ' '); do
+                        pkg=$(echo "$pkg" | xargs) # trim whitespace
+                        [[ -z "$pkg" ]] && continue  # skip empty strings
+                        log "Installing $pkg for $adapter ($reason)..."
+                        if apt-get install -y -qq "$pkg" 2>&1; then
+                            log "Installed $pkg"
+                            installed=true
+                            break
+                        fi
+                    done
+                    
+                    if [[ "$installed" == "false" ]]; then
+                        log "WARNING: Failed to install $pkg_spec - $adapter may not work"
+                    fi
+                fi
+            done
         fi
     done
-
-    # No staged file found (normal case)
-    return 0
 }
 
 # Ensure staging directories exist with correct permissions
 ensure_staging_dirs() {
-    # Root-owned staging for HTTP API
-    if [ ! -d "/var/lib/zen-garden/staging" ]; then
-        mkdir -p /var/lib/zen-garden/staging
-        chmod 755 /var/lib/zen-garden/staging
-        log "Created /var/lib/zen-garden/staging"
-    fi
-
-    # Stone-owned staging for SSH (should exist, but ensure it does)
-    if [ ! -d "/home/stone/bin" ]; then
-        mkdir -p /home/stone/bin
-        chown stone:stone /home/stone/bin
-        chmod 755 /home/stone/bin
-        log "Created /home/stone/bin"
+    if [[ ! -d "$STAGING_DIR" ]]; then
+        mkdir -p "$STAGING_DIR"
+        chmod 755 "$STAGING_DIR"
+        log "Created $STAGING_DIR"
     fi
 }
 
-# Clean up any stale staged files older than 1 hour (failed deployments)
-cleanup_stale_staged() {
-    for staging_dir in "${STAGING_DIRS[@]}"; do
-        if [ -d "$staging_dir" ]; then
-            find "$staging_dir" -name "*.staged" -mmin +60 -delete 2>/dev/null || true
-        fi
-    done
-}
-
-# Process package-based upgrade
+# Process pending package upgrade
 process_package_upgrade() {
-    if [[ -f "$PACKAGE_FILE" ]]; then
-        log "Found upgrade package: $PACKAGE_FILE"
-
-        # Try to run garden-upgrade.sh from known locations
-        local upgrade_script=""
-        for location in "/usr/local/bin/garden-upgrade.sh" "$SCRIPT_DIR/garden-upgrade.sh"; do
-            if [[ -x "$location" ]]; then
-                upgrade_script="$location"
-                break
-            fi
-        done
-
-        if [[ -n "$upgrade_script" ]]; then
-            log "Running package upgrade via $upgrade_script"
-            if "$upgrade_script"; then
-                log "Package upgrade completed successfully"
-                return 0
-            else
-                log "ERROR: Package upgrade failed"
-                return 1
-            fi
-        else
-            # Inline package processing if garden-upgrade.sh not found
-            log "garden-upgrade.sh not found, processing package inline..."
-            process_package_inline
-        fi
+    if [[ ! -f "$PACKAGE_FILE" ]]; then
+        log "No pending upgrade package"
+        return 0
     fi
-    return 0
-}
 
-# Inline package processing (fallback if garden-upgrade.sh not installed)
-process_package_inline() {
+    log "Found upgrade package: $PACKAGE_FILE"
+
     local work_dir
     work_dir=$(mktemp -d)
     trap 'rm -rf "$work_dir"' RETURN
@@ -108,31 +115,46 @@ process_package_inline() {
         return 1
     fi
 
-    # Find package directory
+    # Find package directory (zen-garden-X.Y.Z-linux-amd64/)
     local pkg_dir
     pkg_dir=$(find "$work_dir" -maxdepth 1 -type d -name "zen-garden-*" | head -1)
     if [[ -z "$pkg_dir" ]]; then
-        log "ERROR: Invalid package structure"
+        log "ERROR: Invalid package structure - no zen-garden-* directory found"
         rm -f "$PACKAGE_FILE"
         return 1
     fi
 
-    # Deploy binaries and adapters (copy recursively to preserve bin/adapters/)
+    log "Installing from: $(basename "$pkg_dir")"
+
+    # Deploy binaries (including adapters subdirectory)
     if [[ -d "$pkg_dir/bin" ]]; then
-        cp -r "$pkg_dir/bin/"* "$TARGET_DIR/"
-        find "$TARGET_DIR" -type f -exec chmod 755 {} \;
-        # Log what was installed
+        # Ensure adapters directory exists
+        mkdir -p "$TARGET_DIR/adapters"
+        
+        # Copy binaries
         for binary in "$pkg_dir/bin/"*; do
             if [[ -f "$binary" ]]; then
-                log "Installed $(basename "$binary")"
+                local name
+                name=$(basename "$binary")
+                cp "$binary" "$TARGET_DIR/$name"
+                chmod 755 "$TARGET_DIR/$name"
+                log "Installed $name"
             fi
         done
+        
+        # Copy adapters subdirectory recursively
         if [[ -d "$pkg_dir/bin/adapters" ]]; then
-            for adapter in "$pkg_dir/bin/adapters/"*; do
-                if [[ -f "$adapter" ]]; then
-                    log "Installed adapters/$(basename "$adapter")"
-                fi
+            cp -r "$pkg_dir/bin/adapters/"* "$TARGET_DIR/adapters/"
+            # Set permissions on all adapter files
+            find "$TARGET_DIR/adapters" -type f -exec chmod 755 {} \;
+            # Log installed adapters
+            find "$pkg_dir/bin/adapters" -type f | while read -r adapter; do
+                log "Installed adapters/$(basename "$(dirname "$adapter")")/$(basename "$adapter")"
             done
+            # Install adapter dependencies from package
+            if [[ -f "$pkg_dir/dependencies.json" ]]; then
+                install_adapter_dependencies "$pkg_dir/dependencies.json"
+            fi
         fi
     fi
 
@@ -140,10 +162,12 @@ process_package_inline() {
     if [[ -d "$pkg_dir/manifests" ]]; then
         mkdir -p /var/lib/zen-garden/manifests
         cp -r "$pkg_dir/manifests/"* /var/lib/zen-garden/manifests/
-        log "Updated manifests"
+        local manifest_count
+        manifest_count=$(find "$pkg_dir/manifests" -type f | wc -l)
+        log "Updated manifests ($manifest_count files)"
     fi
 
-    # Deploy scripts (install to /usr/local/bin, make executable)
+    # Deploy scripts
     if [[ -d "$pkg_dir/scripts" ]]; then
         for script in "$pkg_dir/scripts/"*.sh; do
             if [[ -f "$script" ]]; then
@@ -156,7 +180,10 @@ process_package_inline() {
         done
     fi
 
+    # Cleanup
     rm -f "$PACKAGE_FILE"
+    rm -f "$STAGING_DIR"/*.staged 2>/dev/null || true
+    
     log "Package upgrade complete"
 }
 
@@ -165,14 +192,7 @@ main() {
     log "Starting update check..."
 
     ensure_staging_dirs
-
-    # First, process package-based upgrades (new method)
     process_package_upgrade
-
-    # Then, process legacy staged binaries (backwards compatibility)
-    cleanup_stale_staged
-    process_staged_binary "garden-moss"
-    process_staged_binary "garden-rake"
 
     log "Update check complete"
 }

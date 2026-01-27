@@ -157,8 +157,20 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
         .unwrap_or(0);
 
     let disk = resources.as_ref().map(|r| DiskCapabilities {
-        total_gb: r.disk.total_bytes / 1024 / 1024 / 1024,
-        disk_type: garden_common::metrics::system::detect_disk_type_for_mount(&r.disk.path),
+        total_gb: r.storage.iter()
+            .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+            .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
+            .map(|s| s.total_gb)
+            .unwrap_or(0),
+        disk_type: r.storage.iter()
+            .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
+            .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
+            .map(|s| match &s.disk_type {
+                garden_common::DiskType::NVMe => "NVMe".to_string(),
+                garden_common::DiskType::SSD => "SSD".to_string(),
+                garden_common::DiskType::HDD => "HDD".to_string(),
+                garden_common::DiskType::Unknown => "Unknown".to_string(),
+            }),
     });
 
     // Slow detection: GPUs
@@ -191,7 +203,6 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
         },
         gpus,
         disk,
-        storage: vec![],
         swap_mb,
         ai_capabilities: None,
         system_manufacturer,
@@ -250,7 +261,6 @@ pub fn create_skeleton(stone_name: String) -> HardwareCapabilities {
         },
         gpus: vec![],
         disk: None,
-        storage: vec![],
         swap_mb: None,
         ai_capabilities: None,
         system_manufacturer: None,

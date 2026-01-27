@@ -10,9 +10,11 @@
 //! - Archive operations (centralized compression/checksum)
 //! - Harvest storage
 //! - Ceremony journal (crash recovery)
+//! - Adapter registry (external adapters like Cricket)
 //!
 //! No business logic here - pure I/O adapters.
 
+pub mod adapters;
 pub mod api_helpers;
 pub mod auth;
 pub mod ceremony_journal;
@@ -33,6 +35,7 @@ pub mod service;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 
+pub use adapters::AdapterRegistry;
 pub use api_helpers::{error_response, error_codes};
 pub use auth::NoAuth;
 pub use config::MossConfig;

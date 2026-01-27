@@ -66,10 +66,43 @@ pub async fn get_adapter_manifest(
 
 /// POST /api/v1/stone/adapters/:id/command
 /// Proxy command to adapter (5s timeout)
+/// 
+/// If the first arg is "all", broadcasts to all stones in topology AND runs locally.
+/// The "all" keyword is stripped before forwarding to the adapter.
 pub async fn send_adapter_command(
     State(state): State<AppState>,
     Path(adapter_id): Path<String>,
     Json(request): Json<AdapterCommandRequest>,
+) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
+    // Check for "all" broadcast modifier
+    let is_broadcast = request.raw_args.first().map(|s| s == "all").unwrap_or(false);
+    
+    // Strip "all" from args if present
+    let local_args: Vec<String> = if is_broadcast {
+        request.raw_args.iter().skip(1).cloned().collect()
+    } else {
+        request.raw_args.clone()
+    };
+    
+    // Build local request (without "all")
+    let local_request = AdapterCommandRequest::new(&adapter_id, local_args);
+    
+    // Execute locally first
+    let local_result = execute_adapter_command_local(&state, &adapter_id, &local_request).await;
+    
+    // If broadcast, fan out to all other stones
+    if is_broadcast {
+        broadcast_to_topology(&state, &adapter_id, &local_request).await;
+    }
+    
+    local_result
+}
+
+/// Execute adapter command on this stone only
+async fn execute_adapter_command_local(
+    state: &AppState,
+    adapter_id: &str,
+    request: &AdapterCommandRequest,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
     // Get adapter and its assigned port
     let adapter = match state.adapter_registry.get(&adapter_id).await {
@@ -82,15 +115,27 @@ pub async fn send_adapter_command(
         }
     };
     
-    // Check if adapter is running
+    // Auto-start adapter if not running
     if !adapter.is_running() {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(CommandResponse::error(format!(
-                "Adapter '{}' is not running. Start it with: hey tell {} up", 
-                adapter_id, adapter_id
-            ))),
-        ));
+        tracing::info!(adapter_id = %adapter_id, "Adapter not running, auto-starting before command execution");
+        
+        // Get moss endpoint for adapter to connect to
+        let self_entry = state.self_entry.read().await;
+        let moss_endpoint = self_entry.endpoint.clone();
+        drop(self_entry);
+        
+        if let Err(e) = state.adapter_registry.start(&adapter_id, &moss_endpoint).await {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(CommandResponse::error(format!(
+                    "Failed to auto-start adapter '{}': {}", 
+                    adapter_id, e
+                ))),
+            ));
+        }
+        
+        // Give the adapter a moment to initialize
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     
     // Get the pre-assigned port
@@ -165,6 +210,84 @@ pub async fn send_adapter_command(
             }
         }
     }
+}
+
+/// Broadcast adapter command to all other stones in topology
+/// 
+/// Runs in parallel with best-effort delivery. Errors are logged but not propagated.
+async fn broadcast_to_topology(
+    state: &AppState,
+    adapter_id: &str,
+    request: &AdapterCommandRequest,
+) {
+    use crate::domain::topology;
+    
+    // Get our own stone_id to exclude from broadcast
+    let self_id = {
+        let self_entry = state.self_entry.read().await;
+        self_entry.stone_id.clone()
+    };
+    
+    // Get all online stones except self
+    let stones = topology::get_online_stones(&state.topology_cache).await;
+    let other_stones: Vec<_> = stones.into_iter()
+        .filter(|s| s.stone_id != self_id)
+        .collect();
+    
+    if other_stones.is_empty() {
+        tracing::debug!(adapter_id = %adapter_id, "No other stones to broadcast to");
+        return;
+    }
+    
+    tracing::info!(
+        adapter_id = %adapter_id,
+        stone_count = other_stones.len(),
+        args = ?request.raw_args,
+        "Broadcasting adapter command to all stones"
+    );
+    
+    // Fan out requests in parallel
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    
+    let futures: Vec<_> = other_stones.iter().map(|stone| {
+        let client = client.clone();
+        let url = format!("{}/api/v1/stone/adapters/{}/command", 
+            stone.endpoint.trim_end_matches('/'), 
+            adapter_id
+        );
+        let request = request.clone();
+        let stone_name = stone.stone_name.clone();
+        
+        async move {
+            match client.post(&url).json(&request).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::debug!(stone = %stone_name, "Broadcast succeeded");
+                }
+                Ok(resp) => {
+                    tracing::warn!(
+                        stone = %stone_name, 
+                        status = %resp.status(),
+                        "Broadcast failed"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        stone = %stone_name, 
+                        error = %e,
+                        "Broadcast error"
+                    );
+                }
+            }
+        }
+    }).collect();
+    
+    // Execute all in parallel, don't wait for completion to avoid blocking
+    tokio::spawn(async move {
+        futures_util::future::join_all(futures).await;
+    });
 }
 
 /// Response for adapter lifecycle operations

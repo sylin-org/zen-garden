@@ -156,14 +156,13 @@ if (-not $SkipPackage) {
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $packageDir "bin") -Force | Out-Null
     
-    # Copy binaries
+    # Copy binaries (adapters go in bin/adapters/ subdirectory)
     Get-ChildItem $WINDOWS_DIR -File | ForEach-Object {
-        # Adapters go to adapters/, everything else to bin/
         if ($_.BaseName -like "*cricket*") {
-            $adaptersDir = Join-Path $packageDir "adapters"
+            $adaptersDir = Join-Path (Join-Path $packageDir "bin") "adapters"
             New-Item -ItemType Directory -Path $adaptersDir -Force | Out-Null
             Copy-Item $_.FullName $adaptersDir
-            Write-Host "  + adapters\$($_.Name)" -ForegroundColor DarkGray
+            Write-Host "  + bin\adapters\$($_.Name)" -ForegroundColor DarkGray
         } else {
             Copy-Item $_.FullName (Join-Path $packageDir "bin")
             Write-Host "  + bin\$($_.Name)" -ForegroundColor DarkGray
@@ -181,7 +180,7 @@ if (-not $SkipPackage) {
     $components = @{}
     Get-ChildItem $WINDOWS_DIR -File | ForEach-Object {
         $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-        $pathPrefix = if ($_.BaseName -like "*cricket*") { "adapters" } else { "bin" }
+        $pathPrefix = if ($_.BaseName -like "*cricket*") { "bin\adapters" } else { "bin" }
         $components[$_.BaseName] = @{
             path = "$pathPrefix\$($_.Name)"
             sha256 = $hash

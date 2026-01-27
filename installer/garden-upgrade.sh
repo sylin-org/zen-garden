@@ -53,17 +53,26 @@ if [[ -d "$STAGING_DIR/scripts" ]]; then
     done
 fi
 
-# Install binaries (moss, rake, lantern, etc.)
+# Install binaries (moss, rake, lantern, etc.) and adapters (cricket, etc.)
 if [[ -d "$STAGING_DIR/bin" ]]; then
     log "Installing binaries..."
+    # Copy recursively to preserve bin/adapters/ subdirectory
+    cp -r "$STAGING_DIR/bin/"* "$TARGET_BIN/"
+    # Set permissions on all files recursively
+    find "$TARGET_BIN" -type f -exec chmod 755 {} \;
+    # Log what was installed
     for binary in "$STAGING_DIR/bin/"*; do
         if [[ -f "$binary" ]]; then
-            name=$(basename "$binary")
-            cp "$binary" "$TARGET_BIN/$name"
-            chmod 755 "$TARGET_BIN/$name"
-            log "  Installed $name"
+            log "  Installed $(basename "$binary")"
         fi
     done
+    if [[ -d "$STAGING_DIR/bin/adapters" ]]; then
+        for adapter in "$STAGING_DIR/bin/adapters/"*; do
+            if [[ -f "$adapter" ]]; then
+                log "  Installed adapters/$(basename "$adapter")"
+            fi
+        done
+    fi
 fi
 
 # Cleanup staging

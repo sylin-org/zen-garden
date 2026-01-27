@@ -117,17 +117,23 @@ process_package_inline() {
         return 1
     fi
 
-    # Deploy binaries
+    # Deploy binaries and adapters (copy recursively to preserve bin/adapters/)
     if [[ -d "$pkg_dir/bin" ]]; then
+        cp -r "$pkg_dir/bin/"* "$TARGET_DIR/"
+        find "$TARGET_DIR" -type f -exec chmod 755 {} \;
+        # Log what was installed
         for binary in "$pkg_dir/bin/"*; do
             if [[ -f "$binary" ]]; then
-                local name
-                name=$(basename "$binary")
-                cp "$binary" "$TARGET_DIR/$name"
-                chmod 755 "$TARGET_DIR/$name"
-                log "Installed $name"
+                log "Installed $(basename "$binary")"
             fi
         done
+        if [[ -d "$pkg_dir/bin/adapters" ]]; then
+            for adapter in "$pkg_dir/bin/adapters/"*; do
+                if [[ -f "$adapter" ]]; then
+                    log "Installed adapters/$(basename "$adapter")"
+                fi
+            done
+        fi
     fi
 
     # Deploy manifests

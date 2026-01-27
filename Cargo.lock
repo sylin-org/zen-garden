@@ -1138,6 +1138,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "garden-adapter-sdk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "clap",
+ "futures-util",
+ "garden-common",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "garden-build-utils"
 version = "0.1.0"
 
@@ -1182,10 +1200,10 @@ name = "garden-cricket"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
  "clap",
  "crossterm",
  "futures-util",
+ "garden-adapter-sdk",
  "garden-common",
  "notify",
  "reqwest 0.11.27",

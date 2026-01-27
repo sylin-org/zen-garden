@@ -3,6 +3,12 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-27
+- **garden-adapter-sdk crate** - shared infrastructure for adapters (DDD/SoC)
+  - Created `src/adapter-sdk/` with CommandHandler trait, AdapterRuntime, SSE client
+  - Adapters focus on domain logic only, SDK handles: HTTP server, shutdown, signals
+  - Re-exports: AdapterConfig, CommandResult, EventHandler, SseEvent, async_trait
+  - Standard endpoints: POST /command, POST /shutdown, GET /health
+  - Refactored Cricket to use SDK - removed 200+ lines of boilerplate (command.rs, sse.rs)
 - **Embedded asset framework for Moss** - manifests and adapters compiled into binary for portability
   - Added `rust-embed` v8 dependency to Moss for compile-time asset embedding
   - Created `src/moss/embedded/manifests/` - moved manifests from repo root for binary embedding

@@ -12,41 +12,232 @@ Adapters are standalone executables that:
 2. Expose an HTTP command server on that port
 3. Subscribe to Stone presence events via SSE (optional)
 4. Execute commands and return results
+5. Support graceful shutdown via `/shutdown` endpoint
 
-**Language:** Any language supporting HTTP servers (Rust, Python, Go, Node.js, etc.)
+**Language:** Rust (recommended, uses `garden-adapter-sdk`) or any language supporting HTTP servers
 
 ---
 
-## Quick Start
+## Quick Start with Rust SDK
 
-### 1. Minimal Adapter (Python)
+The `garden-adapter-sdk` crate provides all common adapter infrastructure:
+
+```rust
+use garden_adapter_sdk::prelude::*;
+use std::sync::Arc;
+
+// 1. Define your manifest
+fn build_manifest() -> CommandManifest {
+    CommandManifest::new("my-adapter", "My Adapter", "0.1.0", "Does cool things")
+        .command(CommandDef::new("hello", "Say hello"))
+        .command(
+            CommandDef::new("greet", "Greet someone")
+                .arg(CommandArg::required_string("name", "Name to greet"))
+        )
+}
+
+// 2. Implement command handler
+struct MyHandler;
+
+#[async_trait]
+impl CommandHandler for MyHandler {
+    async fn handle(&self, args: &[String]) -> CommandResult {
+        let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
+        let cmd_args = if args.len() > 1 { &args[1..] } else { &[] };
+        
+        match cmd {
+            "hello" => CommandResult::success("Hello, World!"),
+            "greet" => {
+                let name = cmd_args.first().map(|s| s.as_str()).unwrap_or("stranger");
+                CommandResult::success(format!("Hello, {}!", name))
+            }
+            "" => CommandResult::error("No command provided")
+                .with_suggestions(vec!["hello".into(), "greet <name>".into()]),
+            _ => CommandResult::error(format!("Unknown command: {}", cmd)),
+        }
+    }
+    
+    async fn on_shutdown(&self) {
+        // Optional: cleanup resources
+        tracing::info!("Cleaning up...");
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Handle --dump-commands before anything else
+    check_dump_commands(&build_manifest());
+    
+    // Initialize logging
+    garden_adapter_sdk::runtime::init_tracing();
+    
+    // Parse CLI
+    let config = AdapterConfig::from_cli();
+    
+    // Run adapter (handles HTTP server, shutdown, etc.)
+    AdapterRuntime::new(config, "my-adapter")
+        .command_handler(MyHandler)
+        .run()
+        .await
+}
+```
+
+**Cargo.toml:**
+```toml
+[dependencies]
+garden-adapter-sdk = { path = "../adapter-sdk" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+```
+
+---
+
+## SDK Features
+
+The `garden-adapter-sdk` provides:
+
+| Module | Purpose |
+|--------|---------|
+| `cli` | Standard CLI args (`--stone`, `--port`, `--dump-commands`) |
+| `handler` | `CommandHandler` trait and `CommandResult` type |
+| `server` | HTTP server with `/command`, `/shutdown`, `/health` |
+| `sse` | SSE client for presence events |
+| `runtime` | Main loop, shutdown coordination, signal handling |
+
+### Command Handler Trait
+
+```rust
+#[async_trait]
+pub trait CommandHandler: Send + Sync + 'static {
+    /// Handle a command from Moss
+    async fn handle(&self, args: &[String]) -> CommandResult;
+    
+    /// Called before shutdown (optional override)
+    async fn on_shutdown(&self) {}
+}
+```
+
+### SSE Event Handler
+
+```rust
+#[async_trait]
+pub trait EventHandler: Send + Sync + 'static {
+    async fn on_event(&self, event: SseEvent);
+}
+
+// Usage:
+struct MyEventHandler { mixer: Arc<Mixer> }
+
+#[async_trait]
+impl EventHandler for MyEventHandler {
+    async fn on_event(&self, event: SseEvent) {
+        if event.event_type == "stone-online" {
+            self.mixer.play("welcome.wav").await;
+        }
+    }
+}
+
+AdapterRuntime::new(config, "my-adapter")
+    .command_handler(cmd_handler)
+    .event_handler(event_handler)  // Optional
+    .run()
+    .await
+```
+
+---
+
+## Protocol Requirements
+
+### 1. CLI Arguments
+
+**Required flags:**
+- `--stone <url>` - Moss HTTP endpoint (e.g., `http://localhost:7185`)
+- `--port <port>` - Assigned port from Moss (e.g., `7187`)
+- `--dump-commands` - Output JSON manifest to stdout and exit
+
+---
+
+### 2. HTTP Endpoints (Required)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/command` | Execute adapter commands |
+| `POST` | `/shutdown` | Graceful shutdown (called by Moss before upgrades) |
+| `GET` | `/health` | Health check |
+
+**POST /command Request:**
+```json
+{ "args": ["command", "arg1", "arg2"] }
+```
+
+**POST /command Response:**
+```json
+{ "success": true, "output": "Command executed" }
+{ "success": false, "output": "Error message", "suggestions": ["try this"] }
+```
+
+**POST /shutdown Response:**
+```json
+{ "status": "shutting_down", "adapter": "my-adapter" }
+```
+
+The `/shutdown` endpoint is critical for graceful upgrades. When Moss receives a deployment package, it calls `/shutdown` on all running adapters before installing new binaries.
+
+---
+
+### 3. Timeout
+
+Commands must respond within **5 seconds**. Moss will timeout and return error if adapter takes longer.
+
+---
+
+## Quick Start (Non-Rust)
+
+### Python Minimal Adapter
 
 ```python
 #!/usr/bin/env python3
 import json
 import sys
+import signal
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+
+shutdown_flag = threading.Event()
 
 class AdapterHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        if self.path == '/command':
-            content_length = int(self.headers['Content-Length'])
-            body = self.rfile.read(content_length)
-            request = json.loads(body)
-            
-            # Execute command
-            args = request.get('args', [])
-            result = self.execute_command(args)
-            
-            # Return result
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_json(200, {'status': 'healthy', 'adapter': 'my-adapter'})
         else:
             self.send_response(404)
             self.end_headers()
+    
+    def do_POST(self):
+        if self.path == '/command':
+            body = self.read_body()
+            args = body.get('args', [])
+            result = self.execute_command(args)
+            self.send_json(200, result)
+        elif self.path == '/shutdown':
+            self.send_json(200, {
+                'status': 'shutting_down',
+                'adapter': 'my-adapter'
+            })
+            # Signal main thread to shutdown
+            shutdown_flag.set()
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def read_body(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        return json.loads(self.rfile.read(content_length))
+    
+    def send_json(self, status, data):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
     
     def execute_command(self, args):
         if not args:
@@ -59,43 +250,38 @@ class AdapterHandler(BaseHTTPRequestHandler):
             return {'success': False, 'output': f'Unknown command: {command}'}
 
 def main():
-    # Parse CLI arguments
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--stone', required=True, help='Moss endpoint')
-    parser.add_argument('--port', type=int, required=True, help='Assigned port')
-    parser.add_argument('--dump-commands', action='store_true', 
-                        help='Output manifest and exit')
+    parser.add_argument('--stone', help='Moss endpoint')
+    parser.add_argument('--port', type=int, help='Assigned port')
+    parser.add_argument('--dump-commands', action='store_true')
     args = parser.parse_args()
     
-    # Handle --dump-commands
     if args.dump_commands:
         manifest = {
+            'id': 'my-adapter',
             'name': 'My Adapter',
             'version': '0.1.0',
             'description': 'Example adapter',
-            'commands': [
-                {
-                    'name': 'hello',
-                    'description': 'Say hello',
-                    'parameters': [],
-                    'examples': [
-                        {
-                            'command': 'hello',
-                            'description': 'Basic greeting',
-                            'expected_output': 'Hello from my adapter!'
-                        }
-                    ]
-                }
-            ]
+            'commands': [{'name': 'hello', 'description': 'Say hello'}]
         }
         print(json.dumps(manifest))
         sys.exit(0)
     
-    # Start HTTP server
-    server = HTTPServer(('127.0.0.1', args.port), AdapterHandler)
+    if not args.stone or not args.port:
+        print('--stone and --port required', file=sys.stderr)
+        sys.exit(1)
+    
+    server = HTTPServer(('0.0.0.0', args.port), AdapterHandler)
     print(f'Adapter running on port {args.port}', file=sys.stderr)
-    server.serve_forever()
+    
+    # Run server in thread, check shutdown flag
+    server_thread = threading.Thread(target=server.serve_forever)
+    server_thread.start()
+    
+    shutdown_flag.wait()  # Block until /shutdown called
+    server.shutdown()
+    print('Adapter stopped', file=sys.stderr)
 
 if __name__ == '__main__':
     main()

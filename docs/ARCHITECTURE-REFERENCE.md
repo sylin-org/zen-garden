@@ -86,11 +86,26 @@ Rake → POST /api/v1/stone/adapters/{id}/command
   → Adapter executes and returns result (5s timeout)
 ```
 
+**Required Adapter Endpoints:**
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/command` | Execute commands from Moss |
+| `POST` | `/shutdown` | Graceful shutdown (called before upgrades) |
+| `GET` | `/health` | Health check |
+
 **Rules:**
 - ❌ **NEVER** hardcode adapter ports (use ledger)
 - ❌ **NEVER** adopt non-adapter ports (ledger is source of truth)
 - ✅ **ALWAYS** pass `--port` during `--dump-commands` and startup
 - ✅ **ALWAYS** route commands through Moss (never direct to adapters)
+- ✅ **ALWAYS** implement `/shutdown` for graceful upgrade support
+
+**Adapter SDK (garden-adapter-sdk):**
+For Rust adapters, use the SDK which provides all standard infrastructure:
+- `AdapterConfig` - CLI parsing (`--stone`, `--port`, `--dump-commands`)
+- `CommandHandler` trait - Implement to handle commands
+- `AdapterRuntime` - HTTP server, shutdown coordination, signals
+- `SseClient` - Optional presence event subscription
 
 **Pattern:**
 ```rust
@@ -107,10 +122,13 @@ let response = client.post(&url)
     .json(&command_request)
     .timeout(Duration::from_millis(ADAPTER_COMMAND_TIMEOUT_MS))
     .send().await?;
+
+// Graceful shutdown before upgrade (infra/adapters.rs)
+adapter_registry.stop_all().await;  // Calls /shutdown on each adapter
 ```
 
 **Why:** Centralizes port management, prevents port conflicts, enables adapter hot-reload.  
-**Reference:** [ADAPTER-COMMAND-PROTOCOL](specs/ADAPTER-COMMAND-PROTOCOL.md), [ADAPTER-SERVICE-REGISTRY](specs/ADAPTER-SERVICE-REGISTRY.md)
+**Reference:** [ADAPTER-COMMAND-PROTOCOL](specs/ADAPTER-COMMAND-PROTOCOL.md), [ADAPTER-SERVICE-REGISTRY](specs/ADAPTER-SERVICE-REGISTRY.md), [adapter-development.md](guides/adapter-development.md)
 
 ### Discovery Transport (Multicast-First)
 **UDP discovery uses multicast-first strategy to solve multi-homed system failures.**

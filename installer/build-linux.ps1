@@ -200,7 +200,7 @@ if ($UseDocker) {
             Write-Host "  Build Number: $env:CARGO_BUILD_NUMBER" -ForegroundColor Cyan
         }
         
-        # Build all three binaries in one container run for efficiency
+        # Build all four binaries in one container run for efficiency
         $buildArgs = @("cargo", "build", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
@@ -211,7 +211,7 @@ if ($UseDocker) {
         else {
             $buildArgs += "--release"
         }
-        $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake")
+        $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake", "--bin", "garden-cricket")
         
         $containerName = "zen-garden-builder-container"
         
@@ -272,12 +272,34 @@ if ($UseDocker) {
         # Copy binaries from Docker container to dist/linux/
         # Use docker cp because volume mount may not reflect changes immediately on Windows
         Write-Host "  → Copying binaries from container..." -ForegroundColor DarkGray
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-lantern" "$LINUX_DIR\garden-lantern"
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-moss" "$LINUX_DIR\garden-moss"
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-rake" "$LINUX_DIR\garden-rake"
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-cricket" "$LINUX_DIR\garden-cricket"
         
-        if ($LASTEXITCODE -ne 0) { throw "Failed to copy binaries from container" }
+        $copyFailed = $false
+        
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-lantern" "$LINUX_DIR\garden-lantern" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    ✗ Failed to copy garden-lantern" -ForegroundColor Red
+            $copyFailed = $true
+        }
+        
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-moss" "$LINUX_DIR\garden-moss" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    ✗ Failed to copy garden-moss" -ForegroundColor Red
+            $copyFailed = $true
+        }
+        
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-rake" "$LINUX_DIR\garden-rake" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    ✗ Failed to copy garden-rake" -ForegroundColor Red
+            $copyFailed = $true
+        }
+        
+        docker cp "${containerName}:/build/target/${buildProfile}/garden-cricket" "$LINUX_DIR\garden-cricket" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    ✗ Failed to copy garden-cricket" -ForegroundColor Red
+            $copyFailed = $true
+        }
+        
+        if ($copyFailed) { throw "Failed to copy one or more binaries from container" }
         
         Write-Host "  ✓ Linux binaries built`n" -ForegroundColor Green
         

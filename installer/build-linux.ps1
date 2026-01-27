@@ -55,6 +55,7 @@
 
 [CmdletBinding()]
 param(
+    [string]$Version,
     [switch]$DebugBuild,
     [switch]$Fast,
     [switch]$ForceRebuild,
@@ -79,10 +80,6 @@ $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
 $LINUX_DIR = Join-Path $DIST_DIR "linux"
 $IMAGE_NAME = "zen-garden-builder:latest"
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Distribution Build                    ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
-
 # Detect platform (handle Windows PowerShell which lacks $PSVersionTable.Platform)
 $IsLinuxHost = $false
 if ($PSVersionTable.PSVersion.Major -ge 6) {
@@ -92,25 +89,52 @@ if ($PSVersionTable.PSVersion.Major -ge 6) {
 $IsWslHost = $null -ne $env:WSL_DISTRO_NAME
 $UseDocker = -not ($IsLinuxHost -and $Native)
 
-Write-Host "Platform Detection:" -ForegroundColor Yellow
-Write-Host "  OS: $(if ($RunningOnWindows) { 'Windows' } elseif ($IsLinuxHost) { 'Linux' } else { 'Unix' })"
-if ($IsWslHost) { Write-Host "  Environment: WSL ($env:WSL_DISTRO_NAME)" }
-Write-Host "  Build Method: $(if ($UseDocker) { 'Docker Container' } else { 'Native' })"
-Write-Host ""
-
 # Create dist directories
 New-Item -ItemType Directory -Force -Path $LINUX_DIR | Out-Null
 
-# Get version from parent script or generate default
-if (-not $env:GARDEN_VERSION) {
+# Use version from parameter if provided, otherwise generate default
+if ($Version) {
+    $env:GARDEN_VERSION = $Version
+    # Extract build number from version (assumes format: major.minor.buildNumber)
+    $parts = $Version.Split('.')
+    if ($parts.Length -ge 3) {
+        $env:BUILD_NUMBER = $parts[2]
+        $env:CARGO_BUILD_NUMBER = $parts[2]
+    }
+} elseif (-not $env:GARDEN_VERSION) {
     $revision = (Get-Date).ToString("yyyyMMddHHmm")
     $env:GARDEN_VERSION = "0.1.$revision"
     $env:BUILD_NUMBER = $revision
-    $env:CARGO_BUILD_NUMBER = $revision  # For Rust build.rs
+    $env:CARGO_BUILD_NUMBER = $revision
     Write-Host "⚠ Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
     Write-Host ""
 }
 $version = $env:GARDEN_VERSION
+
+# Determine build profile description
+$buildProfile = if ($DebugBuild) { "debug" } elseif ($Fast) { "fast-release" } else { "release" }
+$buildTypeDesc = switch ($buildProfile) {
+    "debug" { "Debug (fastest compile, largest binary)" }
+    "fast-release" { "Fast-Release (thin LTO, ~40% faster compile)" }
+    default { "Release (full LTO, smallest binary)" }
+}
+
+# Determine parallel jobs
+$parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
+
+Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║   Zen Garden Linux Build                           ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+
+Write-Host "Configuration:" -ForegroundColor Yellow
+Write-Host "  Platform: Linux"
+Write-Host "  Version: $version"
+Write-Host "  Build Type: $buildTypeDesc"
+Write-Host "  Parallel Jobs: $parallelJobs"
+Write-Host "  Output Dir: $LINUX_DIR"
+Write-Host "  Build Method: $(if ($UseDocker) { 'Docker Container' } else { 'Native' })"
+if ($IsWslHost) { Write-Host "  Environment: WSL ($env:WSL_DISTRO_NAME)" }
+Write-Host ""
 
 if ($UseDocker) {
     # Docker-based build (Windows, or Linux with Docker preference)

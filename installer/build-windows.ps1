@@ -38,6 +38,7 @@
 
 [CmdletBinding()]
 param(
+    [string]$Version,
     [switch]$DebugBuild,
     [switch]$Fast,
     [switch]$SkipTests,
@@ -78,12 +79,20 @@ $buildProfile = if ($DebugBuild) {
     "release"
 }
 
-# Get version from parent script or generate default
-if (-not $env:GARDEN_VERSION) {
+# Use version from parameter if provided, otherwise generate default
+if ($Version) {
+    $env:GARDEN_VERSION = $Version
+    # Extract build number from version (assumes format: major.minor.buildNumber)
+    $parts = $Version.Split('.')
+    if ($parts.Length -ge 3) {
+        $env:BUILD_NUMBER = $parts[2]
+        $env:CARGO_BUILD_NUMBER = $parts[2]
+    }
+} elseif (-not $env:GARDEN_VERSION) {
     $revision = (Get-Date).ToString("yyyyMMddHHmm")
     $env:GARDEN_VERSION = "0.1.$revision"
     $env:BUILD_NUMBER = $revision
-    $env:CARGO_BUILD_NUMBER = $revision  # For Rust build.rs
+    $env:CARGO_BUILD_NUMBER = $revision
     Write-Host "⚠ Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
 }
 $version = $env:GARDEN_VERSION

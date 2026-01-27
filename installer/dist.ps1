@@ -1,24 +1,10 @@
 ﻿<#
 .SYNOPSIS
-    Build complete Zen Garden distribution (orchestrator)
+    Master distribution coordinator for Zen Garden
 
 .DESCRIPTION
-    Minimal orchestrator that:
-    1. Loads version from version.json
-    2. Calls dist-linux.ps1 for Linux build
-    3. Calls dist-windows.ps1 for Windows build
-    4. Summarizes results
-
-    All platform-specific logic lives in dist-linux.ps1 and dist-windows.ps1.
-
-.PARAMETER DebugBuild
-    Build debug binaries (fastest compile, largest size)
-
-.PARAMETER Release
-    Build full-release binaries (full LTO, smallest size)
-
-.PARAMETER Fast
-    Use fast-release profile (default, thin LTO)
+    Coordinates Linux and Windows builds, consolidates packages.
+    All configuration is read from dist.json.
 
 .PARAMETER SkipLinux
     Skip Linux build
@@ -26,11 +12,14 @@
 .PARAMETER SkipWindows
     Skip Windows build
 
-.PARAMETER SkipTests
-    Skip tests in Windows build
+.PARAMETER DebugBuild
+    Build debug binaries
 
-.PARAMETER SkipPackages
-    Skip creating deployment packages
+.PARAMETER Release
+    Build full-release binaries (full LTO)
+
+.PARAMETER Fast
+    Use fast-release profile (default, thin LTO)
 
 .PARAMETER ForceRebuild
     Force rebuild of Docker container (Linux only)
@@ -40,26 +29,20 @@
 
 .EXAMPLE
     .\dist.ps1
-    # Default: fast-release, all platforms
+    Build both platforms with fast-release profile
 
 .EXAMPLE
-    .\dist.ps1 -Release
-    # Full LTO release (smallest binaries)
-
-.EXAMPLE
-    .\dist.ps1 -SkipWindows
-    # Linux only
+    .\dist.ps1 -SkipWindows -Release
+    Build Linux only with full release profile
 #>
 
 [CmdletBinding()]
 param(
+    [switch]$SkipLinux,
+    [switch]$SkipWindows,
     [switch]$DebugBuild,
     [switch]$Release,
     [switch]$Fast,
-    [switch]$SkipLinux,
-    [switch]$SkipWindows,
-    [switch]$SkipTests,
-    [switch]$SkipPackages,
     [switch]$ForceRebuild,
     [int]$Jobs = 0
 )
@@ -67,204 +50,162 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
-$DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
+# Import configuration module
+Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
 
-# Load version from version.json
-$versionFile = Join-Path $WORKSPACE_ROOT "version.json"
-if (-not (Test-Path $versionFile)) {
-    Write-Error "version.json not found at $versionFile"
+# Load configuration
+$config = Get-DistConfig
+
+# Generate version
+$versionFile = Join-Path $config.workspace.root "version.json"
+$versionData = Get-Content $versionFile | ConvertFrom-Json
+$buildNumber = Get-Date -Format "yyyyMMddHHmm"
+$version = "$($versionData.major).$($versionData.minor).$buildNumber"
+
+Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║  Zen Garden Distribution Build                     ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "Version: $version" -ForegroundColor Cyan
+Write-Host "Configuration: dist.json" -ForegroundColor Cyan
+Write-Host ""
+
+# Determine build profile
+$profile = if ($DebugBuild) { "debug" } 
+           elseif ($Release) { "release" } 
+           else { "fast-release" }
+
+Write-Host "Build Profile: $profile" -ForegroundColor Yellow
+Write-Host ""
+
+# Track build results
+$buildErrors = @()
+$builtPlatforms = @()
+
+# Build Linux
+if (-not $SkipLinux) {
+    Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host " Linux Build" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+    
+    $linuxScript = Join-Path $PSScriptRoot $config.linux.buildScript
+    try {
+        & $linuxScript `
+            -Version $version `
+            -DebugBuild:$DebugBuild `
+            -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
+            -ForceRebuild:$ForceRebuild `
+            -Jobs $Jobs
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "Linux build failed with exit code $LASTEXITCODE"
+        }
+        
+        $builtPlatforms += "linux"
+        Write-Host "✓ Linux build complete`n" -ForegroundColor Green
+    }
+    catch {
+        $buildErrors += "Linux: $_"
+        Write-Host "✗ Linux build failed: $_`n" -ForegroundColor Red
+    }
+}
+
+# Build Windows
+if (-not $SkipWindows) {
+    Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host " Windows Build" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+    
+    $windowsScript = Join-Path $PSScriptRoot $config.windows.buildScript
+    try {
+        & $windowsScript `
+            -Version $version `
+            -DebugBuild:$DebugBuild `
+            -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
+            -Jobs $Jobs
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "Windows build failed with exit code $LASTEXITCODE"
+        }
+        
+        $builtPlatforms += "windows"
+        Write-Host "✓ Windows build complete`n" -ForegroundColor Green
+    }
+    catch {
+        $buildErrors += "Windows: $_"
+        Write-Host "✗ Windows build failed: $_`n" -ForegroundColor Red
+    }
+}
+
+# Check for build errors
+if ($buildErrors.Count -gt 0) {
+    Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Red
+    Write-Host "║  Build Failed                                      ║" -ForegroundColor Red
+    Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Red
+    foreach ($error in $buildErrors) {
+        Write-Host "  ✗ $error" -ForegroundColor Red
+    }
     exit 1
 }
 
-$versionData = Get-Content $versionFile | ConvertFrom-Json
-$major = $versionData.major
-$minor = $versionData.minor
-$revision = (Get-Date).ToString("yyyyMMddHHmm")
-$version = "$major.$minor.$revision"
-
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Distribution Build                    ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
-
-Write-Host "Version: $version" -ForegroundColor Cyan
-Write-Host "  Phase: $major.$minor - $($versionData.description)" -ForegroundColor DarkGray
-Write-Host "  Moment: $revision ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))" -ForegroundColor DarkGray
-Write-Host ""
-
-Write-Host "Platform Selection:" -ForegroundColor Yellow
-Write-Host "  Linux Build: $(if ($SkipLinux) { '❌ Skipped' } else { '✓ Enabled' })"
-Write-Host "  Windows Build: $(if ($SkipWindows) { '❌ Skipped' } else { '✓ Enabled' })"
-Write-Host ""
-
-# Create dist directory
-New-Item -ItemType Directory -Force -Path $DIST_DIR | Out-Null
-
-$buildErrors = @()
-
-# Set environment variable for build number
-$env:CARGO_BUILD_NUMBER = $revision
-
-# Prepare common arguments
-$commonArgs = @{
-    Version = $version
-    Description = $versionData.description
-}
-if ($DebugBuild) { $commonArgs.Add('DebugBuild', $true) }
-if ($Release) { $commonArgs.Add('Release', $true) }
-if ($Fast -or (-not $DebugBuild -and -not $Release)) { $commonArgs.Add('Fast', $true) }
-if ($SkipPackages) { $commonArgs.Add('SkipPackage', $true) }
-if ($Jobs -gt 0) { $commonArgs.Add('Jobs', $Jobs) }
-
-$linuxScript = Join-Path $PSScriptRoot "dist-linux.ps1"
-$windowsScript = Join-Path $PSScriptRoot "dist-windows.ps1"
-
-$linuxArgs = $commonArgs.Clone()
-if ($ForceRebuild) { $linuxArgs.Add('ForceRebuild', $true) }
-
-$windowsArgs = $commonArgs.Clone()
-if ($SkipTests) { $windowsArgs.Add('SkipTests', $true) }
-
-# Sequential builds
-if (-not $SkipLinux) {
-    try {
-        & $linuxScript @linuxArgs
-        if ($LASTEXITCODE -ne 0) {
-            $buildErrors += "Linux build failed"
-        }
-    } catch {
-        Write-Host "✗ Linux build failed: $_" -ForegroundColor Red
-        $buildErrors += "Linux build failed: $_"
-    }
+if ($builtPlatforms.Count -eq 0) {
+    Write-Host "No platforms selected for build" -ForegroundColor Yellow
+    exit 0
 }
 
-if (-not $SkipWindows) {
-    try {
-        & $windowsScript @windowsArgs
-        if ($LASTEXITCODE -ne 0) {
-        $buildErrors += "Windows build failed"
-    }
-} catch {
-        Write-Host "✗ Windows build failed: $_" -ForegroundColor Red
-        $buildErrors += "Windows build failed: $_"
-    }
-}
+# Consolidate packages
+Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host " Package Consolidation" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
 
-# Consolidate packages after successful builds
-if ($buildErrors.Count -eq 0 -and -not $SkipPackages) {
-    Write-Host "`nConsolidating packages..." -ForegroundColor Cyan
+# Clean and recreate packages directory
+Write-Host "Cleaning packages directory..." -ForegroundColor Yellow
+if (Test-Path $config.packages.outputDir) {
+    Remove-Item $config.packages.outputDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $config.packages.outputDir -Force | Out-Null
+
+$packagesMoved = 0
+
+# Move Linux package
+if ($builtPlatforms -contains "linux") {
+    $linuxStaging = $config.staging.linux -replace '\$\{TEMP\}', $env:TEMP
+    $linuxPackage = Get-ChildItem $linuxStaging -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
     
-    $packagesDir = Join-Path $DIST_DIR "packages"
-    $linuxStagingDir = Join-Path $DIST_DIR "staging\linux"
-    $windowsStagingDir = Join-Path $DIST_DIR "staging\windows"
-    
-    # Collect staged packages
-    $stagedPackages = @()
-    if (-not $SkipLinux -and (Test-Path $linuxStagingDir)) {
-        $stagedPackages += @(Get-ChildItem $linuxStagingDir -File -ErrorAction SilentlyContinue)
-    }
-    if (-not $SkipWindows -and (Test-Path $windowsStagingDir)) {
-        $stagedPackages += @(Get-ChildItem $windowsStagingDir -File -ErrorAction SilentlyContinue)
-    }
-    
-    # Only clean and consolidate if we have new packages
-    if ($stagedPackages.Count -gt 0) {
-        # Clean dist/packages directory (remove all old packages)
-        if (Test-Path $packagesDir) {
-            $oldPackages = @(Get-ChildItem $packagesDir -File -ErrorAction SilentlyContinue)
-            if ($oldPackages.Count -gt 0) {
-                Write-Host "  Cleaning $($oldPackages.Count) old package(s)..." -ForegroundColor DarkGray
-                Remove-Item $packagesDir\* -Recurse -Force -ErrorAction Stop
-            }
-        } else {
-            New-Item -ItemType Directory -Force -Path $packagesDir | Out-Null
-        }
-        
-        # Move staged packages to final location
-        $packagesMoved = 0
-        if (-not $SkipLinux -and (Test-Path $linuxStagingDir)) {
-            Get-ChildItem $linuxStagingDir -File | ForEach-Object {
-                Move-Item $_.FullName $packagesDir -Force
-                $sizeMB = [math]::Round($_.Length / 1MB, 2)
-                Write-Host "  ✓ $($_.Name) ($sizeMB MB)" -ForegroundColor Green
-                $packagesMoved++
-            }
-            Remove-Item $linuxStagingDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        
-        if (-not $SkipWindows -and (Test-Path $windowsStagingDir)) {
-            Get-ChildItem $windowsStagingDir -File | ForEach-Object {
-                Move-Item $_.FullName $packagesDir -Force
-                $sizeMB = [math]::Round($_.Length / 1MB, 2)
-                Write-Host "  ✓ $($_.Name) ($sizeMB MB)" -ForegroundColor Green
-                $packagesMoved++
-            }
-            Remove-Item $windowsStagingDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        
-        if ($packagesMoved -gt 0) {
-            Write-Host "`n✓ $packagesMoved package(s) ready in dist/packages" -ForegroundColor Green
-        }
+    if ($linuxPackage) {
+        Move-Item $linuxPackage.FullName $config.packages.outputDir -Force
+        $sizeMB = [math]::Round($linuxPackage.Length / 1MB, 2)
+        Write-Host "  ✓ $($linuxPackage.Name) ($sizeMB MB)" -ForegroundColor Green
+        $packagesMoved++
     } else {
-        Write-Host "  No new packages to consolidate" -ForegroundColor Yellow
+        Write-Warning "Linux package not found in staging"
     }
+}
+
+# Move Windows package
+if ($builtPlatforms -contains "windows") {
+    $windowsStaging = $config.staging.windows -replace '\$\{TEMP\}', $env:TEMP
+    $windowsPackage = Get-ChildItem $windowsStaging -Filter "*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+    
+    if ($windowsPackage) {
+        Move-Item $windowsPackage.FullName $config.packages.outputDir -Force
+        $sizeMB = [math]::Round($windowsPackage.Length / 1MB, 2)
+        Write-Host "  ✓ $($windowsPackage.Name) ($sizeMB MB)" -ForegroundColor Green
+        $packagesMoved++
+    } else {
+        Write-Warning "Windows package not found in staging"
+    }
+}
+
+if ($packagesMoved -eq 0) {
+    Write-Host "⚠️  No packages found to consolidate" -ForegroundColor Yellow
+    exit 1
 }
 
 # Summary
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor $(if ($buildErrors.Count -gt 0) { "Yellow" } else { "Green" })
-Write-Host "║   Build Summary                                    ║" -ForegroundColor $(if ($buildErrors.Count -gt 0) { "Yellow" } else { "Green" })
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor $(if ($buildErrors.Count -gt 0) { "Yellow" } else { "Green" })
-
-if ($buildErrors.Count -gt 0) {
-    Write-Host "Build completed with errors:" -ForegroundColor Yellow
-    foreach ($buildError in $buildErrors) {
-        Write-Host "  ✗ $buildError" -ForegroundColor Red
-    }
-    Write-Host ""
-    exit 1
-}
-
-Write-Host "Distribution artifacts:" -ForegroundColor Cyan
-
-$linuxDir = Join-Path $DIST_DIR "linux"
-$windowsDir = Join-Path $DIST_DIR "windows"
-$packagesDir = Join-Path $DIST_DIR "packages"
-$linuxArtifacts = Get-ChildItem $linuxDir -File -ErrorAction SilentlyContinue
-$windowsArtifacts = Get-ChildItem $windowsDir -File -ErrorAction SilentlyContinue
-$packageArtifacts = Get-ChildItem $packagesDir -File -ErrorAction SilentlyContinue
-
-if ($linuxArtifacts) {
-    Write-Host "`n  Linux ($linuxDir):" -ForegroundColor Cyan
-    $linuxArtifacts | ForEach-Object {
-        $sizeMB = [math]::Round($_.Length / 1MB, 2)
-        $sizeStr = if ($sizeMB -lt 1) { "$([math]::Round($_.Length / 1KB, 0)) KB" } else { "$sizeMB MB" }
-        Write-Host ("    ✓ {0,-18} {1,10}" -f $_.Name, $sizeStr) -ForegroundColor Green
-    }
-}
-
-if ($windowsArtifacts) {
-    Write-Host "`n  Windows ($windowsDir):" -ForegroundColor Cyan
-    $windowsArtifacts | ForEach-Object {
-        $sizeMB = [math]::Round($_.Length / 1MB, 2)
-        $sizeStr = if ($sizeMB -lt 1) { "$([math]::Round($_.Length / 1KB, 0)) KB" } else { "$sizeMB MB" }
-        Write-Host ("    ✓ {0,-18} {1,10}" -f $_.Name, $sizeStr) -ForegroundColor Green
-    }
-}
-
-if ($packageArtifacts) {
-    Write-Host "`n  Packages ($packagesDir):" -ForegroundColor Cyan
-    $packageArtifacts | ForEach-Object {
-        $sizeMB = [math]::Round($_.Length / 1MB, 2)
-        $sizeStr = if ($sizeMB -lt 1) { "$([math]::Round($_.Length / 1KB, 0)) KB" } else { "$sizeMB MB" }
-        Write-Host ("    ✓ {0,-35} {1,10}" -f $_.Name, $sizeStr) -ForegroundColor Green
-    }
-}
-
-Write-Host "`nNext steps:" -ForegroundColor Yellow
-if ($packageArtifacts) {
-    Write-Host "  cd installer; .\push2all.ps1 -UsePackage" -ForegroundColor Cyan
-}
-if ($linuxArtifacts) {
-    Write-Host "  cd installer; .\NewStone.ps1 -UsbDrive G:" -ForegroundColor Cyan
-}
+Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Green
+Write-Host "║  Distribution Complete                             ║" -ForegroundColor Green
+Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+Write-Host "Version: $version" -ForegroundColor Green
+Write-Host "Packages: $packagesMoved created" -ForegroundColor Green
+Write-Host "Location: $($config.packages.outputDir)" -ForegroundColor DarkGray
 Write-Host ""

@@ -258,6 +258,58 @@ state.docker.create_container(
 
 ---
 
+## Resolution Endpoints
+
+**Protocol vs Offering distinction:**
+- **Protocol** = Wire format (s3, mongodb, redis, storage)
+- **Offering** = Software (minio, mongodb, redis)
+
+**Connection string format:**
+```
+zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]
+```
+
+**Stone endpoints** (Rake → Moss):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/resolve` | Resolve protocol/offering to endpoint |
+
+**Query parameters**:
+- `offering` - Offering name (mongodb, minio)
+- `protocol` - Protocol (s3, mongodb, redis, storage)
+- `instance` - Instance name for multi-instance offerings
+
+**Resolution priority**:
+1. Offerings take precedence over seed-bank gateways
+2. Instance-specific matches over default instances
+3. Health status: healthy > degraded
+4. Priority from mDNS TXT records
+
+---
+
+## Seed Bank Endpoints
+
+**Stone endpoints** (Rake → Moss):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/seed-banks` | List configured seed banks |
+| POST | `/api/v1/stone/seed-banks` | Add seed bank |
+| DELETE | `/api/v1/stone/seed-banks/:name` | Remove seed bank |
+
+**Storage gateway endpoints** (S3-compatible):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| PUT | `/api/v1/storage/{path}` | Put object |
+| GET | `/api/v1/storage/{path}` | Get object |
+| HEAD | `/api/v1/storage/{path}` | Head object (metadata) |
+| DELETE | `/api/v1/storage/{path}` | Delete object |
+| GET | `/api/v1/storage/` | List objects |
+
+**Required headers**:
+- `X-App-Name` - Application namespace for isolation
+
+---
+
 ## Nourishment Endpoints
 
 **Garden endpoints** (Rake → tended Moss, orchestrated):
@@ -348,7 +400,7 @@ src/moss/src/
 | Module | Functions |
 |--------|-----------|
 | `formatting.rs` | `format_bytes_precision()`, `format_bytes_short()`, `format_memory_mb()` |
-| `env.rs` | `EnvConfig` typed accessors for all `GARDEN_*` vars |
+| `env.rs` | `EnvConfig` typed accessors for all `ZG_*` vars |
 | `fs.rs` | `ensure_dir()`, `read_file()`, `write_file()` with async variants |
 | `platform.rs` | `PlatformPaths` trait, `data_dir()`, `config_dir()` |
 | `ids.rs` | `generate_guidv7()`, `generate_id(prefix)` |
@@ -360,15 +412,21 @@ src/moss/src/
 
 ## Environment Variables
 
-**Paths**: `GARDEN_DATA_DIR`, `GARDEN_CONFIG_DIR`, `GARDEN_HARVEST_DIR`, `GARDEN_STAGING_DIR`, `GARDEN_STORED_DIR`
+Environment variables use the `ZG_` prefix for consistency.
 
-**Stone**: `GARDEN_STONE_NAME`, `GARDEN_STONE_HOST`, `GARDEN_STONE_HOME`, `GARDEN_STONE_USER`, `GARDEN_FIRST_RUN_FLAG`
+**Paths**: `ZG_DATA_DIR`, `ZG_CONFIG_DIR`, `ZG_HARVEST_DIR`, `ZG_STAGING_DIR`, `ZG_STORED_DIR`
 
-**Endpoints**: `GARDEN_STONE` (skip discovery), `LANTERN_ENDPOINT`
+**Stone**: `ZG_STONE_NAME`, `ZG_STONE_HOST`, `ZG_STONE_HOME`, `ZG_STONE_USER`, `ZG_FIRST_RUN_FLAG`
 
-**Flags**: `NO_COLOR`, `GARDEN_NO_COLOR`, `GARDEN_UNICODE`, `GARDEN_QUIET`, `RUNNING_AS_SERVICE`, `ZEN_GARDEN_CONTAINER`
+**Endpoints**: `ZG_STONE` (skip discovery), `ZG_LANTERN`
+
+**Resolution**: `ZG_PARTITION` (default partition), `ZG_INSTANCE` (default instance)
+
+**Flags**: `NO_COLOR`, `ZG_NO_COLOR`, `ZG_UNICODE`, `ZG_QUIET`, `RUNNING_AS_SERVICE`, `ZG_CONTAINER`
 
 **External**: `CUDA_PATH`, `INTEL_OPENVINO_DIR`, `SystemRoot`, `PROGRAMDATA`, `HOME`
+
+**Legacy support**: Old `GARDEN_*` and `ZEN_GARDEN_*` prefixes are still supported with deprecation warnings.
 
 ---
 

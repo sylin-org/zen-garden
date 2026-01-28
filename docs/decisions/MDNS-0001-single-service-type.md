@@ -36,10 +36,14 @@ Service Type: _koan-stone._tcp.local.
 Instance Name: stone-01
 TXT Records:
   offering=mongodb
+  instance=            (empty for default instance)
   port=27017
+  protocols=mongodb    (comma-separated list of supported protocols)
+  protocol_default=mongodb
+  admission=communal   (communal or dedicated)
   version=0.2.202601181256
   health=healthy
-  fingerprint=abc123 (if Pond active)
+  fingerprint=abc123   (if Pond active)
 ```
 
 **Multiple services on same Stone:**
@@ -47,9 +51,28 @@ TXT Records:
 Service Type: _koan-stone._tcp.local.
 Instance Name: stone-01
 TXT Records:
-  offerings=mongodb,redis  # Comma-separated list
+  offerings=mongodb,redis    # Comma-separated list
   mongodb_port=27017
+  mongodb_protocols=mongodb
+  mongodb_admission=communal
   redis_port=6379
+  redis_protocols=redis
+  redis_admission=communal
+  mongodb_health=healthy
+  redis_health=degraded
+```
+
+**Multi-instance offerings:**
+```
+Service Type: _koan-stone._tcp.local.
+Instance Name: stone-01-mongodb-staging
+TXT Records:
+  offering=mongodb
+  instance=staging
+  port=27018
+  protocols=mongodb
+  admission=dedicated
+  health=healthy
 ```
 
 ## Consequences
@@ -158,21 +181,34 @@ for stone in stones {
 
 **Core fields (never removed):**
 - `offering=<type>` (mongodb, redis, postgresql) - singular for backward compat
+- `instance=<name>` (staging, prod, empty) - multi-instance support
 - `port=<number>` (deprecated v1.0, but kept) - primary service port
 - `version=<semver>` (0.2.202601181256) - Moss version
 - `health=<status>` (healthy, degraded, unavailable) - current health
 
 **Additive fields (v1.0+):**
 - `offerings=<csv>` (mongodb,redis) - multiple services (replaces singular)
+- `protocols=<csv>` (mongodb,storage) - supported wire protocols
+- `protocol_default=<name>` (mongodb) - default protocol for offering
+- `admission=<policy>` (communal,dedicated) - access policy
 - `endpoints=<uri-list>` (tcp:27017,http:8080) - multiple protocols
 - `fingerprint=<sha256>` (abc123) - Pond certificate hash
 - `capabilities=<flags>` (snapshot,backup) - feature flags
+
+**Protocol vs Offering distinction:**
+- `protocols` = wire formats (s3, mongodb, redis, storage)
+- `offering` = software name (minio, mongodb, redis)
+- Resolution can be by protocol (`zen-garden:s3//`) or offering (`zen-garden:minio`)
 
 **Multiple services example:**
 ```
 offerings=mongodb,redis
 mongodb_port=27017
+mongodb_protocols=mongodb
+mongodb_admission=communal
 redis_port=6379
+redis_protocols=redis
+redis_admission=communal
 mongodb_health=healthy
 redis_health=degraded
 ```

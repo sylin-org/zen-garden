@@ -261,7 +261,7 @@
 
 **Impact:** Cannot customize RAM limits or container count warnings
 
-**Workaround:** Edit `/etc/zen-garden/garden-moss.toml` (requires daemon restart)
+**Workaround:** Edit `/etc/zen-garden/moss.toml` (requires daemon restart)
 
 **Status:** Configuration option planned for Phase 2
 

@@ -2,9 +2,9 @@
   "fingerprint": {
     "moss_version": "0.1.0.dev",
     "capabilities_hash": "7bc5076794c67b9508817ad8e29d1ec423bfb48925499b36a9c30c39a223e6dc",
-    "templates_hash": "670f6f83c03168af33ba319b10829a2e52ccab0ba378d8be73296f4eb17f538e"
+    "templates_hash": "539c985ee354ab231bb3994e1373b032166a83af7e0429c76de39d9bd8d8645c"
   },
-  "generated_at": "2026-01-27T04:32:57.459877800+00:00",
+  "generated_at": "2026-01-28T00:56:32.360183200+00:00",
   "offerings": [
     {
       "name": "aspire",
@@ -121,7 +121,7 @@
     },
     {
       "name": "elasticsearch",
-      "category": "search",
+      "category": "data",
       "description": "Elasticsearch search and analytics engine (AGPL/SSPL licensed)",
       "tags": [
         "search",
@@ -583,7 +583,7 @@
     },
     {
       "name": "opensearch",
-      "category": "search",
+      "category": "data",
       "description": "OpenSearch search and analytics (Apache 2.0, Linux Foundation)",
       "tags": [
         "search",
@@ -760,7 +760,7 @@
     },
     {
       "name": "redis",
-      "category": "cache",
+      "category": "data",
       "description": "Redis Stack in-memory data store with search, JSON, and vector capabilities",
       "tags": [
         "database",

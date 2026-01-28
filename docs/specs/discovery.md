@@ -108,13 +108,12 @@ TXT: offering=mongodb-agnostic
 | Field        | Required | Example                  | Description                                |
 |--------------|----------|--------------------------|--------------------------------------------|
 | `offering`   | Yes      | `mongodb`                | Offering name from template                |
+| `instance`   | No       | `staging`                | Instance name for multi-instance offerings |
 | `port`       | Yes      | `27017`                  | Native protocol port                       |
 | `protocol`   | Yes      | `native`                 | Always `native` for native services        |
-| `version`    | Yes      | `7.0.4`                  | Service version (MongoDB 7.0.4)            |
-| `categories` | No       | `database,document-database` | Comma-separated category tokens      |
-| `health`     | Yes      | `healthy`                | Health status                              |
-| `priority`   | No       | `50`                     | Priority for service selection (0-100)     |
-
+| `protocols`  | No       | `mongodb,storage`        | Comma-separated protocols supported        |
+| `protocol_default` | No | `mongodb`               | Default protocol for this offering         |
+| `admission`  | No       | `communal`               | Admission policy: `communal` or `dedicated`|
 ### Agnostic Sidecar TXT Records
 
 | Field                      | Required | Example                  | Description                                |
@@ -272,7 +271,7 @@ GET http://10.0.1.10:7185/api/garden/stones
 ### Configuration
 
 ```toml
-# /etc/zen-garden/garden-moss.toml
+# /etc/zen-garden/moss.toml
 [discovery]
 udp_broadcast_port = 7184
 udp_broadcast_timeout = 3000  # ms
@@ -287,31 +286,53 @@ election_hash_algorithm = "blake3"
 ### Connection String Format
 
 ```
-zen-garden:<service-type>[/<database>][?options]
+zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>][?options]
 ```
+
+**Grammar:**
+- `protocol` (optional): Wire format (s3, mongodb, redis, storage)
+- `offering` (required): Software name or category
+- `instance` (optional): Named instance for multi-instance offerings
+- `partition` (optional): Database, bucket, or namespace
+- `options` (optional): Query parameters
 
 **Examples:**
 
-- `zen-garden:mongodb` → Native MongoDB (any database)
-- `zen-garden:mongodb/myapp` → Native MongoDB (myapp database)
-- `zen-garden:database` → Agnostic HTTP API (any database)
-- `zen-garden:database/myapp` → Agnostic HTTP API (myapp set)
-- `zen-garden:document-database?tags=transactions` → Filter by tags
+- `zen-garden:mongodb` → MongoDB offering (default protocol)
+- `zen-garden:mongodb//` → MongoDB via mongodb protocol (explicit)
+- `zen-garden:s3//` → Any S3-compatible offering or seed-bank
+- `zen-garden:s3//minio` → MinIO via S3 protocol
+- `zen-garden:mongodb:staging` → MongoDB staging instance
+- `zen-garden:mongodb/myapp` → MongoDB (myapp database)
+- `zen-garden:s3//@seed-usb-01` → Specific seed-bank via S3
+- `zen-garden:database?tags=transactions` → Filter by tags
 
 ### Resolution Steps
 
-**For native protocols:**
+**For protocol-based resolution:**
 
 ```python
-# Connection string: zen-garden:mongodb/myapp
+# Connection string: zen-garden:s3//
 
 1. Query mDNS: _koan-stone._tcp.local.
-2. Filter: protocol=native AND offering=mongodb
-3. Select best: health > priority > latency
-4. Resolve: mongodb://10.0.1.10:27017/myapp
+2. Filter: protocols CONTAINS s3
+3. Prioritize: offerings > seed-bank gateways
+4. Select best: health > priority > latency
+5. Resolve: http://10.0.1.10:9000 (MinIO) or :7185/api/v1/storage (gateway)
 ```
 
-**For agnostic HTTP:**
+**For offering-based resolution:**
+
+```python
+# Connection string: zen-garden:mongodb:staging/myapp
+
+1. Query mDNS: _koan-stone._tcp.local.
+2. Filter: offering=mongodb AND instance=staging
+3. Select best: health > priority > latency
+4. Resolve: mongodb://10.0.1.10:27018/myapp
+```
+
+**For category-based resolution (agnostic):**
 
 ```python
 # Connection string: zen-garden:database/myapp

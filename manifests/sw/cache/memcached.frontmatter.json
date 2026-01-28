@@ -4,5 +4,6 @@
   "category": "cache",
   "tags": ["cache", "inmemory", "keyvalue", "distributed"],
   "port": 11211,
-  "volumes": []
+  "volumes": [],
+  "connection_template": "memcached://{host}:{port}"
 }

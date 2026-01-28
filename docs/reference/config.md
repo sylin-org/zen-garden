@@ -49,7 +49,7 @@ The Garden-Moss Daemon supports a layered configuration system with the followin
 
 ### File Locations
 
-- **Linux:** `/etc/zen-garden/garden-moss.toml`
+- **Linux:** `/etc/zen-garden/moss.toml`
 - **Windows:** `./moss.toml` (current directory)
 
 ### Example moss.toml
@@ -57,8 +57,22 @@ The Garden-Moss Daemon supports a layered configuration system with the followin
 ```toml
 # Production configuration
 stone_name = "prod-stone-east-01"
-port = 3001
+port = 7185
 log_level = "warn"
+
+# Seed bank configuration (optional)
+[seed_banks]
+default = "seed-nas-main"
+
+[[seed_banks.entries]]
+name = "seed-nas-main"
+path = "/mnt/nas/zen-garden"
+announce_s3 = true
+
+[[seed_banks.entries]]
+name = "seed-usb-backup"
+path = "/mnt/usb"
+announce_s3 = false
 ```
 
 ### Installation
@@ -67,8 +81,8 @@ Copy the example configuration:
 
 **Linux:**
 ```bash
-sudo cp installer/moss.toml.example /etc/zen-garden/garden-moss.toml
-sudo nano /etc/zen-garden/garden-moss.toml
+sudo cp installer/moss.toml.example /etc/zen-garden/moss.toml
+sudo nano /etc/zen-garden/moss.toml
 ```
 
 **Windows:**
@@ -180,13 +194,14 @@ rm moss.toml
 
 ### Config file not found
 ```
-DEBUG Config file not found, using defaults path=/etc/zen-garden/garden-moss.toml
+DEBUG Config file not found, using defaults path=/etc/zen-garden/moss.toml
 ```
 **Solution:** This is normal. Create the file or use env vars/CLI args.
 
 ### Config file parse error
 ```
-WARN Failed to parse config file path=/etc/zen-garden/garden-moss.toml error="TOML parse error..."
+WARN Failed to parse config file path=/etc/zen-garden/moss.toml error="TOML parse error..."
+```
 ```
 **Solution:** Check TOML syntax. All fields must be valid types (strings in quotes, numbers without quotes).
 

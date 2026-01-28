@@ -4,5 +4,8 @@
   "category": "storage",
   "tags": ["s3", "object-storage", "backup", "artifacts", "blob"],
   "ports": [9000, 9001],
-  "volumes": ["minio-data"]
+  "port": 9000,
+  "console_port": 9001,
+  "volumes": ["minio-data"],
+  "connection_template": "http://{host}:{port}"
 }

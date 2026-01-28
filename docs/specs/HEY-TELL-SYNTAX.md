@@ -429,10 +429,10 @@ Available commands: select, list, volume, pull, remove, status
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GARDEN_STONE` | (auto-discover) | Target stone endpoint |
-| `GARDEN_UNICODE` | (auto-detect) | Force unicode output |
-| `GARDEN_NO_COLOR` | `false` | Disable colors |
-| `GARDEN_QUIET` | `false` | Minimal output |
+| `ZG_STONE` | (auto-discover) | Target stone endpoint |
+| `ZG_UNICODE` | (auto-detect) | Force unicode output |
+| `ZG_NO_COLOR` | `false` | Disable colors |
+| `ZG_QUIET` | `false` | Minimal output |
 
 ---
 

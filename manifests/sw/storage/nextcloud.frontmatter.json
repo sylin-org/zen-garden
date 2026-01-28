@@ -4,5 +4,7 @@
   "category": "storage",
   "tags": ["cloud", "files", "sync", "calendar", "contacts", "collaboration"],
   "ports": [8080],
-  "volumes": ["nextcloud-data", "nextcloud-apps", "nextcloud-config"]
+  "port": 8080,
+  "volumes": ["nextcloud-data", "nextcloud-apps", "nextcloud-config"],
+  "connection_template": "http://{host}:{port}"
 }

@@ -29,7 +29,7 @@ Implement **tending** - a stateful concept where rake "tends to" a specific ston
 ### Resolution Priority
 
 1. `--at <endpoint>` flag (explicit override, deterministic)
-2. `GARDEN_STONE` environment variable (optional optimization)
+2. `ZG_STONE` environment variable (optional optimization)
 3. `~/.zen-garden/.tending` file (cached discovery result, 90s TTL)
 4. Auto-discover via UDP broadcast + write `.tending` file
 
@@ -117,7 +117,7 @@ Status: Healthy
 3. **DNS-SD/mDNS** (proper service discovery)
    - Deferred: Requires mDNS client library, moss already uses mDNS for stone-to-stone
    
-4. **Environment variable only** (`GARDEN_STONE=http://...`)
+4. **Environment variable only** (`ZG_STONE=http://...`)
    - Rejected: Requires manual setup, doesn't solve zero-config UX goal
 
 ## Implementation Notes
@@ -173,4 +173,4 @@ if health_check.status().is_success() {
 - [ ] Failed connection clears cache and rediscovers automatically
 - [ ] All commands show "Tending to: ..." header for context
 - [ ] Cache expires after 90s, triggers transparent revalidation
-- [ ] `GARDEN_STONE` env var honored when set
+- [ ] `ZG_STONE` env var honored when set

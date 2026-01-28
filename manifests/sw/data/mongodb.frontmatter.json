@@ -4,5 +4,6 @@
   "category": "data",
   "tags": ["database", "document", "nosql"],
   "port": 27017,
-  "volumes": ["mongo-data"]
+  "volumes": ["mongo-data"],
+  "connection_template": "mongodb://{host}:{port}"
 }

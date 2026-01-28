@@ -503,7 +503,7 @@ Drivers MUST resolve endpoints in this order:
 
 ```
 1. Explicit target       (user provided: --at stone-alpha)
-2. Environment variable  (GARDEN_STONE=http://192.168.1.100:7185)
+2. Environment variable  (ZG_STONE=http://192.168.1.100:7185)
 3. Tending state         (cached Stone preference, verified reachable)
 4. Auto-discovery        (UDP broadcast, first responder or best match)
 ```
@@ -568,7 +568,7 @@ async def resolve_endpoint(
         return await resolve_stone_name(target, cache)
     
     # Priority 2: Environment variable
-    env_stone = os.environ.get('GARDEN_STONE')
+    env_stone = os.environ.get('ZG_STONE')
     if env_stone:
         return normalize_endpoint(env_stone) or env_stone
     
@@ -1421,11 +1421,11 @@ interface TendingState {
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GARDEN_STONE` | — | Override target Stone |
-| `GARDEN_QUIET` | — | Suppress verbose output |
-| `GARDEN_DISCOVERY_TIMEOUT_SECS` | 3 | UDP discovery timeout |
-| `GARDEN_CACHE_TTL_SECS` | 90 | Stone cache TTL |
-| `GARDEN_HTTP_REQUEST_TIMEOUT_SECS` | 30 | HTTP request timeout |
+| `ZG_STONE` | — | Override target Stone |
+| `ZG_QUIET` | — | Suppress verbose output |
+| `ZG_DISCOVERY_TIMEOUT_SECS` | 3 | UDP discovery timeout |
+| `ZG_CACHE_TTL_SECS` | 90 | Stone cache TTL |
+| `ZG_HTTP_REQUEST_TIMEOUT_SECS` | 30 | HTTP request timeout |
 | `DISCOVERY_MCAST_GROUP` | 239.255.42.99 | Multicast group |
 | `DISCOVERY_PORT` | 7184 | UDP port |
 

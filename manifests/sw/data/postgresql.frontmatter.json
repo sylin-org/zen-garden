@@ -4,5 +4,6 @@
   "category": "data",
   "tags": ["database", "relational", "sql", "vector", "embeddings"],
   "port": 5432,
-  "volumes": ["postgres-data"]
+  "volumes": ["postgres-data"],
+  "connection_template": "postgresql://{host}:{port}"
 }

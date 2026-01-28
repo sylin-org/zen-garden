@@ -86,7 +86,7 @@ Quick lookup for operators and developers:
 | [Connection Strings](reference/connection-strings.md) | `zen-garden:` URI scheme details |
 | [Port Allocation](reference/ports.md) | Reserved ports (7184-7199) |
 | [Service Catalog](reference/offerings.md) | Available service templates |
-| [Configuration](reference/config.md) | moss.toml and garden-moss.toml settings |
+| [Configuration](reference/config.md) | moss.toml configuration settings |
 | [Driver Specification](reference/driver-specification.md) | Client library implementation guide |
 
 ---

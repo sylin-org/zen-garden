@@ -663,7 +663,7 @@ log_level = "warn"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GARDEN_STONE` | `http://localhost:7185` | Stone endpoint |
+| `ZG_STONE` | `http://localhost:7185` | Stone endpoint |
 | `CRICKET_VOLUME` | `50` | Master volume |
 | `CRICKET_TUNE` | `zen-garden` | Default tune |
 | `RUST_LOG` | `warn` | Log level |

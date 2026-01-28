@@ -4,5 +4,6 @@
   "category": "data",
   "tags": ["database", "relational", "sql", "mysql-compatible", "acid"],
   "port": 3306,
-  "volumes": ["mariadb-data"]
+  "volumes": ["mariadb-data"],
+  "connection_template": "mysql://{host}:{port}"
 }

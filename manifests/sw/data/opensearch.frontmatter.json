@@ -7,5 +7,6 @@
   "port": 9200,
   "transport_port": 9300,
   "volumes": ["opensearch-data"],
-  "requires_sysctl": "vm.max_map_count=262144"
+  "requires_sysctl": "vm.max_map_count=262144",
+  "connection_template": "http://{host}:{port}"
 }

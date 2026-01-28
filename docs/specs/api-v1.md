@@ -279,6 +279,140 @@ POST /api/v1/stone:shutdown                # Shutdown Moss daemon
 
 ---
 
+### Resolution API
+
+**Target:** Service discovery and connection string resolution  
+**Philosophy:** Unified resolution for protocols and offerings
+
+```http
+GET /api/v1/resolve                        # Resolve connection string components
+```
+
+**Query Parameters:**
+
+| Parameter  | Required | Description |
+|------------|----------|-------------|
+| `offering` | No       | Offering name (mongodb, redis, minio) |
+| `protocol` | No       | Protocol (s3, mongodb, redis, storage) |
+| `instance` | No       | Instance name for multi-instance offerings |
+
+**Resolution Logic:**
+- If `protocol` specified → find offerings supporting that protocol
+- If `offering` specified → resolve that specific offering
+- If both → find specific offering with protocol validation
+
+**GET /api/v1/resolve?protocol=s3 response:**
+```json
+{
+  "resolved": {
+    "protocol": "s3",
+    "endpoint": "http://10.0.1.10:9000",
+    "offering": "minio",
+    "instance": null,
+    "stone": "stone-01",
+    "source": "offering"
+  },
+  "alternatives": [
+    {
+      "endpoint": "http://10.0.1.10:7185/api/v1/storage",
+      "offering": null,
+      "stone": "stone-01",
+      "source": "seed-bank"
+    }
+  ]
+}
+```
+
+**GET /api/v1/resolve?offering=mongodb&instance=staging response:**
+```json
+{
+  "resolved": {
+    "protocol": "mongodb",
+    "endpoint": "mongodb://10.0.1.10:27018",
+    "offering": "mongodb",
+    "instance": "staging",
+    "stone": "stone-01",
+    "source": "offering"
+  },
+  "alternatives": []
+}
+```
+
+---
+
+### Storage API (Seed Bank Gateway)
+
+**Target:** S3-compatible storage access via seed banks  
+**Philosophy:** Infrastructure-as-capability, protocol-based access
+
+```http
+PUT    /api/v1/storage/{path}              # Put object
+GET    /api/v1/storage/{path}              # Get object
+HEAD   /api/v1/storage/{path}              # Head object (metadata)
+DELETE /api/v1/storage/{path}              # Delete object
+GET    /api/v1/storage/                    # List objects (with prefix, pagination)
+```
+
+**Headers:**
+- `X-App-Name` (required): Application namespace for isolation
+
+**PUT /api/v1/storage/config.json:**
+```http
+PUT /api/v1/storage/config.json
+X-App-Name: myapp
+Content-Type: application/json
+
+{"key": "value"}
+
+Response:
+201 Created
+ETag: "abc123..."
+```
+
+**GET /api/v1/storage/?prefix=data/:**
+```json
+{
+  "contents": [
+    {"key": "data/file1.json", "size": 1234, "etag": "abc123"},
+    {"key": "data/file2.json", "size": 5678, "etag": "def456"}
+  ],
+  "is_truncated": false
+}
+```
+
+---
+
+### Seed Bank Management
+
+**Target:** Storage infrastructure management  
+**Philosophy:** Adopt local/network storage as S3-capable seed banks
+
+```http
+GET  /api/v1/stone/seed-banks              # List configured seed banks
+POST /api/v1/stone/seed-banks              # Add seed bank
+DELETE /api/v1/stone/seed-banks/{name}     # Remove seed bank
+```
+
+**POST /api/v1/stone/seed-banks:**
+```json
+{
+  "path": "/mnt/usb",
+  "name": "seed-usb-01",
+  "announce_s3": true
+}
+
+Response:
+201 Created
+{
+  "name": "seed-usb-01",
+  "path": "/mnt/usb",
+  "status": "online",
+  "protocols": ["s3", "storage"]
+}
+```
+
+---
+
 ### Events & Jobs (Universal)
 
 ```http

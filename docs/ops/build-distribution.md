@@ -36,7 +36,7 @@ canonical: true
 ### Configuration Files
 
 - `garden-moss.service` - systemd unit file
-- `garden-moss.toml` - Garden-Moss configuration
+- `moss.toml` - Moss daemon configuration
 - `bash_completion.d/garden-rake` - Bash completion (optional)
 
 ---

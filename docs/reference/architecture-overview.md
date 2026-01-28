@@ -209,13 +209,20 @@ cargo build --workspace
 
 ### Runtime Configuration
 
-- `GARDEN_DISCOVERY_TIMEOUT_SECS` - Discovery timeout (default: 3)
-- `GARDEN_CACHE_TTL_SECS` - Cache TTL (default: 90)
-- `GARDEN_HTTP_REQUEST_TIMEOUT_SECS` - HTTP timeout (default: 30)
-- `GARDEN_CONFIG_DIR` - Config directory (default: /etc/zen-garden)
-- `GARDEN_STONE_HOME` - Stone home directory (default: /home/stone)
+Environment variables use the `ZG_` prefix for consistency:
+
+- `ZG_DISCOVERY_TIMEOUT_SECS` - Discovery timeout (default: 3)
+- `ZG_CACHE_TTL_SECS` - Cache TTL (default: 90)
+- `ZG_HTTP_REQUEST_TIMEOUT_SECS` - HTTP timeout (default: 30)
+- `ZG_CONFIG_DIR` - Config directory (default: /etc/zen-garden)
+- `ZG_STONE_HOME` - Stone home directory (default: /home/stone)
+- `ZG_STONE` - Target stone endpoint (skips discovery)
+- `ZG_PARTITION` - Default partition for connection strings
+- `ZG_INSTANCE` - Default instance for multi-instance offerings
 
 See `src/common/src/constants/` for full list.
+
+**Legacy support**: Old `GARDEN_*` and `ZEN_GARDEN_*` prefixes are still supported with deprecation warnings.
 
 ### Build Configuration
 

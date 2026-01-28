@@ -1889,8 +1889,8 @@ EXAMPLES:
     garden-rake logs mongodb
 
 ENVIRONMENT:
-    GARDEN_STONE     Default stone endpoint
-    GARDEN_QUIET     Suppress suggestions (true/false)
+    ZG_STONE         Default stone endpoint
+    ZG_QUIET         Suppress suggestions (true/false)
     RUST_LOG         Log level (trace, debug, info, warn, error)
 
 Learn more: https://zen-garden.dev/docs

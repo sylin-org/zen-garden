@@ -79,7 +79,7 @@ Moss → Rake IP:ephemeral (unicast)
 **Configuration Priority:**
 1. CLI argument: `garden-moss --port 7185`
 2. Environment variable: `PORT=7185`
-3. Config file: `/etc/zen-garden/garden-moss.toml` → `port = 7185`
+3. Config file: `/etc/zen-garden/moss.toml` → `port = 7185`
 4. Default: `7185`
 
 **Implementation Files:**

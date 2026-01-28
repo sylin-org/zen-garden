@@ -2,7 +2,22 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-01-28
+- **Documentation alignment with service resolution and storage specs** - comprehensive update across all docs
+  - **Protocol vs Offering distinction** - clarified: s3/mongodb = protocols (wire format), minio/mongodb = offerings (software)
+  - **Connection string format** - unified: `zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]`
+  - **Environment variables** - standardized `ZG_` prefix (replacing `GARDEN_` and `ZEN_GARDEN_*`)
+  - **Config file naming** - standardized on `moss.toml` (was `garden-moss.toml`)
+  - **mDNS TXT records** - added fields: instance, admission, protocols, protocol_default
+  - **Resolution API** - added `GET /api/v1/resolve?offering=&protocol=&instance=` endpoint spec
+  - **Storage API** - added seed bank management and S3 gateway endpoints to specs
+  - Updated 15+ documentation files for consistency with proposal specs
+
 ## 2026-01-27
+- **Portrait at-a-glance panel** - Hero now shows stone uptime (🪨), Moss uptime (🌿), and offerings status dots
+  - Added `moss_uptime` field to PortraitIdentity API response
+  - Stone uptime = system uptime (how long machine running), Moss uptime = daemon uptime
+  - Offerings glance shows count by status: running (green), stopped (gray), error (red)
 - **Stone Portrait landing page** - SPA at root URL showing stone identity, metrics, offerings, and horizon
   - New endpoint: `GET /` returns Alpine.js SPA (embedded HTML at compile time)
   - New endpoint: `GET /api/v1/stone/portrait` returns JSON for reactive updates

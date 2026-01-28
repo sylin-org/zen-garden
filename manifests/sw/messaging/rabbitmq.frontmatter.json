@@ -6,5 +6,6 @@
   "ports": [5672, 15672],
   "port": 5672,
   "management_port": 15672,
-  "volumes": ["rabbitmq-data"]
+  "volumes": ["rabbitmq-data"],
+  "connection_template": "amqp://{host}:{port}"
 }

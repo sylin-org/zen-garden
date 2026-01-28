@@ -22,11 +22,18 @@
 
 Zen Garden uses curated service templates called "offerings" to ensure consistent, validated deployments. Each offering defines both native and optional agnostic sidecar configurations.
 
+**Key Distinction:**
+- **Protocol** = Wire format for access (mongodb, s3, redis, storage)
+- **Offering** = Software that implements protocols (MongoDB, MinIO, Redis)
+
+Offerings declare which protocols they support. Resolution matches protocols to offerings.
+
 **Design philosophy:**
 
 - **Template-driven:** Prevent ad-hoc Docker configurations
 - **Curated:** Maintained offerings with tested compatibility
 - **Query-based:** Discover services by intent, not exact name
+- **Protocol-aware:** Match by wire format (s3) or by software (minio)
 - **Compatibility-aware:** Match offerings to Stone hardware automatically
 
 ---
@@ -155,31 +162,62 @@ HTTP REST API wrapping native service:
 
 ## Service Discovery
 
-### Specific Requests (Native)
+### Connection String Format
 
 ```
-zen-garden:mongodb → MongoDB native (port 27017)
-zen-garden:redis → Redis native (port 6379)
+zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]
+```
+
+**Examples:**
+
+```
+zen-garden:mongodb              → MongoDB offering (default protocol)
+zen-garden:mongodb//            → MongoDB via mongodb protocol (explicit)
+zen-garden:s3//                 → Any offering supporting s3 protocol
+zen-garden:s3//minio            → MinIO via S3 protocol
+zen-garden:mongodb:staging      → MongoDB staging instance
+zen-garden:mongodb/myapp        → MongoDB with myapp database
+```
+
+### Protocol Requests
+
+Protocols specify the wire format, not the software:
+
+```
+zen-garden:s3//                 → Any S3-compatible (MinIO, seed-bank gateway)
+zen-garden:storage//            → Any storage provider
+zen-garden:mongodb//            → MongoDB protocol (MongoDB, DocumentDB)
+```
+
+### Offering Requests
+
+Offerings specify the software:
+
+```
+zen-garden:minio                → MinIO (uses default protocol: s3)
+zen-garden:mongodb              → MongoDB (uses default protocol: mongodb)
+zen-garden:redis                → Redis (uses default protocol: redis)
 ```
 
 ### Category Requests (Agnostic)
 
 ```
-zen-garden:database → Any database sidecar (port 8080+)
-zen-garden:document-database → MongoDB/CouchDB sidecar
-zen-garden:vector → Weaviate/Qdrant sidecar
+zen-garden:database             → Any database sidecar (port 8080+)
+zen-garden:document-database    → MongoDB/CouchDB sidecar
+zen-garden:vector               → Weaviate/Qdrant sidecar
 ```
 
 **Resolution logic:**
 
-1. Parse connection string: `zen-garden:<service-type>[/<database>]`
+1. Parse connection string: `zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]`
 2. Query mDNS: `_koan-stone._tcp.local.`
-3. Filter by service type:
-   - Known service (mongodb) → native endpoints
-   - Generic category (database) → agnostic endpoints
-4. Filter by tags (if specified)
+3. Filter by protocol or offering:
+   - Protocol specified (s3//) → offerings with matching protocol
+   - Offering specified (mongodb) → specific offering
+   - Category (database) → agnostic endpoints
+4. Filter by instance (if specified)
 5. Select best: health > priority > response time
-6. Build native connection string
+6. Build connection string with resolved endpoint
 
 ---
 
@@ -202,6 +240,15 @@ versions:
     - "7.0"
     - "6.0"
     - "5.0"
+
+# Protocols this offering supports
+protocols:
+  - port: 27017
+    protocol: mongodb
+    default: true
+  - port: 8080
+    protocol: agnostic
+    sidecar: mongodb-agnostic
 
 docker:
   native:

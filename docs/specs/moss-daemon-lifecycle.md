@@ -28,7 +28,7 @@
 **Service:** `garden-moss.service` (systemd)  
 **Port:** 7185 (HTTP API)  
 **Language:** Rust (Axum framework)  
-**Config:** `/etc/zen-garden/garden-moss.toml`
+**Config:** `/etc/zen-garden/moss.toml`
 
 ### Responsibilities
 
@@ -50,7 +50,7 @@
 
 ### File Locations
 
-- **Linux:** `/etc/zen-garden/garden-moss.toml`
+- **Linux:** `/etc/zen-garden/moss.toml`
 - **Windows:** `./moss.toml` (current directory)
 
 ### Configuration Priority

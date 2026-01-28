@@ -16,6 +16,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::app_state::AppState;
+use crate::cli;
 use crate::domain::topology;
 
 /// Embedded HTML template (baked into binary at compile time)
@@ -30,7 +31,10 @@ pub struct PortraitIdentity {
     pub version: String,
     pub color: String,
     pub endpoint: String,
+    /// System (stone) uptime - how long the machine has been running
     pub uptime: String,
+    /// Moss daemon uptime - how long the daemon has been running
+    pub moss_uptime: String,
 }
 
 /// CPU metrics for foundation
@@ -158,14 +162,21 @@ pub async fn get_portrait_data(
             .unwrap_or_else(|| "–".into())
     };
     
+    // Get Moss daemon uptime
+    let moss_uptime = {
+        let secs = state.start_time.elapsed().as_secs();
+        garden_common::utils::format_uptime(secs)
+    };
+    
     let identity = PortraitIdentity {
         id: state.stone_id.clone(),
         name: state.stone_name.clone(),
         role,
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: cli::VERSION.to_string(),
         color: stone_color,
         endpoint,
         uptime,
+        moss_uptime,
     };
 
     // === Foundation (system resources) ===

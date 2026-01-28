@@ -1,0 +1,318 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stone Portrait</title>
+    <style>
+        :root {
+            --bg-base: #f4f2ee;
+            --stone-900: #1a1a1a;
+            --stone-600: #57534e;
+            --stone-400: #a8a29e;
+            --vellum-white: rgba(255, 255, 255, 0.45);
+            --vellum-border: rgba(255, 255, 255, 0.6);
+            --accent-sage: #84a59d;
+            --accent-clay: #d4a373;
+            --accent-muted: #a8a29e;
+            --glass-blur: blur(14px);
+            --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+            --stone-color: #84a59d;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-base: #1a1a1a;
+                --stone-900: #fafaf9;
+                --stone-600: #a8a29e;
+                --stone-400: #78716c;
+                --vellum-white: rgba(40, 40, 40, 0.6);
+                --vellum-border: rgba(255, 255, 255, 0.1);
+            }
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-base);
+            background-image: 
+                radial-gradient(circle at 20% 20%, rgba(200, 200, 190, 0.3) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(190, 185, 175, 0.3) 0%, transparent 40%);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: var(--stone-900);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 3rem 1.5rem;
+            line-height: 1.5;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-image: 
+                    radial-gradient(circle at 20% 20%, rgba(60, 60, 55, 0.5) 0%, transparent 40%),
+                    radial-gradient(circle at 80% 80%, rgba(50, 50, 45, 0.5) 0%, transparent 40%);
+            }
+        }
+
+        .vellum-grain {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 9999; opacity: 0.03;
+        }
+
+        .container {
+            width: 100%; max-width: 900px;
+            display: flex; flex-direction: column; gap: 3rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        /* Hero */
+        .hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 2rem; }
+        .identity { display: flex; flex-direction: column; gap: 0.5rem; border-left: 3px solid var(--stone-color); padding-left: 1.5rem; }
+        .role { font-family: ui-monospace, monospace; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; color: var(--stone-600); }
+        .name { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
+        .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-top: 0.25rem; }
+        .endpoint { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--accent-sage); text-decoration: none; }
+        .uptime { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--stone-600); }
+
+        /* Section */
+        .section-title {
+            font-family: ui-monospace, monospace; font-size: 0.65rem; text-transform: uppercase;
+            letter-spacing: 0.25em; margin-bottom: 1.25rem; color: var(--stone-600);
+            display: flex; align-items: center; gap: 1rem;
+        }
+        .section-title::after { content: ''; flex-grow: 1; height: 1px; background: linear-gradient(90deg, rgba(128,128,128,0.2), transparent); }
+
+        /* Card */
+        .card {
+            background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--vellum-border); border-radius: 3px; padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03), inset 0 0 20px rgba(255,255,255,0.1);
+            transition: var(--transition-soft);
+        }
+        .card:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(0,0,0,0.05); }
+
+        /* Foundation Grid */
+        .foundation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+        .stat { display: flex; flex-direction: column; gap: 0.75rem; }
+        .stat-label { font-size: 0.8rem; font-weight: 500; color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-value { font-family: ui-monospace, monospace; font-size: 1.75rem; }
+        .stat-unit { font-size: 0.8rem; color: var(--stone-600); }
+        .gauge { height: 2px; background: rgba(128,128,128,0.1); width: 100%; position: relative; border-radius: 1px; }
+        .gauge-fill { position: absolute; height: 100%; background: var(--stone-900); width: 0%; transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1); }
+        @media (prefers-color-scheme: dark) { .gauge-fill { background: var(--accent-sage); } }
+
+        /* List Items */
+        .list { display: flex; flex-direction: column; gap: 0.75rem; }
+        .item { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 1rem; padding: 1rem 1.25rem; }
+        .item-name { font-weight: 500; }
+        .item-meta { font-family: ui-monospace, monospace; font-size: 0.75rem; color: var(--stone-600); }
+        .status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; font-family: ui-monospace, monospace; text-transform: uppercase; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-sage); box-shadow: 0 0 8px var(--accent-sage); animation: pulse 2.5s infinite; }
+        .dot.stopped { background: var(--accent-muted); box-shadow: none; animation: none; }
+        .dot.degraded { background: var(--accent-clay); box-shadow: 0 0 8px var(--accent-clay); }
+
+        /* Horizon */
+        .horizon-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; cursor: pointer; }
+        .horizon-header:hover { background: rgba(128,128,128,0.03); }
+        .chevron { font-size: 0.7rem; transition: transform 0.3s; color: var(--stone-600); }
+        .chevron.open { transform: rotate(90deg); }
+        .horizon-label { font-size: 0.9rem; color: var(--stone-600); }
+        .horizon-list { display: none; flex-direction: column; gap: 0.5rem; padding: 0.5rem 1.25rem 1rem; }
+        .horizon-list.open { display: flex; }
+        .horizon-stone { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; }
+        .horizon-color { width: 3px; height: 1.25rem; border-radius: 1px; }
+        .horizon-name { font-size: 0.9rem; text-decoration: none; color: var(--stone-900); }
+        .horizon-health { font-size: 0.75rem; color: var(--stone-600); margin-left: auto; }
+
+        .empty { padding: 2rem; text-align: center; color: var(--stone-600); font-style: italic; }
+        .footer { text-align: center; padding: 1rem; font-size: 0.75rem; color: var(--stone-400); font-family: ui-monospace, monospace; }
+        .footer a { color: var(--stone-600); text-decoration: none; }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <svg class="vellum-grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+
+    <main class="container">
+        <!-- Hero -->
+        <header class="hero">
+            <div class="identity" id="identity">
+                <span class="role" id="role">STONE</span>
+                <h1 class="name" id="name">Loading...</h1>
+                <div class="meta">
+                    <a class="endpoint" id="endpoint" href="#"></a>
+                    <span class="uptime" id="uptime"></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Foundation -->
+        <section>
+            <h2 class="section-title">Foundation</h2>
+            <div class="foundation-grid">
+                <div class="card stat">
+                    <span class="stat-label">CPU</span>
+                    <div><span class="stat-value" id="cpu-value">—</span><span class="stat-unit">%</span></div>
+                    <div class="gauge"><div class="gauge-fill" id="cpu-gauge"></div></div>
+                </div>
+                <div class="card stat">
+                    <span class="stat-label">Memory</span>
+                    <div><span class="stat-value" id="mem-value">—</span><span class="stat-unit" id="mem-unit">GB</span></div>
+                    <div class="gauge"><div class="gauge-fill" id="mem-gauge"></div></div>
+                </div>
+                <div class="card stat">
+                    <span class="stat-label">Disk</span>
+                    <div><span class="stat-value" id="disk-value">—</span><span class="stat-unit" id="disk-unit">GB</span></div>
+                    <div class="gauge"><div class="gauge-fill" id="disk-gauge"></div></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Offerings -->
+        <section id="offerings-section">
+            <h2 class="section-title">Offerings</h2>
+            <div class="list" id="offerings-list"></div>
+            <div class="card empty" id="offerings-empty">No offerings planted.</div>
+        </section>
+
+        <!-- Companions -->
+        <section id="companions-section" class="hidden">
+            <h2 class="section-title">Companions</h2>
+            <div class="list" id="companions-list"></div>
+        </section>
+
+        <!-- Horizon -->
+        <section>
+            <h2 class="section-title">Horizon</h2>
+            <div class="card" style="padding:0">
+                <div class="horizon-header" onclick="toggleHorizon()">
+                    <span class="chevron" id="horizon-chevron">▶</span>
+                    <span class="horizon-label" id="horizon-label">Alone in the garden</span>
+                </div>
+                <div class="horizon-list" id="horizon-list"></div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span id="version">v?</span> · <a href="/health">/health</a> · <a href="/api/v1/manifest">/api</a>
+        </footer>
+    </main>
+
+    <script>
+    // State
+    let horizonOpen = false;
+
+    function toggleHorizon() {
+        horizonOpen = !horizonOpen;
+        document.getElementById('horizon-chevron').classList.toggle('open', horizonOpen);
+        document.getElementById('horizon-list').classList.toggle('open', horizonOpen);
+    }
+
+    function $(id) { return document.getElementById(id); }
+
+    function render(data) {
+        // Identity
+        if (data.identity) {
+            const id = data.identity;
+            $('role').textContent = id.role || 'STONE';
+            $('name').textContent = id.name || 'Unknown';
+            $('endpoint').textContent = id.endpoint || '';
+            $('endpoint').href = id.endpoint || '#';
+            $('uptime').textContent = id.uptime ? 'up ' + id.uptime : '';
+            $('version').textContent = 'v' + (id.version || '?');
+            if (id.color) {
+                document.documentElement.style.setProperty('--stone-color', id.color);
+            }
+            if (id.name) {
+                document.title = id.name + ' · Zen Garden';
+            }
+        }
+
+        // Foundation
+        if (data.foundation) {
+            const f = data.foundation;
+            if (f.cpu) {
+                $('cpu-value').textContent = f.cpu.percent?.toFixed(1) || '—';
+                $('cpu-gauge').style.width = (f.cpu.percent || 0) + '%';
+            }
+            if (f.memory) {
+                $('mem-value').textContent = f.memory.used_gb?.toFixed(1) || '—';
+                $('mem-unit').textContent = '/ ' + (f.memory.total_gb?.toFixed(0) || '?') + ' GB';
+                $('mem-gauge').style.width = (f.memory.percent || 0) + '%';
+            }
+            if (f.disk) {
+                $('disk-value').textContent = f.disk.used_gb || '—';
+                $('disk-unit').textContent = '/ ' + (f.disk.total_gb || '?') + ' GB';
+                $('disk-gauge').style.width = (f.disk.percent || 0) + '%';
+            }
+        }
+
+        // Offerings
+        const offerings = data.offerings || [];
+        const offeringsList = $('offerings-list');
+        offeringsList.innerHTML = offerings.map(o => `
+            <div class="card item">
+                <span class="item-name">${o.name}</span>
+                <span class="item-meta">${o.container || ''}</span>
+                <span class="item-meta">:${o.port}</span>
+                <div class="status">
+                    <div class="dot ${o.status === 'stopped' ? 'stopped' : ''} ${o.health === 'degraded' ? 'degraded' : ''}"></div>
+                    <span>${o.health || o.status}</span>
+                </div>
+            </div>
+        `).join('');
+        $('offerings-empty').classList.toggle('hidden', offerings.length > 0);
+        offeringsList.classList.toggle('hidden', offerings.length === 0);
+
+        // Companions
+        const companions = data.companions || [];
+        $('companions-section').classList.toggle('hidden', companions.length === 0);
+        $('companions-list').innerHTML = companions.map(c => `
+            <div class="card item">
+                <span class="item-name">${c.id}</span>
+                <span class="item-meta">${c.description || ''}</span>
+                <span class="item-meta">${c.port ? ':' + c.port : ''}</span>
+                <div class="status">
+                    <div class="dot ${c.status !== 'running' ? 'stopped' : ''}"></div>
+                    <span>${c.status}</span>
+                </div>
+            </div>
+        `).join('');
+
+        // Horizon
+        const horizon = data.horizon || { count: 0, stones: [] };
+        $('horizon-label').textContent = horizon.count > 0 
+            ? horizon.count + ' stone' + (horizon.count !== 1 ? 's' : '') + ' visible'
+            : 'Alone in the garden';
+        $('horizon-list').innerHTML = (horizon.stones || []).map(s => `
+            <div class="horizon-stone">
+                <div class="horizon-color" style="background-color:${s.color || 'var(--accent-sage)'}"></div>
+                <a class="horizon-name" href="${s.endpoint}">${s.name}</a>
+                <span class="horizon-health">${s.health}</span>
+            </div>
+        `).join('');
+    }
+
+    async function refresh() {
+        try {
+            const res = await fetch('/api/v1/stone/portrait');
+            if (res.ok) {
+                const data = await res.json();
+                render(data);
+            }
+        } catch (e) {
+            console.warn('Portrait refresh failed:', e);
+        }
+    }
+
+    // Start breathing
+    refresh();
+    setInterval(refresh, 4000);
+    </script>
+</body>
+</html>

@@ -3,6 +3,13 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-27
+- **Stone Portrait landing page** - SPA at root URL showing stone identity, metrics, offerings, and horizon
+  - New endpoint: `GET /` returns Alpine.js SPA (embedded HTML at compile time)
+  - New endpoint: `GET /api/v1/stone/portrait` returns JSON for reactive updates
+  - Sections: Identity (name, role, version), Foundation (CPU/memory/disk), Offerings, Companions, Horizon
+  - Stone color derived from stone_id hash for unique identity across garden
+  - Vellum aesthetic with dark mode support, 4-second polling for "breathing" updates
+  - See: docs/decisions/PORTRAIT-0001-stone-landing-page.md
 - **API Manifest system** - structured endpoint documentation like CommandManifest for adapters
   - Created `garden_common::api_manifest` module with EndpointSpec, ApiManifest types
   - New endpoint: `GET /api/v1/manifest` returns live API documentation from Moss

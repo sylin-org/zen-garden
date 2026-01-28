@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod nourishment;
 pub mod offerings;
 pub mod pond;
+pub mod portrait;
 pub mod presence;
 pub mod services;
 pub mod stone;

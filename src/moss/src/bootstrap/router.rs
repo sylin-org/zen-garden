@@ -25,6 +25,9 @@ use crate::{api, AppState};
 /// - /api/v1/admin/stone: Stone machine admin (shutdown, reboot, wake)
 pub fn configure(state: AppState) -> Router {
     Router::new()
+        // Portrait landing page (root)
+        .route("/", get(api::v1::portrait::get_portrait_page))
+        
         // Standard health/monitoring endpoints (root level)
         .route("/health", get(api::v1::health::get_health))
         .route("/capabilities", get(api::v1::capabilities::get_capabilities))
@@ -71,6 +74,7 @@ pub fn configure(state: AppState) -> Router {
 
         // V1 API - Stone operations (software)
         .route("/api/v1/stone/info", get(api::v1::stone::get_stone_info_v1))
+        .route("/api/v1/stone/portrait", get(api::v1::portrait::get_portrait_data))
         .route("/api/v1/stone/upgrade", post(api::v1::stone::upgrade_stone_v1))
         .route("/api/v1/stone/deploy", post(api::v1::stone::deploy_stone_v1))
 

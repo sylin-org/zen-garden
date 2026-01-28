@@ -1,0 +1,416 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Garden — Option B: Permission Slip</title>
+    <meta name="description" content="This is that permission. Self-host without the suffering.">
+    <style>
+        :root {
+            --vellum: #f4f1eb;
+            --vellum-dark: #e8e4db;
+            --ink: #2c2c2c;
+            --ink-light: #5a5a5a;
+            --ink-faint: #8a8a8a;
+            --moss: #4a7c59;
+            --moss-light: #6b9b7a;
+            --amber: #c9a227;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--vellum);
+            color: var(--ink);
+            line-height: 1.7;
+            min-height: 100vh;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+
+        /* The permission hero */
+        .permission-hero {
+            min-height: 60vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 4rem 2rem;
+        }
+
+        .permission-line {
+            font-size: clamp(2.5rem, 7vw, 4.5rem);
+            font-weight: 300;
+            letter-spacing: -0.02em;
+            margin-bottom: 2rem;
+            line-height: 1.2;
+        }
+
+        .permission-line em {
+            font-style: italic;
+            color: var(--moss);
+        }
+
+        .permission-context {
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
+            color: var(--ink-light);
+            max-width: 600px;
+            line-height: 1.8;
+        }
+
+        /* Who this is for */
+        .personas {
+            background: var(--vellum-dark);
+            padding: 4rem 2rem;
+        }
+
+        .personas-inner {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .personas h2 {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: 400;
+            margin-bottom: 2.5rem;
+            color: var(--ink);
+        }
+
+        .persona-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .persona {
+            background: var(--vellum);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border-left: 3px solid var(--moss);
+        }
+
+        .persona-title {
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: var(--ink);
+        }
+
+        .persona-desc {
+            font-size: 0.9rem;
+            color: var(--ink-light);
+        }
+
+        /* What you get */
+        .what-you-get {
+            padding: 4rem 2rem;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .what-you-get h2 {
+            font-size: 1.5rem;
+            font-weight: 400;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .benefit {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            align-items: flex-start;
+        }
+
+        .benefit-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .benefit-text {
+            flex: 1;
+        }
+
+        .benefit-title {
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .benefit-desc {
+            font-size: 0.95rem;
+            color: var(--ink-light);
+        }
+
+        /* CTA */
+        .cta {
+            padding: 4rem 2rem;
+            text-align: center;
+            background: linear-gradient(180deg, transparent, rgba(74, 124, 89, 0.05));
+        }
+
+        .cta-text {
+            font-size: 1.3rem;
+            color: var(--ink);
+            margin-bottom: 2rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 1rem 2rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: var(--moss);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--moss-light);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--ink);
+            border: 1px solid var(--ink-faint);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--ink);
+        }
+
+        /* Philosophy teaser */
+        .philosophy-teaser {
+            padding: 3rem 2rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .essay-cards {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .essay-card {
+            display: flex;
+            gap: 1rem;
+            padding: 1rem;
+            background: var(--vellum-dark);
+            border-radius: 6px;
+            text-decoration: none;
+            color: var(--ink);
+            transition: transform 0.2s ease;
+        }
+
+        .essay-card:hover {
+            transform: translateX(5px);
+        }
+
+        .essay-icon {
+            font-size: 1.2rem;
+        }
+
+        .essay-title {
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .essay-desc {
+            font-size: 0.85rem;
+            color: var(--ink-light);
+        }
+
+        /* Footer */
+        footer {
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .footer-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--moss);
+        }
+
+        .tended {
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+        }
+
+        @media (max-width: 600px) {
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- The permission -->
+    <section class="permission-hero">
+        <h1 class="permission-line">This is <em>that</em> permission.</h1>
+        <p class="permission-context">
+            Self-hosting seems intimidating. Docker, networking, configuration files, 
+            security—where do you even start? You start here. 
+            Zen Garden makes it simple.
+        </p>
+    </section>
+
+    <!-- Who is this for -->
+    <section class="personas">
+        <div class="personas-inner">
+            <h2>You might be...</h2>
+            <div class="persona-grid">
+                <div class="persona">
+                    <div class="persona-title">The Developer</div>
+                    <p class="persona-desc">Who wants a local database without Docker Compose hell</p>
+                </div>
+                <div class="persona">
+                    <div class="persona-title">The Small Business</div>
+                    <p class="persona-desc">Who wants to stop paying cloud prices for simple services</p>
+                </div>
+                <div class="persona">
+                    <div class="persona-title">The Tinkerer</div>
+                    <p class="persona-desc">Who found three old ThinkPads and wants to do something useful</p>
+                </div>
+                <div class="persona">
+                    <div class="persona-title">The Privacy Advocate</div>
+                    <p class="persona-desc">Who wants their data on their own hardware</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- What you get -->
+    <section class="what-you-get">
+        <h2>What Zen Garden Does</h2>
+
+        <div class="benefit">
+            <span class="benefit-icon">🔍</span>
+            <div class="benefit-text">
+                <div class="benefit-title">Discovery</div>
+                <p class="benefit-desc">Services find each other automatically. No configuration files.</p>
+            </div>
+        </div>
+
+        <div class="benefit">
+            <span class="benefit-icon">📦</span>
+            <div class="benefit-text">
+                <div class="benefit-title">Offerings</div>
+                <p class="benefit-desc">Curated templates for MongoDB, Redis, Postgres, and more. One command to deploy.</p>
+            </div>
+        </div>
+
+        <div class="benefit">
+            <span class="benefit-icon">🔄</span>
+            <div class="benefit-text">
+                <div class="benefit-title">Resilience</div>
+                <p class="benefit-desc">Hardware fails? Move the service. Apps reconnect automatically.</p>
+            </div>
+        </div>
+
+        <div class="benefit">
+            <span class="benefit-icon">🪶</span>
+            <div class="benefit-text">
+                <div class="benefit-title">Lightweight</div>
+                <p class="benefit-desc">11 MB daemon. Runs on hardware others threw away.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+        <p class="cta-text">Ready to plant your first Stone?</p>
+        <div class="cta-buttons">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md" class="btn btn-primary">
+                Get Started
+            </a>
+            <a href="https://github.com/sylin-org/zen-garden" class="btn btn-secondary">
+                View on GitHub
+            </a>
+        </div>
+    </section>
+
+    <!-- Philosophy links -->
+    <section class="philosophy-teaser">
+        <div class="essay-cards">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/humanist-infrastructure.md" class="essay-card">
+                <span class="essay-icon">💚</span>
+                <div>
+                    <div class="essay-title">Humanist Infrastructure</div>
+                    <p class="essay-desc">Why we care about operators going home on time</p>
+                </div>
+            </a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/stone-against-the-clouds.md" class="essay-card">
+                <span class="essay-icon">🪨</span>
+                <div>
+                    <div class="essay-title">Stone Against the Clouds</div>
+                    <p class="essay-desc">Choosing physical presence over abstraction</p>
+                </div>
+            </a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/joy-of-understanding.md" class="essay-card">
+                <span class="essay-icon">✨</span>
+                <div>
+                    <div class="essay-title">Joy of Understanding</div>
+                    <p class="essay-desc">Systems that feel right</p>
+                </div>
+            </a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/sylin-org/zen-garden">GitHub</a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/README.md">Docs</a>
+            <a href="https://sylin.org">Sylin</a>
+        </div>
+        <p class="tended">tended with care 🌱</p>
+    </footer>
+</body>
+</html>

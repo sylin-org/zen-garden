@@ -1,0 +1,515 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Garden — Option D: Hybrid A+B</title>
+    <meta name="description" content="Permission, mission, vocabulary. Infrastructure that feels like home.">
+    <style>
+        :root {
+            --vellum: #f4f1eb;
+            --vellum-dark: #e8e4db;
+            --ink: #2c2c2c;
+            --ink-light: #5a5a5a;
+            --ink-faint: #8a8a8a;
+            --moss: #4a7c59;
+            --moss-light: #6b9b7a;
+            --moss-glow: rgba(74, 124, 89, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--vellum);
+            color: var(--ink);
+            line-height: 1.7;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+
+        /* Header */
+        header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--moss);
+            text-decoration: none;
+        }
+
+        .header-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .header-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .header-links a:hover {
+            color: var(--moss);
+        }
+
+        /* Permission hero */
+        .hero {
+            padding: 6rem 2rem;
+            text-align: center;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero-permission {
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 300;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+        }
+
+        .hero-permission em {
+            font-style: italic;
+            color: var(--moss);
+        }
+
+        .hero-subtitle {
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
+            color: var(--ink-light);
+            max-width: 550px;
+            margin: 0 auto 2.5rem;
+        }
+
+        .hero-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.9rem 1.8rem;
+            background: var(--moss);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .hero-cta:hover {
+            background: var(--moss-light);
+            transform: translateY(-2px);
+        }
+
+        /* Mission */
+        .mission {
+            background: var(--moss-glow);
+            padding: 4rem 2rem;
+        }
+
+        .mission-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+        }
+
+        .mission-item {
+            text-align: center;
+        }
+
+        .mission-number {
+            font-size: 2.5rem;
+            font-weight: 200;
+            color: var(--moss);
+            margin-bottom: 0.5rem;
+        }
+
+        .mission-title {
+            font-size: 1.1rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .mission-desc {
+            font-size: 0.95rem;
+            color: var(--ink-light);
+        }
+
+        /* E-waste callout */
+        .ewaste {
+            padding: 4rem 2rem;
+            text-align: center;
+        }
+
+        .ewaste-stat {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 200;
+            color: var(--moss);
+        }
+
+        .ewaste-label {
+            color: var(--ink-light);
+            margin-bottom: 1.5rem;
+        }
+
+        .ewaste-message {
+            font-size: 1.1rem;
+            max-width: 500px;
+            margin: 0 auto;
+            color: var(--ink);
+        }
+
+        /* How it works */
+        .how {
+            padding: 4rem 2rem;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .how h2 {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: 400;
+            margin-bottom: 2.5rem;
+        }
+
+        .how-step {
+            display: flex;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+            align-items: flex-start;
+        }
+
+        .step-num {
+            width: 32px;
+            height: 32px;
+            background: var(--moss);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .step-content h3 {
+            font-size: 1.1rem;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .step-content p {
+            color: var(--ink-light);
+            font-size: 0.95rem;
+        }
+
+        /* Vocabulary */
+        .vocabulary {
+            background: var(--vellum-dark);
+            padding: 4rem 2rem;
+        }
+
+        .vocab-inner {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .vocabulary h2 {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: 400;
+            margin-bottom: 0.5rem;
+        }
+
+        .vocab-subtitle {
+            text-align: center;
+            color: var(--ink-light);
+            margin-bottom: 2rem;
+            font-size: 0.95rem;
+        }
+
+        .vocab-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .vocab-table td {
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .vocab-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .vocab-term {
+            font-weight: 500;
+            color: var(--moss);
+            width: 100px;
+        }
+
+        .vocab-def {
+            color: var(--ink-light);
+        }
+
+        /* Final CTA */
+        .final-cta {
+            padding: 5rem 2rem;
+            text-align: center;
+        }
+
+        .final-text {
+            font-size: 1.3rem;
+            margin-bottom: 2rem;
+            color: var(--ink);
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.9rem 1.8rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: var(--moss);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--moss-light);
+        }
+
+        .btn-secondary {
+            border: 1px solid var(--ink-faint);
+            color: var(--ink);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--ink);
+        }
+
+        /* Footer */
+        footer {
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .footer-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--moss);
+        }
+
+        .tended {
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+        }
+
+        @media (max-width: 700px) {
+            .mission-inner {
+                grid-template-columns: 1fr;
+                gap: 2.5rem;
+            }
+
+            .header-links {
+                display: none;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="#" class="logo">ZEN GARDEN</a>
+        <nav class="header-links">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md">Get Started</a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/README.md">Docs</a>
+            <a href="https://github.com/sylin-org/zen-garden">GitHub</a>
+        </nav>
+    </header>
+
+    <!-- Welcome -->
+    <section class="hero">
+        <h1 class="hero-permission">Infrastructure you can <em>hold</em>.</h1>
+        <p class="hero-subtitle">
+            Self-hosting feels intimidating. But your old hardware still works. 
+            Zen Garden makes it simple to use it.
+        </p>
+        <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md" class="hero-cta">
+            Plant your first Stone →
+        </a>
+        <a href="learn.html" style="display: block; margin-top: 1rem; color: var(--ink-light); text-decoration: none; font-size: 0.95rem;">
+            or learn the whole story →
+        </a>
+    </section>
+
+    <!-- Mission -->
+    <section class="mission">
+        <div class="mission-inner">
+            <div class="mission-item">
+                <div class="mission-number">1</div>
+                <h3 class="mission-title">Reclaim</h3>
+                <p class="mission-desc">Turn "obsolete" hardware into useful infrastructure</p>
+            </div>
+            <div class="mission-item">
+                <div class="mission-number">2</div>
+                <h3 class="mission-title">Own</h3>
+                <p class="mission-desc">Your data, your network, your house</p>
+            </div>
+            <div class="mission-item">
+                <div class="mission-number">3</div>
+                <h3 class="mission-title">Simplify</h3>
+                <p class="mission-desc">Discover, deploy, connect. No YAML required.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- E-waste -->
+    <section class="ewaste">
+        <div class="ewaste-stat">62 million tonnes</div>
+        <p class="ewaste-label">of electronic waste annually</p>
+        <p class="ewaste-message">
+            Most of it still works. That old laptop? That retired PC? 
+            They're not garbage—they're <strong>Stones</strong>.
+        </p>
+    </section>
+
+    <!-- How it works -->
+    <section class="how">
+        <h2>How It Works</h2>
+
+        <div class="how-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+                <h3>Discovery</h3>
+                <p>Stones announce themselves. Services find each other. No configuration files.</p>
+            </div>
+        </div>
+
+        <div class="how-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+                <h3>Offerings</h3>
+                <p>Curated templates for MongoDB, Redis, Postgres. One command to deploy.</p>
+            </div>
+        </div>
+
+        <div class="how-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+                <h3>Resilience</h3>
+                <p>Hardware fails? Move the service. Apps reconnect automatically.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Vocabulary -->
+    <section class="vocabulary">
+        <div class="vocab-inner">
+            <h2>The Vocabulary</h2>
+            <p class="vocab-subtitle">The names teach you how it works</p>
+
+            <table class="vocab-table">
+                <tr>
+                    <td class="vocab-term">Stone</td>
+                    <td class="vocab-def">A machine—laptop, Pi, server. Solid, present, touchable.</td>
+                </tr>
+                <tr>
+                    <td class="vocab-term">Moss</td>
+                    <td class="vocab-def">The daemon. 11 MB. Grows on each Stone.</td>
+                </tr>
+                <tr>
+                    <td class="vocab-term">Rake</td>
+                    <td class="vocab-def">The CLI tool to tend your garden.</td>
+                </tr>
+                <tr>
+                    <td class="vocab-term">Offering</td>
+                    <td class="vocab-def">A service template to plant.</td>
+                </tr>
+                <tr>
+                    <td class="vocab-term">Lantern</td>
+                    <td class="vocab-def">Light one when the garden grows beyond sight.</td>
+                </tr>
+                <tr>
+                    <td class="vocab-term">Pond</td>
+                    <td class="vocab-def">Fill it for security boundaries.</td>
+                </tr>
+            </table>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="final-cta">
+        <p class="final-text">Ready to begin?</p>
+        <div class="cta-buttons">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md" class="btn btn-primary">
+                Get Started
+            </a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/README.md" class="btn btn-secondary">
+                Read the Philosophy
+            </a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/sylin-org/zen-garden">GitHub</a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/README.md">Documentation</a>
+            <a href="https://sylin.org">Sylin</a>
+        </div>
+        <p class="tended">tended with care 🌱</p>
+    </footer>
+</body>
+</html>

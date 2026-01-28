@@ -1,0 +1,288 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Garden — Option A: Quiet Garden</title>
+    <meta name="description" content="Infrastructure for the hardware you already own.">
+    <style>
+        :root {
+            --vellum: #f4f1eb;
+            --vellum-dark: #e8e4db;
+            --ink: #2c2c2c;
+            --ink-light: #5a5a5a;
+            --ink-faint: #8a8a8a;
+            --moss: #4a7c59;
+            --moss-light: #6b9b7a;
+            --stone: #6b6b6b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--vellum);
+            color: var(--ink);
+            line-height: 1.7;
+            min-height: 100vh;
+        }
+
+        /* Paper texture */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+
+        /* Minimal header */
+        header {
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: var(--moss);
+            letter-spacing: 0.05em;
+        }
+
+        /* Hero - the powerful stat */
+        .hero {
+            min-height: 70vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .hero-stat {
+            font-size: clamp(3rem, 10vw, 6rem);
+            font-weight: 200;
+            color: var(--moss);
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero-stat-unit {
+            font-size: clamp(1rem, 3vw, 1.5rem);
+            color: var(--ink-light);
+            margin-bottom: 2rem;
+        }
+
+        .hero-message {
+            font-size: clamp(1.2rem, 3vw, 1.6rem);
+            color: var(--ink);
+            max-width: 500px;
+            font-weight: 400;
+            line-height: 1.6;
+        }
+
+        .hero-message strong {
+            color: var(--moss);
+        }
+
+        /* Stone illustration */
+        .stone-illustration {
+            margin: 3rem 0;
+            text-align: center;
+        }
+
+        .stone-svg {
+            width: 120px;
+            height: 80px;
+        }
+
+        /* Three paths */
+        .paths {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            padding: 4rem 2rem;
+            flex-wrap: wrap;
+        }
+
+        .path {
+            text-align: center;
+        }
+
+        .path a {
+            display: block;
+            padding: 1rem 2rem;
+            color: var(--ink);
+            text-decoration: none;
+            font-size: 1.1rem;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .path a:hover {
+            color: var(--moss);
+            border-bottom-color: var(--moss);
+        }
+
+        .path-desc {
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+            margin-top: 0.5rem;
+        }
+
+        /* Vocabulary (minimized) */
+        .vocab-minimal {
+            max-width: 500px;
+            margin: 4rem auto;
+            padding: 0 2rem;
+        }
+
+        .vocab-minimal h2 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--ink-faint);
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        .vocab-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .vocab-term {
+            font-weight: 500;
+            color: var(--moss);
+        }
+
+        .vocab-def {
+            color: var(--ink-light);
+            font-size: 0.9rem;
+        }
+
+        /* Footer */
+        footer {
+            padding: 4rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .footer-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--moss);
+        }
+
+        .tended {
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+        }
+
+        @media (max-width: 600px) {
+            .paths {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .vocab-row {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">ZEN GARDEN</div>
+    </header>
+
+    <section class="hero">
+        <div class="hero-stat">62M</div>
+        <div class="hero-stat-unit">tonnes of e-waste, annually</div>
+        <p class="hero-message">
+            Most of it still works.<br>
+            Zen Garden turns old hardware into <strong>infrastructure you understand</strong>.
+        </p>
+
+        <div class="stone-illustration">
+            <svg class="stone-svg" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- Simple stone shape -->
+                <ellipse cx="60" cy="60" rx="50" ry="18" fill="#6b6b6b" opacity="0.2"/>
+                <path d="M20 55 Q30 25 60 20 Q90 25 100 55 Q90 65 60 68 Q30 65 20 55" fill="#6b6b6b"/>
+                <!-- Moss growing on top -->
+                <path d="M35 40 Q40 35 45 38 Q50 32 55 36 Q60 30 65 35 Q70 32 75 38 Q80 35 85 42" stroke="#4a7c59" stroke-width="3" stroke-linecap="round" fill="none"/>
+                <circle cx="42" cy="42" r="3" fill="#4a7c59"/>
+                <circle cx="58" cy="38" r="2.5" fill="#6b9b7a"/>
+                <circle cx="72" cy="40" r="3" fill="#4a7c59"/>
+            </svg>
+        </div>
+    </section>
+
+    <nav class="paths">
+        <div class="path">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md">Begin</a>
+            <p class="path-desc">Plant your first Stone</p>
+        </div>
+        <div class="path">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/README.md">Understand</a>
+            <p class="path-desc">Read the philosophy</p>
+        </div>
+        <div class="path">
+            <a href="https://github.com/sylin-org/zen-garden">Explore</a>
+            <p class="path-desc">View the source</p>
+        </div>
+    </nav>
+
+    <section class="vocab-minimal">
+        <h2>Vocabulary</h2>
+        <div class="vocab-row">
+            <span class="vocab-term">Stone</span>
+            <span class="vocab-def">A machine</span>
+        </div>
+        <div class="vocab-row">
+            <span class="vocab-term">Moss</span>
+            <span class="vocab-def">The daemon</span>
+        </div>
+        <div class="vocab-row">
+            <span class="vocab-term">Rake</span>
+            <span class="vocab-def">The CLI tool</span>
+        </div>
+        <div class="vocab-row">
+            <span class="vocab-term">Offering</span>
+            <span class="vocab-def">A service template</span>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/sylin-org/zen-garden">GitHub</a>
+            <a href="https://sylin.org">Sylin</a>
+        </div>
+        <p class="tended">tended with care 🌱</p>
+    </footer>
+</body>
+</html>

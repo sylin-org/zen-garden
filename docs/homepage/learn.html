@@ -1,0 +1,705 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Garden — Learn More</title>
+    <meta name="description" content="Why we built Zen Garden, what you get, and how simple it is to start.">
+    <style>
+        :root {
+            --vellum: #f4f1eb;
+            --vellum-dark: #e8e4db;
+            --ink: #2c2c2c;
+            --ink-light: #5a5a5a;
+            --ink-faint: #8a8a8a;
+            --moss: #4a7c59;
+            --moss-light: #6b9b7a;
+            --moss-glow: rgba(74, 124, 89, 0.08);
+            --amber: #c9a227;
+            --amber-soft: rgba(201, 162, 39, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--vellum);
+            color: var(--ink);
+            line-height: 1.7;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+
+        /* Header */
+        header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--moss);
+            text-decoration: none;
+        }
+
+        .header-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .header-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .header-links a:hover {
+            color: var(--moss);
+        }
+
+        /* Section styling */
+        .section {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+
+        .section-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--moss);
+            margin-bottom: 1rem;
+            font-weight: 500;
+        }
+
+        .section h2 {
+            font-size: clamp(1.8rem, 4vw, 2.5rem);
+            font-weight: 400;
+            margin-bottom: 1.5rem;
+            line-height: 1.3;
+        }
+
+        .section p {
+            font-size: 1.1rem;
+            color: var(--ink-light);
+            margin-bottom: 1.5rem;
+        }
+
+        .section p strong {
+            color: var(--ink);
+            font-weight: 500;
+        }
+
+        /* Hero */
+        .hero {
+            padding: 5rem 2rem 3rem;
+            text-align: center;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero h1 {
+            font-size: clamp(2rem, 5vw, 3rem);
+            font-weight: 300;
+            margin-bottom: 1rem;
+        }
+
+        .hero-subtitle {
+            font-size: 1.2rem;
+            color: var(--ink-light);
+        }
+
+        /* The Why section */
+        .why {
+            background: var(--moss-glow);
+            padding: 4rem 2rem;
+        }
+
+        .why-inner {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .stat-callout {
+            display: flex;
+            align-items: baseline;
+            gap: 1rem;
+            margin: 2rem 0;
+            padding: 1.5rem 0;
+            border-top: 1px solid rgba(74, 124, 89, 0.2);
+            border-bottom: 1px solid rgba(74, 124, 89, 0.2);
+        }
+
+        .stat-number {
+            font-size: clamp(2.5rem, 6vw, 3.5rem);
+            font-weight: 200;
+            color: var(--moss);
+            line-height: 1;
+        }
+
+        .stat-context {
+            font-size: 1.1rem;
+            color: var(--ink-light);
+        }
+
+        /* What you get - list style */
+        .benefits {
+            background: var(--vellum);
+            padding: 4rem 2rem;
+        }
+
+        .benefits-inner {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .benefits-list {
+            margin-top: 2rem;
+        }
+
+        .benefit-item {
+            padding: 1rem 0;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .benefit-item:last-child {
+            border-bottom: none;
+        }
+
+        .benefit-item p {
+            font-size: 1.1rem;
+            color: var(--ink-light);
+            margin: 0;
+            line-height: 1.7;
+        }
+
+        .benefit-item strong {
+            color: var(--ink);
+            font-weight: 500;
+        }
+
+        /* What you're part of */
+        .community {
+            background: var(--vellum-dark);
+            padding: 4rem 2rem;
+        }
+
+        .community-inner {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .values-list {
+            margin-top: 2rem;
+        }
+
+        .value-item {
+            display: flex;
+            gap: 1.5rem;
+            padding: 1.5rem 0;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            align-items: flex-start;
+        }
+
+        .value-item:last-child {
+            border-bottom: none;
+        }
+
+        .value-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+            width: 40px;
+            text-align: center;
+        }
+
+        .value-content h3 {
+            font-size: 1.1rem;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .value-content p {
+            font-size: 0.95rem;
+            color: var(--ink-light);
+            margin: 0;
+        }
+
+        /* How to use */
+        .how-to {
+            padding: 4rem 2rem;
+        }
+
+        .how-to-inner {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .steps {
+            margin-top: 2.5rem;
+        }
+
+        .step {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 3rem;
+            align-items: flex-start;
+        }
+
+        .step-number {
+            width: 48px;
+            height: 48px;
+            background: var(--moss);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .step-content {
+            flex: 1;
+            padding-top: 0.5rem;
+        }
+
+        .step-content h3 {
+            font-size: 1.3rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .step-content p {
+            color: var(--ink-light);
+            margin-bottom: 1rem;
+        }
+
+        .code-block {
+            background: #2c2c2c;
+            color: #e8e4db;
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+        }
+
+        .code-block .prompt {
+            color: var(--moss-light);
+        }
+
+        .code-block .comment {
+            color: #8a8a8a;
+        }
+
+        /* Simplicity callout */
+        .simplicity {
+            background: var(--amber-soft);
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        .simplicity-inner {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .simplicity h2 {
+            font-size: 1.5rem;
+            font-weight: 400;
+            margin-bottom: 1rem;
+        }
+
+        .simplicity p {
+            color: var(--ink-light);
+            font-size: 1.05rem;
+        }
+
+        .simplicity-stats {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .simplicity-stat {
+            text-align: center;
+        }
+
+        .simplicity-stat .number {
+            font-size: 2rem;
+            font-weight: 300;
+            color: var(--ink);
+        }
+
+        .simplicity-stat .label {
+            font-size: 0.85rem;
+            color: var(--ink-light);
+        }
+
+        /* CTA */
+        .final-cta {
+            padding: 5rem 2rem;
+            text-align: center;
+        }
+
+        .final-cta h2 {
+            font-size: 1.8rem;
+            font-weight: 400;
+            margin-bottom: 1rem;
+        }
+
+        .final-cta p {
+            color: var(--ink-light);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.9rem 1.8rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: var(--moss);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--moss-light);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            border: 1px solid var(--ink-faint);
+            color: var(--ink);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--ink);
+        }
+
+        /* Footer */
+        footer {
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .footer-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--moss);
+        }
+
+        .tended {
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+        }
+
+        @media (max-width: 600px) {
+            .header-links {
+                display: none;
+            }
+
+            .stat-callout {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .step {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .step-number {
+                width: 40px;
+                height: 40px;
+                font-size: 1rem;
+            }
+
+            .benefit-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .simplicity-stats {
+                gap: 2rem;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="index.html" class="logo">← ZEN GARDEN</a>
+        <nav class="header-links">
+            <a href="#why">Why</a>
+            <a href="#benefits">Benefits</a>
+            <a href="#community">Community</a>
+            <a href="#how">How It Works</a>
+        </nav>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero">
+        <h1>The whole story</h1>
+        <p class="hero-subtitle">Why we built this, what you get, and how simple it is.</p>
+    </section>
+
+    <!-- THE WHY -->
+    <section class="why" id="why">
+        <div class="why-inner">
+            <span class="section-label">Why We're Doing This</span>
+            <h2>Good hardware is being thrown away.</h2>
+            
+            <div class="stat-callout">
+                <span class="stat-number">62M</span>
+                <span class="stat-context">tonnes of electronic waste generated every year. Most of it still works.</span>
+            </div>
+
+            <p>
+                That laptop you replaced? The office PCs your company retired? The Raspberry Pi in your drawer? 
+                <strong>They're not obsolete. The market just moved on.</strong>
+            </p>
+            <p>
+                Meanwhile, small businesses pay hundreds per month for cloud services they could run themselves. 
+                Developers spin up databases on distant servers when a machine under their desk would do. 
+                Privacy-conscious users have no simple path to owning their own data.
+            </p>
+            <p>
+                We built Zen Garden because <strong>infrastructure shouldn't require a cloud account</strong>, 
+                and because hardware that works shouldn't become landfill.
+            </p>
+        </div>
+    </section>
+
+    <!-- WHAT YOU GET -->
+    <section class="benefits" id="benefits">
+        <div class="benefits-inner">
+            <span class="section-label">What You Get</span>
+            <h2>Everything you need, nothing you don't.</h2>
+
+            <div class="benefits-list">
+                <div class="benefit-item">
+                    <p>Remember hunting for the new server name when a machine changed? <strong>Services find each other now.</strong></p>
+                </div>
+
+                <div class="benefit-item">
+                    <p>Three $50 thin clients running 24/7 cost $26/year in electricity. <strong>That's 96% less than the cloud equivalent.</strong></p>
+                </div>
+
+                <div class="benefit-item">
+                    <p>Start open, experiment freely. <strong>Add security when you're ready, not before.</strong></p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- WHAT YOU'RE PART OF -->
+    <section class="community" id="community">
+        <div class="community-inner">
+            <span class="section-label">What You're Part Of</span>
+            <h2>A community that values different things.</h2>
+
+            <div class="values-list">
+                <div class="value-item">
+                    <span class="value-icon">🌱</span>
+                    <div class="value-content">
+                        <h3>Sustainability over consumption</h3>
+                        <p>Every Stone running is hardware not thrown away. We extend life, not planned obsolescence.</p>
+                    </div>
+                </div>
+
+                <div class="value-item">
+                    <span class="value-icon">🏠</span>
+                    <div class="value-content">
+                        <h3>Ownership over rental</h3>
+                        <p>Your data lives in your house, on your machines. No monthly fees for services you could host yourself.</p>
+                    </div>
+                </div>
+
+                <div class="value-item">
+                    <span class="value-icon">📖</span>
+                    <div class="value-content">
+                        <h3>Understanding over abstraction</h3>
+                        <p>We optimize for systems you can hold in your head. Complexity is a cost, not a feature.</p>
+                    </div>
+                </div>
+
+                <div class="value-item">
+                    <span class="value-icon">🤝</span>
+                    <div class="value-content">
+                        <h3>Appropriate scale</h3>
+                        <p>Not everything needs to scale to millions. A garden serves a household, a small business, a team. That's enough.</p>
+                    </div>
+                </div>
+
+                <div class="value-item">
+                    <span class="value-icon">✨</span>
+                    <div class="value-content">
+                        <h3>Joy in infrastructure</h3>
+                        <p>Systems should feel satisfying to operate. We design for delight, not just function.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- HOW TO USE -->
+    <section class="how-to" id="how">
+        <div class="how-to-inner">
+            <span class="section-label">How It Works</span>
+            <h2>Three commands to a working garden.</h2>
+
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Turn any machine into a Stone</h3>
+                        <p>Create a bootable pendrive, plug it in, reboot. When it comes back up, it's a Stone.</p>
+                        <div class="code-block">
+<span class="comment"># Create the installer pendrive</span>
+<span class="prompt">$</span> garden-rake forge-stone --drive E:
+
+<span class="comment"># Boot from it. That's it. Stone ready.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Plant an offering</h3>
+                        <p>Pick a service from the catalog. One command deploys it.</p>
+                        <div class="code-block">
+<span class="prompt">$</span> garden-rake plant mongodb
+
+<span class="comment"># That's it. MongoDB is running on your Stone.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Connect from anywhere in the garden</h3>
+                        <p>Applications use Zen Garden connection strings. No IPs, no ports.</p>
+                        <div class="code-block">
+<span class="comment"># In your app's config</span>
+mongodb://zen-garden:mongodb/myapp
+
+<span class="comment"># Resolves automatically to wherever MongoDB is running</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Simplicity callout -->
+    <section class="simplicity">
+        <div class="simplicity-inner">
+            <h2>Designed for real people</h2>
+            <p>
+                Not security experts. Not DevOps engineers. 
+                People who want things to work without becoming a full-time job.
+            </p>
+            <div class="simplicity-stats">
+                <div class="simplicity-stat">
+                    <div class="number">11 MB</div>
+                    <div class="label">daemon size</div>
+                </div>
+                <div class="simplicity-stat">
+                    <div class="number">30+</div>
+                    <div class="label">service offerings</div>
+                </div>
+                <div class="simplicity-stat">
+                    <div class="number">0</div>
+                    <div class="label">YAML files to write</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final-cta">
+        <h2>Ready to start?</h2>
+        <p>Plant your first Stone in minutes.</p>
+        <div class="cta-buttons">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md" class="btn btn-primary">
+                Get Started →
+            </a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/README.md" class="btn btn-secondary">
+                Read the Philosophy
+            </a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/sylin-org/zen-garden">GitHub</a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/README.md">Documentation</a>
+            <a href="https://sylin.org">Sylin</a>
+        </div>
+        <p class="tended">tended with care 🌱</p>
+    </footer>
+</body>
+</html>

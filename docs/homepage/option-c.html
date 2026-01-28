@@ -1,0 +1,383 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Garden — Option C: Metaphor Journey</title>
+    <meta name="description" content="The vocabulary teaches you how it works.">
+    <style>
+        :root {
+            --vellum: #f4f1eb;
+            --vellum-dark: #e8e4db;
+            --ink: #2c2c2c;
+            --ink-light: #5a5a5a;
+            --ink-faint: #8a8a8a;
+            --moss: #4a7c59;
+            --moss-light: #6b9b7a;
+            --stone-color: #6b6b6b;
+            --water: #5a8fa8;
+            --lantern: #d4a54a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--vellum);
+            color: var(--ink);
+            line-height: 1.7;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+
+        /* Journey stages */
+        .stage {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 4rem 2rem;
+            text-align: center;
+            position: relative;
+        }
+
+        .stage-icon {
+            font-size: 4rem;
+            margin-bottom: 2rem;
+            opacity: 0;
+            animation: fadeIn 0.8s ease-out forwards;
+        }
+
+        .stage-title {
+            font-size: clamp(2rem, 5vw, 3rem);
+            font-weight: 300;
+            margin-bottom: 1rem;
+            opacity: 0;
+            animation: fadeIn 0.8s ease-out 0.2s forwards;
+        }
+
+        .stage-subtitle {
+            font-size: clamp(1rem, 2.5vw, 1.25rem);
+            color: var(--ink-light);
+            max-width: 500px;
+            opacity: 0;
+            animation: fadeIn 0.8s ease-out 0.4s forwards;
+        }
+
+        .stage-reveal {
+            margin-top: 2rem;
+            padding: 1rem 2rem;
+            background: var(--vellum-dark);
+            border-radius: 8px;
+            font-size: 0.95rem;
+            color: var(--ink-light);
+            opacity: 0;
+            animation: fadeIn 0.8s ease-out 0.6s forwards;
+        }
+
+        .stage-reveal strong {
+            color: var(--ink);
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+
+        /* Scroll indicator */
+        .scroll-hint {
+            position: absolute;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+            animation: bounce 2s ease-in-out infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateX(-50%) translateY(0); }
+            50% { transform: translateX(-50%) translateY(8px); }
+        }
+
+        /* Stage colors */
+        .stage-stone {
+            background: linear-gradient(180deg, var(--vellum) 0%, #e5e2dc 100%);
+        }
+
+        .stage-moss {
+            background: linear-gradient(180deg, #e5e2dc 0%, #e8ebe6 100%);
+        }
+
+        .stage-rake {
+            background: linear-gradient(180deg, #e8ebe6 0%, #eae8e3 100%);
+        }
+
+        .stage-garden {
+            background: linear-gradient(180deg, #eae8e3 0%, var(--vellum) 100%);
+        }
+
+        /* Final stage */
+        .finale {
+            min-height: 80vh;
+            padding: 4rem 2rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .finale-quote {
+            font-size: clamp(1.1rem, 2.5vw, 1.4rem);
+            font-style: italic;
+            color: var(--ink-light);
+            max-width: 600px;
+            line-height: 1.9;
+            margin-bottom: 3rem;
+        }
+
+        .finale-cta {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 1rem 2rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: var(--moss);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--moss-light);
+        }
+
+        .btn-ghost {
+            color: var(--ink-light);
+        }
+
+        .btn-ghost:hover {
+            color: var(--ink);
+        }
+
+        /* More metaphors section */
+        .more-metaphors {
+            padding: 4rem 2rem;
+            background: var(--vellum-dark);
+        }
+
+        .more-inner {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .more-title {
+            text-align: center;
+            font-size: 1.2rem;
+            font-weight: 400;
+            margin-bottom: 2rem;
+            color: var(--ink-light);
+        }
+
+        .metaphor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .metaphor-card {
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        .metaphor-icon {
+            font-size: 2rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .metaphor-name {
+            font-weight: 500;
+            color: var(--ink);
+            margin-bottom: 0.25rem;
+        }
+
+        .metaphor-meaning {
+            font-size: 0.9rem;
+            color: var(--ink-light);
+        }
+
+        /* Footer */
+        footer {
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .footer-links a {
+            color: var(--ink-light);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--moss);
+        }
+
+        .tended {
+            font-size: 0.85rem;
+            color: var(--ink-faint);
+        }
+
+        @media (max-width: 600px) {
+            .finale-cta {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Stage 1: Stone -->
+    <section class="stage stage-stone">
+        <div class="stage-icon">🪨</div>
+        <h1 class="stage-title">A Stone has weight.</h1>
+        <p class="stage-subtitle">
+            It sits somewhere specific. You could trip over it. 
+            It doesn't particularly want to be moved.
+        </p>
+        <div class="stage-reveal">
+            <strong>Stone</strong> = a machine. Laptop, Raspberry Pi, old server. Something you can touch.
+        </div>
+        <div class="scroll-hint">↓ scroll</div>
+    </section>
+
+    <!-- Stage 2: Moss -->
+    <section class="stage stage-moss">
+        <div class="stage-icon">🌿</div>
+        <h2 class="stage-title">Moss grows on Stone.</h2>
+        <p class="stage-subtitle">
+            It cannot exist without the stone beneath it. 
+            It transforms what the stone can do.
+        </p>
+        <div class="stage-reveal">
+            <strong>Moss</strong> = the daemon that runs on each Stone. 11 MB. Almost weightless.
+        </div>
+    </section>
+
+    <!-- Stage 3: Rake -->
+    <section class="stage stage-rake">
+        <div class="stage-icon">🌾</div>
+        <h2 class="stage-title">You tend the garden with a Rake.</h2>
+        <p class="stage-subtitle">
+            Drawing patterns in gravel. Shaping what grows where. 
+            The tool that extends your intention.
+        </p>
+        <div class="stage-reveal">
+            <strong>Rake</strong> = the command-line tool. <code>garden-rake offer mongodb</code>
+        </div>
+    </section>
+
+    <!-- Stage 4: Garden -->
+    <section class="stage stage-garden">
+        <div class="stage-icon">🏡</div>
+        <h2 class="stage-title">Together, a Garden.</h2>
+        <p class="stage-subtitle">
+            Stones placed deliberately. Moss growing slowly. 
+            Patterns raked into gravel. Nothing wasted. Nothing rushed.
+        </p>
+        <div class="stage-reveal">
+            <strong>Garden</strong> = your infrastructure. Services that discover each other. Hardware you understand.
+        </div>
+    </section>
+
+    <!-- More metaphors -->
+    <section class="more-metaphors">
+        <div class="more-inner">
+            <h3 class="more-title">The vocabulary grows with you</h3>
+            <div class="metaphor-grid">
+                <div class="metaphor-card">
+                    <div class="metaphor-icon">🪴</div>
+                    <div class="metaphor-name">Offering</div>
+                    <p class="metaphor-meaning">A service template to plant</p>
+                </div>
+                <div class="metaphor-card">
+                    <div class="metaphor-icon">🏮</div>
+                    <div class="metaphor-name">Lantern</div>
+                    <p class="metaphor-meaning">Light one when you need to see further</p>
+                </div>
+                <div class="metaphor-card">
+                    <div class="metaphor-icon">💧</div>
+                    <div class="metaphor-name">Pond</div>
+                    <p class="metaphor-meaning">Fill it to create security boundaries</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Finale -->
+    <section class="finale">
+        <blockquote class="finale-quote">
+            "A zen garden is a space for contemplation. Infrastructure can be like this. 
+            Not the frantic scaling of cloud dashboards, but the quiet satisfaction 
+            of systems you understand. Hardware you can touch. Services you can see."
+        </blockquote>
+        <div class="finale-cta">
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/guides/first-stone.md" class="btn btn-primary">
+                Plant your first Stone
+            </a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/philosophy/metaphor-as-architecture.md" class="btn btn-ghost">
+                Read more about metaphor as architecture →
+            </a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/sylin-org/zen-garden">GitHub</a>
+            <a href="https://github.com/sylin-org/zen-garden/blob/main/docs/README.md">Docs</a>
+            <a href="https://sylin.org">Sylin</a>
+        </div>
+        <p class="tended">tended with care 🌱</p>
+    </footer>
+</body>
+</html>

@@ -73,7 +73,16 @@
         .name { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
         .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-top: 0.25rem; }
         .endpoint { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--accent-sage); text-decoration: none; }
-        .uptime { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--stone-600); }
+
+        /* At a Glance */
+        .glance { display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem; margin-top: 1.25rem; }
+        .glance-row { display: flex; align-items: center; gap: 0.5rem; font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--stone-600); }
+        .glance-icon { font-size: 0.75rem; opacity: 0.7; }
+        .glance-dots { display: flex; align-items: center; gap: 0.3rem; }
+        .glance-dot { font-size: 0.75rem; opacity: 0.9; line-height: 1; }
+        .glance-dot.running { filter: none; }
+        .glance-dot.stopped { opacity: 0.5; filter: grayscale(1); }
+        .glance-dot.error { filter: hue-rotate(340deg) saturate(0.8); }
 
         /* Section */
         .section-title {
@@ -113,8 +122,9 @@
         .dot.degraded { background: var(--accent-clay); box-shadow: 0 0 8px var(--accent-clay); }
 
         /* Horizon */
-        .horizon-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; cursor: pointer; }
+        .horizon-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; cursor: pointer; background: transparent; border: none; width: 100%; text-align: left; font: inherit; color: inherit; }
         .horizon-header:hover { background: rgba(128,128,128,0.03); }
+        .horizon-header:focus { outline: 2px solid var(--accent-sage); outline-offset: -2px; }
         .chevron { font-size: 0.7rem; transition: transform 0.3s; color: var(--stone-600); }
         .chevron.open { transform: rotate(90deg); }
         .horizon-label { font-size: 0.9rem; color: var(--stone-600); }
@@ -145,61 +155,65 @@
                 <h1 class="name" id="name">Loading...</h1>
                 <div class="meta">
                     <a class="endpoint" id="endpoint" href="#"></a>
-                    <span class="uptime" id="uptime"></span>
                 </div>
+            </div>
+            <div class="glance" id="glance" aria-live="polite" aria-label="Status at a glance">
+                <div class="glance-row"><span id="stone-uptime">—</span><span class="glance-icon" title="uptime (stone)" aria-hidden="true">🪨</span></div>
+                <div class="glance-row"><span id="moss-uptime">—</span><span class="glance-icon" title="uptime (moss)" aria-hidden="true">🌿</span></div>
+                <div class="glance-row"><span>offerings</span><span class="glance-dots" id="offerings-glance" role="status"></span></div>
             </div>
         </header>
 
         <!-- Foundation -->
-        <section>
-            <h2 class="section-title">Foundation</h2>
+        <section aria-labelledby="foundation-title">
+            <h2 class="section-title" id="foundation-title">Foundation</h2>
             <div class="foundation-grid">
                 <div class="card stat">
-                    <span class="stat-label">CPU</span>
+                    <span class="stat-label" id="cpu-label">CPU</span>
                     <div><span class="stat-value" id="cpu-value">—</span><span class="stat-unit">%</span></div>
-                    <div class="gauge"><div class="gauge-fill" id="cpu-gauge"></div></div>
+                    <div class="gauge" role="meter" aria-labelledby="cpu-label" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="cpu-meter"><div class="gauge-fill" id="cpu-gauge"></div></div>
                 </div>
                 <div class="card stat">
-                    <span class="stat-label">Memory</span>
+                    <span class="stat-label" id="mem-label">Memory</span>
                     <div><span class="stat-value" id="mem-value">—</span><span class="stat-unit" id="mem-unit">GB</span></div>
-                    <div class="gauge"><div class="gauge-fill" id="mem-gauge"></div></div>
+                    <div class="gauge" role="meter" aria-labelledby="mem-label" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="mem-meter"><div class="gauge-fill" id="mem-gauge"></div></div>
                 </div>
                 <div class="card stat">
-                    <span class="stat-label">Disk</span>
+                    <span class="stat-label" id="disk-label">Disk</span>
                     <div><span class="stat-value" id="disk-value">—</span><span class="stat-unit" id="disk-unit">GB</span></div>
-                    <div class="gauge"><div class="gauge-fill" id="disk-gauge"></div></div>
+                    <div class="gauge" role="meter" aria-labelledby="disk-label" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="disk-meter"><div class="gauge-fill" id="disk-gauge"></div></div>
                 </div>
             </div>
         </section>
 
         <!-- Offerings -->
-        <section id="offerings-section">
-            <h2 class="section-title">Offerings</h2>
+        <section id="offerings-section" aria-labelledby="offerings-title">
+            <h2 class="section-title" id="offerings-title">Offerings</h2>
             <div class="list" id="offerings-list"></div>
             <div class="card empty" id="offerings-empty">No offerings planted.</div>
         </section>
 
         <!-- Companions -->
-        <section id="companions-section" class="hidden">
-            <h2 class="section-title">Companions</h2>
+        <section id="companions-section" class="hidden" aria-labelledby="companions-title">
+            <h2 class="section-title" id="companions-title">Companions</h2>
             <div class="list" id="companions-list"></div>
         </section>
 
         <!-- Horizon -->
-        <section>
-            <h2 class="section-title">Horizon</h2>
+        <section aria-labelledby="horizon-title">
+            <h2 class="section-title" id="horizon-title">Horizon</h2>
             <div class="card" style="padding:0">
-                <div class="horizon-header" onclick="toggleHorizon()">
-                    <span class="chevron" id="horizon-chevron">▶</span>
+                <button class="horizon-header" onclick="toggleHorizon()" aria-expanded="false" aria-controls="horizon-list" id="horizon-toggle">
+                    <span class="chevron" id="horizon-chevron" aria-hidden="true">▶</span>
                     <span class="horizon-label" id="horizon-label">Alone in the garden</span>
-                </div>
-                <div class="horizon-list" id="horizon-list"></div>
+                </button>
+                <div class="horizon-list" id="horizon-list" role="list"></div>
             </div>
         </section>
 
         <!-- Footer -->
         <footer class="footer">
-            <span id="version">v?</span> · <a href="/health">/health</a> · <a href="/api/v1/manifest">/api</a>
+            <span id="version">Moss v?</span> · <a href="/health">/health</a> · <a href="/api/v1/manifest">/api</a> · <a href="https://github.com/sylin-org/zen-garden" target="_blank">GitHub</a> · <a href="https://sylin.org/" target="_blank">Sylin.org</a> · tended with care 🌱
         </footer>
     </main>
 
@@ -211,6 +225,7 @@
         horizonOpen = !horizonOpen;
         document.getElementById('horizon-chevron').classList.toggle('open', horizonOpen);
         document.getElementById('horizon-list').classList.toggle('open', horizonOpen);
+        document.getElementById('horizon-toggle').setAttribute('aria-expanded', horizonOpen);
     }
 
     function $(id) { return document.getElementById(id); }
@@ -223,8 +238,9 @@
             $('name').textContent = id.name || 'Unknown';
             $('endpoint').textContent = id.endpoint || '';
             $('endpoint').href = id.endpoint || '#';
-            $('uptime').textContent = id.uptime ? 'up ' + id.uptime : '';
-            $('version').textContent = 'v' + (id.version || '?');
+            $('stone-uptime').textContent = id.uptime || '—';
+            $('moss-uptime').textContent = id.moss_uptime || '—';
+            $('version').textContent = 'Moss v' + (id.version || '?');
             if (id.color) {
                 document.documentElement.style.setProperty('--stone-color', id.color);
             }
@@ -239,21 +255,39 @@
             if (f.cpu) {
                 $('cpu-value').textContent = f.cpu.percent?.toFixed(1) || '—';
                 $('cpu-gauge').style.width = (f.cpu.percent || 0) + '%';
+                $('cpu-meter').setAttribute('aria-valuenow', Math.round(f.cpu.percent || 0));
             }
             if (f.memory) {
                 $('mem-value').textContent = f.memory.used_gb?.toFixed(1) || '—';
                 $('mem-unit').textContent = '/ ' + (f.memory.total_gb?.toFixed(0) || '?') + ' GB';
                 $('mem-gauge').style.width = (f.memory.percent || 0) + '%';
+                $('mem-meter').setAttribute('aria-valuenow', Math.round(f.memory.percent || 0));
             }
             if (f.disk) {
                 $('disk-value').textContent = f.disk.used_gb || '—';
                 $('disk-unit').textContent = '/ ' + (f.disk.total_gb || '?') + ' GB';
                 $('disk-gauge').style.width = (f.disk.percent || 0) + '%';
+                $('disk-meter').setAttribute('aria-valuenow', Math.round(f.disk.percent || 0));
             }
         }
 
         // Offerings
         const offerings = data.offerings || [];
+        
+        // At-a-glance offerings summary
+        const running = offerings.filter(o => o.status === 'running' && o.health !== 'degraded').length;
+        const stopped = offerings.filter(o => o.status === 'stopped').length;
+        const errors = offerings.filter(o => o.health === 'degraded' || o.health === 'error').length;
+        let glanceDots = '';
+        let ariaStatus = [];
+        if (running > 0) { glanceDots += `<span>${running}</span><span class="glance-dot running" title="running" aria-hidden="true">🟢</span>`; ariaStatus.push(running + ' running'); }
+        if (stopped > 0) { glanceDots += `<span>${stopped}</span><span class="glance-dot stopped" title="stopped" aria-hidden="true">🟢</span>`; ariaStatus.push(stopped + ' stopped'); }
+        if (errors > 0) { glanceDots += `<span>${errors}</span><span class="glance-dot error" title="degraded" aria-hidden="true">🟢</span>`; ariaStatus.push(errors + ' degraded'); }
+        if (offerings.length === 0) { glanceDots = '<span>—</span>'; ariaStatus.push('none'); }
+        const glanceEl = $('offerings-glance');
+        glanceEl.innerHTML = glanceDots;
+        glanceEl.setAttribute('aria-label', 'offerings: ' + ariaStatus.join(', '));
+        
         const offeringsList = $('offerings-list');
         offeringsList.innerHTML = offerings.map(o => `
             <div class="card item">
@@ -290,8 +324,8 @@
             ? horizon.count + ' stone' + (horizon.count !== 1 ? 's' : '') + ' visible'
             : 'Alone in the garden';
         $('horizon-list').innerHTML = (horizon.stones || []).map(s => `
-            <div class="horizon-stone">
-                <div class="horizon-color" style="background-color:${s.color || 'var(--accent-sage)'}"></div>
+            <div class="horizon-stone" role="listitem">
+                <div class="horizon-color" style="background-color:${s.color || 'var(--accent-sage)'}" aria-hidden="true"></div>
                 <a class="horizon-name" href="${s.endpoint}">${s.name}</a>
                 <span class="horizon-health">${s.health}</span>
             </div>

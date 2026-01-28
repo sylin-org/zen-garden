@@ -142,7 +142,6 @@ if ($LASTEXITCODE -ne 0) {
 if (-not $SkipPackage) {
     Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
     
-    # Use local staging area
     $stagingDir = Join-Path $DIST_DIR "staging\windows"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
     

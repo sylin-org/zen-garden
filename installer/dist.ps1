@@ -77,6 +77,11 @@ $profile = if ($DebugBuild) { "debug" }
 Write-Host "Build Profile: $profile" -ForegroundColor Yellow
 Write-Host ""
 
+# Destroy and recreate staging directory (ensures no stale packages)
+$stagingRoot = Join-Path $config.workspace.dist "staging"
+if (Test-Path $stagingRoot) { Remove-Item $stagingRoot -Recurse -Force }
+New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
+
 # Track build results
 $buildErrors = @()
 $builtPlatforms = @()

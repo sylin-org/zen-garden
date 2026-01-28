@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stones & Offerings | Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;600&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #f4f2ee;
+            --stone-900: #1a1a1a;
+            --stone-600: #57534e;
+            --vellum-white: rgba(255, 255, 255, 0.45);
+            --vellum-border: rgba(255, 255, 255, 0.6);
+            --accent-sage: #84a59d;
+            --accent-clay: #d4a373;
+            --glass-blur: blur(14px);
+            --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            background-image: 
+                radial-gradient(circle at 20% 20%, #e5e1da 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, #dcd7cc 0%, transparent 40%);
+            font-family: 'Outfit', sans-serif;
+            color: var(--stone-900);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            justify-content: center;
+            padding: 4rem 2rem;
+            line-height: 1.5;
+        }
+
+        /* Vellum Texture Overlay */
+        .vellum-grain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.04;
+            filter: contrast(150%) brightness(100%);
+        }
+
+        .dashboard-container {
+            width: 100%;
+            max-width: 1000px;
+            display: flex;
+            flex-direction: column;
+            gap: 4rem;
+            animation: fadeIn 1.2s ease-out;
+        }
+
+        /* Hero Section - The Stone Identity */
+        .stone-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            border-left: 1px solid var(--stone-900);
+            padding-left: 2rem;
+        }
+
+        .stone-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: var(--stone-600);
+        }
+
+        .stone-name {
+            font-size: 4rem;
+            font-weight: 600;
+            letter-spacing: -0.04em;
+            line-height: 1;
+        }
+
+        .stone-url {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1rem;
+            color: var(--accent-sage);
+            opacity: 0.8;
+            text-decoration: none;
+            transition: var(--transition-soft);
+        }
+
+        .stone-url:hover {
+            opacity: 1;
+            transform: translateX(4px);
+        }
+
+        /* Section Layout */
+        .section-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            margin-bottom: 2rem;
+            color: var(--stone-600);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .section-title::after {
+            content: '';
+            flex-grow: 1;
+            height: 1px;
+            background: linear-gradient(90deg, rgba(0,0,0,0.1), transparent);
+        }
+
+        /* Vellum Component Styling */
+        .vellum-card {
+            background: var(--vellum-white);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--vellum-border);
+            border-radius: 2px;
+            padding: 2rem;
+            box-shadow: 
+                0 4px 30px rgba(0, 0, 0, 0.03),
+                inset 0 0 20px rgba(255, 255, 255, 0.2);
+            transition: var(--transition-soft);
+        }
+
+        .vellum-card:hover {
+            background: rgba(255, 255, 255, 0.6);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Hardware Grid */
+        .hardware-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+        }
+
+        .stat-group {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--stone-600);
+        }
+
+        .stat-value-container {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+        }
+
+        .stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
+        }
+
+        .stat-unit {
+            font-size: 0.75rem;
+            opacity: 0.5;
+        }
+
+        .gauge-track {
+            height: 2px;
+            background: rgba(0,0,0,0.05);
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .gauge-fill {
+            position: absolute;
+            height: 100%;
+            background: var(--stone-900);
+            width: 0%;
+            transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        /* Living Offerings Section */
+        .offerings-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .offering-row {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr 1fr 0.5fr;
+            align-items: center;
+            padding: 1.25rem 2rem;
+        }
+
+        .offering-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .offering-meta {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--stone-600);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.7rem;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-sage);
+            box-shadow: 0 0 10px var(--accent-sage);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hardware-grid { grid-template-columns: 1fr; }
+            .offering-row { grid-template-columns: 1fr 1fr; gap: 1rem; }
+            .stone-name { font-size: 2.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <svg class="vellum-grain">
+        <filter id="noiseFilter">
+            <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="3" stitchTiles="stitch"/>
+        </filter>
+        <rect width="100%" height="100%" filter="url(#noiseFilter)"/>
+    </svg>
+
+    <main class="dashboard-container">
+        
+        <!-- Hero: The Stone -->
+        <header class="stone-hero">
+            <span class="stone-label">Primary Monolith</span>
+            <h1 class="stone-name">Aethel-01</h1>
+            <a href="#" class="stone-url">https://aethel.core.internal</a>
+        </header>
+
+        <!-- Hardware: The Foundation -->
+        <section>
+            <h2 class="section-title">Foundation & Hardware</h2>
+            <div class="hardware-grid">
+                
+                <div class="vellum-card stat-group">
+                    <span class="stat-label">Neural Load</span>
+                    <div class="stat-value-container">
+                        <span class="stat-value">12.4</span>
+                        <span class="stat-unit">%</span>
+                    </div>
+                    <div class="gauge-track">
+                        <div class="gauge-fill" style="width: 12.4%"></div>
+                    </div>
+                </div>
+
+                <div class="vellum-card stat-group">
+                    <span class="stat-label">Essence Reserve</span>
+                    <div class="stat-value-container">
+                        <span class="stat-value">32.0</span>
+                        <span class="stat-unit">GB</span>
+                    </div>
+                    <div class="gauge-track">
+                        <div class="gauge-fill" style="width: 45%"></div>
+                    </div>
+                </div>
+
+                <div class="vellum-card stat-group">
+                    <span class="stat-label">Thermal Bloom</span>
+                    <div class="stat-value-container">
+                        <span class="stat-value">41</span>
+                        <span class="stat-unit">°C</span>
+                    </div>
+                    <div class="gauge-track">
+                        <div class="gauge-fill" style="width: 38%"></div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Living Systems: The Offerings -->
+        <section>
+            <h2 class="section-title">Living Offerings</h2>
+            <div class="offerings-list">
+                
+                <div class="vellum-card offering-row">
+                    <span class="offering-name">The Archivist</span>
+                    <span class="offering-meta">DB-POSTGRES-01</span>
+                    <span class="offering-meta">LATENCY: 2ms</span>
+                    <div class="status-pill">
+                        <div class="status-dot"></div>
+                        Stable
+                    </div>
+                </div>
+
+                <div class="vellum-card offering-row">
+                    <span class="offering-name">The Weaver</span>
+                    <span class="offering-meta">LB-TRAEFIK-04</span>
+                    <span class="offering-meta">TPS: 1.2k</span>
+                    <div class="status-pill">
+                        <div class="status-dot"></div>
+                        Stable
+                    </div>
+                </div>
+
+                <div class="vellum-card offering-row">
+                    <span class="offering-name">The Sentinel</span>
+                    <span class="offering-meta">SEC-VAULT-01</span>
+                    <span class="offering-meta">UPTIME: 342d</span>
+                    <div class="status-pill">
+                        <div class="status-dot"></div>
+                        Stable
+                    </div>
+                </div>
+
+                <div class="vellum-card offering-row">
+                    <span class="offering-name">The Chronicler</span>
+                    <span class="offering-meta">LOG-ELK-STACK</span>
+                    <span class="offering-meta">INGEST: 45mb/s</span>
+                    <div class="status-pill">
+                        <div class="status-dot" style="background: var(--accent-clay); box-shadow: 0 0 10px var(--accent-clay);"></div>
+                        Active
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // Subtle interaction: Cards follow mouse tilt slightly
+        document.querySelectorAll('.vellum-card').forEach(card => {
+            card.addEventListener('mousemove', (e) => {
+                const rect = card.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                const centerX = rect.width / 2;
+                const centerY = rect.height / 2;
+                
+                const rotateX = (y - centerY) / 20;
+                const rotateY = (centerX - x) / 20;
+                
+                card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) translateY(-5px)`;
+            });
+
+            card.addEventListener('mouseleave', () => {
+                card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(0px)`;
+            });
+        });
+
+        // Trigger gauge animation after load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                document.querySelectorAll('.gauge-fill').forEach(fill => {
+                    const width = fill.style.width;
+                    fill.style.width = '0%';
+                    setTimeout(() => {
+                        fill.style.width = width;
+                    }, 100);
+                });
+            }, 500);
+        });
+    </script>
+</body>
+</html>

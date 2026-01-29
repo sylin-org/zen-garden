@@ -3,6 +3,12 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-28
+- **Storage API restructured per STORAGE-0002** - dual-layer API for native and S3 gateway
+  - Native Bank API: `/api/v1/stone/storage/bank/:id/*path` - ApiResponse JSON format
+  - S3 Gateway: `/api/v1/stone/storage/s3/:bucket/*key` - S3-spec XML/raw bytes
+  - Added `list_buckets()` method to ObjectStore for S3 ListBuckets operation
+  - Cleaned up duplicate handlers (renamed from `*_seed_bank_v1` to `*_bank_v1`)
+  - Rake commands updated to use new endpoints with proper ApiResponse parsing
 - **Documentation alignment with service resolution and storage specs** - comprehensive update across all docs
   - **Protocol vs Offering distinction** - clarified: s3/mongodb = protocols (wire format), minio/mongodb = offerings (software)
   - **Connection string format** - unified: `zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]`

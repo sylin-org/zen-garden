@@ -23,7 +23,7 @@ This specification defines the UX flow and technical implementation for onboardi
 | **Named + Closed** | User-specified | ❌ Never | ✅ Only if name matches | ✅ Syncs only with same-name closed |
 
 **Naming Rules:**
-- Default name (no `as` clause): `seed-bank-zengarden`
+- Default name (no `as` clause): `seed-bank-zen-garden`
 - Random name (`prepare {device} named`): Generates `seed-{adjective}-{noun}` from word lists
 - Explicit name (`as backup-vault`): Uses provided name
 
@@ -181,29 +181,56 @@ pub const STORAGE_PREPARE_PROGRESS: &str = "storage.prepare.progress";
 
 ### 2.3 Cricket Integration
 
-Cricket can subscribe to storage events for audio feedback:
+Cricket subscribes to storage events via SSE and plays audio feedback using the tune system.
+
+**Event Mappings (in `tunes/zen-tech/tune.yaml`):**
+
+```yaml
+# Storage events (seed bank lifecycle)
+storage.detected:
+  resource: samples/computer-chimes.mp3
+  channel: foreground
+  debounce_ms: 3000
+
+storage.prepared:
+  resource: samples/success-synth.mp3
+  channel: foreground
+  debounce_ms: 1000
+
+storage.released:
+  resource: samples/telephone-dock-beep.mp3
+  channel: midground
+  debounce_ms: 1000
+
+storage.removed:
+  resource: samples/beep-oops.mp3
+  channel: midground
+  debounce_ms: 1000
+
+storage.pool_conflict:
+  resource: samples/alert-short.mp3
+  channel: foreground
+  debounce_ms: 5000
+```
+
+**How It Works:**
+
+Cricket's event handler (`events.rs`) is generic - it looks up the event type in the active tune's event mappings and plays the corresponding audio resource. No special code is needed per event type.
 
 ```rust
-// In cricket/src/events.rs
+// In cricket/src/events.rs - Generic handler
 async fn on_event(&self, event: SseEvent) {
-    match event.event_type.as_str() {
-        "storage.detected" => {
-            self.play_on_channel("notification", "seed-bank-detected").await;
-        }
-        "storage.prepared" => {
-            self.play_on_channel("notification", "seed-bank-ready").await;
-        }
-        "storage.released" => {
-            self.play_on_channel("notification", "seed-bank-released").await;
-        }
-        "storage.pool_conflict" => {
-            // Alert sound - user intervention required
-            self.play_on_channel("alert", "pool-conflict").await;
-        }
-        _ => {}
-    }
+    // Get mapping from active tune (e.g., "storage.detected" → samples/computer-chimes.mp3)
+    let Some(mapping) = self.tune_manager.get_event_mapping(&event.event_type) else {
+        return; // No mapping for this event
+    };
+
+    // Check debounce, resolve channel, play audio
+    // ...
 }
 ```
+
+This design allows tunes to customize which events trigger audio and which samples to use, without code changes.
 
 ---
 
@@ -719,28 +746,46 @@ protocols:
 
 ### 7.1 Mount Persistence
 
-Prepared seed banks are persisted via two mechanisms:
+Prepared seed banks use label-based auto-mount on scan:
 
-**fstab Entry (Boot Persistence):**
+**Filesystem Label (`zen-seed`):**
+
+During preparation, the filesystem is labeled `zen-seed`:
+```bash
+mkfs.ext4 -L zen-seed /dev/sdb1
+# or
+mkfs.btrfs -L zen-seed /dev/sdb1
 ```
-# /etc/fstab entry added during prepare
-UUID=abc123-def456  /var/lib/zen-garden/mounts/portable-backup  ext4  defaults,nofail  0  2
+
+**Auto-Mount on Scan:**
+
+`SeedBankRegistry::scan()` automatically mounts unmounted devices with the `zen-seed` label:
+
+```rust
+// In registry.rs
+pub async fn scan() -> Result<Self> {
+    // Auto-mount any unmounted seed banks before scanning
+    Self::auto_mount_seed_banks().await?;
+    // ... then scan mounts directory for manifests
+}
+
+async fn auto_mount_seed_banks() -> Result<()> {
+    // 1. Run: lsblk -rno NAME,LABEL,MOUNTPOINT
+    // 2. Find devices with label "zen-seed" that have no mountpoint
+    // 3. Check device is removable (skip internal drives)
+    // 4. Mount to {data_dir}/mounts/{seed-bank-name}
+}
 ```
 
-The `nofail` option ensures boot continues if device is absent.
+This approach is preferred over fstab because:
+- No stale entries when device is absent
+- Works across reboots without configuration
+- Handles roaming devices (plugged into different stones)
+- Simpler than UUID-based fstab management
 
-**Moss Startup Scan (Hot-Plug Recovery):**
-
-On startup, Moss:
-1. Scans `/dev/disk/by-id/usb-*` for attached USB storage
-2. Checks each mounted device for `.zen-garden/manifest.yaml`
-3. Reads manifest and registers seed bank in memory
-4. Emits `storage.rediscovered` SSE event for each
-
-This handles:
-- Devices attached after boot
-- Devices moved between stones
-- Recovery from unclean shutdown
+**Mount Directory:**
+- Linux: `/var/lib/zen-garden/mounts/{name}/`
+- Development: `.zen-garden/mounts/{name}/`
 
 ### 7.2 Roaming Seed Banks
 

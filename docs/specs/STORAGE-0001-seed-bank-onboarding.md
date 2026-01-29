@@ -682,6 +682,59 @@ Content-Type: application/json
 | `wipe-target` | Delete target pool content, replace with source |
 | `wipe-source` | Delete source pool content, replace with target |
 
+### 5.9 Object Operations
+
+Object CRUD operations on seed bank contents:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/stone/storage/bank/:id/*path` | Get object (raw bytes) |
+| PUT | `/api/v1/stone/storage/bank/:id/*path` | Create/update object |
+| DELETE | `/api/v1/stone/storage/bank/:id/*path` | Delete object |
+| HEAD | `/api/v1/stone/storage/bank/:id/*path` | Get object metadata |
+
+**Query Parameters:**
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `depth` | `1` (default), `2`, `3`, ..., `all`, `-1` | Listing depth for directory paths |
+
+**Examples:**
+
+```http
+# List immediate children (default depth=1)
+GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/
+
+# List 3 levels deep
+GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=3
+
+# Full recursive listing
+GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=all
+GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=-1  # Unix convention
+```
+
+**Depth Behavior:**
+
+| Value | Behavior |
+|-------|----------|
+| `1` | Immediate children only (default) |
+| `2` | Children and grandchildren |
+| `N` | N levels of subdirectories |
+| `all` or `-1` | Full recursive listing |
+
+**Response (directory listing):**
+```json
+{
+  "path": "apps/myapp/",
+  "entries": [
+    {"name": "config.json", "type": "file", "size": 1024, "modified": "2026-01-28T10:30:00Z"},
+    {"name": "data/", "type": "dir"},
+    {"name": "data/users.db", "type": "file", "size": 51200, "modified": "2026-01-28T09:15:00Z"}
+  ],
+  "truncated": false
+}
+```
+
 ---
 
 ## 6. Seed Bank Structure
@@ -917,7 +970,39 @@ fn is_removable(device: &Path) -> Result<bool, StorageError> {
 
 ### 10.1 Discovery
 
-Seed banks don't discover each other—the **Moss instances** managing them do via normal stone announcements. Moss announces seed bank availability as part of its topology chirp.
+Seed banks don't discover each other—the **Moss instances** managing them do via the Storage Beacon protocol (STORAGE-0003).
+
+**Event-Driven Announcements:**
+
+Moss broadcasts a `STORAGE_BEACON` on:
+- Seed bank mount (USB insert, boot detection)
+- Seed bank unmount (release, removal)
+- Visibility change (open ↔ closed)
+- When a new stone joins the garden (all storage-having stones beacon)
+
+**Beacon Structure:**
+```rust
+StorageBeacon {
+    stone_id: String,           // Links to TopologyEntry
+    stone_name: String,
+    endpoint: String,           // HTTP endpoint
+    seed_banks: Vec<SeedBankAnnouncement>,
+    timestamp: DateTime<Utc>,
+}
+```
+
+**Cache Design:**
+- Separate `StorageCache` references `TopologyCache` by `stone_id`
+- All stones lurk-listen and update their cache on beacon receipt
+- Cache entries expire when stone goes offline (topology-driven)
+
+**New Stone Flow:**
+1. New stone broadcasts `STONE_CHIRP`
+2. All stones with seed banks hear the chirp
+3. They each broadcast `STORAGE_BEACON`
+4. New stone's `StorageCache` is fully populated within seconds
+
+See [STORAGE-0003](../decisions/STORAGE-0003-beacon-protocol.md) for full protocol details.
 
 ### 10.2 Journal Format
 
@@ -1004,6 +1089,8 @@ Detection and warning for multiple seed banks on same USB hub (power limitations
 - [Storage Capability Spec](../proposals/ongoing/zen-garden-storage-capability-spec.md)
 - [Service Resolution Spec](../proposals/ongoing/zen-garden-service-resolution-spec.md)
 - [PRESENCE-0001](../PRESENCE-0001-COMPLETE.md) - SSE event architecture
+- [STORAGE-0002](../decisions/STORAGE-0002-api-structure.md) - API structure decision
+- [STORAGE-0003](../decisions/STORAGE-0003-beacon-protocol.md) - Storage beacon protocol
 - STORAGE-0002-seed-bank-federation.md - Federation protocol (TBD)
 
 ---

@@ -326,21 +326,43 @@ zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]
 **Stone endpoints** (Rake → Moss):
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET | `/api/v1/stone/seed-banks` | List configured seed banks |
-| POST | `/api/v1/stone/seed-banks` | Add seed bank |
-| DELETE | `/api/v1/stone/seed-banks/:name` | Remove seed bank |
+| GET | `/api/v1/stone/storage` | Storage overview |
+| GET | `/api/v1/stone/storage/candidates` | List eligible devices |
+| POST | `/api/v1/stone/storage/prepare` | Prepare device as seed bank |
+| GET | `/api/v1/stone/storage/bank` | List all seed banks |
+| GET | `/api/v1/stone/storage/bank/:id` | Seed bank details |
+| DELETE | `/api/v1/stone/storage/bank/:id` | Remove seed bank |
+| POST | `/api/v1/stone/storage/bank/:id/release` | Safely unmount |
+| PATCH | `/api/v1/stone/storage/bank/:id/visibility` | Set visibility |
 
-**Storage gateway endpoints** (S3-compatible):
+**Object operations** (Native Moss API):
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| PUT | `/api/v1/storage/{path}` | Put object |
-| GET | `/api/v1/storage/{path}` | Get object |
-| HEAD | `/api/v1/storage/{path}` | Head object (metadata) |
-| DELETE | `/api/v1/storage/{path}` | Delete object |
-| GET | `/api/v1/storage/` | List objects |
+| GET | `/api/v1/stone/storage/bank/:id/*path` | Get object or list directory |
+| PUT | `/api/v1/stone/storage/bank/:id/*path` | Create/update object |
+| DELETE | `/api/v1/stone/storage/bank/:id/*path` | Delete object |
+| HEAD | `/api/v1/stone/storage/bank/:id/*path` | Object metadata |
 
-**Required headers**:
-- `X-App-Name` - Application namespace for isolation
+**Listing query parameters**:
+- `depth=1` (default) - Immediate children
+- `depth=3` - 3 levels deep
+- `depth=all` or `depth=-1` - Full recursive listing
+
+**S3 Gateway** (S3-compatible, XML responses):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/storage/s3` | List buckets |
+| GET | `/api/v1/stone/storage/s3/:bucket` | List objects |
+| PUT | `/api/v1/stone/storage/s3/:bucket/*key` | Put object |
+| GET | `/api/v1/stone/storage/s3/:bucket/*key` | Get object |
+| HEAD | `/api/v1/stone/storage/s3/:bucket/*key` | Head object |
+| DELETE | `/api/v1/stone/storage/s3/:bucket/*key` | Delete object |
+
+**Storage Beacon Protocol** (STORAGE-0003):
+- Announcement type: `STORAGE_BEACON`
+- Triggers: seed bank mount/unmount, stone online, visibility change
+- All stones lurk-listen and maintain `StorageCache`
+- See [STORAGE-0003](decisions/STORAGE-0003-beacon-protocol.md)
 
 ---
 

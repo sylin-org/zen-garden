@@ -2,6 +2,19 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-01-29
+- **Storage Beacon Protocol (STORAGE-0003)** - event-driven storage announcements for cross-stone routing
+  - New `STORAGE_BEACON` announcement type (~150-400 bytes, 10x smaller than chirps)
+  - Broadcast on: seed bank mount/unmount, visibility change, new stone online
+  - All stones lurk-listen and maintain separate `StorageCache` referencing topology
+  - Added `StorageBeacon`, `SeedBankAnnouncement`, `StorageAccess` types to garden_common
+- **Directory listing depth parameter** - recursive object listing support
+  - `GET /api/v1/stone/storage/bank/:id/*path?depth=N` for N levels of subdirectories
+  - `?depth=1` (default) immediate children, `?depth=all` or `?depth=-1` for full recursion
+  - Returns `DirectoryListResponse` with entries array (name, type, size, modified)
+- **STORAGE-0001 spec updates** - added Section 5.9 Object Operations with depth docs
+- **ARCHITECTURE-REFERENCE.md** - updated Seed Bank Endpoints with STORAGE-0002/0003 structure
+
 ## 2026-01-28
 - **Storage API restructured per STORAGE-0002** - dual-layer API for native and S3 gateway
   - Native Bank API: `/api/v1/stone/storage/bank/:id/*path` - ApiResponse JSON format

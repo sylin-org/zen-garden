@@ -53,14 +53,45 @@ impl ServicesQuery {
     }
 }
 
-/// GET /api/v1/services - List or search services
+/// GET /api/v1/stone/services - List services running on THIS stone
 ///
-/// Unified endpoint:
-/// - No params: returns all local services (backward compatible with list)
-/// - With ?q=, ?name=, etc.: searches/filters across garden (replaces /find)
+/// Returns all local services (containers) running on this stone.
+/// This is a local-only operation, no remote queries.
+///
+/// Response: ServiceDiscoveryResponse with local services
+pub async fn list_services_v1(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    use crate::domain::list_all_local_services;
+
+    tracing::debug!("list_services_v1: listing local services only");
+
+    let response = list_all_local_services(&state).await;
+
+    let ctx = SuggestionContext::from_headers(&headers, "list_services");
+    let suggestions = generate_suggestions(&ctx);
+
+    Ok(Json(ApiResponse {
+        data: response,
+        suggestions,
+    }))
+}
+
+/// GET /api/v1/garden/services - Find services across the garden
+///
+/// Searches for services matching criteria across ALL stones in the garden.
+/// This is a garden-wide operation that queries remote stones.
+///
+/// Query parameters:
+/// - `q`: Search query (supports prefixes: c:, cat:, category:, t:, tag:, tags:)
+/// - `name`: Search by exact service name
+/// - `category`: Search by category
+/// - `tag`: Search by tag
+/// - `fresh`: Force fresh discovery (bypass cache)
 ///
 /// Response: ServiceDiscoveryResponse with found services
-pub async fn list_services_v1(
+pub async fn find_services_v1(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<ServicesQuery>,
     headers: HeaderMap,
@@ -74,7 +105,7 @@ pub async fn list_services_v1(
         tag = ?query.tag,
         fresh = query.fresh,
         has_params = query.has_search_params(),
-        "list_services_v1: unified handler invoked"
+        "find_services_v1: garden-wide search"
     );
 
     // Sanitize and validate inputs - reject suspicious patterns
@@ -110,11 +141,11 @@ pub async fn list_services_v1(
 
         find_services(&criteria, &state, query.fresh).await
     } else {
-        // List mode: return all local services
+        // No params: return all local services (fallback for convenience)
         list_all_local_services(&state).await
     };
 
-    let ctx = SuggestionContext::from_headers(&headers, "list_services");
+    let ctx = SuggestionContext::from_headers(&headers, "find_services");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {

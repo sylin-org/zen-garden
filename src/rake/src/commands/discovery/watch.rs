@@ -109,7 +109,7 @@ async fn resolve_stone_endpoint(
 
     for response in endpoints {
         let ep = &response.stone_endpoint;
-        let caps_url = format!("{}/capabilities", ep.trim_end_matches('/'));
+        let caps_url = format!("{}/api/v1/stone/capabilities", ep.trim_end_matches('/'));
         if let Ok(resp) = client.get(&caps_url).send().await {
             if let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
                 if caps_response.data.stone_name.to_lowercase() == stone_name.to_lowercase() {
@@ -136,7 +136,7 @@ async fn watch_offering_logs(
     timestamps: bool,
 ) -> anyhow::Result<()> {
     let url = format!(
-        "{}/api/v1/services/{}/logs{}",
+        "{}/api/v1/stone/services/{}/logs{}",
         endpoint.trim_end_matches('/'),
         offering,
         if timestamps { "?timestamps=true" } else { "" }

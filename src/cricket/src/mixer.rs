@@ -6,6 +6,35 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
 
+/// Ensure audio dependencies are installed (Linux only)
+/// Returns Ok(()) if all dependencies are available (either already or after install)
+#[cfg(target_os = "linux")]
+pub fn ensure_audio_dependencies() -> Result<()> {
+    use garden_adapter_sdk::dependencies::{ensure_dependencies, SystemDependency};
+    
+    let deps = vec![
+        SystemDependency::apt_package("alsa-utils", "aplay"),
+        SystemDependency::apt_package("alsa-utils", "amixer"),
+    ];
+    
+    let result = ensure_dependencies(&deps)?;
+    
+    if !result.all_ok() {
+        tracing::warn!(
+            "Audio dependencies incomplete. Sound may not work. Failed: {:?}",
+            result.failed
+        );
+    }
+    
+    Ok(())
+}
+
+/// No-op on non-Linux platforms
+#[cfg(not(target_os = "linux"))]
+pub fn ensure_audio_dependencies() -> Result<()> {
+    Ok(())
+}
+
 /// Initialize system audio on Linux (unmute and set volume)
 /// This ensures the ALSA master volume is set when Cricket starts
 #[cfg(target_os = "linux")]

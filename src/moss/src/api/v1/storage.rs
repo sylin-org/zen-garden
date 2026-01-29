@@ -45,14 +45,41 @@ use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry};
 /// Storage overview for GET /api/v1/stone/storage
 #[derive(Debug, Serialize)]
 pub struct StorageOverview {
-    /// Number of mounted seed banks
+    /// Number of local mounted seed banks
     pub bank_count: usize,
-    /// Total capacity across all banks (bytes)
+    /// Total capacity across all local banks (bytes)
     pub total_capacity_bytes: u64,
-    /// Total used space across all banks (bytes)
+    /// Total used space across all local banks (bytes)
     pub total_used_bytes: u64,
     /// Storage types available
     pub types: Vec<StorageTypeInfo>,
+    /// All seed banks across the garden (from storage_cache)
+    pub garden_banks: Vec<GardenBankInfo>,
+}
+
+/// Info about a remote seed bank in the garden
+#[derive(Debug, Serialize)]
+pub struct GardenBankInfo {
+    /// Unique seed bank ID
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Stone ID hosting this bank
+    pub stone_id: String,
+    /// Stone name hosting this bank
+    pub stone_name: String,
+    /// API endpoint for the stone
+    pub endpoint: String,
+    /// Whether this bank is on the local stone
+    pub is_local: bool,
+    /// Visibility ("open", "closed", "read-only")
+    pub visibility: String,
+    /// Health status
+    pub health: String,
+    /// Capacity in bytes
+    pub capacity_bytes: u64,
+    /// Used space in bytes
+    pub used_bytes: u64,
 }
 
 /// Info about a storage type
@@ -151,27 +178,53 @@ fn err(status: StatusCode, code: &str, msg: &str) -> (StatusCode, Json<ApiErrorR
 // ============================================================================
 
 /// Get storage overview (types, counts)
+/// 
+/// Returns local bank stats plus garden-wide view from storage_cache.
 pub async fn storage_overview_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
+    // Get local banks from filesystem (for local stats)
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let banks = registry.list();
-    let total_capacity: u64 = banks.iter().map(|b| b.capacity_bytes).sum();
-    let total_used: u64 = banks.iter().map(|b| b.used_bytes).sum();
+    let local_banks = registry.list();
+    let total_capacity: u64 = local_banks.iter().map(|b| b.capacity_bytes).sum();
+    let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
+    
+    // Get garden-wide view from storage_cache
+    let storage_cache = state.storage_cache.read().await;
+    let mut garden_banks = Vec::new();
+    
+    for beacon in storage_cache.all_beacons() {
+        let is_local = beacon.stone_id == state.stone_id;
+        for sb in &beacon.seed_banks {
+            garden_banks.push(GardenBankInfo {
+                id: sb.id.clone(),
+                name: sb.name.clone(),
+                stone_id: beacon.stone_id.clone(),
+                stone_name: beacon.stone_name.clone(),
+                endpoint: beacon.endpoint.clone(),
+                is_local,
+                visibility: sb.visibility.clone(),
+                health: sb.health.clone(),
+                capacity_bytes: sb.capacity_bytes,
+                used_bytes: sb.used_bytes,
+            });
+        }
+    }
     
     let overview = StorageOverview {
-        bank_count: banks.len(),
+        bank_count: local_banks.len(),
         total_capacity_bytes: total_capacity,
         total_used_bytes: total_used,
         types: vec![
             StorageTypeInfo {
                 name: "bank".to_string(),
-                count: banks.len(),
+                count: local_banks.len(),
                 endpoint: "/api/v1/stone/storage/bank".to_string(),
             },
         ],
+        garden_banks,
     };
     
     Ok(Json(ApiResponse::new(overview)))
@@ -291,13 +344,14 @@ pub async fn release_bank_v1(
         warn!("Failed to print released ribbon: {}", e);
     }
     
-    // STORAGE-0003: Broadcast storage beacon on release (seed bank list changed)
+    // STORAGE-0003: Update local storage cache AND broadcast beacon
+    let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
-    let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);
+    let endpoint = state.self_entry.read().await.endpoint.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::broadcast_beacon(&stone_id, &stone_name, &endpoint).await {
-            warn!(error = %e, "Failed to broadcast storage beacon after release");
+        if let Err(e) = crate::infra::storage::update_and_broadcast(&storage_cache, &stone_id, &stone_name, &endpoint).await {
+            warn!(error = %e, "Failed to update storage cache and broadcast beacon after release");
         }
     });
     
@@ -934,13 +988,14 @@ pub async fn set_visibility_v1(
     
     info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
     
-    // STORAGE-0003: Broadcast storage beacon on visibility change
+    // STORAGE-0003: Update local storage cache AND broadcast beacon
+    let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
-    let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);
+    let endpoint = state.self_entry.read().await.endpoint.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::broadcast_beacon(&stone_id, &stone_name, &endpoint).await {
-            warn!(error = %e, "Failed to broadcast storage beacon after visibility change");
+        if let Err(e) = crate::infra::storage::update_and_broadcast(&storage_cache, &stone_id, &stone_name, &endpoint).await {
+            warn!(error = %e, "Failed to update storage cache and broadcast beacon after visibility change");
         }
     });
     

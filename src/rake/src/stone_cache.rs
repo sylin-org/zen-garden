@@ -56,7 +56,7 @@ pub async fn fetch_and_cache_stone(
     endpoint: &str,
     cache: &StoneCache,
 ) -> Result<CachedStone> {
-    let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+    let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
     let response: GardenApiResponse<HardwareCapabilities> = client
         .get(&caps_url)
         .timeout(Duration::from_secs(5))

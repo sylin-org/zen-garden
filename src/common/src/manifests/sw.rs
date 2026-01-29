@@ -1,6 +1,6 @@
 //! Software Offering Manifests
 //!
-//! Loads and stores software offering manifests from the templates directory.
+//! Loads and stores software offering manifests from the manifests directory.
 //! Each offering consists of:
 //! - `{name}.snippet.yaml` - Container definition (image, ports, env, volumes)
 //! - `{name}.compatibility.yaml` - Hardware compatibility rules (optional)

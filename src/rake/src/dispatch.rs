@@ -150,7 +150,7 @@ pub async fn resolve_endpoint(
             tracing::info!(endpoint = %endpoint, "Auto-discovered stone");
 
             // Fetch capabilities to get stone name for cache and display
-            let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
             if let Ok(resp) = client
                 .get(&caps_url)
                 .timeout(Duration::from_secs(5))
@@ -218,7 +218,7 @@ async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
     let term = TerminalInfo::detect();
 
     // Fetch stone capabilities to get name and health
-    let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+    let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
     if let Ok(resp) = client
         .get(&caps_url)
         .timeout(Duration::from_secs(3))
@@ -266,7 +266,7 @@ async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
 
 /// Fetch stone name from capabilities
 async fn fetch_stone_name(client: &reqwest::Client, endpoint: &str) -> Option<String> {
-    let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+    let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
     if let Ok(resp) = client
         .get(&caps_url)
         .timeout(Duration::from_secs(3))

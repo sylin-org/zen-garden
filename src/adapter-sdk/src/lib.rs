@@ -49,6 +49,7 @@
 //! - [`handler`] - Command handler trait
 
 pub mod cli;
+pub mod dependencies;
 pub mod handler;
 pub mod runtime;
 pub mod server;
@@ -57,6 +58,7 @@ pub mod sse;
 /// Prelude for convenient imports
 pub mod prelude {
     pub use crate::cli::AdapterConfig;
+    pub use crate::dependencies::{ensure_dependencies, SystemDependency, DependencyCheckResult};
     pub use crate::handler::CommandHandler;
     pub use crate::runtime::AdapterRuntime;
     pub use crate::sse::{EventHandler, SseClient, SseEvent};

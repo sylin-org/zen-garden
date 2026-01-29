@@ -873,7 +873,7 @@ enum Commands {
         Examples:\n  \
         garden-rake api                                 # Show all endpoints by category\n  \
         garden-rake api --category offerings            # Show offerings API only\n  \
-        garden-rake api /api/v1/services                # Detailed docs for endpoint\n  \
+        garden-rake api /api/v1/stone/services          # Detailed docs for endpoint\n  \
         garden-rake api --examples                      # Include curl examples\n  \
         garden-rake api /api/v1/stone/presence/stream   # SSE endpoint docs"
     )]

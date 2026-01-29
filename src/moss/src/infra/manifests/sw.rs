@@ -1,10 +1,14 @@
 //! Software Offering Manifests
 //!
-//! Loads and stores software offering manifests from the templates directory.
+//! Loads and stores software offering manifests.
 //! Each offering consists of:
 //! - `{name}.snippet.yaml` - Container definition (image, ports, env, volumes)
 //! - `{name}.compatibility.yaml` - Hardware compatibility rules (optional)
 //! - `{name}.frontmatter.json` - Metadata (description, category, tags)
+//!
+//! Manifest location: {data_dir}/manifests (via garden_common::manifests::sw::runtime_manifests_dir())
+//! - Linux: /var/lib/zen-garden/manifests
+//! - Windows: .zen-garden/manifests
 
 use anyhow::{Context, Result};
 use garden_common::CompatibilityRules;
@@ -13,16 +17,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::discover_subdirectories;
-
-/// Runtime templates directory (platform-specific)
-#[cfg(target_os = "windows")]
-#[cfg(target_os = "linux")]
-pub const RUNTIME_TEMPLATES_DIR: &str = "/etc/zen-garden/templates";
-#[cfg(target_os = "windows")]
-pub const RUNTIME_TEMPLATES_DIR: &str = ".zen-garden/templates";
-
-#[cfg(not(target_os = "windows"))]
-pub const RUNTIME_TEMPLATES_DIR: &str = "/etc/zen-garden/templates";
 
 // ============================================================================
 // Service Template Types

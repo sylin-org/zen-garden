@@ -341,12 +341,18 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         crate::tasks::run_metrics_collector(metrics_collector_state).await;
     });
 
-    // Adapter registry scan (discover adapters in {data_dir}/adapters/)
+    // Adapter registry scan and auto-start (discover and start adapters)
     tracing::info!("Scanning adapter registry");
     let adapter_scan_state = state.clone();
     tokio::spawn(async move {
-        match adapter_scan_state.adapter_registry.scan().await {
-            Ok(count) => tracing::info!(count = count, "Adapter scan complete"),
+        // Get endpoint for adapter communication
+        let endpoint = adapter_scan_state.self_entry.read().await.endpoint.clone();
+        match adapter_scan_state.adapter_registry.scan_and_autostart(&endpoint).await {
+            Ok((registered, started)) => tracing::info!(
+                registered = registered, 
+                started = started, 
+                "Adapter scan and auto-start complete"
+            ),
             Err(e) => tracing::warn!(error = ?e, "Adapter scan failed"),
         }
     });
@@ -576,6 +582,24 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                 }
             }
         }
+    }
+    
+    // Populate storage_cache with local seed banks (cross-platform)
+    // This makes storage_cache the unified view for both local and remote storage
+    let endpoint = state.self_entry.read().await.endpoint.clone();
+    if let Err(e) = crate::infra::storage::update_local_storage_cache(
+        &state.storage_cache,
+        &state.stone_id,
+        &state.stone_name,
+        &endpoint,
+    ).await {
+        tracing::warn!("Failed to populate local storage cache: {}", e);
+    } else {
+        let cache = state.storage_cache.read().await;
+        tracing::info!(
+            "Storage cache initialized with {} local seed banks",
+            cache.get_beacon(&state.stone_id).map(|b| b.seed_banks.len()).unwrap_or(0)
+        );
     }
 
     // Phase 18: HTTP server

@@ -12,6 +12,7 @@ use garden_common::storage::{SeedBankAnnouncement, StorageBeacon};
 use tracing::{debug, info, warn};
 
 use super::SeedBankRegistry;
+use crate::domain::storage_cache::StorageCache;
 
 /// Build a storage beacon for this stone
 pub async fn build_beacon(
@@ -100,6 +101,50 @@ pub async fn broadcast_if_has_storage(
     // We have storage, broadcast beacon
     broadcast_beacon(stone_id, stone_name, endpoint).await?;
     Ok(true)
+}
+
+/// Update local storage cache with this stone's storage
+///
+/// Called at startup and after mount/unmount events to ensure storage_cache
+/// reflects the local stone's storage capabilities. This makes storage_cache
+/// the unified view for both local and remote storage.
+///
+/// Does NOT broadcast a beacon - use broadcast_beacon for that.
+pub async fn update_local_storage_cache(
+    storage_cache: &StorageCache,
+    stone_id: &str,
+    stone_name: &str,
+    endpoint: &str,
+) -> Result<()> {
+    let beacon = build_beacon(stone_id, stone_name, endpoint).await?;
+    
+    debug!(
+        stone = %stone_name,
+        seed_banks = beacon.seed_banks.len(),
+        "Updating local storage cache"
+    );
+    
+    crate::domain::storage_cache::update_from_beacon(storage_cache, beacon).await;
+    Ok(())
+}
+
+/// Update local storage cache AND broadcast beacon to network
+///
+/// Convenience function for mount/unmount events where both local cache
+/// and network need to be updated.
+pub async fn update_and_broadcast(
+    storage_cache: &StorageCache,
+    stone_id: &str,
+    stone_name: &str,
+    endpoint: &str,
+) -> Result<()> {
+    // Update local cache
+    update_local_storage_cache(storage_cache, stone_id, stone_name, endpoint).await?;
+    
+    // Broadcast to network
+    broadcast_beacon(stone_id, stone_name, endpoint).await?;
+    
+    Ok(())
 }
 
 #[cfg(test)]

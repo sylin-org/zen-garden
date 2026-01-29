@@ -7,7 +7,9 @@ use axum::{
     Json,
 };
 use garden_common::command_manifest::{AdapterCommandRequest, CommandManifest, CommandResponse};
+use garden_common::api_utils::{ApiResponse, ApiErrorResponse};
 use crate::app_state::AppState;
+use crate::error_response;
 use serde::{Deserialize, Serialize};
 
 /// Summary of a registered adapter
@@ -32,7 +34,7 @@ pub struct AdapterListResponse {
 /// Returns list of available adapters with running status
 pub async fn get_adapters(
     State(state): State<AppState>,
-) -> Result<Json<AdapterListResponse>, StatusCode> {
+) -> Result<Json<ApiResponse<AdapterListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let adapters = state.adapter_registry.list().await;
     
     let mut summaries = Vec::new();
@@ -49,18 +51,40 @@ pub async fn get_adapters(
         });
     }
     
-    Ok(Json(AdapterListResponse { adapters: summaries }))
+    Ok(Json(ApiResponse::new(AdapterListResponse { adapters: summaries })))
 }
 
 /// GET /api/v1/stone/adapters/:id
-/// Returns adapter manifest (full command details)
+/// Returns adapter manifest with running status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterDetailResponse {
+    #[serde(flatten)]
+    pub manifest: CommandManifest,
+    pub running: bool,
+    pub pid: Option<u32>,
+    pub port: Option<u16>,
+}
+
 pub async fn get_adapter_manifest(
     State(state): State<AppState>,
     Path(adapter_id): Path<String>,
-) -> Result<Json<CommandManifest>, StatusCode> {
-    match state.adapter_registry.get_manifest(&adapter_id).await {
-        Some(manifest) => Ok(Json(manifest)),
-        None => Err(StatusCode::NOT_FOUND),
+) -> Result<Json<ApiResponse<AdapterDetailResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    match state.adapter_registry.get(&adapter_id).await {
+        Some(adapter) => {
+            let running = adapter.is_running();
+            Ok(Json(ApiResponse::new(AdapterDetailResponse {
+                manifest: adapter.manifest.clone(),
+                running,
+                pid: if running { adapter.pid() } else { None },
+                port: adapter.port(),
+            })))
+        }
+        None => Err(error_response(
+            StatusCode::NOT_FOUND,
+            "ADAPTER_NOT_FOUND",
+            format!("Adapter '{}' not found", adapter_id),
+            None,
+        )),
     }
 }
 
@@ -300,56 +324,61 @@ pub struct AdapterLifecycleResponse {
 }
 
 /// POST /api/v1/stone/adapters/:id/up
-/// Start an adapter process
+/// Start an adapter process and enable auto-start
+/// 
+/// When user explicitly starts an adapter, it should also be marked
+/// to auto-start on boot.
 pub async fn start_adapter(
     State(state): State<AppState>,
     Path(adapter_id): Path<String>,
-) -> Result<Json<AdapterLifecycleResponse>, (StatusCode, Json<AdapterLifecycleResponse>)> {
+) -> Result<Json<ApiResponse<AdapterLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Build this Moss's endpoint for the adapter to connect to
     let self_entry = state.self_entry.read().await;
     let moss_endpoint = self_entry.endpoint.clone();
     drop(self_entry);
     
+    // Enable the adapter (mark for auto-start on boot)
+    if let Err(e) = state.adapter_registry.enable(&adapter_id).await {
+        tracing::warn!(adapter_id = %adapter_id, error = %e, "Failed to enable adapter");
+    }
+    
     match state.adapter_registry.start(&adapter_id, &moss_endpoint).await {
-        Ok(pid) => Ok(Json(AdapterLifecycleResponse {
+        Ok(pid) => Ok(Json(ApiResponse::new(AdapterLifecycleResponse {
             adapter_id: adapter_id.clone(),
             running: true,
             pid: Some(pid),
-            message: format!("Adapter '{}' started (PID {})", adapter_id, pid),
-        })),
-        Err(e) => Err((
+            message: format!("Adapter '{}' started and enabled for auto-start (PID {})", adapter_id, pid),
+        }))),
+        Err(e) => Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(AdapterLifecycleResponse {
-                adapter_id: adapter_id.clone(),
-                running: false,
-                pid: None,
-                message: format!("Failed to start adapter '{}': {}", adapter_id, e),
-            }),
+            "ADAPTER_START_FAILED",
+            format!("Failed to start adapter '{}': {}", adapter_id, e),
+            None,
         )),
     }
 }
 
 /// POST /api/v1/stone/adapters/:id/down
-/// Stop an adapter process
+/// Stop an adapter process and disable auto-start
+/// 
+/// When user explicitly stops an adapter, it should stay off until
+/// manually started again. This persists the disabled state.
 pub async fn stop_adapter(
     State(state): State<AppState>,
     Path(adapter_id): Path<String>,
-) -> Result<Json<AdapterLifecycleResponse>, (StatusCode, Json<AdapterLifecycleResponse>)> {
-    match state.adapter_registry.stop(&adapter_id).await {
-        Ok(()) => Ok(Json(AdapterLifecycleResponse {
+) -> Result<Json<ApiResponse<AdapterLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    match state.adapter_registry.stop_and_disable(&adapter_id).await {
+        Ok(()) => Ok(Json(ApiResponse::new(AdapterLifecycleResponse {
             adapter_id: adapter_id.clone(),
             running: false,
             pid: None,
-            message: format!("Adapter '{}' stopped", adapter_id),
-        })),
-        Err(e) => Err((
+            message: format!("Adapter '{}' stopped and disabled (will not auto-start)", adapter_id),
+        }))),
+        Err(e) => Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(AdapterLifecycleResponse {
-                adapter_id: adapter_id.clone(),
-                running: state.adapter_registry.is_running(&adapter_id).await,
-                pid: None,
-                message: format!("Failed to stop adapter '{}': {}", adapter_id, e),
-            }),
+            "ADAPTER_STOP_FAILED",
+            format!("Failed to stop adapter '{}': {}", adapter_id, e),
+            None,
         )),
     }
 }
@@ -358,7 +387,7 @@ pub async fn stop_adapter(
 /// Re-scan adapters directory
 pub async fn refresh_adapters(
     State(state): State<AppState>,
-) -> Result<Json<AdapterListResponse>, (StatusCode, String)> {
+) -> Result<Json<ApiResponse<AdapterListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     match state.adapter_registry.refresh_all().await {
         Ok(_) => {
             // Return updated list with running status
@@ -376,8 +405,13 @@ pub async fn refresh_adapters(
                     pid: if running { a.pid() } else { None },
                 });
             }
-            Ok(Json(AdapterListResponse { adapters: summaries }))
+            Ok(Json(ApiResponse::new(AdapterListResponse { adapters: summaries })))
         }
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(e) => Err(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ADAPTER_REFRESH_FAILED",
+            e.to_string(),
+            None,
+        )),
     }
 }

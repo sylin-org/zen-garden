@@ -35,7 +35,7 @@ impl Command for StatusCommand {
 
         let endpoint = ctx.endpoint()?;
 
-        let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+        let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
         let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
         let response: GardenApiResponse<HardwareCapabilities> =
             ctx.client.get(&caps_url).send().await?.json().await?;

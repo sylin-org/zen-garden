@@ -34,7 +34,7 @@ impl Command for UpgradeCommand {
         if self.all || self.service.is_none() {
             // Batch upgrade all services (iterate v1 nourish endpoints)
             // First, get list of all services
-            let list_url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
+            let list_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
             let list_response = ctx.client.get(&list_url).send().await?;
 
             if !list_response.status().is_success() {
@@ -59,7 +59,7 @@ impl Command for UpgradeCommand {
                 for svc in service_list {
                     if let Some(name) = svc.get("name").and_then(|n| n.as_str()) {
                         let nourish_url = format!(
-                            "{}/api/v1/services/{}/nourish",
+                            "{}/api/v1/stone/services/{}/nourish",
                             endpoint.trim_end_matches('/'),
                             name
                         );
@@ -104,9 +104,9 @@ impl Command for UpgradeCommand {
                 );
             }
         } else if let Some(svc_name) = &self.service {
-            // v1 API: POST /api/v1/services/:service/nourish
+            // v1 API: POST /api/v1/stone/services/:service/nourish
             let url = format!(
-                "{}/api/v1/services/{}/nourish",
+                "{}/api/v1/stone/services/{}/nourish",
                 endpoint.trim_end_matches('/'),
                 svc_name
             );

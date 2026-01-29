@@ -2073,7 +2073,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 name: "endpoint",
                 zen_syntax: "<endpoint>",
                 normative_syntax: None,
-                description: "Specific endpoint path to show details for (e.g., /api/v1/services)",
+                description: "Specific endpoint path to show details for (e.g., /api/v1/stone/services)",
                 required: false,
             },
             CommandParam {
@@ -2104,7 +2104,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
             CommandExample {
                 description: "Detailed docs for specific endpoint",
-                zen_syntax: Some("garden-rake api /api/v1/services"),
+                zen_syntax: Some("garden-rake api /api/v1/stone/services"),
                 normative_syntax: None,
             },
             CommandExample {

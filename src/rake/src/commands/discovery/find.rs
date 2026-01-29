@@ -135,8 +135,8 @@ impl Command for FindCommand {
         let sanitized_query = sanitize_query(&self.query).into_value();
 
         // Build API URL with query parameters
-        // Uses unified /api/v1/services endpoint with ?q= param
-        let mut url = ctx.api_v1_url("services")?;
+        // Uses /api/v1/garden/services for garden-wide service discovery
+        let mut url = ctx.api_v1_url("garden/services")?;
         url = format!("{}?q={}", url, urlencoding::encode(&sanitized_query));
         if self.fresh {
             url = format!("{}&fresh=true", url);
@@ -237,7 +237,7 @@ impl FindCommand {
     async fn check_offering_exists(&self, ctx: &CommandContext) -> Option<OfferingInfo> {
         let endpoint = ctx.endpoint.as_ref()?;
         let url = format!(
-            "{}/api/v1/offerings/{}",
+            "{}/api/v1/stone/offerings/{}",
             endpoint.trim_end_matches('/'),
             urlencoding::encode(&self.query)
         );
@@ -272,7 +272,7 @@ impl FindCommand {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No endpoint available"))?;
 
-        let url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
+        let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
         let payload = serde_json::json!({
             "offering": offering,
             "ports": [],

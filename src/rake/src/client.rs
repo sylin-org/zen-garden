@@ -91,7 +91,7 @@ async fn resolve_stone_name_to_endpoint(client: &reqwest::Client, stone_name: &s
 	// Check each discovered stone's name AND id (case-insensitive)
 	for response in discovered_responses {
 		let endpoint = response.stone_endpoint.trim_end_matches('/').to_string();
-		let caps_url = format!("{}/capabilities", endpoint);
+		let caps_url = format!("{}/api/v1/stone/capabilities", endpoint);
 		if let Ok(resp) = client.get(&caps_url).timeout(Duration::from_secs(2)).send().await {
 			if let Ok(api_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
 				let caps = &api_response.data;

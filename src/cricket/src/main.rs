@@ -172,6 +172,9 @@ async fn main() -> Result<()> {
     let port = cli.port
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss when starting adapter)"))?;
     
+    // Ensure audio dependencies are installed (alsa-utils on Linux)
+    mixer::ensure_audio_dependencies()?;
+    
     // Initialize system audio (unmute, set volume) on Linux
     mixer::init_system_audio(50)?;
     

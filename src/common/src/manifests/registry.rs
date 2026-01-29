@@ -21,7 +21,7 @@
 //!
 //! ```rust,ignore
 //! // Load once at startup
-//! let registry = ManifestRegistry::load(Path::new("/etc/zen-garden/templates"))?;
+//! let registry = ManifestRegistry::load(Path::new("/var/lib/zen-garden/manifests"))?;
 //!
 //! // Access software offerings
 //! if let Some(entry) = registry.sw.get("mongodb") {
@@ -48,8 +48,9 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 /// Runtime manifests directory for multi-mode offerings (adoption/borrowing)
+/// Linux: /var/lib/zen-garden/manifests, Windows: .zen-garden/manifests
 #[cfg(target_os = "linux")]
-pub const RUNTIME_MANIFESTS_DIR: &str = "/etc/zen-garden/manifests";
+pub const RUNTIME_MANIFESTS_DIR: &str = "/var/lib/zen-garden/manifests";
 
 #[cfg(target_os = "windows")]
 pub const RUNTIME_MANIFESTS_DIR: &str = ".zen-garden/manifests";
@@ -77,13 +78,16 @@ impl ManifestRegistry {
     /// Load all manifests from the runtime directories
     ///
     /// Scans directories once and loads:
-    /// - Software templates from `sw_dir/{category}/*.snippet.yaml`
-    /// - Hardware manifests from `hw_dir/{vendor}/*.manifest.yaml`
-    /// - Offering manifests from `manifests_dir/{category}/*.manifest.yaml`
+    /// - Software manifests from `base_dir/sw/{category}/*.snippet.yaml`
+    /// - Hardware manifests from `base_dir/hw/{vendor}/*.manifest.yaml`
+    /// - Offering manifests from `base_dir/{category}/*.manifest.yaml`
+    ///
+    /// Note: Moss uses `load_sw_manifests_with_overlay()` which handles the sw/ subdirectory.
+    /// This function is used directly only for testing.
     ///
     /// # Arguments
-    /// * `sw_dir` - Directory containing software templates (e.g., /etc/zen-garden/templates)
-    /// * `hw_dir` - Directory containing hardware manifests (e.g., /var/lib/zen-garden/hw-manifests)
+    /// * `sw_dir` - Directory containing software manifests with category subdirs
+    /// * `hw_dir` - Directory containing hardware manifests (e.g., /var/lib/zen-garden/manifests/hw)
     pub fn load(sw_dir: &Path, hw_dir: Option<&Path>) -> Result<Self> {
         let sw = SwManifests::load(sw_dir)
             .with_context(|| format!("Failed to load software manifests from {}", sw_dir.display()))?;

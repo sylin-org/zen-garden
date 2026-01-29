@@ -36,6 +36,56 @@ const ADAPTER_PORT_MAX: u16 = 7199;
 /// Ledger file name for persisting port assignments
 const PORT_LEDGER_FILE: &str = "adapter-ports.json";
 
+/// State file name for persisting adapter enabled/disabled state
+const STATE_FILE: &str = "adapter-state.json";
+
+/// Adapter enabled/disabled state ledger - persisted to disk
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AdapterStateLedger {
+    /// Map of adapter_id -> enabled (true = start on boot, false = disabled by user)
+    /// Adapters not in this map default to enabled
+    enabled: HashMap<String, bool>,
+}
+
+impl AdapterStateLedger {
+    /// Load from disk or create new (all enabled by default)
+    async fn load(data_path: &Path) -> Self {
+        let state_path = data_path.join(STATE_FILE);
+        if state_path.exists() {
+            match tokio::fs::read_to_string(&state_path).await {
+                Ok(content) => {
+                    match serde_json::from_str(&content) {
+                        Ok(state) => return state,
+                        Err(e) => warn!(error = %e, "Failed to parse adapter state, using defaults"),
+                    }
+                }
+                Err(e) => warn!(error = %e, "Failed to read adapter state, using defaults"),
+            }
+        }
+        Self {
+            enabled: HashMap::new(),
+        }
+    }
+    
+    /// Save to disk
+    async fn save(&self, data_path: &Path) -> Result<()> {
+        let state_path = data_path.join(STATE_FILE);
+        let content = serde_json::to_string_pretty(self)?;
+        tokio::fs::write(&state_path, content).await?;
+        Ok(())
+    }
+    
+    /// Check if adapter is enabled (defaults to true if not in map)
+    fn is_enabled(&self, adapter_id: &str) -> bool {
+        self.enabled.get(adapter_id).copied().unwrap_or(true)
+    }
+    
+    /// Set adapter enabled state
+    fn set_enabled(&mut self, adapter_id: &str, enabled: bool) {
+        self.enabled.insert(adapter_id.to_string(), enabled);
+    }
+}
+
 /// Port assignment ledger - persisted to disk
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PortLedger {
@@ -179,32 +229,39 @@ pub struct AdapterRegistry {
     
     /// Port assignment ledger
     port_ledger: Arc<RwLock<PortLedger>>,
+    
+    /// Adapter enabled/disabled state ledger
+    state_ledger: Arc<RwLock<AdapterStateLedger>>,
 }
 
 impl AdapterRegistry {
     /// Create a new adapter registry
-    /// Loads port ledger from disk
+    /// Loads port ledger and state ledger from disk
     pub async fn new() -> Self {
         let data_path = PathBuf::from(data_dir());
         let port_ledger = PortLedger::load(&data_path).await;
+        let state_ledger = AdapterStateLedger::load(&data_path).await;
         
         Self {
             adapters: Arc::new(RwLock::new(HashMap::new())),
             adapters_path: PathBuf::from(adapters_dir()),
             data_path,
             port_ledger: Arc::new(RwLock::new(port_ledger)),
+            state_ledger: Arc::new(RwLock::new(state_ledger)),
         }
     }
     
     /// Create with custom adapters directory (for testing)
     pub async fn with_path(adapters_path: PathBuf, data_path: PathBuf) -> Self {
         let port_ledger = PortLedger::load(&data_path).await;
+        let state_ledger = AdapterStateLedger::load(&data_path).await;
         
         Self {
             adapters: Arc::new(RwLock::new(HashMap::new())),
             adapters_path,
             data_path,
             port_ledger: Arc::new(RwLock::new(port_ledger)),
+            state_ledger: Arc::new(RwLock::new(state_ledger)),
         }
     }
     
@@ -251,6 +308,48 @@ impl AdapterRegistry {
         
         info!(count = count, "Adapter scan complete");
         Ok(count)
+    }
+    
+    /// Scan adapters directory, register, and auto-start enabled adapters
+    /// 
+    /// This is the main entry point for adapter initialization at boot.
+    /// Adapters are started unless explicitly disabled by the user.
+    pub async fn scan_and_autostart(&self, moss_endpoint: &str) -> Result<(usize, usize)> {
+        // First scan and register all adapters
+        let registered = self.scan().await?;
+        
+        if registered == 0 {
+            return Ok((0, 0));
+        }
+        
+        // Get list of adapter IDs to start
+        let adapter_ids: Vec<String> = {
+            let adapters = self.adapters.read().await;
+            adapters.keys().cloned().collect()
+        };
+        
+        // Check state ledger and start enabled adapters
+        let state_ledger = self.state_ledger.read().await;
+        let mut started = 0;
+        
+        for adapter_id in adapter_ids {
+            if state_ledger.is_enabled(&adapter_id) {
+                match self.start(&adapter_id, moss_endpoint).await {
+                    Ok(pid) => {
+                        info!(adapter = %adapter_id, pid = pid, "Auto-started adapter");
+                        started += 1;
+                    }
+                    Err(e) => {
+                        warn!(adapter = %adapter_id, error = %e, "Failed to auto-start adapter");
+                    }
+                }
+            } else {
+                info!(adapter = %adapter_id, "Adapter disabled, skipping auto-start");
+            }
+        }
+        
+        info!(registered = registered, started = started, "Adapter scan and auto-start complete");
+        Ok((registered, started))
     }
     
     /// Register a single adapter by running --dump-commands
@@ -402,8 +501,62 @@ impl AdapterRegistry {
         Ok(pid)
     }
     
-    /// Stop an adapter process
+    /// Stop an adapter process (does NOT disable it - will restart on next boot)
     pub async fn stop(&self, id: &str) -> Result<()> {
+        self.stop_internal(id).await
+    }
+    
+    /// Stop an adapter and disable it (will NOT restart on next boot)
+    /// 
+    /// Use this when user explicitly wants to turn off an adapter.
+    pub async fn stop_and_disable(&self, id: &str) -> Result<()> {
+        // First stop the process
+        self.stop_internal(id).await?;
+        
+        // Then persist disabled state
+        {
+            let mut state_ledger = self.state_ledger.write().await;
+            state_ledger.set_enabled(id, false);
+            if let Err(e) = state_ledger.save(&self.data_path).await {
+                warn!(adapter = %id, error = %e, "Failed to persist adapter disabled state");
+            }
+        }
+        
+        info!(adapter = %id, "Adapter stopped and disabled (will not auto-start)");
+        Ok(())
+    }
+    
+    /// Enable an adapter (will auto-start on next boot or can be started manually)
+    pub async fn enable(&self, id: &str) -> Result<()> {
+        // Verify adapter exists
+        {
+            let adapters = self.adapters.read().await;
+            if !adapters.contains_key(id) {
+                return Err(anyhow::anyhow!("Adapter not found: {}", id));
+            }
+        }
+        
+        // Persist enabled state
+        {
+            let mut state_ledger = self.state_ledger.write().await;
+            state_ledger.set_enabled(id, true);
+            if let Err(e) = state_ledger.save(&self.data_path).await {
+                warn!(adapter = %id, error = %e, "Failed to persist adapter enabled state");
+            }
+        }
+        
+        info!(adapter = %id, "Adapter enabled (will auto-start on next boot)");
+        Ok(())
+    }
+    
+    /// Check if an adapter is enabled (will auto-start on boot)
+    pub async fn is_enabled(&self, id: &str) -> bool {
+        let state_ledger = self.state_ledger.read().await;
+        state_ledger.is_enabled(id)
+    }
+    
+    /// Internal stop implementation
+    async fn stop_internal(&self, id: &str) -> Result<()> {
         let mut adapters = self.adapters.write().await;
         let adapter = adapters.get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Adapter not found: {}", id))?;

@@ -27,7 +27,7 @@ mod registry;
 #[cfg(target_os = "linux")]
 mod monitor;
 
-pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
+pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon, update_local_storage_cache, update_and_broadcast};
 pub use device::{DeviceAnalyzer, analyze_device, list_usb_partitions};
 pub use objects::{ObjectStore, ObjectMetadata, ListResult, PutResult};
 pub use registry::SeedBankRegistry;

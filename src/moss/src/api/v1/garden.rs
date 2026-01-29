@@ -15,14 +15,45 @@ pub async fn get_garden_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<GardenOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // For now, return just local stone (multi-stone discovery in future phase)
-    let local_stone = get_local_stone_info(&state).await?;
-    
+    // Build stone list: self entry + all cached peers
+    let self_entry = state.self_entry.read().await.clone();
+    let cache_entries = topology::get_all_stones(&state.topology_cache).await;
+
+    let mut stones = Vec::new();
+    let mut total_services: u32 = 0;
+    let mut healthy_stones: u32 = 0;
+    let mut degraded_stones: u32 = 0;
+
+    // Add self first
+    let self_info = topology_entry_to_stone_info(&self_entry);
+    total_services += self_info.services_count;
+    if self_info.health == "healthy" || self_info.health == "thriving" {
+        healthy_stones += 1;
+    } else {
+        degraded_stones += 1;
+    }
+    stones.push(self_info);
+
+    // Add all cached peers (skip self if present in cache)
+    for entry in cache_entries {
+        if entry.stone_id == state.stone_id {
+            continue;
+        }
+        let info = topology_entry_to_stone_info(&entry);
+        total_services += info.services_count;
+        if info.health == "healthy" || info.health == "thriving" {
+            healthy_stones += 1;
+        } else {
+            degraded_stones += 1;
+        }
+        stones.push(info);
+    }
+
     let overview = GardenOverview {
-        stones: vec![local_stone],
-        total_services: 0, // TODO: aggregate from stones
-        healthy_stones: 1,
-        degraded_stones: 0,
+        stones,
+        total_services,
+        healthy_stones,
+        degraded_stones,
         pond_status: None, // Phase 3
     };
 
@@ -33,6 +64,18 @@ pub async fn get_garden_v1(
         data: overview,
         suggestions,
     }))
+}
+
+/// Convert TopologyEntry to StoneInfo for garden overview
+fn topology_entry_to_stone_info(entry: &TopologyEntry) -> StoneInfo {
+    StoneInfo {
+        name: entry.stone_name.clone(),
+        endpoint: entry.endpoint.clone(),
+        health: entry.health.clone(),
+        services_count: entry.services.len() as u32,
+        cpu_usage: 0.0,  // TODO: Get from entry.capabilities if available
+        memory_usage: 0.0, // TODO: Get from entry.capabilities if available
+    }
 }
 
 /// GET /api/v1/garden/stones/:stone_name - Get specific stone details
@@ -172,27 +215,6 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
         }),
         detection_status: DetectionStatus::Complete, // Synchronous detection
     }
-}
-
-// Helper function to get stone info summary
-async fn get_local_stone_info(state: &AppState) -> Result<StoneInfo, (StatusCode, Json<ApiErrorResponse>)> {
-    // Use registry instead of docker.list_services
-    let registry = state.registry.read().await;
-    let services_count = registry.len() as u32;
-    drop(registry);
-
-    // Get current IP from network monitor (dynamically updated)
-    let current_ip = state.network_monitor.get_ip().await;
-    let endpoint = format!("http://{}:{}", current_ip, state.api_port);
-
-    Ok(StoneInfo {
-        name: state.stone_name.clone(),
-        endpoint,
-        health: garden_common::HEALTH_HEALTHY.to_string(), // TODO: actual health check
-        services_count,
-        cpu_usage: 0.0, // TODO: Get from metrics
-        memory_usage: 0.0, // TODO: Get from metrics
-    })
 }
 
 // === TOPOLOGY API ===

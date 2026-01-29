@@ -71,7 +71,7 @@ impl Command for TemplateCommand {
 /// List all available templates
 async fn list_templates(client: &reqwest::Client, endpoint: &str) -> anyhow::Result<()> {
     let url = format!(
-        "{}/api/v1/services/manifests",
+        "{}/api/v1/stone/services/manifests",
         endpoint.trim_end_matches('/')
     );
     let response = client.get(&url).send().await?;
@@ -122,7 +122,7 @@ async fn list_templates(client: &reqwest::Client, endpoint: &str) -> anyhow::Res
 async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> anyhow::Result<()> {
     let term = ui::TerminalInfo::detect();
     let url = format!(
-        "{}/api/v1/services/{}/manifest",
+        "{}/api/v1/stone/services/{}/manifest",
         endpoint.trim_end_matches('/'),
         name
     );

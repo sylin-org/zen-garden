@@ -164,7 +164,7 @@ async fn fetch_offerings(
     endpoint: &str,
 ) -> Result<Vec<OfferingEntry>> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let response = moss.get_raw("/api/v1/offerings").await?;
+    let response = moss.get_raw("/api/v1/stone/offerings").await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         anyhow::bail!("This stone's moss does not support validated offerings. Upgrade moss and retry.");
@@ -176,7 +176,7 @@ async fn fetch_offerings(
 
 async fn fetch_capabilities(client: &reqwest::Client, endpoint: &str) -> Result<HardwareCapabilities> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let response: GardenApiResponse<HardwareCapabilities> = moss.get("/capabilities").await?;
+    let response: GardenApiResponse<HardwareCapabilities> = moss.get("/api/v1/stone/capabilities").await?;
     Ok(response.data)
 }
 
@@ -186,7 +186,7 @@ async fn fetch_offering_info_json(
     offering: &str,
 ) -> Result<serde_json::Value> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let path = format!("/api/v1/offerings/{}", offering);
+    let path = format!("/api/v1/stone/offerings/{}", offering);
     let response = moss.get_raw(&path).await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -213,7 +213,7 @@ async fn fetch_search_results(
     } else {
         format!("&prefer={}", prefer.join(","))
     };
-    let path = format!("/api/v1/offerings/search?q={}&limit={}{}", 
+    let path = format!("/api/v1/stone/offerings/search?q={}&limit={}{}", 
         urlencoding::encode(query), limit, prefer_str);
     
     let response = moss.get_raw(&path).await?;
@@ -236,7 +236,7 @@ async fn refresh_offerings_index(
     endpoint: &str,
 ) -> Result<()> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let response = moss.post_empty("/api/v1/offerings/refresh").await?;
+    let response = moss.post_empty("/api/v1/stone/offerings/refresh").await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         anyhow::bail!(
             "This stone's moss does not support offerings refresh. Upgrade moss and retry."
@@ -310,7 +310,7 @@ async fn print_offerings_index(
     let term = ui::TerminalInfo::detect();
 
     // Fetch running services
-    let services_url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
+    let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
     let services: Vec<ServiceInfo> = if let Ok(response) = client.get(&services_url).send().await {
         if let Ok(json) = response.json::<serde_json::Value>().await {
             serde_json::from_value(json.get("data").cloned().unwrap_or(json)).unwrap_or_default()
@@ -396,7 +396,7 @@ async fn print_offering_info(
     offering: &str,
 ) -> Result<()> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let path = format!("/api/v1/offerings/{}", offering);
+    let path = format!("/api/v1/stone/offerings/{}", offering);
     let response = moss.get_raw(&path).await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -661,7 +661,7 @@ async fn stream_job_progress(
             }
 
             // Check completion by querying service list
-            let list_url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
+            let list_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
             if let Ok(response) = client.get(&list_url).send().await {
                 if let Ok(value) = response.json::<serde_json::Value>().await {
                     let services: Vec<ServiceInfo> = serde_json::from_value(
@@ -1189,7 +1189,7 @@ impl Command for OfferCommand {
             OfferAction::Install { name } => {
                 let endpoint = ctx.endpoint.as_ref().expect("endpoint required for install");
                 // Check if service is already installed
-                let services_url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
+                let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
                 if let Ok(response) = ctx.client.get(&services_url).send().await {
                     if let Ok(json) = response.json::<serde_json::Value>().await {
                         let services: Vec<ServiceInfo> = serde_json::from_value(json.get("data").cloned().unwrap_or(json)).unwrap_or_default();
@@ -1218,8 +1218,8 @@ impl Command for OfferCommand {
                     }
                 }
 
-                // POST /api/v1/services with JSON body
-                let url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
+                // POST /api/v1/stone/services with JSON body
+                let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
                 let payload = serde_json::json!({
                     "offering": name,
                     "ports": [],

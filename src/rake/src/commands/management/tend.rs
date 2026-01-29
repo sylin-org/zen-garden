@@ -56,7 +56,7 @@ impl Command for TendCommand {
                     {
                         Ok(resp) if resp.status().is_success() => {
                             // Get stone name from capabilities
-                            let caps_url = format!("{}/capabilities", local_endpoint);
+                            let caps_url = format!("{}/api/v1/stone/capabilities", local_endpoint);
                             let response: GardenApiResponse<HardwareCapabilities> = ctx
                                 .client
                                 .get(&caps_url)
@@ -98,7 +98,7 @@ impl Command for TendCommand {
                                 .await
                             {
                                 Ok(resp) if resp.status().is_success() => {
-                                    let caps_url = format!("{}/capabilities", alternative.endpoint.trim_end_matches('/'));
+                                    let caps_url = format!("{}/api/v1/stone/capabilities", alternative.endpoint.trim_end_matches('/'));
                                     let response: GardenApiResponse<HardwareCapabilities> = ctx
                                         .client
                                         .get(&caps_url)
@@ -152,7 +152,7 @@ impl Command for TendCommand {
                     match discovery::discover_moss().await {
                         Ok(endpoint) => {
                             // Get capabilities for stone name
-                            let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+                            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
                             let response: GardenApiResponse<HardwareCapabilities> = ctx
                                 .client
                                 .get(&caps_url)
@@ -190,7 +190,7 @@ impl Command for TendCommand {
                         .await
                     {
                         Ok(resp) if resp.status().is_success() => {
-                            let caps_url = format!("{}/capabilities", url.trim_end_matches('/'));
+                            let caps_url = format!("{}/api/v1/stone/capabilities", url.trim_end_matches('/'));
                             let response: GardenApiResponse<HardwareCapabilities> = ctx
                                 .client
                                 .get(&caps_url)
@@ -230,7 +230,7 @@ impl Command for TendCommand {
                         .await
                     {
                         Ok(resp) if resp.status().is_success() => {
-                            let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+                            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
                             let caps: HardwareCapabilities = ctx
                                 .client
                                 .get(&caps_url)
@@ -356,7 +356,7 @@ async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> 
     {
         if resp.status().is_success() {
             // Get stone name from capabilities
-            let caps_url = format!("{}/capabilities", local_endpoint);
+            let caps_url = format!("{}/api/v1/stone/capabilities", local_endpoint);
             if let Ok(response) = client
                 .get(&caps_url)
                 .timeout(Duration::from_secs(5))
@@ -380,7 +380,7 @@ async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> 
     match discovery::discover_moss().await {
         Ok(endpoint) => {
             // Get capabilities for stone name
-            let caps_url = format!("{}/capabilities", endpoint.trim_end_matches('/'));
+            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
             let response: GardenApiResponse<HardwareCapabilities> = client
                 .get(&caps_url)
                 .timeout(Duration::from_secs(5))

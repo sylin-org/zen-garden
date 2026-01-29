@@ -84,6 +84,12 @@ pub mod cmd {
     
     // Developer Tools
     pub const API: &str = "api";
+    
+    // Storage (Seed Bank operations)
+    pub const PREPARE: &str = "prepare";
+    pub const RELEASE_SEED_BANK: &str = "release-seed-bank";
+    pub const SEED_BANKS: &str = "seed-banks";
+    pub const STORE: &str = "store";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +108,8 @@ pub enum CommandCategory {
     Pond,
     /// Adapter commands: hey tell
     Adapter,
+    /// Storage commands: prepare, release-seed-bank, seed-banks, store
+    Storage,
 }
 
 impl CommandCategory {
@@ -114,6 +122,7 @@ impl CommandCategory {
             Self::System => "System",
             Self::Pond => "Pond",
             Self::Adapter => "Adapter",
+            Self::Storage => "Storage",
         }
     }
 }
@@ -1855,6 +1864,196 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "presence"],
     });
 
+    // === STORAGE COMMANDS ===
+    
+    manifest.add(CommandDef {
+        name: cmd::PREPARE,
+        zen_name: "prepare",
+        normative_name: None,
+        category: CommandCategory::Storage,
+        description: "Prepare a USB device as a seed bank",
+        long_description: "Initialize a USB storage device as a Zen Garden seed bank.\n\n\
+            Creates the required directory structure and metadata for the device\n\
+            to be used as portable storage in the Zen Garden ecosystem.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "device",
+                zen_syntax: "<device>",
+                normative_syntax: None,
+                description: "Device name (e.g., sdb1)",
+                required: true,
+            },
+            CommandParam {
+                name: "name",
+                zen_syntax: "--name <name>",
+                normative_syntax: None,
+                description: "Custom seed bank name",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Prepare USB device",
+                zen_syntax: Some("garden-rake prepare sdb1"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Prepare with custom name",
+                zen_syntax: Some("garden-rake prepare sdb1 --name my-seeds"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["seed-banks", "release-seed-bank", "store"],
+    });
+    
+    manifest.add(CommandDef {
+        name: cmd::RELEASE_SEED_BANK,
+        zen_name: "release-seed-bank",
+        normative_name: None,
+        category: CommandCategory::Storage,
+        description: "Release a seed bank for safe removal",
+        long_description: "Safely unmount a seed bank, ensuring all writes are complete\n\
+            before the USB device is physically removed.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "name",
+                zen_syntax: "<name>",
+                normative_syntax: None,
+                description: "Seed bank name to release",
+                required: true,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Release seed bank",
+                zen_syntax: Some("garden-rake release-seed-bank my-seeds"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["seed-banks", "prepare"],
+    });
+    
+    manifest.add(CommandDef {
+        name: cmd::SEED_BANKS,
+        zen_name: "seed-banks",
+        normative_name: None,
+        category: CommandCategory::Storage,
+        description: "Show seed banks on a stone",
+        long_description: "List all seed banks and eligible USB storage devices on a stone.\n\n\
+            Shows both actively mounted seed banks and available devices that can be prepared.",
+        remote_capable: true,
+        params: vec![],
+        examples: vec![
+            CommandExample {
+                description: "List seed banks",
+                zen_syntax: Some("garden-rake seed-banks"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "List on specific stone",
+                zen_syntax: Some("garden-rake seed-banks --at stone-01"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["prepare", "release-seed-bank", "store"],
+    });
+    
+    manifest.add(CommandDef {
+        name: cmd::STORE,
+        zen_name: "store",
+        normative_name: None,
+        category: CommandCategory::Storage,
+        description: "Object storage operations on seed banks",
+        long_description: "S3-compatible object storage on seed banks.\n\n\
+            Provides put, get, list (ls), delete (rm), and head operations for storing\n\
+            objects in seed bank buckets. Objects are organized under apps/<app-name>/<bucket>/<key>.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "operation",
+                zen_syntax: "<put|get|ls|rm|head>",
+                normative_syntax: None,
+                description: "Storage operation to perform",
+                required: true,
+            },
+            CommandParam {
+                name: "bucket",
+                zen_syntax: "<bucket>",
+                normative_syntax: None,
+                description: "Bucket name",
+                required: true,
+            },
+            CommandParam {
+                name: "key",
+                zen_syntax: "<key>",
+                normative_syntax: None,
+                description: "Object key (required for put/get/rm/head)",
+                required: false,
+            },
+            CommandParam {
+                name: "file",
+                zen_syntax: "<file>",
+                normative_syntax: None,
+                description: "Local file path (source for put, destination for get)",
+                required: false,
+            },
+            CommandParam {
+                name: "prefix",
+                zen_syntax: "--prefix <prefix>",
+                normative_syntax: None,
+                description: "Prefix for list operations",
+                required: false,
+            },
+            CommandParam {
+                name: "app",
+                zen_syntax: "--app <name>",
+                normative_syntax: None,
+                description: "Application namespace (default: zen-garden)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Upload file",
+                zen_syntax: Some("garden-rake store put mydata config.json ./config.json"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Download file",
+                zen_syntax: Some("garden-rake store get mydata config.json ./config.json"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Print to stdout",
+                zen_syntax: Some("garden-rake store get mydata config.json"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "List bucket contents",
+                zen_syntax: Some("garden-rake store ls mydata"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "List with prefix",
+                zen_syntax: Some("garden-rake store ls mydata --prefix logs/"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Delete object",
+                zen_syntax: Some("garden-rake store rm mydata config.json"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Show object metadata",
+                zen_syntax: Some("garden-rake store head mydata config.json"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["seed-banks", "prepare"],
+    });
+
     // === DEVELOPER TOOLS ===
     
     manifest.add(CommandDef {
@@ -1950,6 +2149,8 @@ pub fn validate_manifest() {
         "hey",
         // Developer Tools
         "api",
+        // Storage
+        "prepare", "release-seed-bank", "seed-banks", "store",
     ];
 
     for cmd_name in expected_commands {

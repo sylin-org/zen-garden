@@ -38,6 +38,7 @@ pub mod management;
 pub mod offering;
 pub mod nourish;
 pub mod presence;
+pub mod storage;
 
 use crate::context::CommandContext;
 use async_trait::async_trait;

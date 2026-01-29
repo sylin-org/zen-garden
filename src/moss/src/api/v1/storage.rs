@@ -19,7 +19,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
     Json,
@@ -30,9 +30,10 @@ use garden_common::storage::{
     RenameSeedBankRequest, SeedBankInfo, SetVisibilityRequest,
     StorageDetectedInfo,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
+
 
 use crate::{error_response, AppState};
 use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry};
@@ -95,6 +96,46 @@ pub struct ObjectListResponse {
     pub prefix: String,
     pub objects: Vec<ObjectMeta>,
     pub common_prefixes: Vec<String>,
+}
+
+/// Directory listing response with depth support
+#[derive(Debug, Serialize)]
+pub struct DirectoryListResponse {
+    pub path: String,
+    pub entries: Vec<DirectoryEntry>,
+    pub truncated: bool,
+}
+
+/// Single entry in a directory listing
+#[derive(Debug, Serialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,  // "file" or "dir"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
+}
+
+/// Query parameters for object listing
+#[derive(Debug, Deserialize, Default)]
+pub struct ListQueryParams {
+    /// Depth of listing: 1 (default), 2, 3, ..., or "all"/-1 for recursive
+    #[serde(default)]
+    pub depth: Option<String>,
+}
+
+impl ListQueryParams {
+    /// Parse depth parameter to a numeric value
+    /// Returns None for unlimited (recursive), Some(n) for n levels
+    pub fn parse_depth(&self) -> Option<usize> {
+        match self.depth.as_deref() {
+            None | Some("1") => Some(1),
+            Some("all") | Some("-1") => None,
+            Some(s) => s.parse().ok(),
+        }
+    }
 }
 
 // ============================================================================
@@ -301,13 +342,19 @@ pub async fn rename_bank_v1(
 }
 
 // ============================================================================
-// GET /api/v1/stone/storage/bank/:id/*path - Get Object
+// GET /api/v1/stone/storage/bank/:id/*path - Get Object or List Directory
 // ============================================================================
 
-/// Get an object from a bank (raw bytes)
+/// Get an object from a bank (raw bytes) or list directory contents
+/// 
+/// If path ends with `/`, returns a directory listing with optional depth:
+/// - `?depth=1` (default): immediate children only
+/// - `?depth=3`: 3 levels deep
+/// - `?depth=all` or `?depth=-1`: full recursive listing
 pub async fn get_object_v1(
     State(_state): State<AppState>,
     Path((id, path)): Path<(String, String)>,
+    Query(params): Query<ListQueryParams>,
 ) -> Response {
     let registry = match SeedBankRegistry::scan().await {
         Ok(r) => r,
@@ -324,6 +371,12 @@ pub async fn get_object_v1(
     // Path format: app/bucket/key or just key (defaults to zen-garden/default)
     let (app, bucket, key) = parse_object_path(&path);
     
+    // If path ends with /, treat as directory listing
+    if path.ends_with('/') || key.is_empty() {
+        return handle_directory_listing(&store, &id, &app, &bucket, &key, &params).await;
+    }
+    
+    // Otherwise, get object
     match store.get_object(&app, &bucket, &key).await {
         Ok(Some((data, meta))) => {
             debug!(bank = %id, key = %key, size = data.len(), "GET object success");
@@ -339,6 +392,76 @@ pub async fn get_object_v1(
         Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
+
+/// Handle directory listing with depth parameter
+async fn handle_directory_listing(
+    store: &ObjectStore,
+    bank_id: &str,
+    app: &str,
+    bucket: &str,
+    prefix: &str,
+    params: &ListQueryParams,
+) -> Response {
+    let max_depth = params.parse_depth();
+    let delimiter = if max_depth == Some(1) { Some("/") } else { None };
+    
+    match store.list_objects(app, bucket, Some(prefix), delimiter, None, 1000).await {
+        Ok(result) => {
+            let mut entries: Vec<DirectoryEntry> = Vec::new();
+            
+            // Add files from contents
+            for obj in &result.contents {
+                // Calculate relative path from prefix
+                let name = obj.key.strip_prefix(prefix).unwrap_or(&obj.key);
+                
+                // Apply depth filter if needed
+                if let Some(depth) = max_depth {
+                    let path_depth = name.matches('/').count() + 1;
+                    if path_depth > depth {
+                        continue;
+                    }
+                }
+                
+                entries.push(DirectoryEntry {
+                    name: name.to_string(),
+                    entry_type: "file".to_string(),
+                    size: Some(obj.size),
+                    modified: Some(obj.last_modified.clone()),
+                });
+            }
+            
+            // Add directories from common_prefixes (only when depth=1)
+            for prefix_path in &result.common_prefixes {
+                let name = prefix_path.strip_prefix(prefix).unwrap_or(prefix_path);
+                entries.push(DirectoryEntry {
+                    name: name.to_string(),
+                    entry_type: "dir".to_string(),
+                    size: None,
+                    modified: None,
+                });
+            }
+            
+            let response = DirectoryListResponse {
+                path: format!("{}/{}/{}", app, bucket, prefix),
+                entries,
+                truncated: result.is_truncated,
+            };
+            
+            debug!(bank = %bank_id, prefix = %prefix, depth = ?max_depth, count = response.entries.len(), "Directory listing");
+            
+            match serde_json::to_string(&ApiResponse::new(response)) {
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(json.into())
+                    .unwrap(),
+                Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            }
+        }
+        Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 
 // ============================================================================
 // PUT /api/v1/stone/storage/bank/:id/*path - Put Object

@@ -12,7 +12,14 @@
 //! - Objects stored at: `{mount}/apps/{app}/{bucket}/{key}`
 //! - Metadata in sidecar files: `{key}.meta.json`
 //! - Atomic writes with temp-file + rename
+//!
+//! ## Storage Beacon (STORAGE-0003)
+//!
+//! The `beacon` module broadcasts storage capability announcements:
+//! - Triggered on mount/unmount, visibility change, new stone online
+//! - All stones lurk-listen and update their StorageCache
 
+mod beacon;
 mod device;
 mod objects;
 mod registry;
@@ -20,6 +27,7 @@ mod registry;
 #[cfg(target_os = "linux")]
 mod monitor;
 
+pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
 pub use device::{DeviceAnalyzer, analyze_device, list_usb_partitions};
 pub use objects::{ObjectStore, ObjectMetadata, ListResult, PutResult};
 pub use registry::SeedBankRegistry;

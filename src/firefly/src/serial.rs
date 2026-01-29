@@ -200,10 +200,14 @@ impl FireflyConnection {
 pub fn find_firefly_port() -> Result<String> {
     let ports = serialport::available_ports()?;
 
-    // Look for Raspberry Pi RP2040 (VID 0x2e8a)
+    // Look for RP2040 devices:
+    // - 0x2e8a: Raspberry Pi (native RP2040 / Pico SDK)
+    // - 0x239a: Adafruit (CircuitPython firmware)
+    const RP2040_VIDS: [u16; 2] = [0x2e8a, 0x239a];
+
     for port in &ports {
         if let serialport::SerialPortType::UsbPort(info) = &port.port_type {
-            if info.vid == 0x2e8a {
+            if RP2040_VIDS.contains(&info.vid) {
                 tracing::debug!(
                     port = %port.port_name,
                     vid = format!("{:04x}", info.vid),

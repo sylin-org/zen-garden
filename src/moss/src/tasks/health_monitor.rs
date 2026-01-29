@@ -44,6 +44,12 @@ pub async fn health_monitor_task(state: AppState) {
     loop {
         interval.tick().await;
 
+        // Reap any terminated adapter processes to prevent zombies
+        let reaped = state.adapter_registry.reap_terminated().await;
+        if reaped > 0 {
+            tracing::debug!(reaped = reaped, "Reaped terminated adapter processes");
+        }
+
         let registry_snapshot = { state.registry.read().await.clone() };
 
         for service in registry_snapshot {

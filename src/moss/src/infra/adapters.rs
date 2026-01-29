@@ -39,6 +39,9 @@ const PORT_LEDGER_FILE: &str = "adapter-ports.json";
 /// State file name for persisting adapter enabled/disabled state
 const STATE_FILE: &str = "adapter-state.json";
 
+/// Runtime file name for persisting running adapter PIDs (for restart recovery)
+const RUNTIME_FILE: &str = "adapter-runtime.json";
+
 /// Adapter enabled/disabled state ledger - persisted to disk
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct AdapterStateLedger {
@@ -83,6 +86,62 @@ impl AdapterStateLedger {
     /// Set adapter enabled state
     fn set_enabled(&mut self, adapter_id: &str, enabled: bool) {
         self.enabled.insert(adapter_id.to_string(), enabled);
+    }
+}
+
+/// Runtime ledger - tracks currently running adapter PIDs
+/// Persisted to disk for restart recovery
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RuntimeLedger {
+    /// Map of adapter_id -> (pid, port)
+    running: HashMap<String, (u32, u16)>,
+}
+
+impl RuntimeLedger {
+    /// Load from disk or create new
+    async fn load(data_path: &Path) -> Self {
+        let runtime_path = data_path.join(RUNTIME_FILE);
+        if runtime_path.exists() {
+            match tokio::fs::read_to_string(&runtime_path).await {
+                Ok(content) => {
+                    match serde_json::from_str(&content) {
+                        Ok(ledger) => return ledger,
+                        Err(e) => debug!(error = %e, "Failed to parse runtime ledger, starting fresh"),
+                    }
+                }
+                Err(e) => debug!(error = %e, "Failed to read runtime ledger, starting fresh"),
+            }
+        }
+        Self::default()
+    }
+
+    /// Save to disk
+    async fn save(&self, data_path: &Path) -> Result<()> {
+        let runtime_path = data_path.join(RUNTIME_FILE);
+        let content = serde_json::to_string_pretty(self)?;
+        tokio::fs::write(&runtime_path, content).await?;
+        Ok(())
+    }
+
+    /// Record an adapter as running
+    fn set_running(&mut self, adapter_id: &str, pid: u32, port: u16) {
+        self.running.insert(adapter_id.to_string(), (pid, port));
+    }
+
+    /// Record an adapter as stopped
+    fn set_stopped(&mut self, adapter_id: &str) {
+        self.running.remove(adapter_id);
+    }
+
+    /// Get running adapter info
+    #[allow(dead_code)]
+    fn get(&self, adapter_id: &str) -> Option<(u32, u16)> {
+        self.running.get(adapter_id).copied()
+    }
+
+    /// Get all running adapters
+    fn all_running(&self) -> impl Iterator<Item = (&String, &(u32, u16))> {
+        self.running.iter()
     }
 }
 
@@ -220,48 +279,55 @@ impl RegisteredAdapter {
 pub struct AdapterRegistry {
     /// Registered adapters by ID
     adapters: Arc<RwLock<HashMap<String, RegisteredAdapter>>>,
-    
+
     /// Path to adapters directory
     adapters_path: PathBuf,
-    
+
     /// Path to data directory (for ledger persistence)
     data_path: PathBuf,
-    
+
     /// Port assignment ledger
     port_ledger: Arc<RwLock<PortLedger>>,
-    
+
     /// Adapter enabled/disabled state ledger
     state_ledger: Arc<RwLock<AdapterStateLedger>>,
+
+    /// Runtime ledger - tracks running PIDs for restart recovery
+    runtime_ledger: Arc<RwLock<RuntimeLedger>>,
 }
 
 impl AdapterRegistry {
     /// Create a new adapter registry
-    /// Loads port ledger and state ledger from disk
+    /// Loads port ledger, state ledger, and runtime ledger from disk
     pub async fn new() -> Self {
         let data_path = PathBuf::from(data_dir());
         let port_ledger = PortLedger::load(&data_path).await;
         let state_ledger = AdapterStateLedger::load(&data_path).await;
-        
+        let runtime_ledger = RuntimeLedger::load(&data_path).await;
+
         Self {
             adapters: Arc::new(RwLock::new(HashMap::new())),
             adapters_path: PathBuf::from(adapters_dir()),
             data_path,
             port_ledger: Arc::new(RwLock::new(port_ledger)),
             state_ledger: Arc::new(RwLock::new(state_ledger)),
+            runtime_ledger: Arc::new(RwLock::new(runtime_ledger)),
         }
     }
-    
+
     /// Create with custom adapters directory (for testing)
     pub async fn with_path(adapters_path: PathBuf, data_path: PathBuf) -> Self {
         let port_ledger = PortLedger::load(&data_path).await;
         let state_ledger = AdapterStateLedger::load(&data_path).await;
-        
+        let runtime_ledger = RuntimeLedger::load(&data_path).await;
+
         Self {
             adapters: Arc::new(RwLock::new(HashMap::new())),
             adapters_path,
             data_path,
             port_ledger: Arc::new(RwLock::new(port_ledger)),
             state_ledger: Arc::new(RwLock::new(state_ledger)),
+            runtime_ledger: Arc::new(RwLock::new(runtime_ledger)),
         }
     }
     
@@ -311,28 +377,41 @@ impl AdapterRegistry {
     }
     
     /// Scan adapters directory, register, and auto-start enabled adapters
-    /// 
+    ///
     /// This is the main entry point for adapter initialization at boot.
     /// Adapters are started unless explicitly disabled by the user.
+    ///
+    /// On restart, this method first reconciles with any adapters that survived
+    /// the previous Moss session (thanks to kill_on_drop(false)), then only
+    /// starts adapters that aren't already running.
     pub async fn scan_and_autostart(&self, moss_endpoint: &str) -> Result<(usize, usize)> {
         // First scan and register all adapters
         let registered = self.scan().await?;
-        
+
         if registered == 0 {
             return Ok((0, 0));
         }
-        
-        // Get list of adapter IDs to start
+
+        // Reconcile with any adapters still running from previous session
+        let (adopted, _dead) = self.reconcile_running_adapters().await;
+
+        // Get list of adapter IDs to potentially start
         let adapter_ids: Vec<String> = {
             let adapters = self.adapters.read().await;
             adapters.keys().cloned().collect()
         };
-        
-        // Check state ledger and start enabled adapters
+
+        // Check state ledger and start enabled adapters (if not already running)
         let state_ledger = self.state_ledger.read().await;
         let mut started = 0;
-        
+
         for adapter_id in adapter_ids {
+            // Skip if already running (adopted from previous session)
+            if self.is_running(&adapter_id).await {
+                debug!(adapter = %adapter_id, "Adapter already running, skipping start");
+                continue;
+            }
+
             if state_ledger.is_enabled(&adapter_id) {
                 match self.start(&adapter_id, moss_endpoint).await {
                     Ok(pid) => {
@@ -347,9 +426,14 @@ impl AdapterRegistry {
                 info!(adapter = %adapter_id, "Adapter disabled, skipping auto-start");
             }
         }
-        
-        info!(registered = registered, started = started, "Adapter scan and auto-start complete");
-        Ok((registered, started))
+
+        info!(
+            registered = registered,
+            adopted = adopted,
+            started = started,
+            "Adapter scan and auto-start complete"
+        );
+        Ok((registered, started + adopted))
     }
     
     /// Register a single adapter by running --dump-commands
@@ -491,12 +575,21 @@ impl AdapterRegistry {
             .kill_on_drop(false) // Keep running if Moss restarts
             .spawn()
             .with_context(|| format!("Failed to start adapter {}", id))?;
-        
+
         let pid = child.id().unwrap_or(0);
         adapter.process = Some(child);
         adapter.pid = Some(pid);
         adapter.assigned_port = Some(port);
-        
+
+        // Persist to runtime ledger for restart recovery
+        {
+            let mut runtime_ledger = self.runtime_ledger.write().await;
+            runtime_ledger.set_running(id, pid, port);
+            if let Err(e) = runtime_ledger.save(&self.data_path).await {
+                warn!(adapter = %id, error = %e, "Failed to persist runtime ledger");
+            }
+        }
+
         info!(adapter = %id, pid = pid, port = port, "Adapter started");
         Ok(pid)
     }
@@ -554,36 +647,181 @@ impl AdapterRegistry {
         let state_ledger = self.state_ledger.read().await;
         state_ledger.is_enabled(id)
     }
-    
+
+    /// Reap terminated adapter processes
+    ///
+    /// Checks all adapters with process handles and calls try_wait() to collect
+    /// exit status from terminated processes. This prevents zombie processes.
+    ///
+    /// Returns the number of processes reaped.
+    pub async fn reap_terminated(&self) -> usize {
+        let mut adapters = self.adapters.write().await;
+        let mut runtime_ledger = self.runtime_ledger.write().await;
+        let mut reaped = 0;
+
+        for (id, adapter) in adapters.iter_mut() {
+            // Skip adapters without a process handle
+            let child = match adapter.process.as_mut() {
+                Some(c) => c,
+                None => continue,
+            };
+
+            // Try to collect exit status without blocking
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // Process has exited - reap it
+                    let pid = adapter.pid.unwrap_or(0);
+                    if status.success() {
+                        info!(adapter = %id, pid = pid, "Adapter exited normally");
+                    } else {
+                        warn!(adapter = %id, pid = pid, status = ?status, "Adapter exited with error");
+                    }
+
+                    // Clear process state
+                    adapter.process = None;
+                    adapter.pid = None;
+                    runtime_ledger.set_stopped(id);
+                    reaped += 1;
+                }
+                Ok(None) => {
+                    // Process still running - nothing to do
+                }
+                Err(e) => {
+                    // Error checking status - log but don't clear
+                    warn!(adapter = %id, error = %e, "Failed to check adapter process status");
+                }
+            }
+        }
+
+        // Persist runtime ledger if anything changed
+        if reaped > 0 {
+            if let Err(e) = runtime_ledger.save(&self.data_path).await {
+                warn!(error = %e, "Failed to persist runtime ledger after reaping");
+            }
+            debug!(reaped = reaped, "Reaped terminated adapter processes");
+        }
+
+        reaped
+    }
+
+    /// Reconcile running adapters after Moss restart
+    ///
+    /// On restart, Moss loses process handles but adapters may still be running
+    /// (due to kill_on_drop(false)). This method:
+    /// 1. Loads the runtime ledger (PIDs from before restart)
+    /// 2. Checks which processes are still alive
+    /// 3. Adopts still-running adapters (updates internal state, no process handle)
+    /// 4. Cleans up entries for dead processes
+    ///
+    /// Returns (adopted_count, dead_count)
+    pub async fn reconcile_running_adapters(&self) -> (usize, usize) {
+        let runtime_ledger = self.runtime_ledger.read().await;
+        let mut to_adopt = Vec::new();
+        let mut to_remove = Vec::new();
+
+        // Check each entry in runtime ledger
+        for (adapter_id, (pid, port)) in runtime_ledger.all_running() {
+            if is_process_alive(*pid) {
+                to_adopt.push((adapter_id.clone(), *pid, *port));
+            } else {
+                to_remove.push(adapter_id.clone());
+            }
+        }
+        drop(runtime_ledger);
+
+        let adopted = to_adopt.len();
+        let dead = to_remove.len();
+
+        // Adopt still-running adapters
+        if !to_adopt.is_empty() {
+            let mut adapters = self.adapters.write().await;
+            for (adapter_id, pid, port) in to_adopt {
+                if let Some(adapter) = adapters.get_mut(&adapter_id) {
+                    // Adapter is registered - update its state
+                    // Note: we don't have a process handle (can't reattach to running process)
+                    // but we can track the PID for is_running() checks
+                    adapter.pid = Some(pid);
+                    adapter.assigned_port = Some(port);
+                    info!(
+                        adapter = %adapter_id,
+                        pid = pid,
+                        port = port,
+                        "Adopted running adapter from previous session"
+                    );
+                } else {
+                    // Adapter not registered (binary removed?) - kill orphan
+                    warn!(
+                        adapter = %adapter_id,
+                        pid = pid,
+                        "Found orphaned adapter process, killing"
+                    );
+                    kill_process_by_pid(pid);
+                    to_remove.push(adapter_id);
+                }
+            }
+        }
+
+        // Clean up dead entries from runtime ledger
+        if !to_remove.is_empty() {
+            let mut runtime_ledger = self.runtime_ledger.write().await;
+            for adapter_id in &to_remove {
+                runtime_ledger.set_stopped(adapter_id);
+            }
+            if let Err(e) = runtime_ledger.save(&self.data_path).await {
+                warn!(error = %e, "Failed to persist runtime ledger after reconciliation");
+            }
+        }
+
+        if adopted > 0 || dead > 0 {
+            info!(
+                adopted = adopted,
+                dead = dead,
+                "Reconciled adapter processes from previous session"
+            );
+        }
+
+        (adopted, dead)
+    }
+
     /// Internal stop implementation
     async fn stop_internal(&self, id: &str) -> Result<()> {
         let mut adapters = self.adapters.write().await;
         let adapter = adapters.get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Adapter not found: {}", id))?;
-        
+
         if let Some(pid) = adapter.pid {
             if is_process_alive(pid) {
                 info!(adapter = %id, pid = pid, "Stopping adapter");
-                
+
                 // Try graceful shutdown first via process handle
                 if let Some(ref mut child) = adapter.process {
                     if let Err(e) = child.kill().await {
                         warn!(adapter = %id, error = %e, "Failed to kill adapter via handle, trying by PID");
                         kill_process_by_pid(pid);
                     }
+                    // Reap the process to prevent zombie
+                    let _ = child.wait().await;
                 } else {
                     // No handle, kill by PID
                     kill_process_by_pid(pid);
                 }
-                
+
                 info!(adapter = %id, "Adapter stopped");
             }
         }
-        
+
         adapter.process = None;
         adapter.pid = None;
-        adapter.assigned_port = None;
-        
+
+        // Remove from runtime ledger
+        {
+            let mut runtime_ledger = self.runtime_ledger.write().await;
+            runtime_ledger.set_stopped(id);
+            if let Err(e) = runtime_ledger.save(&self.data_path).await {
+                warn!(adapter = %id, error = %e, "Failed to persist runtime ledger");
+            }
+        }
+
         Ok(())
     }
     
@@ -768,12 +1006,51 @@ mod tests {
         let data_dir = std::env::temp_dir().join("zen-garden-test-data");
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         let _ = tokio::fs::remove_dir_all(&data_dir).await;
-        
+
         let registry = AdapterRegistry::with_path(temp_dir.clone(), data_dir.clone()).await;
         let count = registry.scan().await.unwrap();
-        
+
         assert_eq!(count, 0);
-        
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let _ = tokio::fs::remove_dir_all(&data_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_reap_terminated_no_processes() {
+        let temp_dir = std::env::temp_dir().join("zen-garden-test-adapters-reap");
+        let data_dir = std::env::temp_dir().join("zen-garden-test-data-reap");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let _ = tokio::fs::remove_dir_all(&data_dir).await;
+        let _ = tokio::fs::create_dir_all(&data_dir).await;
+
+        let registry = AdapterRegistry::with_path(temp_dir.clone(), data_dir.clone()).await;
+
+        // Should return 0 when no adapters registered
+        let reaped = registry.reap_terminated().await;
+        assert_eq!(reaped, 0);
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let _ = tokio::fs::remove_dir_all(&data_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_empty() {
+        let temp_dir = std::env::temp_dir().join("zen-garden-test-adapters-reconcile");
+        let data_dir = std::env::temp_dir().join("zen-garden-test-data-reconcile");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let _ = tokio::fs::remove_dir_all(&data_dir).await;
+        let _ = tokio::fs::create_dir_all(&data_dir).await;
+
+        let registry = AdapterRegistry::with_path(temp_dir.clone(), data_dir.clone()).await;
+
+        // Should return (0, 0) when no runtime state
+        let (adopted, dead) = registry.reconcile_running_adapters().await;
+        assert_eq!(adopted, 0);
+        assert_eq!(dead, 0);
+
         // Cleanup
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         let _ = tokio::fs::remove_dir_all(&data_dir).await;

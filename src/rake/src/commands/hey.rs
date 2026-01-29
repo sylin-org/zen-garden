@@ -255,10 +255,11 @@ async fn list_adapters(endpoint: &str, ctx: &CommandContext) -> CommandResult {
         anyhow::bail!("Failed to list adapters: {}", response.status());
     }
     
-    // New format from AdapterListResponse
+    // ApiResponse wraps data in { "data": { "adapters": [...] } }
     let body: serde_json::Value = response.json().await?;
-    
-    let adapters = body.get("adapters")
+
+    let adapters = body.get("data")
+        .and_then(|d| d.get("adapters"))
         .and_then(|a| a.as_array())
         .map(|a| a.to_vec())
         .unwrap_or_default();
@@ -316,9 +317,11 @@ async fn show_adapter_commands(endpoint: &str, adapter: &str, ctx: &CommandConte
         anyhow::bail!("Failed to get adapter info: {}", response.status());
     }
     
-    // Parse full CommandManifest
-    let manifest: CommandManifest = response.json().await?;
-    
+    // ApiResponse wraps in { "data": { ...manifest fields... } }
+    let body: serde_json::Value = response.json().await?;
+    let data = body.get("data").ok_or_else(|| anyhow::anyhow!("Invalid response format"))?;
+    let manifest: CommandManifest = serde_json::from_value(data.clone())?;
+
     println!("{} - {}", manifest.name, manifest.description);
     println!("Version: {}", manifest.version);
     println!();

@@ -60,12 +60,18 @@ $script:Config = @{
     # Local paths
     CacheDir            = (Join-Path $PSScriptRoot "dependencies")
     ManifestsDir        = (Join-Path $PSScriptRoot "..\manifests")
+    LinuxDistDir        = (Join-Path $PSScriptRoot "..\dist\linux")
+    PackagesDir         = (Join-Path $PSScriptRoot "..\dist\packages")
     
-    # Zen Garden binaries
+    # Zen Garden binaries (required) - used as fallback if no package
     MossUrl             = "https://github.com/koan-framework/zen-garden/releases/latest/download/garden-moss-linux-amd64"
     MossPath            = (Join-Path $PSScriptRoot "..\dist\linux\garden-moss")
     GardenRakeUrl       = "https://github.com/koan-framework/zen-garden/releases/latest/download/garden-rake-linux-amd64"
     GardenRakePath      = (Join-Path $PSScriptRoot "..\dist\linux\garden-rake")
+    
+    # Zen Garden binaries (optional)
+    LanternPath         = (Join-Path $PSScriptRoot "..\dist\linux\garden-lantern")
+    CricketPath         = (Join-Path $PSScriptRoot "..\dist\linux\garden-cricket")
     
     # USB requirements
     MinUsbSizeGB        = 4
@@ -967,69 +973,88 @@ function Write-StoneFiles {
             throw "Cannot remove existing stone-root directory: $errorMsg`n`nThis usually means a file is locked by Explorer or antivirus.`nTry: Close any Explorer windows showing $UsbDrive, or eject and re-insert the USB."
         }
     }
-    # Create destination and copy contents (not the directory itself)
-    # This avoids Copy-Item creating stone-root/stone-root when dest exists
+    # Create destination and copy template structure
     New-Item -ItemType Directory -Path $stoneRootUsb -Force | Out-Null
     Copy-Item -Path "$stoneRoot\*" -Destination $stoneRootUsb -Recurse -Force
     
-    # Copy manifests to stone-root/etc/zen-garden/templates/
-    $templatesDir = Join-Path $stoneRootUsb "etc\zen-garden\templates"
-    if (-not (Test-Path $templatesDir)) {
-        New-Item -ItemType Directory -Path $templatesDir -Force | Out-Null
-    }
+    # =========================================================================
+    # Deploy from Linux package (single source of truth)
+    # Package structure → Target filesystem mapping:
+    #   bin/*           → /usr/local/bin/* 
+    #   bin/adapters/*  → /usr/local/bin/adapters/*
+    #   manifests/*     → /var/lib/zen-garden/manifests/*
+    #   scripts/*.sh    → /usr/local/bin/*.sh
+    # =========================================================================
     
-    $manifestsSource = $script:Config.ManifestsDir
-    if (Test-Path $manifestsSource) {
-        # Copy taxonomy dictionary (best-effort)
-        $taxonomyDict = Join-Path $manifestsSource "taxonomy.dictionary.yaml"
-        if (Test-Path $taxonomyDict) {
-            Copy-Item $taxonomyDict (Join-Path $templatesDir "taxonomy.dictionary.yaml") -Force -ErrorAction SilentlyContinue
+    # Find latest Linux package
+    $linuxPackage = $null
+    if (Test-Path $script:Config.PackagesDir) {
+        $packages = @(Get-ChildItem $script:Config.PackagesDir -Filter "zen-garden-*-linux-amd64.tar.gz" | Sort-Object LastWriteTime -Descending)
+        if ($packages.Count -gt 0) {
+            $linuxPackage = $packages[0].FullName
         }
-
-        # Copy each category directory
-        $categories = @("data", "messaging", "ai", "vector", "secrets", "observability", "cache")
-        foreach ($category in $categories) {
-            $categoryPath = Join-Path $manifestsSource $category
-            if (Test-Path $categoryPath) {
-                $categoryDest = Join-Path $templatesDir $category
-                New-Item -ItemType Directory -Path $categoryDest -Force | Out-Null
-                # Copy all offering artifacts needed by moss at runtime:
-                # - *.snippet.yaml: service definitions
-                # - *.compatibility.yaml: Pass/Fallback/Fail rules
-                # - *.frontmatter.json: metadata (optional today, but cheap to ship)
-                Copy-Item (Join-Path $categoryPath "*.snippet.yaml") $categoryDest -Force -ErrorAction SilentlyContinue
-                Copy-Item (Join-Path $categoryPath "*.compatibility.yaml") $categoryDest -Force -ErrorAction SilentlyContinue
-                Copy-Item (Join-Path $categoryPath "*.frontmatter.json") $categoryDest -Force -ErrorAction SilentlyContinue
-            }
+    }
+    
+    if (-not $linuxPackage) {
+        Write-Step "No Linux package found in $($script:Config.PackagesDir)" "FAIL"
+        throw "Linux package required. Run dist.ps1 first to create packages."
+    }
+    
+    Write-Step "Using package: $(Split-Path -Leaf $linuxPackage)" "OK"
+    
+    # Extract package to temp directory
+    $tempExtract = Join-Path $env:TEMP "zen-garden-extract-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    New-Item -ItemType Directory -Path $tempExtract -Force | Out-Null
+    
+    try {
+        # Extract tar.gz
+        Write-Step "Extracting package..." "..."
+        & tar -xzf $linuxPackage -C $tempExtract 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract package"
         }
-        Write-Step "manifests → stone-root/etc/zen-garden/templates/" "OK"
+        
+        # Find extracted directory (zen-garden-X.Y.Z-linux-amd64/)
+        $pkgDir = Get-ChildItem $tempExtract -Directory | Where-Object { $_.Name -like "zen-garden-*" } | Select-Object -First 1
+        if (-not $pkgDir) {
+            throw "Invalid package structure - no zen-garden-* directory found"
+        }
+        
+        $pkgPath = $pkgDir.FullName
+        Write-Step "Extracted: $($pkgDir.Name)" "OK"
+        
+        # Deploy bin/ → stone-root/usr/local/bin/
+        $pkgBinDir = Join-Path $pkgPath "bin"
+        if (Test-Path $pkgBinDir) {
+            $binDir = Join-Path $stoneRootUsb "usr\local\bin"
+            New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+            Copy-Item "$pkgBinDir\*" $binDir -Recurse -Force
+            $binCount = @(Get-ChildItem $binDir -Recurse -File).Count
+            Write-Step "bin/ ($binCount files) → stone-root/usr/local/bin/" "OK"
+        }
+        
+        # Deploy lib/ → stone-root/var/lib/
+        $pkgLibDir = Join-Path $pkgPath "lib"
+        if (Test-Path $pkgLibDir) {
+            $libDir = Join-Path $stoneRootUsb "var\lib"
+            New-Item -ItemType Directory -Path $libDir -Force | Out-Null
+            Copy-Item "$pkgLibDir\*" $libDir -Recurse -Force
+            $libCount = @(Get-ChildItem $libDir -Recurse -File).Count
+            Write-Step "lib/ ($libCount files) → stone-root/var/lib/" "OK"
+        }
     }
-    else {
-        Write-Step "manifests directory not found; runtime templates are required for offerings (list/info/install will be unavailable)" "WARN"
+    finally {
+        # Cleanup temp directory
+        Remove-Item $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
     }
     
-    # Copy binaries to stone-root/usr/local/bin/
-    $binDir = Join-Path $stoneRootUsb "usr\local\bin"
-    if (Test-Path $script:Config.MossPath) {
-        Copy-Item $script:Config.MossPath (Join-Path $binDir "garden-moss") -Force
-        Write-Step "garden-moss binary → stone-root/usr/local/bin/" "OK"
-    }
-    else {
-        Write-Step "garden-moss binary not found at $($script:Config.MossPath)" "FAIL"
-        throw "garden-moss binary required. Run build-linux.ps1 first to create binaries in ../dist/linux/"
-    }
-    
-    if (Test-Path $script:Config.GardenRakePath) {
-        Copy-Item $script:Config.GardenRakePath (Join-Path $binDir "garden-rake") -Force
-        Write-Step "garden-rake binary → stone-root/usr/local/bin/" "OK"
-    }
-    else {
-        Write-Step "garden-rake binary not found at $($script:Config.GardenRakePath)" "FAIL"
-        throw "garden-rake binary required. Run build-linux.ps1 first to create binaries in ../dist/linux/"
-    }
+    # =========================================================================
+    # Write generated configuration files (not from package)
+    # =========================================================================
     
     # Write garden-moss.service to stone-root/etc/systemd/system/
     $serviceDir = Join-Path $stoneRootUsb "etc\systemd\system"
+    New-Item -ItemType Directory -Path $serviceDir -Force | Out-Null
     $mossServicePath = Join-Path $serviceDir "garden-moss.service"
     if ($PSVersionTable.PSVersion.Major -ge 6) {
         $script:PreparedMossService | Out-File -FilePath $mossServicePath -Encoding utf8NoBOM -NoNewline
@@ -1038,16 +1063,6 @@ function Write-StoneFiles {
         $script:PreparedMossService | Out-File -FilePath $mossServicePath -Encoding utf8 -NoNewline
     }
     Write-Step "garden-moss.service → stone-root/etc/systemd/system/" "OK"
-    
-    # Copy moss-update-helper.sh to stone-root/usr/local/bin/
-    $helperScript = Join-Path $PSScriptRoot "moss-update-helper.sh"
-    if (Test-Path $helperScript) {
-        Copy-Item $helperScript (Join-Path $binDir "moss-update-helper.sh") -Force
-        Write-Step "moss-update-helper.sh → stone-root/usr/local/bin/" "OK"
-    }
-    else {
-        Write-Step "moss-update-helper.sh not found" "WARN"
-    }
     
     # Copy sudoers configuration to stone-root/etc/sudoers.d/
     $sudoersFile = Join-Path $PSScriptRoot "sudoers.d-moss"
@@ -1068,6 +1083,7 @@ function Write-StoneFiles {
     
     # Write garden-moss.toml to stone-root/etc/zen-garden/
     $configDir = Join-Path $stoneRootUsb "etc\zen-garden"
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
     $mossConfigPath = Join-Path $configDir "garden-moss.toml"
     if ($PSVersionTable.PSVersion.Major -ge 6) {
         $script:PreparedMossConfig | Out-File -FilePath $mossConfigPath -Encoding utf8NoBOM -NoNewline

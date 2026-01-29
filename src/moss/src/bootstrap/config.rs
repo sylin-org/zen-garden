@@ -138,10 +138,11 @@ pub fn init_tracing(config: &DaemonConfig) {
     };
 
     // Build filter with suppressions for noisy external crates
-    // mdns_sd emits spurious ERROR logs about IPv6/TYPE_AAAA on interfaces that are working fine
+    // mdns_sd emits spurious ERROR logs about IPv6/TYPE_A/TYPE_AAAA on interfaces that are working fine
+    // These are false positives from the library, so we suppress them entirely
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(default_tracing_level))
-        .add_directive("mdns_sd=warn".parse().unwrap());
+        .add_directive("mdns_sd=off".parse().unwrap());
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)

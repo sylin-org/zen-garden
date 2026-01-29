@@ -4,7 +4,7 @@
 //! Extracted from main.rs for cleaner separation of concerns.
 
 use axum::{
-    routing::{get, post, delete},
+    routing::{get, post, delete, patch, put, head},
     Router,
 };
 use tower_http::trace::TraceLayer;
@@ -97,6 +97,34 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/adapters/:id/command", post(api::v1::adapters::send_adapter_command))
         .route("/api/v1/stone/adapters/:id/up", post(api::v1::adapters::start_adapter))
         .route("/api/v1/stone/adapters/:id/down", post(api::v1::adapters::stop_adapter))
+
+        // V1 API - Storage overview and bank management
+        // See: docs/decisions/STORAGE-0002-api-structure.md
+        .route("/api/v1/stone/storage", get(api::v1::storage::storage_overview_v1))
+        .route("/api/v1/stone/storage/candidates", get(api::v1::storage::list_candidates_v1))
+        .route("/api/v1/stone/storage/prepare", post(api::v1::storage::prepare_seed_bank_v1))
+        .route("/api/v1/stone/storage/release-all", post(api::v1::storage::release_all_seed_banks_v1))
+
+        // V1 API - Storage banks (native Moss API, ApiResponse format)
+        .route("/api/v1/stone/storage/bank", get(api::v1::storage::list_banks_v1))
+        .route("/api/v1/stone/storage/bank/:id", get(api::v1::storage::get_bank_v1))
+        .route("/api/v1/stone/storage/bank/:id", delete(api::v1::storage::delete_bank_v1))
+        .route("/api/v1/stone/storage/bank/:id/visibility", patch(api::v1::storage::set_visibility_v1))
+        .route("/api/v1/stone/storage/bank/:id/rename", patch(api::v1::storage::rename_bank_v1))
+        .route("/api/v1/stone/storage/bank/:id/release", post(api::v1::storage::release_bank_v1))
+        .route("/api/v1/stone/storage/bank/:id/*path", get(api::v1::storage::get_object_v1))
+        .route("/api/v1/stone/storage/bank/:id/*path", put(api::v1::storage::put_object_v1))
+        .route("/api/v1/stone/storage/bank/:id/*path", delete(api::v1::storage::delete_object_v1))
+        .route("/api/v1/stone/storage/bank/:id/*path", head(api::v1::storage::head_object_v1))
+
+        // V1 API - S3-compatible Storage Gateway (XML responses, S3 spec compliant)
+        // See: docs/reference/S3-API-REFERENCE.md
+        .route("/api/v1/stone/storage/s3", get(api::v1::s3_gateway::list_buckets))
+        .route("/api/v1/stone/storage/s3/:bucket", get(api::v1::s3_gateway::list_objects))
+        .route("/api/v1/stone/storage/s3/:bucket/*key", put(api::v1::s3_gateway::put_object))
+        .route("/api/v1/stone/storage/s3/:bucket/*key", get(api::v1::s3_gateway::get_object))
+        .route("/api/v1/stone/storage/s3/:bucket/*key", head(api::v1::s3_gateway::head_object))
+        .route("/api/v1/stone/storage/s3/:bucket/*key", delete(api::v1::s3_gateway::delete_object))
 
         // V1 API - Garden topology
         .route("/api/v1/garden", get(api::v1::garden::get_garden_v1))

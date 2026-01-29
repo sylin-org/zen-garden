@@ -46,6 +46,11 @@ argon2 = "0.5"
 walkdir = "2.4"
 url = "2.5"
 
+# S3 gateway
+md5 = "0.7"
+hex = "0.4"
+mime_guess = "2.0"
+
 # Embedded assets (manifests + default adapters)
 rust-embed = "8"
 
@@ -62,6 +67,8 @@ windows = { version = "0.52", features = [
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", features = ["process", "signal"] }
+udev = "0.9"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.10"

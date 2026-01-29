@@ -550,6 +550,29 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         start_auto_adoption(state.clone(), cfg, &console_printer);
     }
 
+    // Phase 17.5: Storage monitoring (Linux only)
+    #[cfg(target_os = "linux")]
+    {
+        tracing::info!("Starting storage monitor");
+        let storage_monitor = crate::infra::storage::StorageMonitor::new(state.event_tx.clone());
+        if let Err(e) = storage_monitor.start() {
+            tracing::error!("Failed to start storage monitor: {}", e);
+        } else {
+            // Scan for existing devices at startup
+            match storage_monitor.scan_existing().await {
+                Ok(devices) => {
+                    tracing::info!("Scanned existing storage devices, found {} eligible", devices.len());
+                    for device_info in devices {
+                        tracing::info!("Found existing device: {} ({} GB)", device_info.device, device_info.capacity_bytes / 1_000_000_000);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to scan existing storage devices: {}", e);
+                }
+            }
+        }
+    }
+
     // Phase 18: HTTP server
     tracing::info!("Setting up HTTP router with 200 MB body limit");
     let app = router::configure(state.clone());

@@ -88,6 +88,18 @@ pub struct PortraitCompanion {
     pub status: String,
 }
 
+/// Seed bank entry
+#[derive(Debug, Clone, Serialize)]
+pub struct PortraitSeedBank {
+    pub name: String,
+    pub used_gb: f32,
+    pub capacity_gb: f32,
+    pub filesystem: String,
+    pub visibility: String,
+    pub roaming: bool,
+    pub online: bool,
+}
+
 /// Horizon stone entry
 #[derive(Debug, Clone, Serialize)]
 pub struct HorizonStone {
@@ -110,6 +122,7 @@ pub struct PortraitResponse {
     pub identity: PortraitIdentity,
     pub foundation: PortraitFoundation,
     pub offerings: Vec<PortraitOffering>,
+    pub seed_banks: Vec<PortraitSeedBank>,
     pub companions: Vec<PortraitCompanion>,
     pub horizon: PortraitHorizon,
 }
@@ -254,6 +267,26 @@ pub async fn get_portrait_data(
             .collect()
     };
 
+    // === Seed Banks ===
+    let seed_banks = {
+        match crate::infra::storage::SeedBankRegistry::scan().await {
+            Ok(registry) => {
+                registry.list().iter().map(|bank| {
+                    PortraitSeedBank {
+                        name: bank.name.clone(),
+                        used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                        capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                        filesystem: if bank.btrfs { "btrfs".into() } else { "ext4".into() },
+                        visibility: bank.visibility.to_string(),
+                        roaming: bank.roaming,
+                        online: bank.online,
+                    }
+                }).collect()
+            }
+            Err(_) => Vec::new(),
+        }
+    };
+
     // === Companions (adapters) ===
     let companions = {
         let adapters = state.adapter_registry.list().await;
@@ -295,6 +328,7 @@ pub async fn get_portrait_data(
         identity,
         foundation,
         offerings,
+        seed_banks,
         companions,
         horizon,
     }))

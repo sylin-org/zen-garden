@@ -33,6 +33,7 @@ pub mod persistence;
 pub mod process;
 pub mod secrets;
 pub mod service;
+pub mod storage;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 

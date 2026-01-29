@@ -193,6 +193,12 @@
             <div class="card empty" id="offerings-empty">No offerings planted.</div>
         </section>
 
+        <!-- Seed Banks -->
+        <section id="seedbanks-section" class="hidden" aria-labelledby="seedbanks-title">
+            <h2 class="section-title" id="seedbanks-title">Seed Banks</h2>
+            <div class="list" id="seedbanks-list"></div>
+        </section>
+
         <!-- Companions -->
         <section id="companions-section" class="hidden" aria-labelledby="companions-title">
             <h2 class="section-title" id="companions-title">Companions</h2>
@@ -302,6 +308,21 @@
         `).join('');
         $('offerings-empty').classList.toggle('hidden', offerings.length > 0);
         offeringsList.classList.toggle('hidden', offerings.length === 0);
+
+        // Seed Banks
+        const seedBanks = data.seed_banks || [];
+        $('seedbanks-section').classList.toggle('hidden', seedBanks.length === 0);
+        $('seedbanks-list').innerHTML = seedBanks.map(sb => `
+            <div class="card item">
+                <span class="item-name">${sb.name}</span>
+                <span class="item-meta">${sb.used_gb.toFixed(1)} / ${sb.capacity_gb.toFixed(0)} GB</span>
+                <span class="item-meta">${sb.filesystem} · ${sb.roaming ? 'roaming' : sb.visibility}</span>
+                <div class="status">
+                    <div class="dot ${sb.online ? '' : 'stopped'}"></div>
+                    <span>${sb.online ? 'online' : 'offline'}</span>
+                </div>
+            </div>
+        `).join('');
 
         // Companions
         const companions = data.companions || [];

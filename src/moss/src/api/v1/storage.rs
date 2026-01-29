@@ -291,6 +291,16 @@ pub async fn release_bank_v1(
         warn!("Failed to print released ribbon: {}", e);
     }
     
+    // STORAGE-0003: Broadcast storage beacon on release (seed bank list changed)
+    let stone_id = state.stone_id.clone();
+    let stone_name = state.stone_name.clone();
+    let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);
+    tokio::spawn(async move {
+        if let Err(e) = crate::infra::storage::broadcast_beacon(&stone_id, &stone_name, &endpoint).await {
+            warn!(error = %e, "Failed to broadcast storage beacon after release");
+        }
+    });
+    
     info!(id = %id, "Bank released");
     Ok(Json(ApiResponse::new(ReleaseResponse {
         released: true,
@@ -679,25 +689,36 @@ pub async fn prepare_seed_bank_v1(
     let device = request.device.clone();
     let filesystem = request.filesystem.clone();
     let stone_name = state.stone_name.clone();
+    let stone_id = state.stone_id.clone();
+    let api_port = state.api_port;
     let event_tx = state.event_tx.clone();
     
     tokio::spawn(async move {
-        if let Err(e) = run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, &stone_name, event_tx.clone()).await {
-            tracing::error!(
-                job_id = %job_id_clone,
-                device = %device,
-                name = %name_clone,
-                error = %e,
-                error_chain = ?e,
-                "Seed bank preparation FAILED"
-            );
-            let failure_event = crate::app_state::MossEvent {
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                level: "error".to_string(),
-                message: format!("[STORAGE] FAILED: {} - {}", name_clone, e),
-                job_id: Some(job_id_clone.clone()),
-            };
-            let _ = event_tx.send(failure_event);
+        match run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, &stone_name, event_tx.clone()).await {
+            Ok(()) => {
+                // STORAGE-0003: Broadcast storage beacon on successful preparation
+                let endpoint = format!("http://{}:{}", stone_name, api_port);
+                if let Err(e) = crate::infra::storage::broadcast_beacon(&stone_id, &stone_name, &endpoint).await {
+                    warn!(error = %e, "Failed to broadcast storage beacon after preparation");
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    device = %device,
+                    name = %name_clone,
+                    error = %e,
+                    error_chain = ?e,
+                    "Seed bank preparation FAILED"
+                );
+                let failure_event = crate::app_state::MossEvent {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    level: "error".to_string(),
+                    message: format!("[STORAGE] FAILED: {} - {}", name_clone, e),
+                    job_id: Some(job_id_clone.clone()),
+                };
+                let _ = event_tx.send(failure_event);
+            }
         }
     });
     
@@ -891,7 +912,7 @@ fn generate_seed_bank_name() -> String {
 
 /// Change seed bank visibility (updates manifest on device)
 pub async fn set_visibility_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(name): Path<String>,
     Json(request): Json<SetVisibilityRequest>,
 ) -> Result<(StatusCode, Json<SeedBankInfo>), (StatusCode, Json<ApiErrorResponse>)> {
@@ -912,6 +933,17 @@ pub async fn set_visibility_v1(
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", "Seed bank disappeared after update"))?;
     
     info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
+    
+    // STORAGE-0003: Broadcast storage beacon on visibility change
+    let stone_id = state.stone_id.clone();
+    let stone_name = state.stone_name.clone();
+    let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);
+    tokio::spawn(async move {
+        if let Err(e) = crate::infra::storage::broadcast_beacon(&stone_id, &stone_name, &endpoint).await {
+            warn!(error = %e, "Failed to broadcast storage beacon after visibility change");
+        }
+    });
+    
     Ok((StatusCode::OK, Json(updated.clone())))
 }
 

@@ -123,6 +123,9 @@ pub struct AppState {
     /// Topology cache for discovered stones (in-memory only)
     pub topology_cache: crate::domain::topology::TopologyCache,
 
+    /// Storage routing cache for seed banks across stones (STORAGE-0003)
+    pub storage_cache: crate::domain::storage_cache::StorageCache,
+
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
 

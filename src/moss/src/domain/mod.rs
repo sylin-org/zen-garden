@@ -31,6 +31,7 @@ pub mod connection;
 pub mod service_discovery;
 pub mod ceremony;
 pub mod harvest;
+pub mod storage_cache;
 
 pub use service_manager::ServiceManager;
 pub use registry::Registry;
@@ -73,4 +74,8 @@ pub use ceremony::{
     CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
 };
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
+pub use storage_cache::{
+    StorageCache, StorageCacheInner, new_storage_cache,
+    update_from_beacon, remove_stone as remove_stone_storage, find_s3_gateways, find_by_name,
+};
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

@@ -53,71 +53,6 @@ if [[ -d "$STAGING_DIR/scripts" ]]; then
     done
 fi
 
-# Install dependencies from dependencies.json if present
-install_dependencies() {
-    local deps_file="$1"
-    
-    if [[ ! -f "$deps_file" ]]; then
-        return 0
-    fi
-    
-    log "Processing dependencies..."
-    
-    # Check if jq is available
-    if ! command -v jq &>/dev/null; then
-        log "WARNING: jq not installed, cannot process dependencies"
-        return 0
-    fi
-    
-    # Get list of adapters with apt dependencies
-    local adapters
-    adapters=$(jq -r '.linux | keys[]' "$deps_file" 2>/dev/null) || return 0
-    
-    for adapter in $adapters; do
-        local adapter_binary="$TARGET_BIN/adapters/$adapter/garden-$adapter"
-        
-        # Only install dependencies if the adapter binary exists
-        if [[ -f "$adapter_binary" ]]; then
-            # Get apt packages for this adapter
-            local packages
-            packages=$(jq -r ".linux.\"$adapter\".apt // [] | .[]" "$deps_file" 2>/dev/null)
-            local reason
-            reason=$(jq -r ".linux.\"$adapter\".reason // \"required dependency\"" "$deps_file" 2>/dev/null)
-            
-            for pkg_spec in $packages; do
-                # Handle alternative packages (pkg1 | pkg2)
-                local installed=false
-                # Split on | and try each package
-                for pkg in $(echo "$pkg_spec" | tr '|' ' '); do
-                    pkg=$(echo "$pkg" | xargs) # trim whitespace
-                    if dpkg -s "$pkg" >/dev/null 2>&1; then
-                        installed=true
-                        break
-                    fi
-                done
-                
-                if [[ "$installed" == "false" ]]; then
-                    # Try to install alternatives in order
-                    for pkg in $(echo "$pkg_spec" | tr '|' ' '); do
-                        pkg=$(echo "$pkg" | xargs) # trim whitespace
-                        [[ -z "$pkg" ]] && continue  # skip empty strings
-                        log "  Installing $pkg for $adapter ($reason)..."
-                        if apt-get install -y -qq "$pkg" 2>&1; then
-                            log "  Installed $pkg"
-                            installed=true
-                            break
-                        fi
-                    done
-                    
-                    if [[ "$installed" == "false" ]]; then
-                        log "  WARNING: Failed to install $pkg_spec - $adapter may not work"
-                    fi
-                fi
-            done
-        fi
-    done
-}
-
 # Install binaries (moss, rake, lantern, etc.) and adapters (cricket, etc.)
 if [[ -d "$STAGING_DIR/bin" ]]; then
     log "Installing binaries..."
@@ -138,11 +73,6 @@ if [[ -d "$STAGING_DIR/bin" ]]; then
             log "  Installed $rel_path"
         done
     fi
-fi
-
-# Install dependencies from the staging area if present
-if [[ -f "$STAGING_DIR/dependencies.json" ]]; then
-    install_dependencies "$STAGING_DIR/dependencies.json"
 fi
 
 # Cleanup staging

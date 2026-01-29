@@ -10,6 +10,7 @@ Type=simple
 User=root
 Group=root
 ExecStartPre=/usr/local/bin/moss-update-helper.sh
+ExecStartPre=/usr/local/bin/garden-upgrade.sh
 ExecStart=/usr/local/bin/garden-moss
 Restart=always
 RestartSec=10

@@ -5,11 +5,19 @@
 .DESCRIPTION
     Complete Linux build pipeline:
     - Clean Cargo cache (incremental, fingerprints, build outputs)
-    - Build Linux binaries via Docker
-    - Create deployment package (tar.gz with binaries, manifests, scripts)
+    - Build Linux binaries via Docker (only tier-specified binaries)
+    - Create deployment package (tar.gz with ALL available binaries, manifests, scripts)
+
+    The package always includes all binaries found in dist/linux/, even if only
+    core binaries were built. This allows fast iteration on core components while
+    including previously-built adapters in the package.
 
 .PARAMETER Version
     Version string (e.g., "0.1.202601251234")
+
+.PARAMETER Tier
+    Build tier: "core" (moss + rake only) or "full" (all binaries)
+    Default: "core" for fast iteration. Use "full" for complete rebuilds.
 
 .PARAMETER DebugBuild
     Build debug binaries
@@ -34,7 +42,10 @@
 param(
     [Parameter(Mandatory)]
     [string]$Version,
-    
+
+    [ValidateSet('core', 'full')]
+    [string]$Tier = "core",
+
     [switch]$DebugBuild,
     [switch]$Release,
     [switch]$Fast,
@@ -65,53 +76,62 @@ Write-Host "`n══════════════════════
 Write-Host " Linux Build Pipeline" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
 Write-Host "Version: $Version" -ForegroundColor Cyan
+Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
 Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'fast-release' })" -ForegroundColor Cyan
 Write-Host ""
 
-# Build Linux binaries
+# Get build targets for this tier
+$buildTargets = Get-CargoBuildTargets -Config $config -Tier $Tier
+Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
+
+# Build Linux binaries (only tier-specified targets)
 $buildScript = Join-Path $PSScriptRoot "build-linux.ps1"
-$buildArgs = @{}
+$buildArgs = @{
+    Targets = $buildTargets
+}
 if ($DebugBuild) { $buildArgs.Add('DebugBuild', $true) }
 if ($Release) { $buildArgs.Add('Release', $true) }
 if ($Fast -or (-not $DebugBuild -and -not $Release)) { $buildArgs.Add('Fast', $true) }
 if ($ForceRebuild) { $buildArgs.Add('ForceRebuild', $true) }
 if ($Jobs -gt 0) { $buildArgs.Add('Jobs', $Jobs) }
 
-Write-Host "Building Linux binaries..." -ForegroundColor Yellow
 & $buildScript @buildArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Linux build failed"
 }
 
-# Create package
+# Create package (includes ALL available binaries, not just those built in this tier)
 if (-not $SkipPackage) {
     Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
-    
+    Write-Host "  (Including all available binaries from dist/linux/)" -ForegroundColor DarkGray
+
     $stagingDir = Join-Path $DIST_DIR "staging\linux"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
-    
+
     $packageName = "zen-garden-$Version-linux-amd64"
     $packageDir = Join-Path $stagingDir $packageName
     $tarPath = Join-Path $stagingDir "$packageName.tar.gz"
-    
+
     # Clean and create package directory
     if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-    
-    # Copy binaries from config
+
+    # Copy ALL available binaries (not just tier-specific ones)
+    # This allows packages to include previously-built adapters even when only core was built
     $binaries = Get-PlatformBinaries -Config $config -Platform "linux"
+    $includedCount = 0
+    $skippedCount = 0
     foreach ($binary in $binaries) {
-        Copy-BinaryToStaging -SourceDir $LINUX_DIR -StagingRoot $packageDir -Binary $binary -Platform "linux" | Out-Null
+        $result = Copy-BinaryToStaging -SourceDir $LINUX_DIR -StagingRoot $packageDir -Binary $binary -Platform "linux"
+        if ($result) { $includedCount++ } else { $skippedCount++ }
     }
+    Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
     
     # Copy assets from config
     $assets = Get-PlatformAssets -Config $config -Platform "linux"
     foreach ($asset in $assets) {
         Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
     }
-    
-    # Write dependencies file for adapters
-    Write-DependenciesFile -Config $config -StagingRoot $packageDir -Platform "linux" | Out-Null
 
     # Create package manifest
     $components = @{}

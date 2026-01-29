@@ -9,6 +9,10 @@
     - Detects existing build container and reuses it (perennial)
     - Only rebuilds container when Dockerfile changes or forced
 
+.PARAMETER Targets
+    List of cargo package names to build (e.g., "garden-moss", "garden-rake")
+    If not specified, builds all binaries.
+
 .PARAMETER DebugBuild
     Build debug binaries instead of optimized release (default: release)
 
@@ -30,7 +34,11 @@
 
 .EXAMPLE
     .\build-linux.ps1
-    # Build optimized release binaries using Docker (default, reuses existing image)
+    # Build all binaries using Docker (default)
+
+.EXAMPLE
+    .\build-linux.ps1 -Targets "garden-moss","garden-rake"
+    # Build only moss and rake (core tier)
 
 .EXAMPLE
     .\build-linux.ps1 -Fast
@@ -56,6 +64,7 @@
 [CmdletBinding()]
 param(
     [string]$Version,
+    [string[]]$Targets,
     [switch]$DebugBuild,
     [switch]$Fast,
     [switch]$ForceRebuild,
@@ -213,18 +222,21 @@ if ($UseDocker) {
     
     Push-Location $WORKSPACE_ROOT
     try {
-        Write-Host "  → Building garden-moss (Linux daemon)..."
-        Write-Host "  → Building garden-lantern (Linux service registry)..."
-        Write-Host "  → Building garden-rake (Linux CLI)..."
-        Write-Host "  → Building garden-cricket (Audio adapter)..."
-        
+        foreach ($target in $buildTargets) {
+            Write-Host "  → Building $target..."
+        }
+
         # Generate build number if not already set by parent script
         if (-not $env:CARGO_BUILD_NUMBER) {
             $env:CARGO_BUILD_NUMBER = (Get-Date).ToString("yyyyMMdd.HHmm")
             Write-Host "  Build Number: $env:CARGO_BUILD_NUMBER" -ForegroundColor Cyan
         }
         
-        # Build all four binaries in one container run for efficiency
+        # Determine which binaries to build
+        $defaultTargets = @("garden-moss", "garden-lantern", "garden-rake", "garden-cricket", "garden-firefly")
+        $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
+
+        # Build binaries in one container run for efficiency
         $buildArgs = @("cargo", "build", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
@@ -235,7 +247,9 @@ if ($UseDocker) {
         else {
             $buildArgs += "--release"
         }
-        $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake", "--bin", "garden-cricket")
+        foreach ($target in $buildTargets) {
+            $buildArgs += @("--bin", $target)
+        }
         
         $containerName = "zen-garden-builder-container"
         
@@ -296,33 +310,17 @@ if ($UseDocker) {
         # Copy binaries from Docker container to dist/linux/
         # Use docker cp because volume mount may not reflect changes immediately on Windows
         Write-Host "  → Copying binaries from container..." -ForegroundColor DarkGray
-        
+
         $copyFailed = $false
-        
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-lantern" "$LINUX_DIR\garden-lantern" 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "    ✗ Failed to copy garden-lantern" -ForegroundColor Red
-            $copyFailed = $true
+
+        foreach ($target in $buildTargets) {
+            docker cp "${containerName}:/build/target/${buildProfile}/${target}" "$LINUX_DIR\$target" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "    ✗ Failed to copy $target" -ForegroundColor Red
+                $copyFailed = $true
+            }
         }
-        
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-moss" "$LINUX_DIR\garden-moss" 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "    ✗ Failed to copy garden-moss" -ForegroundColor Red
-            $copyFailed = $true
-        }
-        
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-rake" "$LINUX_DIR\garden-rake" 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "    ✗ Failed to copy garden-rake" -ForegroundColor Red
-            $copyFailed = $true
-        }
-        
-        docker cp "${containerName}:/build/target/${buildProfile}/garden-cricket" "$LINUX_DIR\garden-cricket" 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "    ✗ Failed to copy garden-cricket" -ForegroundColor Red
-            $copyFailed = $true
-        }
-        
+
         if ($copyFailed) { throw "Failed to copy one or more binaries from container" }
         
         Write-Host "  ✓ Linux binaries built`n" -ForegroundColor Green
@@ -336,6 +334,10 @@ if ($UseDocker) {
 else {
     # Native Linux build
     Write-Host "Building binaries natively..." -ForegroundColor Cyan
+
+    # Determine which binaries to build
+    $defaultTargets = @("garden-moss", "garden-lantern", "garden-rake", "garden-cricket", "garden-firefly")
+    $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
 
     # Determine build type (default: release for production)
     # Priority: DebugBuild > Fast > Release
@@ -364,8 +366,8 @@ else {
         # Clean build artifacts to force version update (native path)
         Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
         $targetProfileDirs = @("debug", "release", "fast-release")
-        foreach ($profile in $targetProfileDirs) {
-            $targetPath = Join-Path (Join-Path $WORKSPACE_ROOT "target") $profile
+        foreach ($profileDir in $targetProfileDirs) {
+            $targetPath = Join-Path (Join-Path $WORKSPACE_ROOT "target") $profileDir
             if (Test-Path $targetPath) {
                 Get-ChildItem $targetPath -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
                 $buildPath = Join-Path $targetPath "build"
@@ -382,11 +384,10 @@ else {
                 }
             }
         }
-        
-        Write-Host "  → Building garden-moss (Linux daemon)..."
-        Write-Host "  → Building garden-lantern (Linux service registry)..."
-        Write-Host "  → Building garden-rake (Linux CLI)..."
-        Write-Host "  → Building garden-cricket (Audio adapter)..."
+
+        foreach ($target in $buildTargets) {
+            Write-Host "  → Building $target..."
+        }
 
         $buildArgs = @("build", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
@@ -398,26 +399,25 @@ else {
         else {
             $buildArgs += "--release"
         }
-        $buildArgs += @("--bin", "garden-moss", "--bin", "garden-lantern", "--bin", "garden-rake", "--bin", "garden-cricket")
+        foreach ($target in $buildTargets) {
+            $buildArgs += @("--bin", $target)
+        }
 
         cargo @buildArgs
-        
+
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
-        
+
         # Copy binaries from target to dist/linux/
         $srcDir = Join-Path (Join-Path $WORKSPACE_ROOT "target") $buildProfile
-        Copy-Item "$srcDir/garden-lantern" "$LINUX_DIR/garden-lantern-$version" -Force
-        Copy-Item "$srcDir/garden-moss" "$LINUX_DIR/garden-moss-$version" -Force
-        Copy-Item "$srcDir/garden-rake" "$LINUX_DIR/garden-rake-$version" -Force
-        Copy-Item "$srcDir/garden-cricket" "$LINUX_DIR/garden-cricket-$version" -Force
-        # Also create unversioned copies for convenience
-        Copy-Item "$LINUX_DIR/garden-lantern-$version" "$LINUX_DIR/garden-lantern" -Force
-        Copy-Item "$LINUX_DIR/garden-moss-$version" "$LINUX_DIR/garden-moss" -Force
-        Copy-Item "$LINUX_DIR/garden-rake-$version" "$LINUX_DIR/garden-rake" -Force
-        Copy-Item "$LINUX_DIR/garden-cricket-$version" "$LINUX_DIR/garden-cricket" -Force
-        
+        foreach ($target in $buildTargets) {
+            $srcPath = Join-Path $srcDir $target
+            if (Test-Path $srcPath) {
+                Copy-Item $srcPath "$LINUX_DIR/$target" -Force
+            }
+        }
+
         Write-Host "  ✓ Binaries built`n" -ForegroundColor Green
-        
+
     }
     finally {
         Pop-Location

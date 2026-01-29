@@ -1,18 +1,18 @@
 ﻿{
   "$schema": "./dist.schema.json",
-  "version": "1.0",
-  "description": "Zen Garden distribution build configuration",
-  
+  "version": "2.1",
+  "description": "Zen Garden distribution - mirrors target filesystem structure",
+
   "workspace": {
     "root": "..",
     "dist": "../dist"
   },
-  
+
   "staging": {
     "linux": "../dist/staging/linux",
     "windows": "../dist/staging/windows"
   },
-  
+
   "packages": {
     "outputDir": "../dist/packages",
     "format": {
@@ -20,57 +20,71 @@
       "windows": "zip"
     }
   },
-  
+
+  "tiers": {
+    "core": ["moss", "rake"],
+    "full": ["moss", "rake", "lantern", "cricket", "firefly"]
+  },
+
   "binaries": {
     "moss": {
       "source": "garden-moss",
       "destination": "bin/",
       "required": true,
+      "tier": "core",
       "platforms": ["linux", "windows"]
     },
     "rake": {
       "source": "garden-rake",
       "destination": "bin/",
       "required": true,
+      "tier": "core",
       "platforms": ["linux", "windows"]
     },
     "lantern": {
       "source": "garden-lantern",
       "destination": "bin/",
       "required": false,
+      "tier": "full",
       "platforms": ["linux", "windows"]
     },
     "cricket": {
       "source": "garden-cricket",
       "destination": "bin/adapters/cricket/",
       "required": false,
+      "tier": "full",
       "platforms": ["linux", "windows"]
-    }
-  },
-
-  "dependencies": {
-    "linux": {
-      "cricket": {
-        "apt": ["libasound2t64 | libasound2"],
-        "reason": "ALSA audio library for sound playback"
-      }
+    },
+    "firefly": {
+      "source": "garden-firefly",
+      "destination": "bin/adapters/firefly/",
+      "required": false,
+      "tier": "full",
+      "platforms": ["linux", "windows"]
     }
   },
 
   "assets": {
-    "manifests": {
-      "source": "manifests",
-      "destination": "manifests/",
-      "recursive": true,
-      "platforms": ["linux", "windows"]
-    },
     "scripts": {
       "source": "installer",
-      "destination": "scripts/",
+      "destination": "bin/",
       "files": [
         "garden-upgrade.sh",
         "moss-update-helper.sh"
       ],
+      "lineEndings": "lf",
+      "platforms": ["linux"]
+    },
+    "manifests": {
+      "source": "manifests",
+      "destination": "lib/zen-garden/manifests/",
+      "recursive": true,
+      "platforms": ["linux", "windows"]
+    },
+    "gardenConfig": {
+      "source": "installer",
+      "destination": "lib/zen-garden/",
+      "files": ["garden.conf"],
       "lineEndings": "lf",
       "platforms": ["linux"]
     }

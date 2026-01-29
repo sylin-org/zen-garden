@@ -51,18 +51,25 @@ function Resolve-ConfigPath {
 }
 
 function Get-PlatformBinaries {
+    <#
+    .SYNOPSIS
+        Get all binaries for a platform (for packaging)
+    .DESCRIPTION
+        Returns all binaries configured for the platform, regardless of tier.
+        Used during packaging to include all available binaries.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [PSCustomObject]$Config,
-        
+
         [Parameter(Mandatory)]
         [ValidateSet('linux', 'windows')]
         [string]$Platform
     )
-    
+
     $binaries = @()
-    
+
     # Add main binaries
     foreach ($key in $Config.binaries.PSObject.Properties.Name) {
         $binary = $Config.binaries.$key
@@ -72,26 +79,116 @@ function Get-PlatformBinaries {
                 Source = $binary.source
                 Destination = $binary.destination
                 Required = $binary.required
+                Tier = if ($binary.tier) { $binary.tier } else { "core" }
                 Type = 'binary'
             }
         }
     }
-    
-    # Add adapters
-    foreach ($key in $Config.adapters.PSObject.Properties.Name) {
-        $adapter = $Config.adapters.$key
-        if ($adapter.platforms -contains $Platform) {
-            $binaries += [PSCustomObject]@{
-                Name = $key
-                Source = $adapter.source
-                Destination = $adapter.destination
-                Required = $adapter.required
-                Type = 'adapter'
+
+    # Add adapters (legacy support - adapters section)
+    if ($Config.adapters) {
+        foreach ($key in $Config.adapters.PSObject.Properties.Name) {
+            $adapter = $Config.adapters.$key
+            if ($adapter.platforms -contains $Platform) {
+                $binaries += [PSCustomObject]@{
+                    Name = $key
+                    Source = $adapter.source
+                    Destination = $adapter.destination
+                    Required = $adapter.required
+                    Tier = if ($adapter.tier) { $adapter.tier } else { "full" }
+                    Type = 'adapter'
+                }
             }
         }
     }
-    
+
     return $binaries
+}
+
+function Get-TierBinaries {
+    <#
+    .SYNOPSIS
+        Get binaries to BUILD for a specific tier
+    .DESCRIPTION
+        Returns only binaries that should be compiled for the given tier.
+        - "core" tier: only moss and rake
+        - "full" tier: all binaries
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [PSCustomObject]$Config,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('linux', 'windows')]
+        [string]$Platform,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('core', 'full')]
+        [string]$Tier
+    )
+
+    # Get tier definition from config
+    $tierBinaries = if ($Config.tiers -and $Config.tiers.$Tier) {
+        $Config.tiers.$Tier
+    } else {
+        # Fallback: core = moss/rake, full = everything
+        if ($Tier -eq "core") { @("moss", "rake") } else { $Config.binaries.PSObject.Properties.Name }
+    }
+
+    $binaries = @()
+
+    foreach ($key in $Config.binaries.PSObject.Properties.Name) {
+        # Only include if in tier definition
+        if ($tierBinaries -contains $key) {
+            $binary = $Config.binaries.$key
+            if ($binary.platforms -contains $Platform) {
+                $binaries += [PSCustomObject]@{
+                    Name = $key
+                    Source = $binary.source
+                    Destination = $binary.destination
+                    Required = $binary.required
+                    Tier = if ($binary.tier) { $binary.tier } else { "core" }
+                    Type = 'binary'
+                }
+            }
+        }
+    }
+
+    return $binaries
+}
+
+function Get-CargoBuildTargets {
+    <#
+    .SYNOPSIS
+        Get cargo package names to build for a tier
+    .DESCRIPTION
+        Returns the list of cargo package names (e.g., "garden-moss") to pass to cargo build -p
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [PSCustomObject]$Config,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('core', 'full')]
+        [string]$Tier
+    )
+
+    $tierBinaries = if ($Config.tiers -and $Config.tiers.$Tier) {
+        $Config.tiers.$Tier
+    } else {
+        if ($Tier -eq "core") { @("moss", "rake") } else { $Config.binaries.PSObject.Properties.Name }
+    }
+
+    $targets = @()
+    foreach ($key in $tierBinaries) {
+        if ($Config.binaries.$key) {
+            $targets += $Config.binaries.$key.source
+        }
+    }
+
+    return $targets
 }
 
 function Get-PlatformAssets {
@@ -238,65 +335,13 @@ function Copy-AssetToStaging {
     }
 }
 
-function Write-DependenciesFile {
-    <#
-    .SYNOPSIS
-        Write dependencies.json file to staging directory
-    
-    .DESCRIPTION
-        Extracts platform-specific dependencies from config and writes to package
-        for processing by moss-update-helper.sh during installation
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [PSCustomObject]$Config,
-        
-        [Parameter(Mandatory)]
-        [string]$StagingRoot,
-        
-        [Parameter(Mandatory)]
-        [ValidateSet('linux', 'windows')]
-        [string]$Platform
-    )
-    
-    # Check if dependencies key exists
-    if (-not $Config.dependencies) {
-        return $false
-    }
-    
-    # Get platform-specific dependencies
-    $platformDeps = $Config.dependencies.$Platform
-    if (-not $platformDeps) {
-        return $false
-    }
-    
-    # Build output object with just this platform's dependencies
-    $output = @{
-        $Platform = @{}
-    }
-    
-    foreach ($adapter in $platformDeps.PSObject.Properties.Name) {
-        $deps = $platformDeps.$adapter
-        $output[$Platform][$adapter] = @{
-            apt = @($deps.apt)
-            reason = $deps.reason
-        }
-    }
-    
-    $destPath = Join-Path $StagingRoot "dependencies.json"
-    $output | ConvertTo-Json -Depth 5 | Set-Content $destPath -Encoding UTF8
-    Write-Host "  + dependencies.json" -ForegroundColor DarkGray
-    
-    return $true
-}
-
 Export-ModuleMember -Function @(
     'Get-DistConfig',
     'Get-PlatformBinaries',
+    'Get-TierBinaries',
+    'Get-CargoBuildTargets',
     'Get-PlatformAssets',
     'New-StagingDirectory',
     'Copy-BinaryToStaging',
-    'Copy-AssetToStaging',
-    'Write-DependenciesFile'
+    'Copy-AssetToStaging'
 )

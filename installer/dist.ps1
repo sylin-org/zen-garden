@@ -6,6 +6,16 @@
     Coordinates Linux and Windows builds, consolidates packages.
     All configuration is read from dist.json.
 
+    By default, builds only core binaries (moss + rake) for fast iteration.
+    Use -Tier full or dist-full.ps1 to build all binaries including adapters.
+
+    Packages ALWAYS include all available binaries from dist/, so even when
+    building core-only, previously-built adapters are included in the package.
+
+.PARAMETER Tier
+    Build tier: "core" (moss + rake only) or "full" (all binaries)
+    Default: "core" for fast iteration.
+
 .PARAMETER SkipLinux
     Skip Linux build
 
@@ -29,7 +39,11 @@
 
 .EXAMPLE
     .\dist.ps1
-    Build both platforms with fast-release profile
+    Build core (moss + rake) for both platforms (default, fast)
+
+.EXAMPLE
+    .\dist.ps1 -Tier full
+    Build all binaries including adapters
 
 .EXAMPLE
     .\dist.ps1 -SkipWindows -Release
@@ -38,6 +52,9 @@
 
 [CmdletBinding()]
 param(
+    [ValidateSet('core', 'full')]
+    [string]$Tier = "core",
+
     [switch]$SkipLinux,
     [switch]$SkipWindows,
     [switch]$DebugBuild,
@@ -70,11 +87,12 @@ Write-Host "Configuration: dist.json" -ForegroundColor Cyan
 Write-Host ""
 
 # Determine build profile
-$profile = if ($DebugBuild) { "debug" } 
-           elseif ($Release) { "release" } 
-           else { "fast-release" }
+$buildProfile = if ($DebugBuild) { "debug" }
+                elseif ($Release) { "release" }
+                else { "fast-release" }
 
-Write-Host "Build Profile: $profile" -ForegroundColor Yellow
+Write-Host "Build Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Yellow
+Write-Host "Build Profile: $buildProfile" -ForegroundColor Yellow
 Write-Host ""
 
 # Destroy and recreate staging directory (ensures no stale packages)
@@ -96,6 +114,7 @@ if (-not $SkipLinux) {
     try {
         & $linuxScript `
             -Version $version `
+            -Tier $Tier `
             -DebugBuild:$DebugBuild `
             -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
             -ForceRebuild:$ForceRebuild `
@@ -124,6 +143,7 @@ if (-not $SkipWindows) {
     try {
         & $windowsScript `
             -Version $version `
+            -Tier $Tier `
             -DebugBuild:$DebugBuild `
             -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
             -Jobs $Jobs
@@ -146,8 +166,8 @@ if ($buildErrors.Count -gt 0) {
     Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Red
     Write-Host "║  Build Failed                                      ║" -ForegroundColor Red
     Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Red
-    foreach ($error in $buildErrors) {
-        Write-Host "  ✗ $error" -ForegroundColor Red
+    foreach ($buildError in $buildErrors) {
+        Write-Host "  ✗ $buildError" -ForegroundColor Red
     }
     exit 1
 }
@@ -210,6 +230,7 @@ Write-Host "`n╔═════════════════════
 Write-Host "║  Distribution Complete                             ║" -ForegroundColor Green
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
 Write-Host "Version: $version" -ForegroundColor Green
+Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake built, all binaries packaged)' } else { '(all binaries built and packaged)' })" -ForegroundColor Green
 Write-Host "Platforms Built: $($builtPlatforms -join ', ')" -ForegroundColor Green
 if ($packagesMoved -gt 0) {
     Write-Host "Packages: $packagesMoved created" -ForegroundColor Green

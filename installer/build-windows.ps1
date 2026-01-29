@@ -6,6 +6,10 @@
     Builds garden-moss.exe and garden-rake.exe for Windows using the MSVC toolchain.
     Requires Rust with x86_64-pc-windows-msvc target installed.
 
+.PARAMETER Targets
+    List of cargo package names to build (e.g., "garden-moss", "garden-rake")
+    If not specified, builds all binaries.
+
 .PARAMETER DebugBuild
     Build debug binaries instead of optimized release (default: release)
 
@@ -21,7 +25,11 @@
 
 .EXAMPLE
     .\build-windows.ps1
-    # Build optimized release binaries for Windows (default)
+    # Build all binaries for Windows (default)
+
+.EXAMPLE
+    .\build-windows.ps1 -Targets "garden-moss","garden-rake"
+    # Build only moss and rake (core tier)
 
 .EXAMPLE
     .\build-windows.ps1 -Fast
@@ -39,6 +47,7 @@
 [CmdletBinding()]
 param(
     [string]$Version,
+    [string[]]$Targets,
     [switch]$DebugBuild,
     [switch]$Fast,
     [switch]$SkipTests,
@@ -135,16 +144,23 @@ if (-not $SkipTests) {
 
 # Check if MSVC target installed
 Write-Host "Checking Rust toolchain..." -ForegroundColor Yellow
-$targets = rustup target list --installed 2>$null
-if ($targets -notcontains "x86_64-pc-windows-msvc") {
+$installedTargets = rustup target list --installed 2>$null
+if ($installedTargets -notcontains "x86_64-pc-windows-msvc") {
     Write-Host "  Installing x86_64-pc-windows-msvc target..."
     rustup target add x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw "Failed to install Windows target" }
 }
 Write-Host "  ✓ x86_64-pc-windows-msvc target ready`n" -ForegroundColor Green
 
+# Determine which binaries to build
+$defaultTargets = @("garden-moss", "garden-rake", "garden-lantern", "garden-cricket", "garden-firefly")
+$buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
+
 # Build Windows binaries
 Write-Host "Building Windows binaries..." -ForegroundColor Cyan
+foreach ($target in $buildTargets) {
+    Write-Host "  → Building $target.exe..."
+}
 
 Push-Location $WORKSPACE_ROOT
 try {
@@ -158,50 +174,33 @@ try {
         $commonArgs += "--release"
     }
 
-    Write-Host "  → Building garden-moss.exe (Windows daemon)..."
-    $buildArgs = @("build") + $commonArgs + @("--bin", "garden-moss", "--target", "x86_64-pc-windows-msvc")
+    # Build all targets
+    $buildArgs = @("build") + $commonArgs + @("--target", "x86_64-pc-windows-msvc")
+    foreach ($target in $buildTargets) {
+        $buildArgs += @("--bin", $target)
+    }
 
     cargo @buildArgs
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ⚠ garden-moss.exe build failed" -ForegroundColor Yellow
-        Write-Host "    Cross-platform support may not be fully implemented yet." -ForegroundColor DarkYellow
+        Write-Host "  ⚠ Build failed with exit code $LASTEXITCODE" -ForegroundColor Yellow
     }
 
-    Write-Host "  → Building garden-rake.exe (Windows CLI)..."
-    $buildArgs = @("build") + $commonArgs + @("--bin", "garden-rake", "--target", "x86_64-pc-windows-msvc")
-
-    cargo @buildArgs
-
-    if ($LASTEXITCODE -ne 0) { throw "garden-rake.exe build failed" }
-    
-    Write-Host "  → Building garden-cricket.exe (Audio adapter)..."
-    $buildArgs = @("build") + $commonArgs + @("--bin", "garden-cricket", "--target", "x86_64-pc-windows-msvc")
-
-    cargo @buildArgs
-
-    if ($LASTEXITCODE -ne 0) { throw "garden-cricket.exe build failed" }
-    
     # Copy binaries from target to dist/windows/
     $srcDir = Join-Path $WORKSPACE_ROOT "target\x86_64-pc-windows-msvc\$buildProfile"
-    
-    $mossBuilt = $false
-    if (Test-Path "$srcDir\garden-moss.exe") {
-        Copy-Item "$srcDir\garden-moss.exe" "$WINDOWS_DIR\garden-moss.exe" -Force
-        $mossBuilt = $true
-        Write-Host "  ✓ garden-moss.exe built" -ForegroundColor Green
-    } else {
-        Write-Host "  ⚠ garden-moss.exe not found (build may have failed)" -ForegroundColor Yellow
+
+    foreach ($target in $buildTargets) {
+        $srcPath = "$srcDir\$target.exe"
+        if (Test-Path $srcPath) {
+            Copy-Item $srcPath "$WINDOWS_DIR\$target.exe" -Force
+            Write-Host "  ✓ $target.exe built" -ForegroundColor Green
+        } else {
+            Write-Host "  ⚠ $target.exe not found (build may have failed)" -ForegroundColor Yellow
+        }
     }
-    
-    Copy-Item "$srcDir\garden-rake.exe" "$WINDOWS_DIR\garden-rake.exe" -Force
-    Write-Host "  ✓ garden-rake.exe built" -ForegroundColor Green
-    
-    Copy-Item "$srcDir\garden-cricket.exe" "$WINDOWS_DIR\garden-cricket.exe" -Force
-    Write-Host "  ✓ garden-cricket.exe built" -ForegroundColor Green
-    
+
     Write-Host "`n✓ Windows binaries built`n" -ForegroundColor Green
-    
+
 } finally {
     Pop-Location
 }

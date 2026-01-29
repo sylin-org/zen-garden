@@ -178,6 +178,7 @@ pub async fn prune_stale(cache: &StorageCache, topology: &TopologyCache) -> usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use garden_common::storage::StorageAccess;
 
     fn make_test_beacon(stone_id: &str, stone_name: &str, seed_banks: Vec<&str>) -> StorageBeacon {

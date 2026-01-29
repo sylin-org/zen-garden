@@ -376,6 +376,128 @@ impl SeedBankManifest {
     }
 }
 
+// ============================================================================
+// Storage Beacon Types (STORAGE-0003)
+// ============================================================================
+
+/// Storage capability beacon - lightweight announcement for routing
+/// 
+/// Broadcast on seed bank mount/unmount/visibility change.
+/// All stones lurk-listen and update their StorageCache.
+/// 
+/// See docs/decisions/STORAGE-0003-beacon-protocol.md
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageBeacon {
+    /// Stone ID (links to TopologyEntry in TopologyCache)
+    pub stone_id: String,
+    
+    /// Human-readable stone name
+    pub stone_name: String,
+    
+    /// HTTP endpoint for storage API (e.g., "http://stone-alpha.local:7185")
+    pub endpoint: String,
+    
+    /// List of available seed banks (empty = no storage)
+    pub seed_banks: Vec<SeedBankAnnouncement>,
+    
+    /// Beacon timestamp
+    pub timestamp: DateTime<Utc>,
+}
+
+impl StorageBeacon {
+    /// Create an empty beacon (no seed banks)
+    pub fn empty(stone_id: &str, stone_name: &str, endpoint: &str) -> Self {
+        Self {
+            stone_id: stone_id.to_string(),
+            stone_name: stone_name.to_string(),
+            endpoint: endpoint.to_string(),
+            seed_banks: Vec::new(),
+            timestamp: Utc::now(),
+        }
+    }
+    
+    /// Check if this stone has any storage capability
+    pub fn has_storage(&self) -> bool {
+        !self.seed_banks.is_empty()
+    }
+    
+    /// Check if this stone supports S3 protocol
+    pub fn supports_s3(&self) -> bool {
+        self.seed_banks.iter().any(|sb| sb.protocols.contains(&"s3".to_string()))
+    }
+}
+
+/// Seed bank announcement entry for beacons
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedBankAnnouncement {
+    /// Unique seed bank ID (GUIDv7)
+    pub id: String,
+    
+    /// Human-readable name
+    pub name: String,
+    
+    /// Supported protocols (e.g., ["s3", "storage"])
+    pub protocols: Vec<String>,
+    
+    /// Access type
+    pub access: StorageAccess,
+    
+    /// Visibility ("open" or "closed")
+    pub visibility: String,
+    
+    /// Health status ("healthy", "degraded", "read-only")
+    pub health: String,
+    
+    /// Total capacity in bytes
+    pub capacity_bytes: u64,
+    
+    /// Used space in bytes
+    pub used_bytes: u64,
+}
+
+impl SeedBankAnnouncement {
+    /// Create from SeedBankInfo
+    pub fn from_info(info: &SeedBankInfo) -> Self {
+        Self {
+            id: info.id.clone(),
+            name: info.name.clone(),
+            protocols: vec!["s3".to_string(), "storage".to_string()],
+            access: StorageAccess::Direct,
+            visibility: info.visibility.to_string(),
+            health: if info.online {
+                if matches!(info.visibility, SeedBankVisibility::ReadOnly) {
+                    "read-only".to_string()
+                } else {
+                    "healthy".to_string()
+                }
+            } else {
+                "degraded".to_string()
+            },
+            capacity_bytes: info.capacity_bytes,
+            used_bytes: info.used_bytes,
+        }
+    }
+}
+
+/// Storage access type for routing
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum StorageAccess {
+    /// Stone can access storage directly
+    Direct,
+    /// Stone proxies to another gateway
+    Proxy {
+        /// Stone ID of the direct gateway
+        via: String,
+    },
+}
+
+impl Default for StorageAccess {
+    fn default() -> Self {
+        Self::Direct
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

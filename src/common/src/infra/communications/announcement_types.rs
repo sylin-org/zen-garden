@@ -24,3 +24,8 @@ pub const ELECTION_CANDIDATE: &str = "election_candidate";
 
 /// Election result announcement (broadcast winner)
 pub const ELECTION_RESULT: &str = "election_result";
+
+// Storage beacon protocol (STORAGE-0003)
+/// Storage capability beacon (event-driven, on mount/unmount/change)
+/// Lightweight announcement of seed bank availability for routing
+pub const STORAGE_BEACON: &str = "storage_beacon";

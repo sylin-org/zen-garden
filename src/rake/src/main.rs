@@ -606,6 +606,116 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// Prepare a USB device as a seed bank
+    #[command(
+        long_about = "Prepare a USB storage device as a seed bank for portable data storage.\n\n\
+        Examples:\n  \
+        garden-rake prepare seed-bank                    # Auto-detect single USB device\n  \
+        garden-rake prepare seed-bank /dev/sdb           # Specific device\n  \
+        garden-rake prepare seed-bank named garden-data  # Custom name\n  \
+        garden-rake prepare seed-bank --fs ext4          # Use ext4 instead of btrfs\n\n\
+        WARNING: This will ERASE ALL DATA on the device."
+    )]
+    Prepare {
+        /// Target: 'seed-bank'
+        target: String,
+
+        /// Device path (auto-detect if omitted)
+        device: Option<String>,
+
+        /// Seed bank name (optional, use 'named <name>' or 'as <name>')
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Generate random whimsical name
+        #[arg(long)]
+        random: bool,
+
+        /// Filesystem type (btrfs or ext4, default: btrfs)
+        #[arg(long)]
+        fs: Option<String>,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
+    /// Release a seed bank for safe removal
+    #[command(
+        long_about = "Safely unmount a seed bank so the USB device can be removed.\n\n\
+        Examples:\n  \
+        garden-rake release seed-bank garden-data   # Release specific seed bank\n  \
+        garden-rake release seed-bank all           # Release all seed banks\n\n\
+        After releasing, you can safely remove the USB device."
+    )]
+    ReleaseSeedBank {
+        /// Seed bank name (or 'all' to release all)
+        name: String,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
+    /// Show seed banks on a stone
+    #[command(
+        name = "seed-banks",
+        long_about = "List all seed banks and eligible devices on a stone.\n\n\
+        Examples:\n  \
+        garden-rake seed-banks                      # List seed banks\n  \
+        garden-rake seed-banks --at stone-01        # On specific stone"
+    )]
+    SeedBanks {
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
+    /// Object storage operations on seed banks
+    #[command(
+        name = "store",
+        long_about = "S3-compatible object storage on seed banks.\n\n\
+        Examples:\n  \
+        garden-rake store put mydata config.json ./config.json    # Upload file\n  \
+        garden-rake store get mydata config.json ./config.json    # Download file\n  \
+        garden-rake store get mydata config.json                  # Print to stdout\n  \
+        garden-rake store ls mydata                               # List bucket\n  \
+        garden-rake store ls mydata --prefix logs/                # List with prefix\n  \
+        garden-rake store rm mydata config.json                   # Delete object\n  \
+        garden-rake store head mydata config.json                 # Show metadata\n\n\
+        Objects are stored in seed bank under apps/<app-name>/<bucket>/<key>.\n\
+        Use --app to specify application namespace (default: zen-garden)."
+    )]
+    Store {
+        /// Operation: put, get, ls, rm, head
+        operation: String,
+
+        /// Bucket name
+        bucket: String,
+
+        /// Object key (required for put/get/rm/head)
+        key: Option<String>,
+
+        /// Local file path (source for put, destination for get)
+        file: Option<String>,
+
+        /// Prefix for list operations
+        #[arg(long)]
+        prefix: Option<String>,
+
+        /// Delimiter for list operations (default: /)
+        #[arg(long)]
+        delimiter: Option<String>,
+
+        /// Application namespace (default: zen-garden)
+        #[arg(long)]
+        app: Option<String>,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
     /// Test distributed election protocol
     #[command(
         long_about = "Test distributed election protocol (ELECTION-0001).\n\n\
@@ -1111,6 +1221,16 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.push("api".to_string());
             args.extend(parsed.args.clone());
         }
+
+        // === STORAGE ===
+        "prepare" => {
+            args.push("prepare".to_string());
+            args.extend(parsed.args.clone());
+        }
+        "seed-banks" => {
+            args.push("seed-banks".to_string());
+            args.extend(parsed.args.clone());
+        }
         
         _ => {
             return Err(anyhow::anyhow!("Unknown zen verb: {}", parsed.verb));
@@ -1496,6 +1616,60 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Nourish { stone, updates_only, auto_confirm, at: _ } => {
             let cmd = commands::nourish::NourishCommand::new(stone, updates_only, auto_confirm);
             dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
+        }
+
+        Commands::Prepare { target, device, name, random, fs, at } => {
+            if target != "seed-bank" {
+                anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>]");
+            }
+            let cmd = commands::storage::PrepareSeedBankCommand::new(device, name, random, fs);
+            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::ReleaseSeedBank { name, at } => {
+            let cmd = commands::storage::ReleaseSeedBankCommand::new(name);
+            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::SeedBanks { at } => {
+            let cmd = commands::storage::ShowSeedBanksCommand::new();
+            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::Store { operation, bucket, key, file, prefix, delimiter, app, at } => {
+            match operation.as_str() {
+                "put" => {
+                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for put operation"))?;
+                    let file = file.ok_or_else(|| anyhow::anyhow!("File required for put operation"))?;
+                    let cmd = commands::storage::StorePutCommand::new(bucket, key, std::path::PathBuf::from(file), app);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                "get" => {
+                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for get operation"))?;
+                    let output = file.map(std::path::PathBuf::from);
+                    let cmd = commands::storage::StoreGetCommand::new(bucket, key, output, app);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                "ls" | "list" => {
+                    // key is used as prefix if no --prefix flag
+                    let prefix = prefix.or(key);
+                    let cmd = commands::storage::StoreListCommand::new(bucket, prefix, delimiter, app);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                "rm" | "delete" => {
+                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for delete operation"))?;
+                    let cmd = commands::storage::StoreDeleteCommand::new(bucket, key, app);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                "head" | "info" => {
+                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for head operation"))?;
+                    let cmd = commands::storage::StoreHeadCommand::new(bucket, key, app);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                _ => {
+                    anyhow::bail!("Unknown store operation '{}'. Use: put, get, ls, rm, head", operation);
+                }
+            }
         }
 
         Commands::Election(election_cmd) => {

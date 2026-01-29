@@ -37,3 +37,5 @@ pub const STORAGE_POOL_CONFLICT: &str = "storage.pool_conflict";
 pub const STORAGE_READONLY: &str = "storage.readonly_detected";
 pub const STORAGE_PREPARE_PROGRESS: &str = "storage.prepare.progress";
 pub const STORAGE_REDISCOVERED: &str = "storage.rediscovered";
+/// Storage beacon received from another stone (STORAGE-0003)
+pub const STORAGE_BEACON_RECEIVED: &str = "storage.beacon.received";

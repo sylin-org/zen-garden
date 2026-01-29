@@ -8,6 +8,11 @@ All notable changes to Zen Garden will be documented in this file.
   - Broadcast on: seed bank mount/unmount, visibility change, new stone online
   - All stones lurk-listen and maintain separate `StorageCache` referencing topology
   - Added `StorageBeacon`, `SeedBankAnnouncement`, `StorageAccess` types to garden_common
+  - Added `StorageCache` domain module with beacon update/prune operations
+  - Added `broadcast_beacon()` and `broadcast_if_has_storage()` infra functions
+  - Coordinator handles `STORAGE_BEACON` reception and updates storage cache
+  - New stone trigger: when `STONE_CHIRP` received, storage-having stones broadcast beacon
+  - Storage cache maintenance task runs every 60s to prune stale entries
 - **Directory listing depth parameter** - recursive object listing support
   - `GET /api/v1/stone/storage/bank/:id/*path?depth=N` for N levels of subdirectories
   - `?depth=1` (default) immediate children, `?depth=all` or `?depth=-1` for full recursion

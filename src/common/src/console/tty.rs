@@ -287,35 +287,74 @@ pub async fn get_hostname() -> Result<String> {
 }
 
 /// Update /etc/hosts to reflect a hostname change.
+///
+/// Uses word-boundary matching to only replace complete hostnames, not substrings.
+/// This prevents the bug where "stone" matches "stone-golden-summit" and causes
+/// concatenation like "stone-new-name-golden-summit".
 pub async fn update_hosts_file(old_name: &str, new_name: &str) -> Result<()> {
     display_wait("Updating /etc/hosts")?;
-    
+
     // Read current hosts file
     let hosts_content = tokio::fs::read_to_string("/etc/hosts")
         .await
         .context("Failed to read /etc/hosts")?;
-    
-    // Replace explicit old hostname entries, plus legacy stone-new-* entries.
+
+    // Replace only complete hostname entries, not substrings.
+    // /etc/hosts format: <IP address>   <hostname> [aliases...]
+    // Hostnames are whitespace-delimited, so we split and match exactly.
     let updated_content = hosts_content
         .lines()
         .map(|line| {
-            if line.contains(old_name) {
-                line.replace(old_name, new_name)
-            } else if line.contains("stone-new-") {
-                // Back-compat for older installers that used stone-new-<guid>
-                line.replace("stone-new-", new_name.strip_prefix("stone-").unwrap_or(new_name))
-            } else {
-                line.to_string()
+            // Skip comment lines
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                return line.to_string();
             }
+
+            // Split line into parts (IP and hostnames)
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                return line.to_string();
+            }
+
+            // Check if any hostname field exactly matches old_name or legacy pattern
+            let needs_update = parts.iter().skip(1).any(|&hostname| {
+                hostname == old_name || hostname.starts_with("stone-new-")
+            });
+
+            if !needs_update {
+                return line.to_string();
+            }
+
+            // Rebuild line with exact replacements (preserving original whitespace is tricky,
+            // so we use single-space separation which is valid for /etc/hosts)
+            let updated_parts: Vec<String> = parts.iter().enumerate().map(|(i, &part)| {
+                if i == 0 {
+                    // IP address - keep as-is
+                    part.to_string()
+                } else if part == old_name {
+                    // Exact match - replace
+                    new_name.to_string()
+                } else if part.starts_with("stone-new-") {
+                    // Legacy stone-new-* pattern - replace entire hostname
+                    new_name.to_string()
+                } else {
+                    // Other hostnames (aliases) - keep as-is
+                    part.to_string()
+                }
+            }).collect();
+
+            // Use tab separator (common in /etc/hosts)
+            format!("{}\t{}", updated_parts[0], updated_parts[1..].join(" "))
         })
         .collect::<Vec<_>>()
         .join("\n");
-    
+
     // Write back
     tokio::fs::write("/etc/hosts", updated_content)
         .await
         .context("Failed to write /etc/hosts")?;
-    
+
     display_success("Updated /etc/hosts")?;
     Ok(())
 }
@@ -402,12 +441,12 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
     display_wait("Updating Moss configuration")?;
     
     let config_dir = crate::constants::paths::config_dir();
-    let config_path = format!("{}/moss.toml", config_dir);
+    let config_path = format!("{}/{}", config_dir, crate::constants::MOSS_CONFIG);
     
     // Read current config
     let config_content = tokio::fs::read_to_string(&config_path)
         .await
-        .context(format!("Failed to read moss.toml"))?;
+        .context(format!("Failed to read {}", crate::constants::MOSS_CONFIG))?;
     
     let mut found = false;
     let mut updated_lines: Vec<String> = Vec::new();
@@ -706,11 +745,11 @@ pub fn print_storage_prepared_ribbon(name: &str, mount_path: &str) -> Result<()>
 /// Print seed bank released confirmation
 pub fn print_storage_released_ribbon(name: &str) -> Result<()> {
     let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    
+
     let line1 = format!("    ┌──┐      ↓           Seed bank released: {}", name);
     let line2 = "    │  │                  Safe to remove device";
     let line3 = "    └──┘";
-    
+
     tty_write("")?;
     tty_write(divider)?;
     tty_write(&line1)?;
@@ -718,6 +757,111 @@ pub fn print_storage_released_ribbon(name: &str) -> Result<()> {
     tty_write(line3)?;
     tty_write(divider)?;
     tty_write("")?;
-    
+
     Ok(())
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    /// Test helper: transform a single hosts file line (mirrors update_hosts_file logic)
+    fn transform_hosts_line(line: &str, old_name: &str, new_name: &str) -> String {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            return line.to_string();
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return line.to_string();
+        }
+
+        let needs_update = parts.iter().skip(1).any(|&hostname| {
+            hostname == old_name || hostname.starts_with("stone-new-")
+        });
+
+        if !needs_update {
+            return line.to_string();
+        }
+
+        let updated_parts: Vec<String> = parts.iter().enumerate().map(|(i, &part)| {
+            if i == 0 {
+                part.to_string()
+            } else if part == old_name {
+                new_name.to_string()
+            } else if part.starts_with("stone-new-") {
+                new_name.to_string()
+            } else {
+                part.to_string()
+            }
+        }).collect();
+
+        format!("{}\t{}", updated_parts[0], updated_parts[1..].join(" "))
+    }
+
+    #[test]
+    fn test_hosts_line_basic_replacement() {
+        // Basic case: replace "stone" with "stone-golden-summit"
+        let line = "127.0.1.1\tstone";
+        let result = transform_hosts_line(line, "stone", "stone-golden-summit");
+        assert_eq!(result, "127.0.1.1\tstone-golden-summit");
+    }
+
+    #[test]
+    fn test_hosts_line_no_substring_replacement() {
+        // Bug fix test: "stone" should NOT match "stone-golden-summit"
+        // This was the root cause of the hostname concatenation bug
+        let line = "127.0.1.1\tstone-golden-summit";
+        let result = transform_hosts_line(line, "stone", "stone-crimson-glacier");
+        // Should remain unchanged because "stone" != "stone-golden-summit"
+        assert_eq!(result, "127.0.1.1\tstone-golden-summit");
+    }
+
+    #[test]
+    fn test_hosts_line_exact_match_only() {
+        // Should only replace exact matches
+        let line = "127.0.1.1\tstone stone-alias";
+        let result = transform_hosts_line(line, "stone", "stone-golden-summit");
+        // Only "stone" should be replaced, not "stone-alias"
+        assert_eq!(result, "127.0.1.1\tstone-golden-summit stone-alias");
+    }
+
+    #[test]
+    fn test_hosts_line_legacy_stone_new_pattern() {
+        // Legacy pattern: stone-new-* should be replaced
+        let line = "127.0.1.1\tstone-new-abc123";
+        let result = transform_hosts_line(line, "stone", "stone-golden-summit");
+        assert_eq!(result, "127.0.1.1\tstone-golden-summit");
+    }
+
+    #[test]
+    fn test_hosts_line_preserve_comments() {
+        // Comments should be preserved
+        let line = "# This is a comment with stone in it";
+        let result = transform_hosts_line(line, "stone", "stone-golden-summit");
+        assert_eq!(result, "# This is a comment with stone in it");
+    }
+
+    #[test]
+    fn test_hosts_line_preserve_localhost() {
+        // localhost line should be unchanged
+        let line = "127.0.0.1\tlocalhost";
+        let result = transform_hosts_line(line, "stone", "stone-golden-summit");
+        assert_eq!(result, "127.0.0.1\tlocalhost");
+    }
+
+    #[test]
+    fn test_hosts_line_no_double_concatenation() {
+        // Ensure running replacement twice doesn't cause concatenation
+        let line = "127.0.1.1\tstone";
+        let after_first = transform_hosts_line(line, "stone", "stone-golden-summit");
+        assert_eq!(after_first, "127.0.1.1\tstone-golden-summit");
+
+        // Running again with "stone" as old_name should NOT modify the line
+        let after_second = transform_hosts_line(&after_first, "stone", "stone-crimson-glacier");
+        assert_eq!(after_second, "127.0.1.1\tstone-golden-summit"); // Unchanged!
+    }
 }

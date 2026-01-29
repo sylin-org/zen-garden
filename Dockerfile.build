@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     musl-tools \
     file \
     libasound2-dev \
+    libudev-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 

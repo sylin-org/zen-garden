@@ -246,15 +246,24 @@ if ($PublishMode -eq "Package") {
         if ($windowsPackages.Count -gt 0) { $windowsPackage = $windowsPackages[0].FullName }
     }
 
-    if (-not $linuxPackage -or -not $windowsPackage) {
+    # Require at least one package (not both) - stones without matching package will be skipped later
+    if (-not $linuxPackage -and -not $windowsPackage) {
         Write-Host "⚠️  No deployment packages found in $packagesDir" -ForegroundColor Yellow
         Write-Host "   Run dist.ps1 first to create packages, or choose a different publish mode." -ForegroundColor Yellow
         exit 1
     }
 
     Write-Host "📦 Using packages:" -ForegroundColor Cyan
-    Write-Host "   Linux:   $(Split-Path -Leaf $linuxPackage)" -ForegroundColor Gray
-    Write-Host "   Windows: $(Split-Path -Leaf $windowsPackage)" -ForegroundColor Gray
+    if ($linuxPackage) {
+        Write-Host "   Linux:   $(Split-Path -Leaf $linuxPackage)" -ForegroundColor Gray
+    } else {
+        Write-Host "   Linux:   (not available - Linux stones will be skipped)" -ForegroundColor Yellow
+    }
+    if ($windowsPackage) {
+        Write-Host "   Windows: $(Split-Path -Leaf $windowsPackage)" -ForegroundColor Gray
+    } else {
+        Write-Host "   Windows: (not available - Windows stones will be skipped)" -ForegroundColor Yellow
+    }
     Write-Host ""
 } else {
     # Validate individual binaries exist for legacy modes
@@ -1109,14 +1118,23 @@ try {
     # Detect platform for each stone and prepare configs
     Write-Status "`n🔍 Detecting platform and resolving endpoints for each stone..."
     $stoneConfigs = @()
+    $skippedStones = @()
     foreach ($stone in $stones) {
         Write-Status "   $($stone.Name): " -NoNewline
         $info = Get-StoneInfo -Stone $stone
         $binaries = Get-BinariesForPlatform -OS $info.OS -Architecture $info.Architecture
-        Write-Status "$($binaries.Platform) $($info.Architecture)" -Type "Success"
 
         # Determine package path for this platform
         $packagePath = if ($binaries.Platform -eq "Windows") { $windowsPackage } else { $linuxPackage }
+
+        # Skip stones without a matching package (in Package mode)
+        if ($PublishMode -eq "Package" -and -not $packagePath) {
+            Write-Status "$($binaries.Platform) - SKIPPED (no $($binaries.Platform.ToLower()) package available)" -Type "Warning"
+            $skippedStones += $stone.Name
+            continue
+        }
+
+        Write-Status "$($binaries.Platform) $($info.Architecture)" -Type "Success"
 
         # Create a modified stone object with the resolved endpoint
         $resolvedStone = [PSCustomObject]@{
@@ -1132,6 +1150,17 @@ try {
             RakePath = $binaries.Rake
             PackagePath = $packagePath
         }
+    }
+
+    # Check if any stones remain after filtering
+    if ($stoneConfigs.Count -eq 0) {
+        Write-Status "`n⚠️  No stones can be deployed to (all were skipped due to missing packages)" -Type "Warning"
+        Write-Status "   Build packages for the required platforms first." -Type "Warning"
+        exit 1
+    }
+
+    if ($skippedStones.Count -gt 0) {
+        Write-Status "`n⚠️  Skipped $($skippedStones.Count) stone(s) due to missing packages: $($skippedStones -join ', ')" -Type "Warning"
     }
 
     # Validate binaries if not using package mode

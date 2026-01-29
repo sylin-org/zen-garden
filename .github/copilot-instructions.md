@@ -53,7 +53,46 @@ fn handler() -> Result<Json<T>, (StatusCode, Json<ErrorResponse>)>
 ### 6. Async Patterns
 - File I/O: `tokio::fs` (never `std::fs`)
 - HTTP: `reqwest` with timeouts
-- Background: `tokio::spawn` with error logging
+- Background: `tokio::spawn` with **mandatory error handling** (see below)
+
+### 7. Background Task Error Handling (CRITICAL)
+**NEVER allow silent failures in spawned tasks.** Every `tokio::spawn` must:
+```rust
+// CORRECT - Full error handling with visibility
+tokio::spawn(async move {
+    if let Err(e) = do_background_work().await {
+        // 1. Log at ERROR level with full context
+        tracing::error!(
+            job_id = %job_id,
+            context = %relevant_context,
+            error = %e,
+            error_chain = ?e,  // Full anyhow chain
+            "OPERATION_NAME FAILED"
+        );
+        
+        // 2. Emit event for SSE subscribers (if applicable)
+        let failure_event = MossEvent {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            level: "error".to_string(),
+            message: format!("[CATEGORY] FAILED: {} - {}", context, e),
+            job_id: Some(job_id.clone()),
+        };
+        let _ = event_tx.send(failure_event);
+    }
+});
+
+// WRONG - Silent failure
+tokio::spawn(async move {
+    let _ = do_background_work().await;  // ❌ Error silently ignored
+});
+
+// WRONG - Only debug/trace logging
+tokio::spawn(async move {
+    if let Err(e) = do_background_work().await {
+        debug!("Task failed: {}", e);  // ❌ Not visible in production logs
+    }
+});
+```
 
 ## Pre-Flight Checklist
 

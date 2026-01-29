@@ -21,6 +21,40 @@ Use `garden_common::constants::paths::*` functions. Never hardcode paths or use 
 ### Async I/O
 - File I/O: `tokio::fs` only, never blocking `std::fs`
 - HTTP: `reqwest` with 30s timeout
+- Background tasks: `tokio::spawn` with **mandatory error handling**
+
+### Background Task Error Handling (CRITICAL)
+**NEVER allow silent failures in spawned tasks.** Every `tokio::spawn` must:
+
+```rust
+// CORRECT - Full error handling with visibility
+tokio::spawn(async move {
+    if let Err(e) = do_background_work().await {
+        // 1. Log at ERROR level with full context
+        tracing::error!(
+            job_id = %job_id,
+            context = %relevant_context,
+            error = %e,
+            error_chain = ?e,  // Full anyhow chain
+            "OPERATION_NAME FAILED"
+        );
+        
+        // 2. Emit event for SSE subscribers (if applicable)
+        let failure_event = MossEvent {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            level: "error".to_string(),
+            message: format!("[CATEGORY] FAILED: {} - {}", context, e),
+            job_id: Some(job_id.clone()),
+        };
+        let _ = event_tx.send(failure_event);
+    }
+});
+
+// WRONG - Silent failure
+tokio::spawn(async move {
+    let _ = do_background_work().await;  // ❌ Error silently ignored
+});
+```
 
 ### Shared Contracts
 **Moss and Rake MUST share types via `garden_common`.** No duplicate structs. Example: `garden_common::nourishment::*`

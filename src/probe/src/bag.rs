@@ -45,6 +45,10 @@ impl StepResult {
         Self::Failed(msg.into())
     }
 
+    pub fn skipped(msg: impl Into<String>) -> Self {
+        Self::Skipped(msg.into())
+    }
+
     pub fn is_success(&self) -> bool {
         matches!(self, Self::Ok(_))
     }

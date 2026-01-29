@@ -63,7 +63,7 @@ pub fn capabilities_test() -> TestDef {
 async fn test_capabilities(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     for stone in &garden.stones {
         let start = Instant::now();
-        let result = stone.get_json("/capabilities").await;
+        let result = stone.get_json("/api/v1/stone/capabilities").await;
         let duration = start.elapsed();
 
         match result {
@@ -113,7 +113,7 @@ pub fn offerings_list_test() -> TestDef {
 async fn test_offerings_list(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     for stone in &garden.stones {
         let start = Instant::now();
-        let result = stone.get_json("/api/v1/offerings").await;
+        let result = stone.get_json("/api/v1/stone/offerings").await;
         let duration = start.elapsed();
 
         match result {

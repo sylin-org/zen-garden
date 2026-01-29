@@ -3,9 +3,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use garden_probe::{Bag, LiveGarden, TestRegistry};
 use garden_probe::report::SuiteReport;
+use garden_probe::{Bag, LiveGarden, TestRegistry};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "garden-probe")]
@@ -15,9 +16,17 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Stone endpoint to connect to (default: discovers via tended stone)
+    /// Stone endpoint to connect to (fallback if UDP discovery fails)
     #[arg(long, short = 'e', global = true)]
     endpoint: Option<String>,
+
+    /// Use UDP broadcast discovery (like Rake)
+    #[arg(long, global = true)]
+    udp: bool,
+
+    /// Discovery timeout in seconds
+    #[arg(long, default_value = "3", global = true)]
+    timeout: u64,
 
     /// Verbose output
     #[arg(long, short = 'v', global = true)]
@@ -74,16 +83,17 @@ async fn main() -> Result<()> {
     // Setup logging
     if cli.verbose {
         tracing_subscriber::fmt()
-            .with_env_filter("garden_probe=debug,info")
+            .with_env_filter("garden_probe=debug,garden_common=debug,info")
             .init();
     }
 
-    // Determine endpoint
-    let endpoint = cli
+    // Discovery settings
+    let timeout = Duration::from_secs(cli.timeout);
+    let fallback_endpoint = cli
         .endpoint
         .clone()
-        .or_else(|| std::env::var("ZG_STONE").ok())
-        .unwrap_or_else(|| "http://localhost:7185".to_string());
+        .or_else(|| std::env::var("ZG_STONE").ok());
+    let use_udp = cli.udp || fallback_endpoint.is_none();
 
     match cli.command {
         Commands::List { category, tag } => {
@@ -97,14 +107,26 @@ async fn main() -> Result<()> {
             detailed,
             set_values,
         } => {
-            cmd_run(&endpoint, tests, all, tag, category, detailed, set_values).await?;
+            cmd_run(
+                use_udp,
+                timeout,
+                fallback_endpoint.as_deref(),
+                tests,
+                all,
+                tag,
+                category,
+                detailed,
+                set_values,
+            )
+            .await?;
         }
         Commands::Discover => {
-            cmd_discover(&endpoint).await?;
+            cmd_discover(use_udp, timeout, fallback_endpoint.as_deref()).await?;
         }
     }
 
-    Ok(())
+    Ok(()
+    )
 }
 
 fn cmd_list(category: Option<String>, tag: Option<String>) -> Result<()> {
@@ -162,7 +184,9 @@ fn cmd_list(category: Option<String>, tag: Option<String>) -> Result<()> {
 }
 
 async fn cmd_run(
-    endpoint: &str,
+    use_udp: bool,
+    timeout: Duration,
+    fallback_endpoint: Option<&str>,
     tests: Vec<String>,
     all: bool,
     tag: Option<String>,
@@ -170,23 +194,51 @@ async fn cmd_run(
     detailed: bool,
     set_values: Vec<String>,
 ) -> Result<()> {
-    // Connect to garden
+    // Discover garden
     println!();
-    println!("{} {}", "Connecting to:".dimmed(), endpoint);
-
-    let garden = Arc::new(
-        LiveGarden::discover(endpoint)
+    let garden = if use_udp {
+        println!("{} (timeout: {:?})", "UDP Discovery...".dimmed(), timeout);
+        LiveGarden::auto_discover(timeout, fallback_endpoint)
             .await
-            .context("Failed to discover garden")?,
-    );
+            .context("Failed to discover garden")?
+    } else if let Some(ep) = fallback_endpoint {
+        println!("{} {}", "HTTP Discovery from:".dimmed(), ep);
+        LiveGarden::discover(ep)
+            .await
+            .context("Failed to discover garden")?
+    } else {
+        anyhow::bail!("No discovery method available. Use --udp or specify --endpoint")
+    };
 
-    println!(
-        "{} {} stones: {:?}",
-        "Discovered:".dimmed(),
-        garden.len(),
-        garden.stone_names()
-    );
+    // Print discovery info
+    match garden.discovery.method {
+        garden_probe::DiscoveryMethod::Udp => {
+            println!(
+                "{} {} stones in {}ms (UDP)",
+                "Found:".green(),
+                garden.len(),
+                garden.discovery.duration_ms
+            );
+            for (name, time_ms) in &garden.discovery.timings {
+                println!("  {} responded in {}ms", name.cyan(), time_ms);
+            }
+        }
+        _ => {
+            println!(
+                "{} {} stones: {:?}",
+                "Discovered:".dimmed(),
+                garden.len(),
+                garden.stone_names()
+            );
+        }
+    }
+
+    if let Some(tended) = &garden.tended {
+        println!("{} {}", "Tended:".green().bold(), tended.name.cyan());
+    }
     println!();
+
+    let garden = Arc::new(garden);
 
     // Build registry
     let registry = TestRegistry::new();
@@ -197,14 +249,22 @@ async fn cmd_run(
     } else if let Some(t) = &tag {
         registry.by_tag(t).iter().map(|t| t.id.to_string()).collect()
     } else if let Some(c) = &category {
-        registry.by_category(c).iter().map(|t| t.id.to_string()).collect()
+        registry
+            .by_category(c)
+            .iter()
+            .map(|t| t.id.to_string())
+            .collect()
     } else if !tests.is_empty() {
         // Expand patterns
         let mut ids = Vec::new();
         for pattern in &tests {
             let found = registry.find(pattern);
             if found.is_empty() {
-                eprintln!("{}: No tests match pattern '{}'", "warning".yellow(), pattern);
+                eprintln!(
+                    "{}: No tests match pattern '{}'",
+                    "warning".yellow(),
+                    pattern
+                );
             }
             for test in found {
                 ids.push(test.id.to_string());
@@ -213,7 +273,11 @@ async fn cmd_run(
         ids
     } else {
         // Default: run smoke tests
-        registry.by_category("smoke").iter().map(|t| t.id.to_string()).collect()
+        registry
+            .by_category("smoke")
+            .iter()
+            .map(|t| t.id.to_string())
+            .collect()
     };
 
     if test_ids.is_empty() {
@@ -222,11 +286,7 @@ async fn cmd_run(
         return Ok(());
     }
 
-    println!(
-        "{} {} test(s)",
-        "Running:".bold(),
-        test_ids.len()
-    );
+    println!("{} {} test(s)", "Running:".bold(), test_ids.len());
     println!("{}", "─".repeat(60));
 
     // Parse initial bag values
@@ -271,17 +331,54 @@ async fn cmd_run(
     Ok(())
 }
 
-async fn cmd_discover(endpoint: &str) -> Result<()> {
-    println!();
-    println!("{} {}", "Discovering garden from:".dimmed(), endpoint);
+async fn cmd_discover(
+    use_udp: bool,
+    timeout: Duration,
+    fallback_endpoint: Option<&str>,
+) -> Result<()> {
     println!();
 
-    let garden = LiveGarden::discover(endpoint)
-        .await
-        .context("Failed to discover garden")?;
+    let garden = if use_udp {
+        println!(
+            "{} (timeout: {:?})",
+            "UDP Discovery broadcast...".cyan().bold(),
+            timeout
+        );
+        println!();
+        LiveGarden::auto_discover(timeout, fallback_endpoint)
+            .await
+            .context("Failed to discover garden")?
+    } else if let Some(ep) = fallback_endpoint {
+        println!("{} {}", "HTTP Discovery from:".dimmed(), ep);
+        println!();
+        LiveGarden::discover(ep)
+            .await
+            .context("Failed to discover garden")?
+    } else {
+        anyhow::bail!("No discovery method available. Use --udp or specify --endpoint")
+    };
 
     println!("{}", "Garden Stones".bold());
     println!("{}", "═".repeat(60));
+
+    // Show discovery metadata
+    match garden.discovery.method {
+        garden_probe::DiscoveryMethod::Udp => {
+            println!(
+                "{}  {} stones found in {}ms",
+                "Method:".dimmed(),
+                garden.len(),
+                garden.discovery.duration_ms
+            );
+        }
+        garden_probe::DiscoveryMethod::HttpTopology => {
+            println!("{}  HTTP Topology", "Method:".dimmed());
+        }
+        garden_probe::DiscoveryMethod::Manual => {
+            println!("{}  Manual", "Method:".dimmed());
+        }
+    }
+    println!();
 
     for stone in &garden.stones {
         let is_tended = garden
@@ -296,23 +393,58 @@ async fn cmd_discover(endpoint: &str) -> Result<()> {
             "".normal()
         };
 
+        // Find response time from discovery
+        let response_time = garden
+            .discovery
+            .timings
+            .iter()
+            .find(|(n, _)| n == &stone.name)
+            .map(|(_, t)| format!("{}ms", t))
+            .unwrap_or_default();
+
         let healthy = if stone.is_healthy().await {
             "healthy".green()
         } else {
             "unreachable".red()
         };
 
-        println!(
-            "  {}{} - {} ({})",
-            stone.name.cyan().bold(),
-            tended_marker,
-            stone.endpoint.dimmed(),
-            healthy
-        );
+        if !response_time.is_empty() {
+            println!(
+                "  {}{} - {} ({}, {})",
+                stone.name.cyan().bold(),
+                tended_marker,
+                stone.endpoint.dimmed(),
+                healthy,
+                response_time.dimmed()
+            );
+        } else {
+            println!(
+                "  {}{} - {} ({})",
+                stone.name.cyan().bold(),
+                tended_marker,
+                stone.endpoint.dimmed(),
+                healthy
+            );
+        }
     }
 
     println!();
     println!("{}: {} stones", "Total".bold(), garden.len());
+
+    if garden.len() > 1 {
+        let others = garden.other_stones();
+        println!(
+            "{}: {} alternative stones available for failover",
+            "Fallback".dimmed(),
+            others.len()
+        );
+    }
+
+    println!();
+    println!(
+        "{}",
+        "Run tests: garden-probe run --all".dimmed()
+    );
     println!();
 
     Ok(())

@@ -56,6 +56,47 @@ impl TestRegistry {
         self.register(crate::tests::discovery::topology_test());
         self.register(crate::tests::discovery::stone_count_test());
         self.register(crate::tests::discovery::tended_test());
+
+        // Tend tests (tending selection, fallback, persistence)
+        self.register(crate::tests::tend::reachable_test());
+        self.register(crate::tests::tend::capabilities_test());
+        self.register(crate::tests::tend::alternatives_test());
+        self.register(crate::tests::tend::switch_simulation_test());
+        self.register(crate::tests::tend::all_healthy_test());
+        self.register(crate::tests::tend::round_robin_test());
+
+        // Inter-stone tests (communication between stones)
+        self.register(crate::tests::interstone::discovery_consistency_test());
+        self.register(crate::tests::interstone::cross_query_test());
+        self.register(crate::tests::interstone::offering_visibility_test());
+        self.register(crate::tests::interstone::latency_matrix_test());
+
+        // Offerings tests (catalog, search, deployment)
+        self.register(crate::tests::offerings::catalog_test());
+        self.register(crate::tests::offerings::installed_test());
+        self.register(crate::tests::offerings::search_test());
+        self.register(crate::tests::offerings::services_match_topology_test());
+
+        // Nourishment tests (updates detection)
+        self.register(crate::tests::nourishment::detection_test());
+        self.register(crate::tests::nourishment::garden_aggregation_test());
+        self.register(crate::tests::nourishment::scope_filtering_test());
+
+        // Adapter tests (registry, commands)
+        self.register(crate::tests::adapters::registry_test());
+        self.register(crate::tests::adapters::cricket_test());
+        self.register(crate::tests::adapters::command_forwarding_test());
+
+        // Storage tests (seed banks, beacon)
+        self.register(crate::tests::storage::overview_test());
+        self.register(crate::tests::storage::candidates_test());
+        self.register(crate::tests::storage::beacon_visibility_test());
+        self.register(crate::tests::storage::object_roundtrip_test());
+
+        // Resolution tests (protocol and offering resolution)
+        self.register(crate::tests::resolution::offering_lookup_test());
+        self.register(crate::tests::resolution::protocol_test());
+        self.register(crate::tests::resolution::consistency_test());
     }
 
     /// Get all test definitions

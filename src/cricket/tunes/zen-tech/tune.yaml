@@ -69,3 +69,29 @@ events:
     channel: ambient
     looping: true
     volume: 0.3
+
+  # Storage events (seed bank lifecycle)
+  storage.detected:
+    resource: samples/computer-chimes.mp3
+    channel: foreground
+    debounce_ms: 3000
+
+  storage.prepared:
+    resource: samples/success-synth.mp3
+    channel: foreground
+    debounce_ms: 1000
+
+  storage.released:
+    resource: samples/telephone-dock-beep.mp3
+    channel: midground
+    debounce_ms: 1000
+
+  storage.removed:
+    resource: samples/beep-oops.mp3
+    channel: midground
+    debounce_ms: 1000
+
+  storage.pool_conflict:
+    resource: samples/alert-short.mp3
+    channel: foreground
+    debounce_ms: 5000

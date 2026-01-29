@@ -607,3 +607,117 @@ fn boot_symbol() -> &'static str {
         symbols_night[idx]
     }
 }
+
+// ============================================================================
+// Storage Ribbon Functions
+// ============================================================================
+
+/// Print seed bank detection ribbon to TTY1
+/// 
+/// Displays a visual notification when a USB storage device is detected.
+/// Matches the visual style of existing boot/shutdown ribbons.
+pub fn print_storage_detected_ribbon(info: &crate::storage::StorageDetectedInfo) -> Result<()> {
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    
+    let label = info.label.as_deref().unwrap_or("USB Storage");
+    let capacity = crate::utils::format_bytes(info.capacity_bytes);
+    
+    // USB icon with storage info
+    let line1 = format!("    ┌──┐      🌱          Device: {} ({})", label, capacity);
+    let line2 = "    │▓▓│                  A new seed bank awaits...";
+    let line3 = "    └┬─┘";
+    let line4 = "     │        Prepare:    garden-rake prepare seed-bank";
+    
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write(&line1)?;
+    tty_write(line2)?;
+    tty_write(line3)?;
+    tty_write(line4)?;
+    tty_write(divider)?;
+    tty_write("")?;
+    
+    Ok(())
+}
+
+/// Print seed bank detection ribbon for multiple devices
+pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo]) -> Result<()> {
+    if devices.is_empty() {
+        return Ok(());
+    }
+    
+    if devices.len() == 1 {
+        return print_storage_detected_ribbon(&devices[0]);
+    }
+    
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    
+    // Header
+    let line1 = format!("    ┌──┐      🌱          {} devices await preparation", devices.len());
+    let line2 = "    │▓▓│                  ";
+    let line3 = "    └┬─┘";
+    
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write(&line1)?;
+    tty_write(line2)?;
+    tty_write(line3)?;
+    
+    // List each device
+    for (i, dev) in devices.iter().enumerate() {
+        let label = dev.label.as_deref().unwrap_or("USB Storage");
+        let capacity = crate::utils::format_bytes(dev.capacity_bytes);
+        let mount = dev.mount_path.as_deref().unwrap_or(&dev.device);
+        let prefix = if i == devices.len() - 1 { "     │" } else { "     │" };
+        tty_write(&format!("{}                    {} ({}) at {}", prefix, label, capacity, mount))?;
+    }
+    
+    // Footer with command hint using first device label
+    let first_label = devices[0].label.as_deref().unwrap_or(&devices[0].device);
+    tty_write("     │")?;
+    tty_write(&format!("     │        Prepare:    garden-rake prepare seed-bank {}", first_label))?;
+    tty_write(divider)?;
+    tty_write("")?;
+    
+    Ok(())
+}
+
+/// Print seed bank prepared confirmation ribbon
+pub fn print_storage_prepared_ribbon(name: &str, mount_path: &str) -> Result<()> {
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    
+    let line1 = format!("    ┌──┐      ✓           Seed bank ready: {}", name);
+    let line2 = format!("    │▓▓│                  Mounted at: {}", mount_path);
+    let line3 = "    └┬─┘";
+    let line4 = "     │        Release:    garden-rake release seed-bank";
+    
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write(&line1)?;
+    tty_write(&line2)?;
+    tty_write(line3)?;
+    tty_write(line4)?;
+    tty_write(divider)?;
+    tty_write("")?;
+    
+    Ok(())
+}
+
+/// Print seed bank released confirmation
+pub fn print_storage_released_ribbon(name: &str) -> Result<()> {
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    
+    let line1 = format!("    ┌──┐      ↓           Seed bank released: {}", name);
+    let line2 = "    │  │                  Safe to remove device";
+    let line3 = "    └──┘";
+    
+    tty_write("")?;
+    tty_write(divider)?;
+    tty_write(&line1)?;
+    tty_write(line2)?;
+    tty_write(line3)?;
+    tty_write(divider)?;
+    tty_write("")?;
+    
+    Ok(())
+}

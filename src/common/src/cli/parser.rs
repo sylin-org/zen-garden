@@ -130,7 +130,9 @@ fn is_normative_verb(verb: &str) -> bool {
         // Developer tools (normative)
         "api" | "locate" |
         // Installation (normative)
-        "install-service"
+        "install-service" |
+        // Storage (normative - uses dashes)
+        "prepare" | "release-seed-bank" | "seed-banks" | "store"
     )
 }
 

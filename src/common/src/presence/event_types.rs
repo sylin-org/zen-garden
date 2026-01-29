@@ -26,3 +26,14 @@ pub const OFFERING_ADOPTED: &str = "offering.adopted";
 pub const STONE_LOAD_UPDATED: &str = "stone.load.updated";
 pub const STONE_HEALTH_CHANGED: &str = "stone.health.changed";
 pub const STONE_TENDED: &str = "stone.tended";
+
+// Storage events (seed bank lifecycle)
+pub const CATEGORY_STORAGE: &str = "storage";
+pub const STORAGE_DETECTED: &str = "storage.detected";
+pub const STORAGE_PREPARED: &str = "storage.prepared";
+pub const STORAGE_RELEASED: &str = "storage.released";
+pub const STORAGE_REMOVED: &str = "storage.removed";
+pub const STORAGE_POOL_CONFLICT: &str = "storage.pool_conflict";
+pub const STORAGE_READONLY: &str = "storage.readonly_detected";
+pub const STORAGE_PREPARE_PROGRESS: &str = "storage.prepare.progress";
+pub const STORAGE_REDISCOVERED: &str = "storage.rediscovered";

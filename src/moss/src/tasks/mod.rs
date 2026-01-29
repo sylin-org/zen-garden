@@ -34,6 +34,7 @@ pub use coordinator::{
     start_registry_loader, start_catalog_builder,
     start_health_monitor, start_auto_adoption,
     start_lantern_registration, start_topology_maintenance,
+    start_storage_maintenance,
 };
 pub use discovery::lantern_registration_loop;
 pub use hardware_detection::detect_capabilities_background;

@@ -50,20 +50,47 @@ pub fn start_topology_maintenance(topology_cache: TopologyCache) {
     });
 }
 
+/// Start storage cache maintenance task (STORAGE-0003)
+///
+/// Periodically prunes stale entries from storage cache.
+/// Runs every 60 seconds (2x topology interval).
+pub fn start_storage_maintenance(
+    storage_cache: crate::domain::storage_cache::StorageCache,
+    topology_cache: TopologyCache,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        interval.tick().await; // Skip first immediate tick
+
+        loop {
+            interval.tick().await;
+            let pruned = crate::domain::storage_cache::prune_stale(&storage_cache, &topology_cache).await;
+            if pruned > 0 {
+                tracing::debug!(
+                    pruned = pruned,
+                    "Storage cache maintenance: pruned stale entries"
+                );
+            }
+        }
+    });
+}
+
 /// Start UDP discovery listener with topology cache integration
 ///
 /// Enables stone discovery via UDP broadcast.
-/// Handles discovery requests (chirp response), stone chirps (topology updates), and goodbyes.
+/// Handles discovery requests (chirp response), stone chirps (topology updates), 
+/// goodbyes, and storage beacons (STORAGE-0003).
 /// Returns immediately after spawning the listener.
 pub async fn start_discovery_listener(
-    _stone_id: String,
-    _stone_name: String,
-    _api_endpoint: String,
+    stone_id: String,
+    stone_name: String,
+    api_endpoint: String,
     topology_cache: TopologyCache,
+    storage_cache: crate::domain::storage_cache::StorageCache,
     _self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
 ) {
-    // Spawn UDP event monitor that handles chirps and goodbyes
+    // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
     tokio::spawn(async move {
         let mut all_events = match p2p::subscribe_to_all().await {
             Ok(rx) => rx,
@@ -95,16 +122,55 @@ pub async fn start_discovery_listener(
                         }
                     };
                     
+                    // Check if this is a NEW stone (not already in cache)
+                    let is_new_stone = {
+                        let cache = topology_cache.read().await;
+                        !cache.contains_key(&chirp.stone_id)
+                    };
+                    
                     tracing::debug!(
                         stone = %chirp.stone_name,
                         services = chirp.services.len(),
                         mac = ?chirp.mac,
                         health = %chirp.health,
                         from = %from_addr,
+                        is_new = is_new_stone,
                         "Stone chirp received, updating topology cache"
                     );
+                    
                     // Update topology cache with chirp data
-                    upsert_from_chirp(&topology_cache, chirp).await;
+                    upsert_from_chirp(&topology_cache, chirp.clone()).await;
+                    
+                    // STORAGE-0003: If new stone, broadcast our storage beacon (if we have storage)
+                    if is_new_stone && chirp.stone_id != stone_id {
+                        let local_stone_id = stone_id.clone();
+                        let local_stone_name = stone_name.clone();
+                        let local_endpoint = api_endpoint.clone();
+                        tokio::spawn(async move {
+                            match crate::infra::storage::broadcast_if_has_storage(
+                                &local_stone_id,
+                                &local_stone_name,
+                                &local_endpoint,
+                            ).await {
+                                Ok(true) => {
+                                    tracing::debug!(
+                                        new_stone = %chirp.stone_name,
+                                        "Broadcast storage beacon for new stone"
+                                    );
+                                }
+                                Ok(false) => {
+                                    // No storage, nothing to broadcast
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        new_stone = %chirp.stone_name,
+                                        "Failed to broadcast storage beacon for new stone"
+                                    );
+                                }
+                            }
+                        });
+                    }
                 }
                 garden_common::infra::communications::announcement_types::STONE_GOODBYE => {
                     let goodbye: garden_common::StoneGoodbyePayload = match serde_json::from_value(payload) {
@@ -122,6 +188,29 @@ pub async fn start_discovery_listener(
                     );
                     // Mark stone as offline immediately (don't wait for timeout)
                     mark_stone_offline(&topology_cache, &goodbye.stone_id).await;
+                    
+                    // STORAGE-0003: Remove from storage cache
+                    crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id).await;
+                }
+                garden_common::infra::communications::announcement_types::STORAGE_BEACON => {
+                    // STORAGE-0003: Handle storage beacon from peer
+                    let beacon: garden_common::storage::StorageBeacon = match serde_json::from_value(payload) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(error = ?e, "Failed to parse storage beacon");
+                            continue;
+                        }
+                    };
+                    
+                    tracing::debug!(
+                        stone = %beacon.stone_name,
+                        seed_banks = beacon.seed_banks.len(),
+                        from = %from_addr,
+                        "Storage beacon received, updating storage cache"
+                    );
+                    
+                    // Update storage cache
+                    crate::domain::storage_cache::update_from_beacon(&storage_cache, beacon).await;
                 }
                 _ => {
                     // Ignore other announcement types (election events handled by election service, discovery handled by discovery_handler)
@@ -416,12 +505,16 @@ pub async fn start_all_background_tasks(
     // Start topology maintenance (mark stale offline, evict old)
     start_topology_maintenance(state.topology_cache.clone());
 
+    // Start storage cache maintenance (STORAGE-0003: prune stale entries)
+    start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
+
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(
         state.stone_id.clone(),
         stone_name.to_string(),
         api_endpoint.to_string(),
         state.topology_cache.clone(),
+        state.storage_cache.clone(),
         state.self_entry.clone(),
         console.clone(),
     )

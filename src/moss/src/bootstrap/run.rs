@@ -66,6 +66,9 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Self-entry will be progressively updated as boot continues
     let topology_cache = Arc::new(RwLock::new(std::collections::HashMap::new()));
     
+    // STORAGE-0003: Create storage cache for seed bank routing
+    let storage_cache = crate::domain::storage_cache::new_storage_cache();
+    
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
         config.console_mode,
@@ -78,6 +81,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         stone_name.clone(),
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
+        storage_cache.clone(),
         self_entry.clone(),
         console_printer.clone(),
     )
@@ -269,6 +273,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         network_monitor: Arc::new(network_monitor),
         api_port: port,
         topology_cache: topology_cache.clone(),
+        storage_cache: storage_cache.clone(),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         ceremony_registry,

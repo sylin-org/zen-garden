@@ -1,0 +1,29 @@
+[package]
+name = "garden-firefly"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Visual status indicator adapter for Zen Garden (Waveshare RP2040-Matrix)"
+
+[[bin]]
+name = "garden-firefly"
+path = "src/main.rs"
+
+[dependencies]
+garden-common = { path = "../common" }
+garden-adapter-sdk = { path = "../adapter-sdk" }
+
+# Core
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "fs", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Config & CLI
+clap = { workspace = true, features = ["derive", "env"] }
+serde.workspace = true
+serde_json.workspace = true
+
+# Serial port communication
+serialport = "4.3"

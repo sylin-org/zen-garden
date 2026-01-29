@@ -5,12 +5,13 @@ members = [
   # "src/linux/moss",
   # "src/windows/garden-rake",
   "src/lantern",
-  
+
   # New structure
   "src/common",
   "src/moss",
   "src/rake",
   "src/cricket",
+  "src/firefly",
   "src/adapter-sdk",
   "src/build-utils",
   "src/probe",

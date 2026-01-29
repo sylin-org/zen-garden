@@ -190,9 +190,9 @@ garden-rake take-away redis --at stone-01
 garden-rake offer mongodb --at stone-01
 ```
 
-2. **Use different port** (custom template):
+2. **Use different port** (custom manifest):
 
-Edit `/etc/zen-garden/templates/custom/mongodb-alt.yaml` and change port to 27018.
+Edit `/var/lib/zen-garden/manifests/custom/mongodb-alt.yaml` and change port to 27018.
 
 #### Incompatible Hardware
 

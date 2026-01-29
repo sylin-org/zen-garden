@@ -145,9 +145,9 @@ Documented in `docs/decisions/`:
 
 ### Critical Paths
 
-1. **Runtime Templates**: Offerings are loaded from disk at runtime
-   - Path: `/etc/zen-garden/templates` (on stones)
-   - Behavior: If the runtime templates directory is missing/empty, offering list/info/install will fail
+1. **Runtime Manifests**: Offerings are loaded from disk at runtime
+   - Path: `/var/lib/zen-garden/manifests` (on stones)
+   - Behavior: If the runtime manifests directory is missing/empty, offering list/info/install will fail
 
 2. **Service Compatibility**: CPU architecture validation before deployment
    - Checks ELF headers

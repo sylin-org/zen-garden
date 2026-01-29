@@ -244,14 +244,16 @@ Adapters filter for events they care about and take action.
 
 ### Manual Installation
 
-1. **Copy adapter executable** to `{data_dir}/adapters/`:
+1. **Copy adapter executable** to adapters directory:
    ```bash
    # Linux
-   sudo cp garden-cricket /var/lib/zen-garden/adapters/
-   sudo chmod +x /var/lib/zen-garden/adapters/garden-cricket
+   sudo mkdir -p /usr/local/bin/adapters/cricket
+   sudo cp garden-cricket /usr/local/bin/adapters/cricket/
+   sudo chmod +x /usr/local/bin/adapters/cricket/garden-cricket
    
    # Windows
-   copy garden-cricket.exe .zen-garden\adapters\
+   mkdir .zen-garden\adapters\cricket
+   copy garden-cricket.exe .zen-garden\adapters\cricket\
    ```
 
 2. **Restart Moss** to trigger discovery:
@@ -280,7 +282,7 @@ garden-rake adapter install cricket
 **Check adapter directory:**
 ```bash
 # Linux
-ls -l /var/lib/zen-garden/adapters/
+ls -l /usr/local/bin/adapters/
 
 # Windows
 dir .zen-garden\adapters\
@@ -303,7 +305,7 @@ curl -X POST http://localhost:7185/api/v1/stone/adapters/refresh
 **Check executable permissions:**
 ```bash
 # Linux - must be executable
-chmod +x /var/lib/zen-garden/adapters/garden-cricket
+chmod +x /usr/local/bin/adapters/cricket/garden-cricket
 ```
 
 **Check port conflicts:**
@@ -317,7 +319,7 @@ netstat -tulpn | grep 7187
 
 **Manual start for debugging:**
 ```bash
-/var/lib/zen-garden/adapters/garden-cricket \
+/usr/local/bin/adapters/cricket/garden-cricket \
   --stone http://localhost:7185 \
   --port 7187
 ```

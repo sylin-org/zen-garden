@@ -272,16 +272,16 @@ state.docker.create_container(
 
 ## Offerings Endpoints
 
-**Stone endpoints** (Rake → Moss):
+**Stone endpoints** (Rake → Moss, local operations):
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET | `/api/v1/offerings` | List all offerings (installed + available) |
-| GET | `/api/v1/offerings/search?q={query}` | Search offerings with taxonomy normalization |
-| GET | `/api/v1/offerings/:name` | Get offering details |
-| POST | `/api/v1/offerings` | Plant (install) an offering |
-| DELETE | `/api/v1/offerings/:name` | Take away (uninstall) an offering |
-| POST | `/api/v1/offerings/refresh` | Refresh offerings catalog from disk |
-| POST | `/api/v1/offerings/heal` | Self-heal by adopting orphaned containers |
+| GET | `/api/v1/stone/offerings` | List all offerings (installed + available) |
+| GET | `/api/v1/stone/offerings/search?q={query}` | Search offerings with taxonomy normalization |
+| GET | `/api/v1/stone/offerings/:name` | Get offering details |
+| POST | `/api/v1/stone/offerings` | Plant (install) an offering |
+| DELETE | `/api/v1/stone/offerings/:name` | Take away (uninstall) an offering |
+| POST | `/api/v1/stone/offerings/refresh` | Refresh offerings catalog from disk |
+| POST | `/api/v1/stone/offerings/heal` | Self-heal by adopting orphaned containers |
 
 **Search query parameters**:
 - `q` - Free-form query (e.g., "nosql database", "vector store")
@@ -292,7 +292,54 @@ state.docker.create_container(
 
 ---
 
+## Services Endpoints
+
+**Stone endpoints** (local service operations):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/services` | List local services |
+| POST | `/api/v1/stone/services` | Create service from offering |
+| GET | `/api/v1/stone/services/:service` | Get service details |
+| DELETE | `/api/v1/stone/services/:service` | Delete service |
+| POST | `/api/v1/stone/services/:service/restart` | Restart service |
+| POST | `/api/v1/stone/services/:service/rest` | Stop service |
+| POST | `/api/v1/stone/services/:service/wake` | Start service |
+| POST | `/api/v1/stone/services/:service/nourish` | Update service |
+| GET | `/api/v1/stone/services/:service/logs` | Stream service logs (SSE) |
+
+**Garden endpoints** (garden-wide service discovery):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/garden/services?q={query}` | Find services across all stones |
+
+**Service discovery (`rake find`):**
+- Query by name: `?q=mongodb`
+- Query by category: `?q=c:database`
+- Query by tag: `?q=t:nosql`
+
+---
+
+## Capabilities & Metrics Endpoints
+
+**Stone endpoints:**
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/capabilities` | Hardware capabilities |
+| GET | `/api/v1/stone/metrics` | Prometheus-format metrics |
+| GET | `/health` | Health check (industry standard, at root) |
+
+---
+
 ## Resolution Endpoints
+
+Resolution is handled via the garden-wide service discovery endpoint:
+
+**Resolution via Service Discovery:**
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/garden/services?q={query}` | Find services, returns connection info |
+
+The response includes connection URIs for each found service. This is used by `rake find`.
 
 **Protocol vs Offering distinction:**
 - **Protocol** = Wire format (s3, mongodb, redis, storage)
@@ -302,16 +349,6 @@ state.docker.create_container(
 ```
 zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]
 ```
-
-**Stone endpoints** (Rake → Moss):
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/api/v1/resolve` | Resolve protocol/offering to endpoint |
-
-**Query parameters**:
-- `offering` - Offering name (mongodb, minio)
-- `protocol` - Protocol (s3, mongodb, redis, storage)
-- `instance` - Instance name for multi-instance offerings
 
 **Resolution priority**:
 1. Offerings take precedence over seed-bank gateways
@@ -422,7 +459,7 @@ src/moss/src/
 ### Paths → `common/src/constants/paths.rs`
 - `data_dir()` → `/var/lib/zen-garden` (Linux) or `.zen-garden` (Windows)
 - `config_dir()` → `/etc/zen-garden` (Linux) or `.zen-garden` (Windows)
-- `adapters_dir()` → `{data_dir}/adapters/` (adapter executables)
+- `adapters_dir()` → `/usr/local/bin/adapters/` (adapter executables)
 - `harvest_dir()`, `stored_dir()`, `stone_home()`, `stone_user()`, `first_run_flag()`
 
 ### Network → `common/src/constants/mod.rs`

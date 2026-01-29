@@ -241,9 +241,9 @@ moss/                            # 🔧 MOSS-SPECIFIC CODE ONLY
   │   │   ├── mod.rs             # MetricsCollector impl
   │   │   ├── hardware.rs        # CPU/RAM/Disk detection
   │   │   └── gpu.rs             # GPU/AI runtime detection
-  │   ├── templates/             # Template loading (Moss-only)
-  │   │   ├── mod.rs             # TemplateProvider impl
-  │   │   ├── filesystem.rs      # Load from /etc/zen-garden/templates
+  │   ├── manifests/             # Manifest loading (Moss-only)
+  │   │   ├── mod.rs             # ManifestProvider impl
+  │   │   ├── filesystem.rs      # Load from /var/lib/zen-garden/manifests
   │   │   └── embedded.rs        # Load from binary
   │   └── mdns.rs                # mDNS announcer (Moss-only)
   ├── api/                       # Moss HTTP API

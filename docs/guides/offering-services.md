@@ -620,12 +620,12 @@ garden-rake offer vector --at anywhere --prefer ssd,high-memory
 
 ## Creating Custom Offerings
 
-### Offering Template Structure
+### Offering Manifest Structure
 
-Create custom offerings in `/etc/zen-garden/templates/custom/`:
+Create custom offerings in `/var/lib/zen-garden/manifests/custom/`:
 
 ```yaml
-# /etc/zen-garden/templates/custom/myapp.yaml
+# /var/lib/zen-garden/manifests/custom/myapp.yaml
 ---
 name: myapp
 offering: myapp
@@ -670,16 +670,16 @@ mdns:
 ### Template Validation
 
 ```bash
-# Refresh offering index to include custom templates
+# Refresh offering index to include custom manifests
 garden-rake offer refresh --at stone-01
 
 # Output:
 # Refreshing offerings index on stone-01...
-# Scanning templates: /usr/share/garden-moss/templates/
+# Scanning manifests: /var/lib/zen-garden/manifests/
 # ✓ Found 15 curated offerings
-# Scanning custom: /etc/zen-garden/templates/custom/
+# Scanning custom: /var/lib/zen-garden/manifests/custom/
 # ✓ Found 1 custom offering (myapp)
-# ⚠ Skipped 1 invalid template (validation failed)
+# ⚠ Skipped 1 invalid manifest (validation failed)
 # 
 # Available offerings: 16 total
 ```
@@ -840,8 +840,8 @@ garden-rake offer refresh --at stone-01
 **Solutions:**
 
 - Typo in offering name (correct: `mongodb` not `mongo`)
-- Custom offering not in `/etc/zen-garden/templates/custom/`
-- Template validation failed (check Moss logs)
+- Custom offering not in `/var/lib/zen-garden/manifests/custom/`
+- Manifest validation failed (check Moss logs)
 
 ### Upgrade Failed
 

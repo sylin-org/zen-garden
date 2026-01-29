@@ -3,6 +3,57 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-29
+- **Package Structure v2.0** - Simplified to mirror target filesystem exactly
+  - Package now has just `bin/` (→ /usr/local/bin) and `lib/` (→ /var/lib) folders
+  - Deploy is now two `cp -r` operations instead of multiple conditional blocks
+  - Removed `dependencies` block from dist.json (adapters install deps at runtime)
+  - Updated `moss-update-helper.sh` and `NewStone.ps1` to use new structure
+- **Timezone/NTP Configuration** - Stones now sync timezone on deploy
+  - New `garden.conf` with timezone setting (default: America/New_York)
+  - `moss-update-helper.sh` applies timezone and enables NTP on upgrade
+  - `debian-preseed.template` applies timezone on first boot
+- **Path Cleanup** - Removed all stale `/etc/zen-garden/templates` references
+  - Manifests at `/var/lib/zen-garden/manifests/{sw,hw}/`
+  - Adapters at `/usr/local/bin/adapters/{adapter}/`
+  - Fixed `RUNTIME_MANIFESTS_DIR` and `RUNTIME_HW_MANIFESTS_DIR` constants
+- **NewStone.ps1: Package-based deployment** - USB creator now extracts from Linux package directly
+  - Single source of truth: binaries, adapters, manifests, scripts all from `dist/packages/*.tar.gz`
+  - Matches deployment layout used by `garden-upgrade.sh` and `moss-update-helper.sh`
+  - Includes `dependencies.json` for post-install adapter dependency resolution
+- **Test: storage.object_roundtrip** - new probe test verifying PUT/GET/DELETE object lifecycle in seed banks
+- **Adapter SDK: System Dependency Management** - adapters can auto-install missing dependencies
+  - New `garden_adapter_sdk::dependencies` module with `ensure_dependencies()` helper
+  - `SystemDependency::apt_package(pkg, binary)` for declaring apt package requirements
+  - Cricket now auto-installs `alsa-utils` (aplay/amixer) on first run if missing
+- **Adapter Endpoints: ApiResponse Wrapper** - consistent response format across all adapter APIs
+  - All adapter endpoints now return `ApiResponse<T>` with `data` field
+  - Adapter detail endpoint includes `running`, `port`, `pid` fields alongside manifest
+- **Adapter Auto-Start with State Persistence** - adapters now start automatically on boot
+  - Moss auto-starts all registered adapters unless explicitly disabled
+  - New `adapter-state.json` ledger persists enabled/disabled state across restarts
+  - `POST /adapters/:id/down` now disables adapter (won't auto-start until `/up`)
+  - `POST /adapters/:id/up` re-enables adapter for auto-start
+  - New `scan_and_autostart()` replaces simple `scan()` at startup
+- **Storage Cache as Unified View** - storage_cache now serves as boundary between local and remote storage
+  - Local seed banks are self-registered into storage_cache at startup
+  - Remote banks populate via STORAGE_BEACON announcements
+  - `/api/v1/stone/storage` now returns `garden_banks` field with all known banks across garden
+  - Storage API can easily route requests: local bank → local functions, remote bank → proxy to owning stone
+  - Added `update_local_storage_cache()` and `update_and_broadcast()` helpers to beacon module
+- **API Surface Reorganization (Greenfield)** - clean semantic separation of stone-local vs garden-wide endpoints
+  - All stone-local operations now under `/api/v1/stone/*`:
+    - `/api/v1/stone/offerings/*` - local catalog and offering management
+    - `/api/v1/stone/services/*` - local service management
+    - `/api/v1/stone/capabilities` - hardware capabilities (moved from root `/capabilities`)
+    - `/api/v1/stone/metrics` - Prometheus metrics (moved from root `/metrics`)
+  - Garden-wide operations under `/api/v1/garden/*`:
+    - `/api/v1/garden/services?q=` - service discovery across all stones (used by `rake find`)
+    - `/api/v1/garden/topology` - garden topology overview
+    - `/api/v1/garden/nourishment` - orchestrated updates
+  - `/health` remains at root (industry standard)
+  - Updated Rake to use new endpoints throughout
+  - Updated garden-probe tests for new API structure
+  - Updated ARCHITECTURE-REFERENCE.md with complete endpoint documentation
 - **Storage Beacon Protocol (STORAGE-0003)** - event-driven storage announcements for cross-stone routing
   - New `STORAGE_BEACON` announcement type (~150-400 bytes, 10x smaller than chirps)
   - Broadcast on: seed bank mount/unmount, visibility change, new stone online
@@ -92,7 +143,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Removed computed port logic from command_manifest, Cricket now requires port from Moss
   - Tested end-to-end: Cricket assigned 7187, plays audio via `hey tell cricket play stone-online`
 - **Adapter registry & service discovery** - adapters auto-discovered via `--dump-commands` protocol
-  - Added `adapters_dir()` path function: `{data_dir}/adapters/`
+  - Added `adapters_dir()` path function: `/usr/local/bin/adapters/` (Linux), `.zen-garden/adapters/` (Windows)
   - Added `CommandManifest::check_dump_commands()` helper for adapter main.rs
   - Created `infra/adapters.rs`: scans adapters folder, spawns `--dump-commands`, caches manifests
   - Updated Moss API: GET /stone/adapters, GET /stone/adapters/:id, POST :id/command, POST refresh

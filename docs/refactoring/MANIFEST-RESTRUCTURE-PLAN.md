@@ -252,7 +252,7 @@ if (Test-Path $swManifestsSource) {
         Copy-Item (Join-Path $_.FullName "*.compatibility.yaml") $categoryDest -Force -ErrorAction SilentlyContinue
         Copy-Item (Join-Path $_.FullName "*.frontmatter.json") $categoryDest -Force -ErrorAction SilentlyContinue
     }
-    Write-Step "manifests/sw/* → stone-root/etc/zen-garden/templates/" "OK"
+    Write-Step "manifests/sw/* → stone-root/var/lib/zen-garden/manifests/" "OK"
 }
 ```
 
@@ -307,17 +307,17 @@ fi
 **Change to:**
 
 ```bash
-# Deploy software manifests to templates directory
+# Deploy software manifests
 if [[ -d "$pkg_dir/manifests/sw" ]]; then
-    mkdir -p /etc/zen-garden/templates
-    cp -r "$pkg_dir/manifests/sw/"* /etc/zen-garden/templates/
-    log "Updated software templates"
+    mkdir -p /var/lib/zen-garden/manifests
+    cp -r "$pkg_dir/manifests/sw/"* /var/lib/zen-garden/manifests/
+    log "Updated software manifests"
 fi
 
 # Deploy hardware manifests (future use)
 if [[ -d "$pkg_dir/manifests/hw" ]]; then
-    mkdir -p /var/lib/zen-garden/hw-manifests
-    cp -r "$pkg_dir/manifests/hw/"* /var/lib/zen-garden/hw-manifests/
+    mkdir -p /var/lib/zen-garden/manifests/hw
+    cp -r "$pkg_dir/manifests/hw/"* /var/lib/zen-garden/manifests/hw/
     log "Updated hardware manifests"
 fi
 ```
@@ -373,8 +373,8 @@ With `ManifestRegistry.hw` in place, future work includes:
 
 | Purpose | Linux Path | Windows Path |
 |---------|------------|--------------|
-| SW Templates | `/etc/zen-garden/templates/` | `C:\ProgramData\ZenGarden\templates\` |
-| HW Manifests | `/var/lib/zen-garden/hw-manifests/` | `C:\ProgramData\ZenGarden\hw-manifests\` |
+| SW Manifests | `/var/lib/zen-garden/manifests/` | `.zen-garden\manifests\` |
+| HW Manifests | `/var/lib/zen-garden/manifests/hw/` | `.zen-garden\manifests\hw\` |
 
 ---
 

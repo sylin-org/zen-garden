@@ -372,8 +372,8 @@ The goal is to establish a complete picture before designing comprehensive dual-
 - `observe` is **garden-wide** (but currently only shows local stone - multi-stone discovery is Phase 3)
 
 **Ambiguous Cases**:
-1. **Template operations**: Are templates per-stone or garden-wide?
-   - Current: Per-stone (stored in `/opt/zen-garden/templates/`)
+1. **Manifest operations**: Are manifests per-stone or garden-wide?
+   - Current: Per-stone (stored in `/var/lib/zen-garden/manifests/`)
    - Future: Could be garden-wide catalog?
 
 2. **Offering catalog**: Per-stone or garden-wide?

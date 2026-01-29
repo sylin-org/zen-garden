@@ -546,11 +546,11 @@ TXT: offering=mongodb-agnostic
 
 ---
 
-## Service Template Handler
+## Service Manifest Handler
 
-**Template Location:** `/etc/zen-garden/templates/`
+**Manifest Location:** `/var/lib/zen-garden/manifests/`
 
-### Template Format
+### Manifest Format
 
 Templates are YAML files defining:
 - Service metadata (name, offering, description, categories)

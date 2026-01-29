@@ -123,7 +123,7 @@ Secrets:          vault
 
 These are services we've tested, configured correctly, and documented. They deploy with sane defaults. They announce themselves for discovery. They work.
 
-You can also create custom Offerings. The template format is documented; if you have a service that isn't in the catalog, you can write a template for it. Custom templates live in `/etc/zen-garden/templates/custom/` and appear in the catalog alongside the built-in ones.
+You can also create custom Offerings. The manifest format is documented; if you have a service that isn't in the catalog, you can write a manifest for it. Custom manifests live in `/var/lib/zen-garden/manifests/custom/` and appear in the catalog alongside the built-in ones.
 
 ```bash
 $ garden-rake offer

@@ -605,8 +605,9 @@ curl -X POST http://localhost:7187/command \
 
 ```bash
 # Copy to adapters directory
-sudo cp my-adapter /var/lib/zen-garden/adapters/
-sudo chmod +x /var/lib/zen-garden/adapters/my-adapter
+sudo mkdir -p /usr/local/bin/adapters/my-adapter
+sudo cp my-adapter /usr/local/bin/adapters/my-adapter/
+sudo chmod +x /usr/local/bin/adapters/my-adapter/my-adapter
 
 # Restart Moss (or trigger refresh)
 sudo systemctl restart garden-moss

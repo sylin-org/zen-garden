@@ -178,11 +178,11 @@ RestartSec=5s
    - `staging_dir()` - Returns `.zen-garden/staging` (✅ fixed today)
 
 5. **[`src/moss/src/infra/manifests/sw.rs`](../../src/moss/src/infra/manifests/sw.rs)**:
-   - `RUNTIME_TEMPLATES_DIR` - `.zen-garden/templates` (✅ fixed today)
+   - `runtime_manifests_dir()` - `.zen-garden/manifests` (✅ fixed today)
    - Volumes base path - `.zen-garden/volumes` (✅ fixed today)
 
 6. **[`src/moss/src/infra/manifests/hw.rs`](../../src/moss/src/infra/manifests/hw.rs)**:
-   - `RUNTIME_HW_MANIFESTS_DIR` - `.zen-garden/hw-manifests` (✅ fixed today)
+   - `RUNTIME_HW_MANIFESTS_DIR` - `.zen-garden/manifests/hw` (✅ fixed today)
 
 ---
 
@@ -445,7 +445,7 @@ pub const RUNTIME_TEMPLATES_DIR: &str = "C:\\ProgramData\\ZenGarden\\templates";
 let base = "C:\\ProgramData\\ZenGarden\\volumes";
 
 // src/moss/src/infra/manifests/hw.rs
-pub const RUNTIME_HW_MANIFESTS_DIR: &str = "C:\\ProgramData\\ZenGarden\\hw-manifests";
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = "C:\\ProgramData\\ZenGarden\\manifests\\hw";
 ```
 
 **After** (relative to service working directory):
@@ -460,14 +460,13 @@ pub fn staging_dir() -> String {
 // src/moss/src/api/v1/stone.rs
 let staging_dir = garden_common::constants::paths::staging_dir();
 
-// src/moss/src/infra/manifests/sw.rs
-#[cfg(target_os = "windows")]
-pub const RUNTIME_TEMPLATES_DIR: &str = ".zen-garden/templates";
+// src/common/src/manifests/sw.rs
+// runtime_manifests_dir() returns ".zen-garden/manifests" on Windows
 let base = ".zen-garden/volumes";
 
 // src/moss/src/infra/manifests/hw.rs
 #[cfg(target_os = "windows")]
-pub const RUNTIME_HW_MANIFESTS_DIR: &str = ".zen-garden/hw-manifests";
+pub const RUNTIME_HW_MANIFESTS_DIR: &str = ".zen-garden/manifests/hw";
 ```
 
 **Impact**: All Windows runtime state now resides in `.zen-garden/` alongside service binaries, consistent with project architecture.

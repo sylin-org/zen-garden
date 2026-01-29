@@ -102,7 +102,7 @@ garden-rake offer vector --at anywhere --prefer ssd,high-memory
 ## Offering Registry Structure
 
 ```
-/etc/zen-garden/templates/
+/var/lib/zen-garden/manifests/
 ├── mongodb.yml
 ├── postgresql.yml
 ├── redis.yml
@@ -117,7 +117,7 @@ garden-rake offer vector --at anywhere --prefer ssd,high-memory
 
 **Registry loading:**
 
-1. Scan `/etc/zen-garden/templates/` on Moss startup
+1. Scan `/var/lib/zen-garden/manifests/` on Moss startup
 2. Validate each template (schema, syntax, injection checks)
 3. Load compatibility rules from `.compatibility.yaml` (if present)
 4. Evaluate compatibility against Stone capabilities
@@ -221,12 +221,12 @@ zen-garden:vector               → Weaviate/Qdrant sidecar
 
 ---
 
-## Template Format
+## Manifest Format
 
 ### Example: MongoDB Offering
 
 ```yaml
-# /etc/zen-garden/templates/mongodb.yaml
+# /var/lib/zen-garden/manifests/mongodb.yaml
 ---
 name: mongodb
 offering: mongodb

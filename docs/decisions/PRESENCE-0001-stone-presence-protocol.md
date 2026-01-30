@@ -8,9 +8,9 @@
 
 ## Executive Summary
 
-The **Stone Presence Protocol** defines a simple, agnostic SSE-based mechanism for Moss to broadcast domain events to local presence adapters. Adapters translate events into sensory feedback—light, sound, text—without Moss knowing or caring about the consumer type.
+The **Stone Presence Protocol** defines a simple, agnostic SSE-based mechanism for Moss to broadcast domain events to local presence Companions. Companions translate events into sensory feedback—light, sound, text—without Moss knowing or caring about the consumer type.
 
-**Core principle:** Moss emits *what happened*. Adapters decide *how to express it*.
+**Core principle:** Moss emits *what happened*. Companions decide *how to express it*.
 
 ---
 
@@ -34,12 +34,12 @@ Both connect via SSE to Moss and translate events into their medium. This docume
 
 #### Assessment
 
-The proposal correctly separates **signifier** (how it's shown) from **signified** (what it means). Moss emits semantic events (`stone.health.changed`, `service.started`). Adapters perform semiotic translation—green glow means "healthy," rapid chirping means "active."
+The proposal correctly separates **signifier** (how it's shown) from **signified** (what it means). Moss emits semantic events (`stone.health.changed`, `service.started`). Companions perform semiotic translation—green glow means "healthy," rapid chirping means "active."
 
 **Concern:** Event naming must be *domain-anchored*, not *presentation-anchored*. 
 
 ❌ `stone.color.green` — This leaks visual semantics into the protocol  
-✅ `stone.health.thriving` — This is domain truth; adapters interpret
+✅ `stone.health.thriving` — This is domain truth; Companions interpret
 
 **Recommendation:** Define an event vocabulary rooted in garden metaphors (thriving, withering, wilting, resting) rather than technical metrics or visual properties.
 
@@ -58,11 +58,11 @@ The goal of *ambient awareness* requires low cognitive load. Users should recogn
 - Cricket: Spatial sound creates locational memory ("that high chirp is the database")
 - Both: Identity-derived personality (stone name → unique voice/pattern)
 
-**Concern:** Event bursts can overwhelm. If 5 services restart simultaneously, 5 events fire. Adapters must coalesce—but Moss shouldn't.
+**Concern:** Event bursts can overwhelm. If 5 services restart simultaneously, 5 events fire. Companions must coalesce—but Moss shouldn't.
 
 **Recommendation:** 
 - Moss emits every event (completeness)
-- Adapters implement debouncing/coalescence (their concern)
+- Companions implement debouncing/coalescence (their concern)
 - Include `correlation_id` for related event grouping
 
 ---
@@ -84,7 +84,7 @@ This proposal aligns with Weiser's calm technology principles:
 
 **Concern:** The line between *noticeable* and *alarming* is thin. A wilting state (critical) must be detectable without triggering fight-or-flight.
 
-**Recommendation:** Protocol should include `severity` alongside `state`, allowing adapters to calibrate their urgency expression. Also: define explicit "nothing requires attention" heartbeats.
+**Recommendation:** Protocol should include `severity` alongside `state`, allowing Companions to calibrate their urgency expression. Also: define explicit "nothing requires attention" heartbeats.
 
 ---
 
@@ -95,20 +95,20 @@ This proposal aligns with Weiser's calm technology principles:
 #### Assessment
 
 SSE is a reasonable choice for this use case:
-- One-way push (Moss → adapters)
+- One-way push (Moss → Companions)
 - Built-in reconnection
 - Text-based, debuggable
 - Works through proxies
 
 **Concerns:**
 
-1. **Reconnection state:** When adapter reconnects after network hiccup, it missed events. Protocol must include:
+1. **Reconnection state:** When Companion reconnects after network hiccup, it missed events. Protocol must include:
    - `snapshot` event on connect (current state)
    - Periodic `heartbeat` with summary state
    
-2. **Event ordering:** Events may arrive out of order. Include `sequence_id` or let adapters be idempotent.
+2. **Event ordering:** Events may arrive out of order. Include `sequence_id` or let Companions be idempotent.
 
-3. **Backpressure:** Cheap ESP8266 can't handle 100 events/second. But this is adapter concern, not protocol concern. Moss emits; adapter filters.
+3. **Backpressure:** Cheap ESP8266 can't handle 100 events/second. But this is Companion concern, not protocol concern. Moss emits; Companion filters.
 
 **Recommendation:** Every SSE connection should start with a `presence.snapshot` event containing complete current state.
 
@@ -123,11 +123,11 @@ SSE is a reasonable choice for this use case:
 The proposal enables *sensory coherence*—the same underlying state can be expressed through sight, sound, and touch simultaneously without conflict.
 
 **Strengths:**
-- Same events feed all adapters
-- Each adapter owns its expression vocabulary
+- Same events feed all Companions
+- Each Companion owns its expression vocabulary
 - Security state (Pond) has consistent tells across media (water sounds, water visuals)
 
-**Concern:** How do multiple adapters coordinate? If Firefly and Cricket both respond to `service.started`, the user experiences both flash and chime. Is this redundant or reinforcing?
+**Concern:** How do multiple Companions coordinate? If Firefly and Cricket both respond to `service.started`, the user experiences both flash and chime. Is this redundant or reinforcing?
 
 **Recommendation:** This is not a protocol concern—it's a deployment choice. Document the principle: *sensory stacking is intentional*. Multiple presences reinforce without conflicting.
 
@@ -144,13 +144,13 @@ The proposal correctly applies DDD principles:
 | Principle | Application |
 |-----------|-------------|
 | **Ubiquitous Language** | Events use garden vocabulary (thriving, tending, withering) |
-| **Bounded Contexts** | Moss (domain) knows nothing about adapters (presentation) |
+| **Bounded Contexts** | Moss (domain) knows nothing about Companions (presentation) |
 | **Domain Events** | Protocol emits facts about what happened, not commands |
-| **Anti-corruption Layer** | Adapters translate domain events into their native models |
+| **Anti-corruption Layer** | Companions translate domain events into their native models |
 
-**The key insight:** Moss doesn't emit "turn on green LED" or "play chirp sound." It emits "this stone is thriving." The translation is 100% adapter responsibility.
+**The key insight:** Moss doesn't emit "turn on green LED" or "play chirp sound." It emits "this stone is thriving." The translation is 100% Companion responsibility.
 
-**Recommendation:** Document that adapters MUST NOT influence Moss behavior. This is a one-way broadcast. Adapters observe; they don't participate.
+**Recommendation:** Document that Companions MUST NOT influence Moss behavior. This is a one-way broadcast. Companions observe; they don't participate.
 
 ---
 
@@ -160,14 +160,14 @@ After reviewing individual assessments, the team converged on these principles:
 
 ### ✅ Agreed: Core Protocol Principles
 
-1. **One-way broadcast**: Moss → Adapters only. Events flow one direction.
+1. **One-way broadcast**: Moss → Companions only. Events flow one direction.
 2. **Domain semantics**: Events describe *what happened* in domain terms, never presentation terms.
 3. **Snapshot on connect**: New connections receive complete current state before incremental events.
 4. **Heartbeat for liveness**: Regular heartbeats confirm connection and carry summary state.
-5. **Adapter autonomy**: All presentation decisions (color, sound, display) are adapter-local.
-6. **Graceful degradation**: If Moss restarts, adapter reconnects.
-7. **Optional identification**: Adapters may identify themselves for observability, but it's not required.
-8. **Connection-based presence**: SSE connection state = adapter presence. No separate registration.
+5. **Companion autonomy**: All presentation decisions (color, sound, display) are Companion-local.
+6. **Graceful degradation**: If Moss restarts, Companion reconnects.
+7. **Optional identification**: Companions may identify themselves for observability, but it's not required.
+8. **Connection-based presence**: SSE connection state = Companion presence. No separate registration.
 
 ### ✅ Agreed: Vocabulary Must Be Garden-Native
 
@@ -205,49 +205,49 @@ GET /api/v1/presence/stream
 Accept: text/event-stream
 ```
 
-### Adapter Identification (Optional)
+### Companion Identification (Optional)
 
-Adapters may identify themselves via query parameters:
+Companions may identify themselves via query parameters:
 
 ```
-GET /api/v1/presence/stream?adapter=cricket&version=0.1.0
-GET /api/v1/presence/stream?adapter=firefly&version=0.1.0
-GET /api/v1/presence/stream?adapter=oled-esp8266&version=1.0.0
+GET /api/v1/presence/stream?Companion=cricket&version=0.1.0
+GET /api/v1/presence/stream?Companion=firefly&version=0.1.0
+GET /api/v1/presence/stream?Companion=oled-esp8266&version=1.0.0
 GET /api/v1/presence/stream              # Anonymous — also valid
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `adapter` | No | Adapter type name (e.g., "cricket", "firefly", "lantern") |
-| `version` | No | Adapter version (e.g., "0.1.0") |
+| `Companion` | No | Companion type name (e.g., "cricket", "firefly", "lantern") |
+| `version` | No | Companion version (e.g., "0.1.0") |
 
 Identification enables:
 - Dashboard display of attached presence devices
-- Debugging ("which adapters are connected?")
-- Future: adapter-specific event filtering (opt-in)
+- Debugging ("which Companions are connected?")
+- Future: Companion-specific event filtering (opt-in)
 
 Moss does NOT:
 - Require identification
-- Change behavior based on adapter type
-- Validate adapter names or versions
+- Change behavior based on Companion type
+- Validate Companion names or versions
 
 ### Connection Lifecycle
 
 ```
-1. Adapter connects to SSE endpoint (with optional ?adapter=&version=)
-2. Moss adds adapter to in-memory subscriber list
+1. Companion connects to SSE endpoint (with optional ?Companion=&version=)
+2. Moss adds Companion to in-memory subscriber list
 3. Moss sends `presence.snapshot` (complete current state)
 4. Moss sends incremental events as they occur
 5. Moss sends `presence.heartbeat` every 30 seconds
-6. On disconnect, Moss removes adapter from subscriber list
-7. Adapter reconnects and repeats from step 1
+6. On disconnect, Moss removes Companion from subscriber list
+7. Companion reconnects and repeats from step 1
 ```
 
 ### Connection-Based Presence Detection
 
 The SSE connection **is** the presence signal:
 
-| Adapter State | Detection |
+| Companion State | Detection |
 |---------------|-----------|
 | Connected | SSE connection open |
 | Disconnected | SSE connection closed (TCP FIN/RST) |
@@ -255,8 +255,8 @@ The SSE connection **is** the presence signal:
 | Reconnected | New SSE connection (may re-identify) |
 
 No additional protocol needed:
-- ❌ No "adapter heartbeat" from adapter → Moss
-- ❌ No "are you alive?" pings from Moss → adapter
+- ❌ No "Companion heartbeat" from Companion → Moss
+- ❌ No "are you alive?" pings from Moss → Companion
 - ❌ No registration/deregistration endpoints
 - ✅ Just track SSE connection state
 
@@ -274,7 +274,7 @@ All events are JSON. All include `timestamp` (ISO 8601).
 
 #### Snapshot (Connection Start)
 
-Sent once when adapter connects. Contains complete current state.
+Sent once when Companion connects. Contains complete current state.
 
 ```
 event: presence.snapshot
@@ -449,9 +449,9 @@ data: {
 
 ---
 
-## Adapter Architecture
+## Companion Architecture
 
-Adapters are independent services that:
+Companions are independent services that:
 1. Connect to Moss SSE endpoint
 2. Maintain internal state model
 3. Translate events to their medium
@@ -471,7 +471,7 @@ Adapters are independent services that:
 │         ├───────────────────┬───────────────────┐               │
 │         ▼                   ▼                   ▼               │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐       │
-│  │   Firefly   │     │   Cricket   │     │ OLED Adapter│       │
+│  │   Firefly   │     │   Cricket   │     │ OLED Companion│       │
 │  │  (LED 5x5)  │     │   (Audio)   │     │  (Display)  │       │
 │  └──────┬──────┘     └──────┬──────┘     └──────┬──────┘       │
 │         ▼                   ▼                   ▼               │
@@ -480,10 +480,10 @@ Adapters are independent services that:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Each adapter is:
-- **Optional**: Moss works without any adapters
-- **Independent**: Adapters don't coordinate with each other
-- **Autonomous**: All rendering logic is adapter-local
+Each Companion is:
+- **Optional**: Moss works without any Companions
+- **Independent**: Companions don't coordinate with each other
+- **Autonomous**: All rendering logic is Companion-local
 - **Resilient**: Reconnects automatically, handles missed events via snapshot
 
 ---
@@ -501,7 +501,7 @@ For garden-wide dashboards, Lantern aggregates presence streams from all stones.
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  Presence Aggregator                                     │   │
 │  │  - Connects to each stone's /api/v1/presence/stream      │   │
-│  │  - Identifies as: ?adapter=lantern&version=0.1.0         │   │
+│  │  - Identifies as: ?Companion=lantern&version=0.1.0         │   │
 │  │  - Maintains composite garden state                      │   │
 │  │  - Re-broadcasts as garden-wide stream                   │   │
 │  └─────────────────────────────────────────────────────────┘   │
@@ -573,7 +573,7 @@ data: {
 
 Lantern connects to each stone as:
 ```
-GET /api/v1/presence/stream?adapter=lantern&version=0.1.0
+GET /api/v1/presence/stream?Companion=lantern&version=0.1.0
 ```
 
 Stones see Lantern in their `/api/v1/presence/subscribers` response.
@@ -604,7 +604,7 @@ When Cricket's ESP8266 loses WiFi, the icon disappears in real-time.
 
 ---
 
-## Adapter Implementation Notes
+## Companion Implementation Notes
 
 ### For Firefly (5×5 LED Matrix)
 
@@ -713,7 +713,7 @@ Future extensions may add:
 2. **Snapshot generation**: Query current state on connect
 3. **Event emission**: Emit presence events from domain event handlers
 4. **Heartbeat task**: Background task sends heartbeat every 30s
-5. **Subscriber tracking**: Track connected adapters in memory (for observability)
+5. **Subscriber tracking**: Track connected Companions in memory (for observability)
 6. **Subscriber endpoint**: `GET /api/v1/presence/subscribers`
 
 ### Subscriber Endpoint
@@ -722,23 +722,23 @@ Future extensions may add:
 GET /api/v1/presence/subscribers
 ```
 
-Returns currently connected presence adapters:
+Returns currently connected presence Companions:
 
 ```json
 {
   "subscribers": [
     {
-      "adapter": "cricket",
+      "Companion": "cricket",
       "version": "0.1.0",
       "connected_since": "2026-01-26T14:30:00Z"
     },
     {
-      "adapter": "firefly",
+      "Companion": "firefly",
       "version": "0.1.0",
       "connected_since": "2026-01-26T14:30:05Z"
     },
     {
-      "adapter": null,
+      "Companion": null,
       "version": null,
       "connected_since": "2026-01-26T14:31:00Z"
     }
@@ -749,19 +749,19 @@ Returns currently connected presence adapters:
 
 This endpoint:
 - Returns **live** connection state (not cached)
-- Includes anonymous adapters (adapter=null)
+- Includes anonymous Companions (Companion=null)
 - Updates immediately on connect/disconnect
 - Is purely observational (no side effects)
 
 ### What Moss Must NOT Do
 
-- Modify behavior based on adapter presence
+- Modify behavior based on Companion presence
 - Include presentation hints in events
-- Require adapter identification
-- Ping or health-check adapters
+- Require Companion identification
+- Ping or health-check Companions
 - Persist subscriber history
 
-### Adapter Responsibilities
+### Companion Responsibilities
 
 - Parse SSE events
 - Maintain internal state model
@@ -772,9 +772,9 @@ This endpoint:
 
 ---
 
-## Example: OLED Adapter for ESP8266
+## Example: OLED Companion for ESP8266
 
-A minimal adapter for the NodeMCU ESP8266 with 0.96" OLED:
+A minimal Companion for the NodeMCU ESP8266 with 0.96" OLED:
 
 ```
 ┌──────────────────────────────────┐
@@ -798,17 +798,17 @@ When `stone.tended` arrives:
 └──────────────────────────────────┘
 ```
 
-The adapter:
+The Companion:
 1. Connects to `http://<stone-ip>:7185/api/v1/presence/stream`
 2. Parses `presence.snapshot` for initial state
 3. Updates display on each event
 4. Reconnects on disconnect
 
-All display layout, icons, and transitions are adapter decisions.
+All display layout, icons, and transitions are Companion decisions.
 
 ---
 
-## Example: RGB Matrix Adapter
+## Example: RGB Matrix Companion
 
 For the RP2040 5×5 RGB LED Matrix, a simple mapping:
 
@@ -825,7 +825,7 @@ For the RP2040 5×5 RGB LED Matrix, a simple mapping:
 | `stone.tended` | Diagonal shimmer 400ms |
 | `service.sprouted` | Ripple from center 800ms |
 
-Brightness field (columns = time, brightness = load) is adapter-local interpretation of `stone.load.updated` history.
+Brightness field (columns = time, brightness = load) is Companion-local interpretation of `stone.load.updated` history.
 
 ---
 
@@ -833,8 +833,8 @@ Brightness field (columns = time, brightness = load) is adapter-local interpreta
 
 | Spec | Relationship |
 |------|--------------|
-| **Firefly** | Firefly is a presence adapter implementing this protocol |
-| **Cricket** | Cricket is a presence adapter implementing this protocol |
+| **Firefly** | Firefly is a presence Companion implementing this protocol |
+| **Cricket** | Cricket is a presence Companion implementing this protocol |
 | **API v1** | Presence endpoint joins existing v1 API surface |
 | **Domain Events** | Presence events derive from domain events |
 
@@ -846,7 +846,7 @@ This document formalizes what Firefly and Cricket specs already assume.
 
 1. **Local-only by default**: Presence endpoint should only accept connections from localhost or LAN
 2. **No authentication required**: Presence data is not sensitive (health, load)
-3. **No adapter authentication**: Adapters are anonymous consumers
+3. **No Companion authentication**: Companions are anonymous consumers
 4. **Pond status is visible**: This is intentional—security state should be observable
 
 ---
@@ -857,30 +857,30 @@ The protocol succeeds if:
 
 1. **Firefly works**: LED matrix displays correct health, load, and responds to events
 2. **Cricket works**: Audio soundscape reflects garden state
-3. **New adapter is trivial**: OLED display adapter can be written in a weekend
-4. **Moss is unaware**: Zero code in Moss knows about adapters
-5. **Reconnection works**: Adapter can disconnect and reconnect without state drift
+3. **New Companion is trivial**: OLED display adapter can be written in a weekend
+4. **Moss is unaware**: Zero code in Moss knows about Companions
+5. **Reconnection works**: Companion can disconnect and reconnect without state drift
 
 ---
 
 ## Open Questions
 
 1. **Activity granularity**: Should `service.activity` fire per-request? Or aggregated (e.g., "10 requests in last second")?
-   - *Proposal*: Per-request, let adapter debounce
+   - *Proposal*: Per-request, let Companion debounce
 
 2. **Load update frequency**: How often to emit `stone.load.updated`?
    - *Proposal*: Every 5 seconds, or on significant change (>5% delta)
 
 ### Resolved Questions
 
-3. **Multi-stone adapters**: Should an adapter (like a web dashboard) connect to multiple stones?
+3. **Multi-stone Companions**: Should an Companion (like a web dashboard) connect to multiple stones?
    - *Resolved*: Yes, via Lantern's `GET /api/v1/garden/presence/stream`
 
-4. **Should adapters identify themselves?**
-   - *Resolved*: Optional, via query params `?adapter=name&version=x.y.z`
+4. **Should Companions identify themselves?**
+   - *Resolved*: Optional, via query params `?Companion=name&version=x.y.z`
 
-5. **How to detect adapter disconnect?**
-   - *Resolved*: SSE connection state = adapter presence. No additional protocol.
+5. **How to detect Companion disconnect?**
+   - *Resolved*: SSE connection state = Companion presence. No additional protocol.
 
 ---
 
@@ -889,12 +889,12 @@ The protocol succeeds if:
 **Accepted.** The Stone Presence Protocol will be implemented as specified.
 
 Next steps:
-1. Implement `GET /api/v1/presence/stream` in Moss (with adapter identification)
+1. Implement `GET /api/v1/presence/stream` in Moss (with Companion identification)
 2. Implement `GET /api/v1/presence/subscribers` in Moss
 3. Implement `GET /api/v1/garden/presence/stream` in Lantern
 4. Update Firefly spec to reference this protocol
 5. Update Cricket spec to reference this protocol
-6. Create reference adapter implementations
+6. Create reference Companion implementations
 
 ---
 

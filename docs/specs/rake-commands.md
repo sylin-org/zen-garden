@@ -222,37 +222,37 @@ garden-rake status [--at stone-01] [--all]
 
 Show service status for local Stone, specific Stone, or all Stones.
 
-#### Hey (Adapter Control)
+#### Hey (Companion Control)
 
-**List adapters:**
+**List Companions:**
 ```bash
 garden-rake hey list
 ```
 
-Shows all registered adapters with running status.
+Shows all registered Companions with running status.
 
-**Adapter help:**
+**Companion help:**
 ```bash
-garden-rake hey <adapter>
+garden-rake hey <Companion>
 ```
 
-Displays adapter manifest with available commands, parameters, and examples.
+Displays Companion manifest with available commands, parameters, and examples.
 
 **Send command:**
 ```bash
-garden-rake hey tell <adapter> <command> [args...]
+garden-rake hey tell <Companion> <command> [args...]
 ```
 
-Forwards command to adapter via Moss. Examples:
+Forwards command to Companion via Moss. Examples:
 - `garden-rake hey tell cricket play stone-online`
 - `garden-rake hey tell cricket volume 50`
 - `garden-rake hey tell cricket select zen-tech`
 
 **Flow:**
-1. Rake sends `POST /api/v1/stone/adapters/{adapter}/command` with `{"args": [command, ...args]}`
-2. Moss looks up adapter port from ledger (7187-7199)
+1. Rake sends `POST /api/v1/stone/companions/{Companion}/command` with `{"args": [command, ...args]}`
+2. Moss looks up Companion port from ledger (7187-7199)
 3. Moss forwards to `http://127.0.0.1:{port}/command` with 5s timeout
-4. Adapter executes, returns `{"success": bool, "output": string}`
+4. Companion executes, returns `{"success": bool, "output": string}`
 5. Rake displays output or error message
 
 **Reference:** [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md)

@@ -7,7 +7,7 @@ Add a **stone-centric lifecycle feature set** that lets humans operate on **mach
 > `garden-rake retire <old-stone> safely`
 > **Move everything off the machine, verify, then wipe and retire it.**
 
-This proposal also defines a small, semantic CLI vocabulary and the underlying "offering lifecycle adapter" contract so each offering can migrate correctly (cache cutover vs DB replication vs storage sync). It includes a simple rule-based election mechanism for:
+This proposal also defines a small, semantic CLI vocabulary and the underlying "offering lifecycle Companion" contract so each offering can migrate correctly (cache cutover vs DB replication vs storage sync). It includes a simple rule-based election mechanism for:
 
 > `garden-rake scale <offering> to N`
 
@@ -25,7 +25,7 @@ This proposal also defines a small, semantic CLI vocabulary and the underlying "
 
 * Full general-purpose orchestration / binpacking scheduler.
 * "Bitwise cloning" of machines (OS image copying, secrets duplication).
-* Automatically inventing replication topologies for every service (adapters opt-in).
+* Automatically inventing replication topologies for every service (Companions opt-in).
 
 ---
 
@@ -113,7 +113,7 @@ garden-rake lift old-stone --to auto
 garden-rake lift old-stone --to stone-02 --to stone-03
 ```
 
-**Semantics:** enumerate all offerings on `old-stone` and migrate each using its adapter. Typically invoked before unplugging or maintenance.
+**Semantics:** enumerate all offerings on `old-stone` and migrate each using its Companion. Typically invoked before unplugging or maintenance.
 
 ---
 
@@ -264,11 +264,11 @@ Provide escape hatches:
 
 ---
 
-## Offering Lifecycle Adapter (Core Abstraction)
+## Offering Lifecycle Companion (Core Abstraction)
 
-Each offering type provides an adapter that describes and performs safe operations.
+Each offering type provides an Companion that describes and performs safe operations.
 
-### Adapter responsibilities
+### Companion responsibilities
 
 * Declare capability metadata:
 
@@ -330,7 +330,7 @@ Refuse (unless explicitly forced):
 
 * No eligible destination stones
 * Stateful offering without a safe migration path
-* Storage offering not synced / no adapter
+* Storage offering not synced / no Companion
 * Attempt to "replace" from a non-stone host without specifying `with`
 
 Provide explicit escape hatches:
@@ -355,11 +355,11 @@ Provide explicit escape hatches:
 * `retire safely` macro
 * wipe semantics (identity + volumes; crypto-erase if supported)
 
-### Phase 3: Offering adapters for stateful services
+### Phase 3: Offering Companions for stateful services
 
-* Mongo adapter: replicate → sync → promote/stepdown → remove old
-* Redis adapter: cutover + optional warming
-* Storage adapter: sync/replicate or refuse without configured mechanism
+* Mongo Companion: replicate → sync → promote/stepdown → remove old
+* Redis Companion: cutover + optional warming
+* Storage Companion: sync/replicate or refuse without configured mechanism
 
 ### Phase 4: Rule-based scaling
 
@@ -409,7 +409,7 @@ Provide explicit escape hatches:
 
 **Scope is appropriately constrained:**
 - Not trying to be Kubernetes (good - maintains simplicity ethos)
-- Adapters opt-in to migration capabilities (stateless → stateful progression)
+- Companions opt-in to migration capabilities (stateless → stateful progression)
 - Rule-based election, not AI scheduler (predictable, debuggable)
 
 **Plan-first UX builds trust:**
@@ -433,18 +433,18 @@ Current protocol is discovery-only (mDNS + Lantern + Pond). This adds:
 - **Distributed state on stones** (complex, but resilient)
 - **Hybrid** (Lantern caches, stones persist locally)
 
-**2. Offering adapter contract needs formalization (high priority)**
+**2. Offering Companion contract needs formalization (high priority)**
 
-Proposal mentions adapters but doesn't specify:
+Proposal mentions Companions but doesn't specify:
 - Interface definition (Rust trait? Plugin boundary?)
-- Versioning (what if MongoDB adapter changes?)
-- Registration (how does garden-rake discover adapters?)
+- Versioning (what if MongoDB Companion changes?)
+- Registration (how does garden-rake discover Companions?)
 - Packaging (separate crates? Built-in?)
 
 **Recommendation:** Write ADR early defining:
 ```rust
-trait OfferingLifecycleAdapter {
-    fn capabilities(&self) -> AdapterCapabilities;
+trait OfferingLifecycleCompanion {
+    fn capabilities(&self) -> CompanionCapabilities;
     fn plan_migration(&self, from: Stone, to: Stone) -> MigrationPlan;
     fn execute_step(&self, step: MigrationStep) -> Result<StepOutcome>;
     fn verify(&self, migration: &Migration) -> Result<HealthStatus>;
@@ -474,7 +474,7 @@ If stone-01 hosts 3 MongoDB databases, which moves? All? First? Requires `--all`
 
 ### Architecture Score: 8/10
 
-Strong conceptual foundation. Needs protocol state management definition and adapter contract formalization before Phase 1 implementation.
+Strong conceptual foundation. Needs protocol state management definition and Companion contract formalization before Phase 1 implementation.
 
 ---
 
@@ -691,7 +691,7 @@ Crypto-erase is Phase 3 (after Pond maturity + key management).
 
 **5. Rollback is mentioned but not specified (high priority)**
 
-Adapters should provide "rollback guidance" but proposal doesn't define:
+Companions should provide "rollback guidance" but proposal doesn't define:
 - Is rollback automatic or manual?
 - Is rollback always possible? (MongoDB replication can't be "undone" after promotion)
 - What's the rollback window? (5 minutes? 1 hour?)
@@ -728,11 +728,11 @@ Solid safety foundation. Critical gaps in failure handling, concurrency, and ver
 - Verification engine: 400 LOC
 - Tests: 200 LOC
 
-**Phase 3 (Stateful Adapters): +3,000-5,000 LOC**
-- Adapter trait + plugin system: 800 LOC
-- MongoDB adapter (replica set mechanics): 1,200 LOC
-- Redis adapter (cutover + warming): 600 LOC
-- Storage adapter (sync/refuse): 800 LOC
+**Phase 3 (Stateful Companions): +3,000-5,000 LOC**
+- Companion trait + plugin system: 800 LOC
+- MongoDB Companion (replica set mechanics): 1,200 LOC
+- Redis Companion (cutover + warming): 600 LOC
+- Storage Companion (sync/refuse): 800 LOC
 - Tests: 600-1,400 LOC
 
 **Phase 4 (Scaling): +2,000 LOC**
@@ -741,7 +741,7 @@ Solid safety foundation. Critical gaps in failure handling, concurrency, and ver
 - Gateway integration: 600 LOC
 - Tests: 200 LOC
 
-**Total: 8,500-11,500 LOC** (garden-rake + adapters)
+**Total: 8,500-11,500 LOC** (garden-rake + Companions)
 
 ### Hard Parts
 
@@ -759,7 +759,7 @@ MongoDB migration requires:
 - Network partition during promotion (split-brain risk)
 - App doesn't handle replica set connection strings (requires `replicaSet=` parameter)
 
-**Recommendation:** Phase 3 should start with MongoDB adapter **design document** including:
+**Recommendation:** Phase 3 should start with MongoDB Companion **design document** including:
 - Prerequisites (replica set must be pre-configured vs auto-configure)
 - Failure scenarios + rollback procedures
 - Integration tests (testcontainers with replica set)
@@ -813,7 +813,7 @@ async fn replicate_mongodb(from: Stone, to: Stone) -> impl Stream<Item = Progres
 
 ### Implementation Score: 7.5/10
 
-Feasible but complex. MongoDB adapter is the critical path. Distributed state adds risk. Need 4-6 months engineering time (1-2 devs).
+Feasible but complex. MongoDB Companion is the critical path. Distributed state adds risk. Need 4-6 months engineering time (1-2 devs).
 
 ---
 
@@ -995,15 +995,15 @@ Reasonable extensions to existing protocol. Needs formal specification (ZGP-006/
 **1. Write ADRs (Architecture Decision Records):**
 - `LIFE-0001`: Stone state management (Lantern vs distributed)
 - `LIFE-0002`: Offering instance identity model
-- `LIFE-0003`: Adapter contract specification (Rust trait)
+- `LIFE-0003`: Companion contract specification (Rust trait)
 - `LIFE-0004`: Migration coordination protocol
 
-**2. Prototype offering adapter:**
+**2. Prototype offering Companion:**
 
-Create minimal MongoDB adapter (even if it just logs, doesn't migrate) to validate:
+Create minimal MongoDB Companion (even if it just logs, doesn't migrate) to validate:
 - Trait design (is it expressive enough?)
 - Plugin loading (dynamic libraries? Built-in?)
-- Error propagation (how do adapter errors surface to CLI?)
+- Error propagation (how do Companion errors surface to CLI?)
 
 **3. Refine failure handling:**
 
@@ -1053,7 +1053,7 @@ Deliver:
 
 **Success criteria:** End-of-life a cache stone safely with one command.
 
-**Phase 3: Stateful adapters (hardest)**
+**Phase 3: Stateful Companions (hardest)**
 
 Start with design doc:
 - MongoDB replica set prerequisites
@@ -1061,9 +1061,9 @@ Start with design doc:
 - Integration test strategy (testcontainers)
 
 Then implement:
-- MongoDB adapter (replica set mechanics)
-- Redis adapter (cutover)
-- Storage adapter (sync or refuse)
+- MongoDB Companion (replica set mechanics)
+- Redis Companion (cutover)
+- Storage Companion (sync or refuse)
 
 **Success criteria:** Replace MongoDB stone with zero downtime (replica set promotion).
 
@@ -1077,7 +1077,7 @@ After stateful migration proven, add election + scaling.
 1. Q1 2026: Specifications (ZGP amendments, ADRs)
 2. Q2 2026: Phase 1 (stateless lifecycle)
 3. Q3 2026: Phase 2 (retirement)
-4. Q4 2026: Phase 3 (stateful adapters)
+4. Q4 2026: Phase 3 (stateful Companions)
 5. Q1 2027: Phase 4 (scaling)
 
 **Total: 12 months** (vs proposal's 6-9 months). Stateful migration is the schedule risk.
@@ -1097,7 +1097,7 @@ After stateful migration proven, add election + scaling.
 
 **Concerns (−):**
 - Underspecified failure modes (network partition, concurrent ops)
-- Adapter contract needs formalization (Rust trait, plugin boundary)
+- Companion contract needs formalization (Rust trait, plugin boundary)
 - Offering instance identity ambiguous (multiple instances per stone)
 - Verification vague (timeout? caching? DNS lag?)
 - MongoDB replica set complexity may exceed Phase 3 timeline
@@ -1105,8 +1105,8 @@ After stateful migration proven, add election + scaling.
 ### Recommend: Approve with Conditions
 
 **Conditions:**
-1. Write ADRs for state management, adapter contract, instance identity (before Phase 1)
-2. Prototype MongoDB adapter as design validation (before committing to trait)
+1. Write ADRs for state management, Companion contract, instance identity (before Phase 1)
+2. Prototype MongoDB Companion as design validation (before committing to trait)
 3. Document failure handling decision trees (abort/continue/pause per scenario)
 4. Revise wipe to simple (Phase 1) + crypto-erase (Phase 3)
 5. Extend timeline: 12 months (not 6-9) to account for stateful migration complexity
@@ -1154,6 +1154,6 @@ Before Phase 1 implementation:
 
 1. **GitHub Discussion:** Share proposal, gather use cases (what stones do people actually want to retire?)
 2. **Prototype Demo:** Record video of `lift` with stateless apps, show plan-first UX
-3. **ADR Review:** Publish state management + adapter contract ADRs, request feedback
+3. **ADR Review:** Publish state management + Companion contract ADRs, request feedback
 
 Zen Garden is open protocol. Major operational features should have community input before implementation.

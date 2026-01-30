@@ -1,14 +1,14 @@
-﻿//! System dependency management for adapters
+﻿//! System dependency management for Companions
 //!
-//! Provides infrastructure for adapters to declare and auto-install
+//! Provides infrastructure for Companions to declare and auto-install
 //! system dependencies at startup.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use garden_adapter_sdk::dependencies::{SystemDependency, ensure_dependencies};
+//! use garden_companion_sdk::dependencies::{SystemDependency, ensure_dependencies};
 //!
-//! // Define what the adapter needs
+//! // Define what the Companion needs
 //! let deps = vec![
 //!     SystemDependency::apt_package("alsa-utils", "aplay"),
 //! ];

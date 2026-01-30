@@ -79,6 +79,7 @@ function Transform-Links {
         'docs/decisions/'   = 'zen-garden-decisions-all.md'
         'docs/proposals/'   = 'zen-garden-proposals-all.md#'
         'docs/refactoring/' = 'zen-garden-refactoring-all.md#'
+        'docs/journeys/'    = 'zen-garden-journeys-all.md#'
         'docs/README.md'    = 'zen-garden-distribution-readme.md'
     }
 
@@ -243,6 +244,11 @@ $processedFiles += Merge-FolderFiles -FolderPath "refactoring" -Output "$Namespa
     -Title "Zen Garden Refactoring Plans" `
     -Description "Technical refactoring plans and analysis documents for codebase improvements."
 
+Write-Host "`n12. Consolidating journeys (journeys/)..." -ForegroundColor Cyan
+$processedFiles += Merge-FolderFiles -FolderPath "journeys" -Output "$Namespace-journeys-all.md" `
+    -Title "Zen Garden journeys Plans" `
+    -Description "User journeys documentation."
+
 # ============================================================================
 # ROOT-LEVEL DOCS FILES (not in subfolders)
 # ============================================================================
@@ -379,6 +385,7 @@ Categories:
 - implementation-reports - Archived implementation and delivery reports
 - philosophy-all - Core philosophical essays
 - refactoring-all - Refactoring plans and analysis
+- journeys-all - Journey plans and analysis
 
 ## File Count
 

@@ -489,18 +489,138 @@ pub async fn start_lantern_registration(
     }
 }
 
-/// Start seed bank hot-plug detection task
+/// Start resilient seed bank mount system
 ///
-/// Periodically scans for new seed banks that may have been plugged in after startup.
-/// This provides a resilient, self-healing experience - users can plug in a seed bank
-/// at any time and it will be automatically mounted and announced.
+/// This is a comprehensive, self-healing mount system with two background tasks:
 ///
-/// Also handles retry of previously failed mounts (device may have been busy or not ready).
+/// 1. **Mount Persistence Task** (every 5 seconds):
+///    - Verifies all tracked mounts are still active
+///    - Automatically re-mounts devices that have unexpectedly become unmounted
+///    - Handles race conditions with udisks2 or other system processes
+///    - Continues retrying indefinitely (devices can come back)
 ///
-/// Runs every 10 seconds for responsive hot-plug detection.
-pub fn start_seedbank_hotplug_detection(
-    state: AppState,
-) {
+/// 2. **Hot-plug Detection Task** (every 10 seconds):
+///    - Scans for new zen-seed devices that may have been plugged in
+///    - Auto-mounts unmounted devices
+///    - Updates storage cache and broadcasts beacon
+///
+/// Both tasks share a MountTracker to maintain state about expected mounts.
+#[cfg(target_os = "linux")]
+pub fn start_seedbank_resilient_mount_system(state: AppState) {
+    use crate::infra::storage::{create_mount_tracker, SeedBankRegistry};
+
+    // Create shared mount tracker
+    let tracker = create_mount_tracker();
+    let tracker_persistence = tracker.clone();
+    let tracker_hotplug = tracker.clone();
+
+    let state_persistence = state.clone();
+    let state_hotplug = state;
+
+    // Task 1: Mount persistence verification (every 5 seconds)
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+        interval.tick().await; // Skip first immediate tick
+
+        tracing::info!("Seed bank mount persistence task started (5s interval)");
+
+        loop {
+            interval.tick().await;
+
+            // Verify and recover any mounts that disappeared
+            let recovered = SeedBankRegistry::verify_and_recover_mounts(&tracker_persistence).await;
+
+            if recovered > 0 {
+                tracing::info!(
+                    recovered = recovered,
+                    "Mount persistence: recovered disappeared mounts"
+                );
+
+                // Update storage cache since mounts changed
+                let endpoint = state_persistence.self_entry.read().await.endpoint.clone();
+                if let Err(e) = crate::infra::storage::update_and_broadcast(
+                    &state_persistence.storage_cache,
+                    &state_persistence.stone_id,
+                    &state_persistence.stone_name,
+                    &endpoint,
+                ).await {
+                    tracing::debug!(
+                        error = %e,
+                        "Failed to update storage cache after mount recovery"
+                    );
+                }
+            }
+        }
+    });
+
+    // Task 2: Hot-plug detection (every 10 seconds)
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        interval.tick().await; // Skip first immediate tick
+
+        tracing::info!("Seed bank hot-plug detection task started (10s interval)");
+
+        loop {
+            interval.tick().await;
+
+            // Scan triggers auto-mount for any new zen-seed devices
+            // Use the tracker so new mounts are monitored for persistence
+            match SeedBankRegistry::auto_mount_seed_banks_with_tracker(Some(&tracker_hotplug)).await {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::trace!(
+                        error = %e,
+                        "Hot-plug auto-mount scan failed"
+                    );
+                }
+            }
+
+            // Scan to get registry state (also triggers auto-mount internally, but we need the result)
+            match SeedBankRegistry::scan().await {
+                Ok(registry) => {
+                    let count = registry.list().len();
+                    if count > 0 {
+                        tracing::trace!(
+                            seed_banks = count,
+                            "Hot-plug scan: seed banks detected"
+                        );
+                    }
+
+                    // Update storage cache and broadcast if we have storage
+                    let endpoint = state_hotplug.self_entry.read().await.endpoint.clone();
+                    if let Err(e) = crate::infra::storage::update_and_broadcast(
+                        &state_hotplug.storage_cache,
+                        &state_hotplug.stone_id,
+                        &state_hotplug.stone_name,
+                        &endpoint,
+                    ).await {
+                        tracing::trace!(
+                            error = %e,
+                            "Failed to update storage cache during hot-plug scan"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::trace!(
+                        error = %e,
+                        "Hot-plug scan failed"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Start seed bank hot-plug detection task (non-Linux fallback)
+///
+/// On non-Linux platforms, just runs the basic scan without mount tracking.
+#[cfg(not(target_os = "linux"))]
+pub fn start_seedbank_resilient_mount_system(state: AppState) {
+    start_seedbank_hotplug_detection_basic(state);
+}
+
+/// Basic hot-plug detection without mount tracking (used on non-Linux)
+fn start_seedbank_hotplug_detection_basic(state: AppState) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         interval.tick().await; // Skip first immediate tick
@@ -563,8 +683,8 @@ pub async fn start_all_background_tasks(
     // Start storage cache maintenance (STORAGE-0003: prune stale entries)
     start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
 
-    // Start seed bank hot-plug detection (resilient auto-mount for plugged devices)
-    start_seedbank_hotplug_detection(state.clone());
+    // Start resilient seed bank mount system (STORAGE-0004: mount persistence + hot-plug)
+    start_seedbank_resilient_mount_system(state.clone());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(

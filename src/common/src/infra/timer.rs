@@ -60,6 +60,7 @@ impl TimerConfig {
     }
 
     /// Format interval for systemd (e.g., "24h", "1d")
+    #[cfg(any(target_os = "linux", test))]
     fn systemd_interval(&self) -> String {
         let secs = self.interval.as_secs();
         if secs >= 86400 && secs % 86400 == 0 {
@@ -74,6 +75,7 @@ impl TimerConfig {
     }
 
     /// Format randomized delay for systemd
+    #[cfg(target_os = "linux")]
     fn systemd_random_delay(&self) -> String {
         let secs = self.randomized_delay.as_secs();
         if secs >= 60 && secs % 60 == 0 {

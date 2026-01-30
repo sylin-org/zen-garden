@@ -10,7 +10,7 @@ use anyhow::Result;
 /// Returns Ok(()) if all dependencies are available (either already or after install)
 #[cfg(target_os = "linux")]
 pub fn ensure_audio_dependencies() -> Result<()> {
-    use garden_adapter_sdk::dependencies::{ensure_dependencies, SystemDependency};
+    use garden_companion_sdk::dependencies::{ensure_dependencies, SystemDependency};
     
     let deps = vec![
         SystemDependency::apt_package("alsa-utils", "aplay"),

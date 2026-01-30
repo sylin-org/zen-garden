@@ -301,10 +301,10 @@ function Get-LanBindAddress {
     $candidates = @()
 
     # Get all IPv4 addresses from network adapters
-    $adapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue
+    $Companions = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue
 
-    foreach ($adapter in $adapters) {
-        $ip = $adapter.IPAddress
+    foreach ($Companion in $Companions) {
+        $ip = $Companion.IPAddress
         $octets = $ip.Split('.')
 
         if ($octets.Count -ne 4) { continue }

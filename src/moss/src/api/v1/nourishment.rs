@@ -1,4 +1,4 @@
-//! Nourishment API - Software and firmware update management
+﻿//! Nourishment API - Software and firmware update management
 //!
 //! Provides unified update checking and execution for:
 //! - Software offerings (Docker images)
@@ -914,7 +914,7 @@ async fn check_firmware_updates(
                     if !is_on_ac_power().await {
                         results.push(Err(BlockedUpdate {
                             update,
-                            reason: "Firmware update requires AC power. Please plug in the power adapter.".to_string(),
+                            reason: "Firmware update requires AC power. Please plug in the power Companion.".to_string(),
                         }));
                         continue;
                     }
@@ -960,7 +960,7 @@ async fn check_firmware_updates(
 async fn is_on_ac_power() -> bool {
     #[cfg(target_os = "linux")]
     {
-        // Check via sysfs - common paths for AC adapter status
+        // Check via sysfs - common paths for AC Companion status
         let ac_paths = [
             "/sys/class/power_supply/AC/online",
             "/sys/class/power_supply/AC0/online",
@@ -976,7 +976,7 @@ async fn is_on_ac_power() -> bool {
             }
         }
         
-        // No AC adapter found means desktop (always "on AC")
+        // No AC Companion found means desktop (always "on AC")
         // Check if there's any battery - if no battery, assume desktop
         let has_battery = match tokio::fs::read_dir("/sys/class/power_supply").await {
             Ok(mut dir) => {

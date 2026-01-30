@@ -66,11 +66,11 @@ garden-rake find mongodb
 # Output:
 # Found: mongodb on stone-01 (192.168.1.42:27017)
 
-# Terminal 3: Control adapters (audio, LEDs, displays)
+# Terminal 3: Control Companions (audio, LEDs, displays)
 garden-rake hey tell cricket play stone-online
 ```
 
-The Stone announced itself via mDNS (the same protocol as AirPlay and Chromecast—20+ years proven). The Rake heard the announcement. Adapters extend Stone capabilities with audio, visual, and display feedback. No configuration. No registry. Just presence.
+The Stone announced itself via mDNS (the same protocol as AirPlay and Chromecast—20+ years proven). The Rake heard the announcement. Companions extend Stone capabilities with audio, visual, and display feedback. No configuration. No registry. Just presence.
 
 **Want real hardware?** → [First Stone Guide](docs/guides/first-stone.md)  
 **Want to understand the protocol?** → [Discovery Spec](docs/specs/discovery.md)

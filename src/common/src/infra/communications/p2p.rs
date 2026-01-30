@@ -27,9 +27,9 @@
 //!
 //! ## Why Multicast?
 //!
-//! Solves multi-homed Windows 11 discovery failures (WSL/Hyper-V vEthernet adapters).
+//! Solves multi-homed Windows 11 discovery failures (WSL/Hyper-V vEthernet Companions).
 //! Limited broadcast (`255.255.255.255`) egresses via default route interface, which may be
-//! a virtual adapter instead of the physical NIC. Multicast join operations explicitly
+//! a virtual Companion instead of the physical NIC. Multicast join operations explicitly
 //! specify which interface to listen on, and per-interface sender binding ensures packets
 //! egress the correct NIC.
 //!
@@ -167,11 +167,11 @@ impl NetworkInterface {
     }
 }
 
-/// Check if interface name or address suggests a virtual adapter
+/// Check if interface name or address suggests a virtual Companion
 fn is_virtual_interface(name: &str, ip: &Ipv4Addr) -> bool {
     let name_lower = name.to_lowercase();
 
-    // Virtual adapter name patterns
+    // Virtual Companion name patterns
     let virtual_patterns = [
         "veth",      // Linux virtual Ethernet
         "virbr",     // libvirt bridge
@@ -180,7 +180,7 @@ fn is_virtual_interface(name: &str, ip: &Ipv4Addr) -> bool {
         "vmnet",     // VMware
         "vboxnet",   // VirtualBox
         "hyperv",    // Hyper-V
-        "wsl",       // WSL adapter
+        "wsl",       // WSL Companion
     ];
 
     for pattern in &virtual_patterns {
@@ -224,7 +224,7 @@ fn enumerate_eligible_interfaces() -> Vec<NetworkInterface> {
             continue;
         }
 
-        // Skip virtual adapters
+        // Skip virtual Companions
         if is_virtual_interface(&iface.name, &ipv4) {
             tracing::debug!(
                 interface = %iface.name,

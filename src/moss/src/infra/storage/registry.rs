@@ -2,20 +2,54 @@
 //!
 //! No persistence file - the USB device manifests ARE the source of truth.
 //! This module scans mounted devices to build the registry in-memory.
-//! 
+//!
 //! Auto-mount behavior: Devices with the `zen-seed` filesystem label are
 //! automatically mounted during scan, ensuring prepared seed banks are
 //! always available after reboot or service restart.
+//!
+//! Mount persistence: A background task monitors mounts every 5 seconds and
+//! automatically re-mounts devices that have unexpectedly become unmounted
+//! (e.g., due to system interference or race conditions with udisks2).
 
 use anyhow::{Context, Result};
 use garden_common::storage::{SeedBankInfo, SeedBankManifest};
 use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use tokio::sync::RwLock;
+#[cfg(target_os = "linux")]
 use tracing::info;
 use tracing::{debug, warn};
 
 use super::device::DeviceAnalyzer;
+
+/// Tracks a persistent mount that should be maintained
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+pub struct TrackedMount {
+    /// Device path (e.g., /dev/sdb)
+    pub device: String,
+    /// Mount path (e.g., /var/lib/zen-garden/mounts/seed-bank-zen-garden)
+    pub mount_path: String,
+    /// Seed bank name (for logging)
+    pub name: String,
+    /// Number of consecutive mount recovery attempts
+    pub recovery_attempts: u32,
+    /// Last successful mount time
+    pub last_mounted: std::time::Instant,
+}
+
+/// Global state for tracking mounts that should persist
+#[cfg(target_os = "linux")]
+pub type MountTracker = Arc<RwLock<HashMap<String, TrackedMount>>>;
+
+/// Create a new mount tracker
+#[cfg(target_os = "linux")]
+pub fn create_mount_tracker() -> MountTracker {
+    Arc::new(RwLock::new(HashMap::new()))
+}
 
 /// Registry of all seed banks discovered on this stone (in-memory only)
 #[derive(Debug, Clone, Default)]
@@ -119,6 +153,8 @@ impl SeedBankRegistry {
                         id: manifest.id,
                         name: manifest.name.clone(),
                         pool_id: manifest.pool_id,
+                        group: manifest.group.clone(),
+                        replica_id: manifest.replica_id,
                         device,
                         mount_path,
                         capacity_bytes,
@@ -234,162 +270,466 @@ impl SeedBankRegistry {
         }
     }
     
-    /// Auto-mount all unmounted devices with the `zen-seed` filesystem label.
-    /// 
-    /// This enables plug-and-play behavior for prepared seed banks:
-    /// 1. Discovers all block devices with `zen-seed` label
-    /// 2. Skips devices that are already mounted
-    /// 3. Mounts unmounted devices to `/var/lib/zen-garden/mounts/seed-bank-{name}`
-    /// 
-    /// Edge cases handled:
-    /// - Already mounted devices: skipped
-    /// - Mount directory already exists: reused
-    /// - Mount failure: logged and skipped (device may be busy/corrupt)
-    /// - Multiple devices with same label: each gets unique mount point
+    /// Verify and recover tracked mounts that may have disappeared.
+    ///
+    /// This is the core of the resilient mount system. It checks each tracked mount
+    /// and re-mounts if the device is still present but the mount disappeared.
+    /// This handles race conditions with udisks2 or other system processes that
+    /// might unmount our devices.
+    ///
+    /// Returns the number of mounts recovered.
     #[cfg(target_os = "linux")]
-    async fn auto_mount_seed_banks() -> Result<()> {
+    pub async fn verify_and_recover_mounts(tracker: &MountTracker) -> u32 {
         use std::process::Stdio;
         use tokio::process::Command;
-        
-        // Get all block devices with zen-seed label using lsblk
-        // Format: NAME,LABEL,MOUNTPOINT
-        let output = Command::new("lsblk")
-            .args(["-rno", "NAME,LABEL,MOUNTPOINT"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .await
-            .context("Failed to run lsblk")?;
-        
-        if !output.status.success() {
-            return Ok(()); // lsblk not available, skip auto-mount
+
+        let mut recovered = 0u32;
+        let mut tracker_write = tracker.write().await;
+
+        // Collect devices to check (can't mutate while iterating)
+        let devices_to_check: Vec<(String, TrackedMount)> = tracker_write
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        for (device_key, tracked) in devices_to_check {
+            // Check if device still exists
+            let device_exists = tokio::fs::metadata(&tracked.device).await.is_ok();
+            if !device_exists {
+                // Device physically removed - stop tracking it
+                info!(
+                    device = %tracked.device,
+                    name = %tracked.name,
+                    "Tracked device no longer exists, removing from tracker"
+                );
+                tracker_write.remove(&device_key);
+                continue;
+            }
+
+            // Check if mount is still active
+            let is_mounted = Self::is_device_mounted(&tracked.device).await;
+            if is_mounted {
+                // All good - reset recovery attempts
+                if let Some(entry) = tracker_write.get_mut(&device_key) {
+                    entry.recovery_attempts = 0;
+                }
+                continue;
+            }
+
+            // Device exists but not mounted - need to recover
+            let attempts = tracker_write.get(&device_key).map(|t| t.recovery_attempts).unwrap_or(0);
+
+            if attempts >= 10 {
+                // Too many failures - log warning but keep trying (don't give up)
+                if attempts % 10 == 0 {
+                    warn!(
+                        device = %tracked.device,
+                        name = %tracked.name,
+                        attempts = attempts,
+                        "Mount recovery failing repeatedly, will continue trying"
+                    );
+                }
+            }
+
+            info!(
+                device = %tracked.device,
+                mount = %tracked.mount_path,
+                name = %tracked.name,
+                attempt = attempts + 1,
+                "Mount disappeared, attempting recovery"
+            );
+
+            // Ensure mount point exists
+            if let Err(e) = tokio::fs::create_dir_all(&tracked.mount_path).await {
+                warn!(
+                    mount = %tracked.mount_path,
+                    error = %e,
+                    "Failed to create mount point for recovery"
+                );
+                if let Some(entry) = tracker_write.get_mut(&device_key) {
+                    entry.recovery_attempts += 1;
+                }
+                continue;
+            }
+
+            // Try to mount
+            let mount_result = Command::new("sudo")
+                .args(["mount", &tracked.device, &tracked.mount_path])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .await;
+
+            match mount_result {
+                Ok(output) if output.status.success() => {
+                    info!(
+                        device = %tracked.device,
+                        mount = %tracked.mount_path,
+                        name = %tracked.name,
+                        "Successfully recovered mount"
+                    );
+                    if let Some(entry) = tracker_write.get_mut(&device_key) {
+                        entry.recovery_attempts = 0;
+                        entry.last_mounted = std::time::Instant::now();
+                    }
+                    recovered += 1;
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    // Check if it's already mounted (race condition)
+                    if stderr.contains("already mounted") {
+                        debug!(
+                            device = %tracked.device,
+                            "Device already mounted (race condition handled)"
+                        );
+                        if let Some(entry) = tracker_write.get_mut(&device_key) {
+                            entry.recovery_attempts = 0;
+                        }
+                    } else {
+                        warn!(
+                            device = %tracked.device,
+                            mount = %tracked.mount_path,
+                            error = %stderr.trim(),
+                            "Mount recovery failed"
+                        );
+                        if let Some(entry) = tracker_write.get_mut(&device_key) {
+                            entry.recovery_attempts += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        device = %tracked.device,
+                        error = %e,
+                        "Failed to execute mount command for recovery"
+                    );
+                    if let Some(entry) = tracker_write.get_mut(&device_key) {
+                        entry.recovery_attempts += 1;
+                    }
+                }
+            }
         }
-        
-        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        recovered
+    }
+
+    /// Check if a device is currently mounted anywhere
+    #[cfg(target_os = "linux")]
+    async fn is_device_mounted(device: &str) -> bool {
+        if let Ok(mounts) = tokio::fs::read_to_string("/proc/mounts").await {
+            for line in mounts.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if !parts.is_empty() && parts[0] == device {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Track a successful mount for persistence monitoring
+    #[cfg(target_os = "linux")]
+    pub async fn track_mount(tracker: &MountTracker, device: &str, mount_path: &str, name: &str) {
+        let mut tracker_write = tracker.write().await;
+        tracker_write.insert(
+            device.to_string(),
+            TrackedMount {
+                device: device.to_string(),
+                mount_path: mount_path.to_string(),
+                name: name.to_string(),
+                recovery_attempts: 0,
+                last_mounted: std::time::Instant::now(),
+            },
+        );
+        debug!(
+            device = %device,
+            mount = %mount_path,
+            name = %name,
+            "Tracking mount for persistence"
+        );
+    }
+
+    /// Auto-mount all unmounted seed bank devices using manifest-first discovery.
+    ///
+    /// This implements the STORAGE-0005 manifest-first discovery model:
+    /// 1. Scan ALL unmounted removable devices (not just labeled ones)
+    /// 2. Temp-mount each device to check for `.zen-garden/manifest.json`
+    /// 3. If manifest found, derive mount path from manifest configuration
+    /// 4. Mount to the derived path (supports named groups and replicas)
+    ///
+    /// Edge cases handled:
+    /// - Already mounted devices: skipped
+    /// - No manifest: unmount temp and skip (not a seed bank)
+    /// - Mount directory already exists: reused
+    /// - Mount failure: logged and skipped (device may be busy/corrupt)
+    /// - Replicated seed banks: mount to `/mounts/{group}/replica-{id}`
+    #[cfg(target_os = "linux")]
+    async fn auto_mount_seed_banks() -> Result<()> {
+        Self::auto_mount_seed_banks_with_tracker(None).await
+    }
+
+    /// Auto-mount with optional mount tracker for persistence monitoring.
+    ///
+    /// If tracker is provided, successful mounts will be tracked for the
+    /// resilient mount persistence system.
+    ///
+    /// This uses manifest-first discovery (STORAGE-0005):
+    /// - Scans ALL unmounted removable devices
+    /// - Temp-mounts to check for manifest
+    /// - Derives mount path from manifest configuration
+    #[cfg(target_os = "linux")]
+    pub async fn auto_mount_seed_banks_with_tracker(tracker: Option<&MountTracker>) -> Result<()> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+        use super::device::list_unmounted_removable_devices;
+
         let data_dir = garden_common::constants::paths::data_dir();
         let mounts_dir = PathBuf::from(&data_dir).join("mounts");
-        
+
         // Ensure mounts directory exists
         if let Err(e) = tokio::fs::create_dir_all(&mounts_dir).await {
             warn!(error = %e, "Failed to create mounts directory");
             return Ok(());
         }
-        
-        for line in stdout.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.is_empty() {
-                continue;
-            }
-            
-            // Parse lsblk output - format varies:
-            // "sdb zen-seed" (no mountpoint)
-            // "sdb zen-seed /mount/path" (mounted)
-            // "sdb" (no label, no mountpoint)
-            let device_name = parts[0];
-            
-            // Check if this is a zen-seed device
-            // Label is second field if present
-            let label = if parts.len() >= 2 && parts[1] != "" {
-                parts[1]
-            } else {
-                continue; // No label
-            };
-            
-            if label != "zen-seed" {
-                continue;
-            }
-            
-            // Check if already mounted (third field present and not empty)
-            if parts.len() >= 3 && !parts[2].is_empty() {
-                debug!(device = %device_name, mount = parts[2], "zen-seed device already mounted");
-                continue;
-            }
-            
-            let device_path = format!("/dev/{}", device_name);
 
-            // Check if device is removable (USB detection)
-            // For zen-seed labeled devices, we proceed even if detection fails
-            // because the label indicates explicit user intent to use as seed bank
-            let is_removable = DeviceAnalyzer::is_removable(&device_path).unwrap_or(false);
-            if !is_removable {
-                // Log diagnostic info for troubleshooting
-                info!(
-                    device = %device_path,
-                    "zen-seed device detected but is_removable=false - proceeding anyway (label trusted)"
-                );
+        // Also track any already-mounted seed banks in our mounts directory
+        Self::track_existing_mounts(tracker, &mounts_dir).await;
+
+        // Get all unmounted removable devices
+        let unmounted_devices = match list_unmounted_removable_devices() {
+            Ok(devices) => devices,
+            Err(e) => {
+                warn!(error = %e, "Failed to list unmounted removable devices");
+                return Ok(());
             }
-            
-            // Determine mount point name
-            // Try to read the manifest from a temp mount to get the seed bank name
-            let mount_name = Self::get_seed_bank_name_from_device(&device_path)
-                .await
-                .unwrap_or_else(|| format!("seed-bank-{}", device_name));
-            
-            let mount_path = mounts_dir.join(&mount_name);
-            
-            // Create mount point if it doesn't exist
-            if let Err(e) = tokio::fs::create_dir_all(&mount_path).await {
-                warn!(
-                    device = %device_path,
-                    mount = %mount_path.display(),
-                    error = %e,
-                    "Failed to create mount point"
-                );
-                continue;
-            }
-            
-            // Check if something else is already mounted at this path
-            if Self::is_mount_point(&mount_path).await {
-                debug!(
-                    mount = %mount_path.display(),
-                    "Mount point already has something mounted, skipping"
-                );
-                continue;
-            }
-            
-            // Mount the device
-            info!(
-                device = %device_path,
-                mount = %mount_path.display(),
-                "Auto-mounting zen-seed device"
-            );
-            
-            let mount_result = Command::new("sudo")
-                .args(["mount", &device_path, &mount_path.to_string_lossy()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .await;
-            
-            match mount_result {
-                Ok(output) if output.status.success() => {
+        };
+
+        for device in unmounted_devices {
+            // Try to mount and check for manifest
+            let manifest_result = Self::probe_device_for_manifest(&device.device).await;
+
+            match manifest_result {
+                Ok(Some(manifest)) => {
+                    // Found a seed bank! Derive mount path from manifest
+                    let mount_path = manifest.derive_mount_path(&data_dir);
+
+                    // Create mount point directory (including parent for replicas)
+                    if let Err(e) = tokio::fs::create_dir_all(&mount_path).await {
+                        warn!(
+                            device = %device.device,
+                            mount = %mount_path,
+                            error = %e,
+                            "Failed to create mount point"
+                        );
+                        continue;
+                    }
+
+                    // Check if something else is already mounted at this path
+                    let mount_path_buf = PathBuf::from(&mount_path);
+                    if Self::is_mount_point(&mount_path_buf).await {
+                        debug!(
+                            mount = %mount_path,
+                            "Mount point already has something mounted, skipping"
+                        );
+                        continue;
+                    }
+
+                    // Mount the device to the derived path
                     info!(
-                        device = %device_path,
-                        mount = %mount_path.display(),
-                        "Successfully auto-mounted seed bank"
+                        device = %device.device,
+                        mount = %mount_path,
+                        name = %manifest.name,
+                        group = ?manifest.group,
+                        replica_id = ?manifest.replica_id,
+                        "Auto-mounting seed bank (manifest-first)"
                     );
+
+                    let mount_result = Command::new("sudo")
+                        .args(["mount", &device.device, &mount_path])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .output()
+                        .await;
+
+                    match mount_result {
+                        Ok(output) if output.status.success() => {
+                            info!(
+                                device = %device.device,
+                                mount = %mount_path,
+                                name = %manifest.name,
+                                "Successfully auto-mounted seed bank"
+                            );
+
+                            // Track this mount for persistence monitoring
+                            if let Some(t) = tracker {
+                                Self::track_mount(t, &device.device, &mount_path, &manifest.name).await;
+                            }
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            warn!(
+                                device = %device.device,
+                                mount = %mount_path,
+                                error = %stderr.trim(),
+                                "Failed to mount seed bank (device may be busy or corrupted)"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                device = %device.device,
+                                mount = %mount_path,
+                                error = %e,
+                                "Failed to execute mount command"
+                            );
+                        }
+                    }
                 }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    warn!(
-                        device = %device_path,
-                        mount = %mount_path.display(),
-                        error = %stderr.trim(),
-                        "Failed to mount seed bank (device may be busy or corrupted)"
+                Ok(None) => {
+                    // No manifest found - not a seed bank, skip silently
+                    debug!(
+                        device = %device.device,
+                        label = ?device.label,
+                        "No manifest found, not a seed bank"
                     );
                 }
                 Err(e) => {
-                    warn!(
-                        device = %device_path,
-                        mount = %mount_path.display(),
+                    // Error probing device
+                    debug!(
+                        device = %device.device,
                         error = %e,
-                        "Failed to execute mount command"
+                        "Failed to probe device for manifest"
                     );
                 }
             }
         }
-        
+
         Ok(())
+    }
+
+    /// Track existing mounts in our mounts directory for persistence monitoring
+    #[cfg(target_os = "linux")]
+    async fn track_existing_mounts(tracker: Option<&MountTracker>, mounts_dir: &PathBuf) {
+        let Some(t) = tracker else { return };
+
+        // Read /proc/mounts to find devices mounted under our mounts directory
+        let mounts = match tokio::fs::read_to_string("/proc/mounts").await {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        let mounts_prefix = mounts_dir.to_string_lossy();
+
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue;
+            }
+
+            let device = parts[0];
+            let mount_path = parts[1];
+
+            // Only track mounts under our mounts directory
+            if !mount_path.starts_with(mounts_prefix.as_ref()) {
+                continue;
+            }
+
+            // Get the name from the mount path
+            let name = std::path::Path::new(mount_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            debug!(
+                device = %device,
+                mount = %mount_path,
+                name = %name,
+                "Tracking existing seed bank mount"
+            );
+
+            Self::track_mount(t, device, mount_path, &name).await;
+        }
+    }
+
+    /// Probe a device for a seed bank manifest by temp-mounting
+    ///
+    /// Returns:
+    /// - Ok(Some(manifest)) if device has a valid manifest
+    /// - Ok(None) if device has no manifest (not a seed bank)
+    /// - Err if probe failed (device error)
+    #[cfg(target_os = "linux")]
+    async fn probe_device_for_manifest(device_path: &str) -> Result<Option<SeedBankManifest>> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        let temp_mount = format!("/tmp/zen-garden-probe-{}-{}",
+            std::process::id(),
+            device_path.replace('/', "_")
+        );
+
+        // Create temp mount point
+        let _ = Command::new("sudo")
+            .args(["mkdir", "-p", &temp_mount])
+            .output()
+            .await;
+
+        // Try to mount read-only
+        let mount_result = Command::new("sudo")
+            .args(["mount", "-o", "ro", device_path, &temp_mount])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+
+        let manifest = if let Ok(output) = mount_result {
+            if output.status.success() {
+                // Check for manifest
+                let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
+                let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await {
+                    match serde_json::from_str::<SeedBankManifest>(&content) {
+                        Ok(m) => {
+                            debug!(
+                                device = %device_path,
+                                name = %m.name,
+                                group = ?m.group,
+                                "Found seed bank manifest"
+                            );
+                            Some(m)
+                        }
+                        Err(e) => {
+                            warn!(
+                                device = %device_path,
+                                error = %e,
+                                "Found manifest but failed to parse"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Unmount
+                let _ = Command::new("sudo")
+                    .args(["umount", &temp_mount])
+                    .output()
+                    .await;
+
+                manifest
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Cleanup temp mount point
+        let _ = Command::new("sudo")
+            .args(["rmdir", &temp_mount])
+            .output()
+            .await;
+
+        Ok(manifest)
     }
     
     #[cfg(not(target_os = "linux"))]
@@ -397,66 +737,7 @@ impl SeedBankRegistry {
         // Auto-mount not supported on non-Linux platforms
         Ok(())
     }
-    
-    /// Try to determine the seed bank name by temporarily mounting and reading manifest
-    #[cfg(target_os = "linux")]
-    async fn get_seed_bank_name_from_device(device_path: &str) -> Option<String> {
-        use std::process::Stdio;
-        use tokio::process::Command;
-        
-        let temp_mount = format!("/tmp/zen-garden-probe-{}", std::process::id());
-        
-        // Create temp mount point
-        let _ = Command::new("sudo")
-            .args(["mkdir", "-p", &temp_mount])
-            .output()
-            .await;
-        
-        // Try to mount read-only
-        let mount_result = Command::new("sudo")
-            .args(["mount", "-o", "ro", device_path, &temp_mount])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .await;
-        
-        let name = if let Ok(output) = mount_result {
-            if output.status.success() {
-                // Read manifest
-                let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
-                let name = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await {
-                    if let Ok(manifest) = serde_json::from_str::<SeedBankManifest>(&content) {
-                        Some(manifest.name)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                
-                // Unmount
-                let _ = Command::new("sudo")
-                    .args(["umount", &temp_mount])
-                    .output()
-                    .await;
-                
-                name
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        
-        // Cleanup temp mount point
-        let _ = Command::new("sudo")
-            .args(["rmdir", &temp_mount])
-            .output()
-            .await;
-        
-        name
-    }
-    
+
     /// Check if a path is a mount point
     #[cfg(target_os = "linux")]
     async fn is_mount_point(path: &PathBuf) -> bool {

@@ -28,9 +28,12 @@ mod registry;
 mod monitor;
 
 pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon, update_local_storage_cache, update_and_broadcast};
-pub use device::{DeviceAnalyzer, analyze_device, list_usb_partitions};
+pub use device::{DeviceAnalyzer, UnmountedDevice, analyze_device, list_usb_partitions, list_unmounted_removable_devices};
 pub use objects::{ObjectStore, ObjectMetadata, ListResult, PutResult};
 pub use registry::SeedBankRegistry;
+
+#[cfg(target_os = "linux")]
+pub use registry::{create_mount_tracker, MountTracker, TrackedMount};
 
 #[cfg(target_os = "linux")]
 pub use monitor::StorageMonitor;

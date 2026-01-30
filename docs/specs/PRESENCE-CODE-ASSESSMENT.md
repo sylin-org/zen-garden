@@ -14,7 +14,7 @@
 ✅ **Reuse EventBus** - Don't create separate broadcast channel (DRY)  
 ✅ **Extend DomainEvent** - Add `StoneEvent`, reuse existing infrastructure (KISS)  
 ✅ **Filter at boundary** - SSE endpoint filters to local + relevant events only (Efficiency)  
-✅ **SSE endpoint translates** - Adapter pattern at boundary (DDD/SoC)  
+✅ **SSE endpoint translates** - Companion pattern at boundary (DDD/SoC)  
 ✅ **No subscriber tracking** - Not needed for protocol (YAGNI)  
 ✅ **Types in common** - Only reusable protocol contracts (Composability)  
 
@@ -28,13 +28,13 @@
 |--------|---------------------|-----------|-----------|
 | Event broadcast | Separate `presence_tx` | Reuse EventBus/`event_tx` | DRY |
 | Event types | New `PresenceEvent` enum | Extend `DomainEvent` | KISS |
-| Event filtering | None (adapters filter) | SSE endpoint filters | Efficiency |
+| Event filtering | None (Companions filter) | SSE endpoint filters | Efficiency |
 | URI semantics | `/api/v1/presence/stream` | `/api/v1/stone/presence/stream` | API-0001 |
 | Subscriber tracking | `Arc<RwLock<Vec<...>>>` | None | YAGNI |
 | Bridge module | `presence_bridge.rs` | Emit directly | KISS |
 | API endpoints | 2 (`/stream`, `/subscribers`) | 1 (`/stone/presence/stream`) | YAGNI |
 | Translation layer | Separate module | SSE endpoint boundary | SoC |
-| Events/minute to adapter | ~100 (all events) | ~20 (filtered) | Efficiency |
+| Events/minute to Companion | ~100 (all events) | ~20 (filtered) | Efficiency |
 | Lines of code | ~800 | ~300 | KISS |
 | Implementation time | 12 hours | 6 hours | Efficiency |
 
@@ -122,7 +122,7 @@ pub presence_tx: tokio::sync::broadcast::Sender<PresenceEvent>,
 
 Why separate?
 - Different event vocabulary (garden-native vs technical)
-- Different subscribers (adapters vs debugging tools)
+- Different subscribers (Companions vs debugging tools)
 - Independent buffering/backpressure
 - Clean separation of concerns
 
@@ -261,7 +261,7 @@ pub async fn run_presence_heartbeat_task(state: AppState) {
 
 1. **Reuse EventBus** - Don't create separate broadcast channel (DRY)
 2. **Extend DomainEvent** - Add presence events as new variant (SoC)
-3. **SSE endpoint translates** - Adapter pattern at boundary (DDD)
+3. **SSE endpoint translates** - Companion pattern at boundary (DDD)
 4. **Remove subscriber tracking** - Not needed for protocol (YAGNI)
 5. **No bridge module** - Emit DomainEvents directly (KISS)
 6. **Types in common** - Only protocol contracts (Reusability)
@@ -269,12 +269,12 @@ pub async fn run_presence_heartbeat_task(state: AppState) {
 ### Architecture (Simplified)
 
 ```
-Emission Sites → DomainEvent → EventBus → SSE Handler (filter + translate) → Adapters
+Emission Sites → DomainEvent → EventBus → SSE Handler (filter + translate) → Companions
                      ↑                           ↓
               (already exists)        (local + relevant only)
 ```
 
-**Not:** ~~DomainEvent → PresenceBridge → PresenceEvent → presence_tx → SSE → Adapters~~
+**Not:** ~~DomainEvent → PresenceBridge → PresenceEvent → presence_tx → SSE → Companions~~
 
 ### Deployment Architecture
 
@@ -382,7 +382,7 @@ GET /api/v1/garden/presence/stream
 ### Consumer Decision Tree
 
 ```
-Adapter deciding which endpoint to use:
+Companion deciding which endpoint to use:
 
 Am I running on a Stone?
 ├─ Yes → Connect to /api/v1/stone/presence/stream (local Moss)
@@ -424,7 +424,7 @@ The URI structure naturally accommodates future features:
 ```rust
 //! Presence protocol types
 //!
-//! Stone Presence Protocol (PRESENCE-0001) - Common types for adapters.
+//! Stone Presence Protocol (PRESENCE-0001) - Common types for Companions.
 //! 
 //! **Design:** Protocol contracts only. Implementation is in Moss.
 
@@ -471,7 +471,7 @@ pub struct ServiceState {
 ```
 
 **Rationale:**
-- ✅ **Reusable** - Adapters (Cricket, Firefly) import these types
+- ✅ **Reusable** - Companions (Cricket, Firefly) import these types
 - ✅ **Protocol contracts only** - No implementation details
 - ✅ **Simple** - Just data structures, no behavior
 
@@ -555,7 +555,7 @@ impl StoneEvent {
 
 ---
 
-### Phase 1C: SSE Endpoint (Moss - Adapter Pattern)
+### Phase 1C: SSE Endpoint (Moss - Companion Pattern)
 
 **File:** `src/moss/src/api/v1/presence.rs` (NEW)
 
@@ -563,7 +563,7 @@ impl StoneEvent {
 //! Presence streaming API endpoint
 //!
 //! Translates DomainEvents to garden-native presence vocabulary.
-//! This is the anti-corruption layer between domain and adapters.
+//! This is the anti-corruption layer between domain and Companions.
 
 use axum::{
     extract::State,
@@ -579,7 +579,7 @@ use garden_common::events::{DomainEvent, ServiceEvent, StoneEvent};
 /// GET /api/v1/stone/presence/stream - Local stone presence stream
 ///
 /// **Scope:** Stone-level (local events only)
-/// **Consumer:** Local adapters (Cricket, Firefly, OLED)
+/// **Consumer:** Local Companions (Cricket, Firefly, OLED)
 /// 
 /// Returns SSE stream of domain events translated to presence vocabulary.
 /// Only emits events relevant to THIS stone (filters out garden-wide events).
@@ -597,7 +597,7 @@ use garden_common::events::{DomainEvent, ServiceEvent, StoneEvent};
 pub async fn stream_stone_presence(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    tracing::info!("Local presence adapter connected");
+    tracing::info!("Local presence Companion connected");
     
     let stone_name = state.stone_name.clone();
     
@@ -622,7 +622,7 @@ pub async fn stream_stone_presence(
                 match result {
                     Ok(event) => Some(event),
                     Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                        tracing::warn!("Presence adapter lagged {} events", n);
+                        tracing::warn!("Presence Companion lagged {} events", n);
                         None
                     }
                 }
@@ -740,7 +740,7 @@ fn extract_service_name(message: &str) -> Option<String> {
 
 **Rationale:**
 - ✅ **KISS** - Single endpoint, no complex infrastructure
-- ✅ **SoC** - Translation happens at boundary (adapter pattern)
+- ✅ **SoC** - Translation happens at boundary (Companion pattern)
 - ✅ **YAGNI** - No subscriber tracking, no extra endpoints
 - ✅ **DRY** - Reuses existing EventBus pattern
 
@@ -938,12 +938,12 @@ let event = DomainEvent::Stone(StoneEvent::Tended {
 
 **Concern:** EventBus broadcasts ALL domain events:
 - Service events from this stone ✓ (relevant)
-- Service events from other stones ✗ (not relevant for local adapter)
+- Service events from other stones ✗ (not relevant for local Companion)
 - Job events ✗ (not presence-relevant)
 - Discovery events ✗ (not presence-relevant)
 - Registry events ✗ (not presence-relevant)
 
-Adapters running on resource-constrained hardware (ESP8266, Wyse 5070) shouldn't waste CPU/memory processing and discarding irrelevant events.
+Companions running on resource-constrained hardware (ESP8266, Wyse 5070) shouldn't waste CPU/memory processing and discarding irrelevant events.
 
 ### Solution: Filter at SSE Boundary
 
@@ -971,29 +971,29 @@ Adapters running on resource-constrained hardware (ESP8266, Wyse 5070) shouldn't
 })
 ```
 
-**What adapters receive:**
+**What Companions receive:**
 - ✅ Service events: started, stopped, sprouted, uprooted (local stone only)
 - ✅ Stone events: health, load, tended (local stone only)
-- ❌ Job events: Not sent (adapter doesn't care about installation progress)
-- ❌ Discovery events: Not sent (adapter doesn't care about topology)
-- ❌ Registry events: Not sent (adapter doesn't care about Lantern registry)
-- ❌ Other stones: Not sent (local adapter only cares about local stone)
+- ❌ Job events: Not sent (Companion doesn't care about installation progress)
+- ❌ Discovery events: Not sent (Companion doesn't care about topology)
+- ❌ Registry events: Not sent (Companion doesn't care about Lantern registry)
+- ❌ Other stones: Not sent (local Companion only cares about local stone)
 
 ### Performance Impact
 
 **Before filtering:**
 - EventBus emits ~100 events/minute (garden-wide)
-- Adapter receives 100 events/minute
-- Adapter discards ~80 events/minute (80% waste)
+- Companion receives 100 events/minute
+- Companion discards ~80 events/minute (80% waste)
 - Processing overhead: ~50μs/event × 100 = 5ms/minute
 
 **After filtering:**
 - EventBus emits ~100 events/minute (unchanged)
 - SSE endpoint filters to ~20 events/minute
-- Adapter receives 20 events/minute (only relevant ones)
+- Companion receives 20 events/minute (only relevant ones)
 - Processing overhead: ~50μs/event × 20 = 1ms/minute (80% reduction)
 
-**For ESP8266 OLED adapter:**
+**For ESP8266 OLED Companion:**
 - 80% fewer events to parse
 - 80% less JSON deserialization
 - 80% less memory churn
@@ -1007,7 +1007,7 @@ Adapters running on resource-constrained hardware (ESP8266, Wyse 5070) shouldn't
 GET /api/v1/presence/stream?events=service,stone&stone=local
 ```
 
-Allows adapters to request specific event types. But default filtering (service + stone, local only) covers 99% of use cases.
+Allows Companions to request specific event types. But default filtering (service + stone, local only) covers 99% of use cases.
 
 ---
 
@@ -1170,7 +1170,7 @@ use super::PresenceEvent;
 /// Active presence subscriber (SSE connection)
 #[derive(Debug, Clone)]
 pub struct Subscriber {
-    pub adapter: Option<String>,
+    pub Companion: Option<String>,
     pub version: Option<String>,
     pub connected_since: DateTime<Utc>,
     pub tx: broadcast::Sender<PresenceEvent>,
@@ -1179,7 +1179,7 @@ pub struct Subscriber {
 /// Subscriber info for API responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriberInfo {
-    pub adapter: Option<String>,
+    pub Companion: Option<String>,
     pub version: Option<String>,
     pub connected_since: DateTime<Utc>,
 }
@@ -1187,7 +1187,7 @@ pub struct SubscriberInfo {
 impl From<&Subscriber> for SubscriberInfo {
     fn from(sub: &Subscriber) -> Self {
         Self {
-            adapter: sub.adapter.clone(),
+            Companion: sub.Companion.clone(),
             version: sub.version.clone(),
             connected_since: sub.connected_since,
         }
@@ -1199,7 +1199,7 @@ impl From<&Subscriber> for SubscriberInfo {
 
 Add to `AppState`:
 ```rust
-/// Presence event broadcast channel for adapters
+/// Presence event broadcast channel for Companions
 pub presence_tx: tokio::sync::broadcast::Sender<PresenceEvent>,
 
 /// Active presence subscribers (for observability)
@@ -1239,10 +1239,10 @@ use tokio_stream::StreamExt;
 use crate::AppState;
 use garden_common::presence::{PresenceEvent, Subscriber, SubscriberInfo};
 
-/// Query params for adapter identification
+/// Query params for Companion identification
 #[derive(Debug, Deserialize)]
 pub struct PresenceQuery {
-    pub adapter: Option<String>,
+    pub Companion: Option<String>,
     pub version: Option<String>,
 }
 
@@ -1254,21 +1254,21 @@ pub struct PresenceQuery {
 /// 3. Heartbeat every 30 seconds
 ///
 /// Optional query params:
-/// - `adapter` - Adapter type (e.g., "cricket", "firefly")
-/// - `version` - Adapter version (e.g., "0.1.0")
+/// - `Companion` - Companion type (e.g., "cricket", "firefly")
+/// - `version` - Companion version (e.g., "0.1.0")
 pub async fn stream_presence(
     State(state): State<AppState>,
     Query(params): Query<PresenceQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     tracing::info!(
-        adapter = ?params.adapter,
+        Companion = ?params.Companion,
         version = ?params.version,
-        "Presence adapter connected"
+        "Presence Companion connected"
     );
     
     // Create subscriber entry
     let subscriber = Subscriber {
-        adapter: params.adapter.clone(),
+        Companion: params.Companion.clone(),
         version: params.version.clone(),
         connected_since: chrono::Utc::now(),
         tx: state.presence_tx.clone(),
@@ -1296,7 +1296,7 @@ pub async fn stream_presence(
     .filter_map(|result| match result {
         Ok(event) => Some(Ok::<PresenceEvent, tokio_stream::wrappers::errors::BroadcastStreamRecvError>(event)),
         Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-            tracing::warn!("Presence adapter lagged {} messages", n);
+            tracing::warn!("Presence Companion lagged {} messages", n);
             None
         }
     })
@@ -1331,7 +1331,7 @@ pub async fn stream_presence(
 
 /// GET /api/v1/presence/subscribers - List active subscribers
 ///
-/// Returns currently connected presence adapters.
+/// Returns currently connected presence Companions.
 #[derive(Debug, Serialize)]
 pub struct SubscribersResponse {
     pub subscribers: Vec<SubscriberInfo>,
@@ -1689,7 +1689,7 @@ crate::domain::presence_bridge::emit_service_uprooted(&state, &service_name);
 - Different vocabularies (technical vs garden-native)
 - Independent buffering/backpressure
 - Cleaner separation of concerns
-- Easier to add adapter-specific filtering later
+- Easier to add Companion-specific filtering later
 
 ### Decision 2: Hook Placement
 
@@ -1800,12 +1800,12 @@ Current: `broadcast::channel::<MossEvent>(100)`
 - Service changes: ~10 events/service (install → start)
 - Load updates every 5s = 12 events/minute
 - Worst case: ~30 events/minute (0.5 events/second)
-- Buffer of 100 = 200 seconds of backlog (adapter has 3+ minutes to recover)
+- Buffer of 100 = 200 seconds of backlog (Companion has 3+ minutes to recover)
 
-**If adapter lags beyond buffer:**
+**If Companion lags beyond buffer:**
 - Lagged messages are dropped (with warning)
 - Next heartbeat/snapshot re-syncs state
-- This is **by design** (slow adapters don't block Moss)
+- This is **by design** (slow Companions don't block Moss)
 
 ### JSON Serialization Overhead
 
@@ -1872,7 +1872,7 @@ Protocol specifies: 30 seconds heartbeat
 After Phase 1 completion:
 
 1. **Phase 2:** Rake commands (`presence watch`, `presence test`)
-2. **Phase 3:** Cricket adapter on Wyse 5070
+2. **Phase 3:** Cricket Companion on Wyse 5070
 3. **Refactor:** Move to EventBus when available
 4. **Enhance:** Real metrics, pond status, activity tracking
 5. **Cleanup:** Subscriber removal on disconnect

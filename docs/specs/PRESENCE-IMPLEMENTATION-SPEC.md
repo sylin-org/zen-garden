@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This spec defines the implementation plan for the Stone Presence Protocol (PRESENCE-0001). We'll build the Moss endpoints first, create a test harness, then incrementally add adapter support.
+This spec defines the implementation plan for the Stone Presence Protocol (PRESENCE-0001). We'll build the Moss endpoints first, create a test harness, then incrementally add Companion support.
 
 **Key insight:** Start with what we can test immediately (Wyse 5070 speakers), prove the protocol works, then expand to external hardware.
 
@@ -28,12 +28,12 @@ This spec defines the implementation plan for the Stone Presence Protocol (PRESE
 
 ### Dr. Raj Patel — Software Architecture
 
-*"Separation of concerns is paramount. Moss emits events. Adapters are separate binaries."*
+*"Separation of concerns is paramount. Moss emits events. Companions are separate binaries."*
 
 **Recommendation:**
-- Adapters should be standalone executables, not Moss plugins
+- Companions should be standalone executables, not Moss plugins
 - Installation can be Moss-assisted but execution is independent
-- Each adapter type gets its own repository/package
+- Each Companion type gets its own repository/package
 
 ### Elena Vasquez — Sensory Design
 
@@ -76,7 +76,7 @@ This spec defines the implementation plan for the Stone Presence Protocol (PRESE
               └───────────┘  └───────────┘  └─────────────┘       │
                                                                    │
               ┌───────────────────────────────────────────────────┘
-              │  ADAPTERS (separate processes)
+              │  Companions (separate processes)
               └───────────────────────────────────────────────────
 ```
 
@@ -93,7 +93,7 @@ This spec defines the implementation plan for the Stone Presence Protocol (PRESE
 **File:** `src/moss/src/api/v1/presence.rs`
 
 ```
-GET /api/v1/presence/stream?adapter=<name>&version=<ver>
+GET /api/v1/presence/stream?Companion=<name>&version=<ver>
 Accept: text/event-stream
 ```
 
@@ -109,7 +109,7 @@ Implementation:
 - [ ] `GET /api/v1/presence/stream` returns SSE
 - [ ] `presence.snapshot` sent on connect
 - [ ] `presence.heartbeat` sent every 30s
-- [ ] Adapter query params parsed and tracked
+- [ ] Companion query params parsed and tracked
 - [ ] Existing `ServiceEvent` mapped to presence events
 
 #### 1.2 Subscribers Endpoint
@@ -166,14 +166,14 @@ garden-rake presence watch --stone stone-crystal-forest
 garden-rake presence subscribers
 garden-rake presence subscribers --stone stone-crystal-forest
 
-# Emit test event (for adapter development)
+# Emit test event (for Companion development)
 garden-rake presence test stone.tended
 garden-rake presence test service.started --service mongodb
 ```
 
 **Deliverables:**
 - [ ] `presence watch` streams events to terminal
-- [ ] `presence subscribers` shows connected adapters
+- [ ] `presence subscribers` shows connected Companions
 - [ ] `presence test` emits synthetic events (dev mode only)
 
 ---
@@ -217,14 +217,14 @@ Tests:
 
 #### 2.3 Load Testing
 
-- Connect 10 adapters simultaneously
+- Connect 10 Companions simultaneously
 - Disconnect/reconnect rapidly
 - Emit 100 events/second
 - Verify no memory leaks over 1 hour
 
 ---
 
-### Phase 3: Audio Adapter (Cricket-Dev) (Week 3-4)
+### Phase 3: Audio Companion (Cricket-Dev) (Week 3-4)
 
 **Goal:** Prove the protocol with audio on Wyse 5070.
 
@@ -279,7 +279,7 @@ garden-rake tend to stone-wyse-5070
 
 ---
 
-### Phase 4: LED Matrix Adapter (Firefly) (Week 5-6)
+### Phase 4: LED Matrix Companion (Firefly) (Week 5-6)
 
 **Goal:** Visual presence on RP2040 5×5 matrix.
 
@@ -315,7 +315,7 @@ mpremote connect /dev/ttyACM0 fs cp main.py :main.py
 
 ---
 
-### Phase 5: OLED Adapter (Week 6-7)
+### Phase 5: OLED Companion (Week 6-7)
 
 **Goal:** Text display on ESP8266 OLED.
 
@@ -328,7 +328,7 @@ The ESP8266 connects directly to Moss WiFi network:
 - Parses SSE events
 - Updates OLED display
 
-No host service needed — the ESP8266 IS the adapter.
+No host service needed — the ESP8266 IS the Companion.
 
 #### 5.2 Configuration
 
@@ -366,7 +366,7 @@ Moss periodically scans for known USB devices:
 | Device | USB VID:PID | Action |
 |--------|-------------|--------|
 | RP2040-Matrix | `2e8a:0005` | Suggest Firefly |
-| ESP8266 (serial) | `1a86:7523` | Suggest OLED adapter |
+| ESP8266 (serial) | `1a86:7523` | Suggest OLED Companion |
 | USB Speaker | (various) | Suggest Cricket |
 
 #### 6.2 Detection API
@@ -381,7 +381,7 @@ GET /api/v1/stone/presence/devices
       "device": "/dev/ttyACM0",
       "vendor": "Raspberry Pi",
       "product": "RP2040",
-      "suggested_adapter": "firefly",
+      "suggested_Companion": "firefly",
       "installed": false
     }
   ]
@@ -391,17 +391,17 @@ GET /api/v1/stone/presence/devices
 #### 6.3 Moss-Assisted Installation
 
 ```
-POST /api/v1/stone/presence/adapters
+POST /api/v1/stone/presence/Companions
 
 {
-  "adapter": "firefly",
+  "Companion": "firefly",
   "device": "/dev/ttyACM0"
 }
 ```
 
 Moss:
-1. Downloads adapter package (from Lantern registry or GitHub)
-2. Places in `/opt/zen-garden/adapters/firefly/`
+1. Downloads Companion package (from Lantern registry or GitHub)
+2. Places in `/opt/zen-garden/companions/firefly/`
 3. Configures with detected device
 4. Starts service
 5. Verifies connection via `/api/v1/presence/subscribers`
@@ -412,7 +412,7 @@ Moss:
 # List detected presence hardware
 garden-rake presence devices
 
-# Install adapter for detected device
+# Install Companion for detected device
 garden-rake presence install firefly --device /dev/ttyACM0
 
 # Or auto-install all detected
@@ -439,7 +439,7 @@ garden-rake tend
 garden-rake uproot mongodb
 ```
 
-### For Adapter Development
+### For Companion Development
 
 ```bash
 # Use the test event emitter
@@ -490,7 +490,7 @@ src/common/src/
 └── lib.rs                      # Export presence module
 ```
 
-### Adapters (Separate Repos/Packages)
+### Companions (Separate Repos/Packages)
 
 ```
 garden-cricket/
@@ -526,8 +526,8 @@ garden-firefly/
 
 [connection]
 moss_url = "http://localhost:7185"
-adapter_name = "cricket"
-adapter_version = "0.1.0"
+Companion_name = "cricket"
+Companion_version = "0.1.0"
 
 [audio]
 device = "default"
@@ -547,8 +547,8 @@ health_warning = "warning"
 
 [connection]
 moss_url = "http://localhost:7185"
-adapter_name = "firefly"
-adapter_version = "0.1.0"
+Companion_name = "firefly"
+Companion_version = "0.1.0"
 
 [device]
 serial_port = "/dev/ttyACM0"
@@ -617,12 +617,12 @@ Assert-GreaterThan $subscribers.count 0
 ### Beta (Hardware Expansion)
 
 - Firefly on RP2040 for 2-3 stones
-- OLED adapter on ESP8266
+- OLED Companion on ESP8266
 - Document installation process
 
 ### GA (General Availability)
 
-- Adapters packaged for apt/cargo
+- Companions packaged for apt/cargo
 - Moss auto-detection enabled
 - Documentation complete
 
@@ -633,7 +633,7 @@ Assert-GreaterThan $subscribers.count 0
 | Risk | Mitigation |
 |------|------------|
 | SSE connection instability | Heartbeat + reconnection logic |
-| Event storms (100 events/sec) | Adapters debounce; Moss rate-limits `service.activity` |
+| Event storms (100 events/sec) | Companions debounce; Moss rate-limits `service.activity` |
 | USB device permissions | Udev rules in package |
 | ESP8266 WiFi reliability | Reconnection with exponential backoff |
 | Audio device contention | Exclusive mode or warn on conflict |
@@ -674,14 +674,14 @@ Assert-GreaterThan $subscribers.count 0
 1. **In-tree or separate repos?**
    - *Proposal:* Start in-tree (`src/cricket/`, `src/firefly/`), split later if needed
 
-2. **Adapter package format?**
+2. **Companion package format?**
    - *Proposal:* Debian packages for Linux, standalone binaries for Windows
 
 3. **Firmware flashing UX?**
    - *Proposal:* Document manual process; Moss-assisted flashing is Phase 7+
 
 4. **Lantern garden-wide stream priority?**
-   - *Proposal:* Implement after single-stone adapters proven
+   - *Proposal:* Implement after single-stone Companions proven
 
 ---
 
@@ -693,7 +693,7 @@ Assert-GreaterThan $subscribers.count 0
 | 2. Test Harness | 1 week | Simulations, protocol tests, load tests |
 | 3. Cricket (Audio) | 1-2 weeks | Working audio on Wyse 5070 |
 | 4. Firefly (LED) | 2 weeks | Working LED matrix on RP2040 |
-| 5. OLED Adapter | 1 week | Working OLED on ESP8266 |
+| 5. OLED Companion | 1 week | Working OLED on ESP8266 |
 | 6. Auto-Detection | 2 weeks | Moss detects hardware, assists install |
 
 **Total:** 9-11 weeks to full presence ecosystem

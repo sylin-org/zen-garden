@@ -64,17 +64,17 @@ pub fn staging_dir() -> String {
     })
 }
 
-/// Get adapters/services directory
-/// Contains subdirectories with adapter executables
-pub fn adapters_dir() -> String {
-    std::env::var("GARDEN_ADAPTERS_DIR").unwrap_or_else(|_| {
+/// Get Companions/services directory
+/// Contains subdirectories with Companion executables
+pub fn companions_dir() -> String {
+    std::env::var("GARDEN_companions_dir").unwrap_or_else(|_| {
         #[cfg(target_os = "windows")]
         {
-            ".zen-garden\\adapters".to_string()
+            ".zen-garden\\Companions".to_string()
         }
         #[cfg(not(target_os = "windows"))]
         {
-            "/usr/local/bin/adapters".to_string()
+            "/usr/local/bin/companions".to_string()
         }
     })
 }

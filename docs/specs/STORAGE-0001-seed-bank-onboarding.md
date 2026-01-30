@@ -69,7 +69,7 @@ USB Insert → Moss Event Queue
 
 - **TTY1**: Fire-and-forget. Writes succeed even if no monitor attached.
 - **SSE**: Broadcast to all connected clients. No clients? Event dropped silently.
-- **Cricket**: Standard SSE subscriber via `garden-adapter-sdk`. No special handler in Moss.
+- **Cricket**: Standard SSE subscriber via `garden-companion-sdk`. No special handler in Moss.
 
 ---
 

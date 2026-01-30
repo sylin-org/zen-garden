@@ -184,16 +184,6 @@ impl FireflyConnection {
             None => Err(anyhow::anyhow!("No Firefly device connected")),
         }
     }
-
-    /// Disconnect (mark as disconnected, e.g., after communication error)
-    pub fn disconnect(&self) {
-        if let Ok(mut guard) = self.serial.lock() {
-            if guard.is_some() {
-                tracing::warn!("Firefly device disconnected");
-                *guard = None;
-            }
-        }
-    }
 }
 
 /// Find RP2040-Matrix port automatically

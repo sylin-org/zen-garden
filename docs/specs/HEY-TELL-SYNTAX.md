@@ -2,13 +2,13 @@
 
 **Status:** Draft  
 **Date:** 2026-01-26  
-**Scope:** Rake command syntax for adapter communication
+**Scope:** Rake command syntax for Companion communication
 
 ---
 
 ## Design Philosophy
 
-The "hey tell" syntax provides a **natural, conversational interface** for interacting with Zen Garden adapters. Think of it as talking to your infrastructure:
+The "hey tell" syntax provides a **natural, conversational interface** for interacting with Zen Garden Companions. Think of it as talking to your infrastructure:
 
 > "Hey, tell cricket to play the mr-robot tune"
 
@@ -26,11 +26,11 @@ garden-rake hey [subcommand] [target] [command] [args...]
 
 hey?                        → Help for hey command
 hey tell?                   → Help for tell subcommand
-hey tell                    → List all registered adapters
-hey tell {adapter}?         → Show adapter's command manifest
-hey tell {adapter} on       → Enable + start adapter
-hey tell {adapter} off      → Disable + stop adapter  
-hey tell {adapter} {cmd}    → Send command to adapter
+hey tell                    → List all registered Companions
+hey tell {Companion}?         → Show Companion's command manifest
+hey tell {Companion} on       → Enable + start Companion
+hey tell {Companion} off      → Disable + stop Companion  
+hey tell {Companion} {cmd}    → Send command to Companion
 ```
 
 ### Token Rules
@@ -39,7 +39,7 @@ hey tell {adapter} {cmd}    → Send command to adapter
 |----------|-------|-------------|
 | 1 | `hey` | Entry point to communication subsystem |
 | 2 | `tell` | Subcommand (currently only one) |
-| 3 | `{adapter}` | Target adapter name |
+| 3 | `{Companion}` | Target Companion name |
 | 4+ | `{command} [args]` | Command and arguments |
 
 ### Help Suffix `?`
@@ -64,14 +64,14 @@ garden-rake hey tell cricket? # Help for 'cricket' (command list)
 # What can I do with 'hey'?
 $ garden-rake hey?
 
-hey - Communicate with Zen Garden adapters
+hey - Communicate with Zen Garden Companions
 
 Subcommands:
-  tell    Send commands to registered adapters
+  tell    Send commands to registered Companions
 
 Usage:
-  garden-rake hey tell               List adapters
-  garden-rake hey tell {adapter}     Send command
+  garden-rake hey tell               List Companions
+  garden-rake hey tell {Companion}     Send command
 
 Examples:
   garden-rake hey tell cricket select mr-robot
@@ -79,17 +79,17 @@ Examples:
 ```
 
 ```bash
-# What adapters are registered?
+# What Companions are registered?
 $ garden-rake hey tell
 
-Registered Adapters:
+Registered Companions:
 
   ● cricket (v0.1.0)
-    Audio presence adapter - ambient soundscapes
+    Audio presence Companion - ambient soundscapes
   ○ firefly (v0.1.0) (disabled)
-    LED matrix adapter - visual presence
+    LED matrix Companion - visual presence
 
-Tip: Use 'garden-rake hey tell {adapter}?' to see commands
+Tip: Use 'garden-rake hey tell {Companion}?' to see commands
 ```
 
 ```bash
@@ -124,11 +124,11 @@ cricket Commands:
 ```bash
 # Enable cricket
 $ garden-rake hey tell cricket on
-✓ Adapter 'cricket' enabled and started
+✓ Companion 'cricket' enabled and started
 
 # Disable cricket
 $ garden-rake hey tell cricket off
-✓ Adapter 'cricket' disabled and stopped
+✓ Companion 'cricket' disabled and stopped
 ```
 
 ### Sending Commands
@@ -204,31 +204,31 @@ pub fn parse_hey_command(args: &[String]) -> HeyCommand {
 }
 
 fn parse_tell_command(args: &[String]) -> HeyCommand {
-    // No args = list adapters
+    // No args = list Companions
     if args.is_empty() {
-        return HeyCommand::ListAdapters;
+        return HeyCommand::ListCompanions;
     }
     
     let target = &args[0];
     
-    // Help for adapter
+    // Help for Companion
     if target.ends_with('?') {
-        let adapter = target.trim_end_matches('?');
-        return HeyCommand::AdapterHelp(adapter.to_string());
+        let Companion = target.trim_end_matches('?');
+        return HeyCommand::CompanionHelp(Companion.to_string());
     }
     
     // Lifecycle commands
     if args.len() >= 2 {
         match args[1].as_str() {
-            "on" => return HeyCommand::EnableAdapter(target.clone()),
-            "off" => return HeyCommand::DisableAdapter(target.clone()),
+            "on" => return HeyCommand::EnableCompanion(target.clone()),
+            "off" => return HeyCommand::DisableCompanion(target.clone()),
             _ => {}
         }
     }
     
-    // Pass remaining args to adapter
+    // Pass remaining args to Companion
     HeyCommand::SendCommand {
-        adapter: target.clone(),
+        Companion: target.clone(),
         raw_args: args[1..].to_vec(),
     }
 }
@@ -236,12 +236,12 @@ fn parse_tell_command(args: &[String]) -> HeyCommand {
 pub enum HeyCommand {
     Help,
     HelpFor(String),
-    ListAdapters,
-    AdapterHelp(String),
-    EnableAdapter(String),
-    DisableAdapter(String),
+    ListCompanions,
+    CompanionHelp(String),
+    EnableCompanion(String),
+    DisableCompanion(String),
     SendCommand {
-        adapter: String,
+        Companion: String,
         raw_args: Vec<String>,
     },
     Unknown(String),
@@ -261,28 +261,28 @@ pub async fn execute_hey_command(cmd: HeyCommand, endpoint: &str) -> Result<()> 
             match token.as_str() {
                 "" | "hey" => print_hey_help(),
                 "tell" => print_tell_help(),
-                adapter => show_adapter_commands(endpoint, adapter).await?,
+                Companion => show_Companion_commands(endpoint, Companion).await?,
             }
         }
         
-        HeyCommand::ListAdapters => {
-            list_adapters(endpoint).await?;
+        HeyCommand::ListCompanions => {
+            list_Companions(endpoint).await?;
         }
         
-        HeyCommand::AdapterHelp(adapter) => {
-            show_adapter_commands(endpoint, &adapter).await?;
+        HeyCommand::CompanionHelp(Companion) => {
+            show_Companion_commands(endpoint, &Companion).await?;
         }
         
-        HeyCommand::EnableAdapter(adapter) => {
-            adapter_lifecycle(endpoint, &adapter, "enable").await?;
+        HeyCommand::EnableCompanion(Companion) => {
+            Companion_lifecycle(endpoint, &Companion, "enable").await?;
         }
         
-        HeyCommand::DisableAdapter(adapter) => {
-            adapter_lifecycle(endpoint, &adapter, "disable").await?;
+        HeyCommand::DisableCompanion(Companion) => {
+            Companion_lifecycle(endpoint, &Companion, "disable").await?;
         }
         
-        HeyCommand::SendCommand { adapter, raw_args } => {
-            send_adapter_command(endpoint, &adapter, &raw_args).await?;
+        HeyCommand::SendCommand { Companion, raw_args } => {
+            send_Companion_command(endpoint, &Companion, &raw_args).await?;
         }
         
         HeyCommand::Unknown(token) => {
@@ -316,26 +316,26 @@ pub async fn execute_hey_command(cmd: HeyCommand, endpoint: &str) -> Result<()> 
 ### Response Handling
 
 ```rust
-pub async fn send_adapter_command(
+pub async fn send_Companion_command(
     endpoint: &str, 
-    adapter: &str, 
+    Companion: &str, 
     raw_args: &[String]
 ) -> Result<()> {
     let url = format!("{}/api/v1/stone/presence/command", endpoint);
     
-    let request = AdapterCommandRequest {
-        adapter: adapter.to_string(),
+    let request = CompanionCommandRequest {
+        Companion: Companion.to_string(),
         raw_args: raw_args.to_vec(),
     };
     
     let response = reqwest::Client::new()
         .post(&url)
         .json(&request)
-        .timeout(Duration::from_secs(6)) // 5s adapter + 1s margin
+        .timeout(Duration::from_secs(6)) // 5s Companion + 1s margin
         .send()
         .await?;
     
-    let result: AdapterCommandResponse = response.json().await?;
+    let result: CompanionCommandResponse = response.json().await?;
     
     // Format based on status
     match result.status {
@@ -374,24 +374,24 @@ pub async fn send_adapter_command(
 
 ## Error Handling
 
-### Unknown Adapter
+### Unknown Companion
 
 ```bash
 $ garden-rake hey tell foobar status
 
-✗ Unknown adapter: 'foobar'
+✗ Unknown Companion: 'foobar'
 
 Did you mean:
   → cricket
   → firefly
 ```
 
-### Adapter Not Running
+### Companion Not Running
 
 ```bash
 $ garden-rake hey tell cricket status
 
-✗ Adapter 'cricket' is not running
+✗ Companion 'cricket' is not running
 
 Suggestions:
   → Enable with: garden-rake hey tell cricket on
@@ -402,11 +402,11 @@ Suggestions:
 ```bash
 $ garden-rake hey tell cricket pull https://slow-server.com/huge.tar.gz
 
-✗ Request timed out (adapter did not respond in 5s)
+✗ Request timed out (Companion did not respond in 5s)
 
 Suggestions:
-  → Check adapter logs: journalctl -u garden-cricket -f
-  → Restart adapter: garden-rake hey tell cricket off && garden-rake hey tell cricket on
+  → Check Companion logs: journalctl -u garden-cricket -f
+  → Restart Companion: garden-rake hey tell cricket off && garden-rake hey tell cricket on
 ```
 
 ### Invalid Command
@@ -441,9 +441,9 @@ Available commands: select, list, volume, pull, remove, status
 ### Planned Subcommands
 
 ```bash
-garden-rake hey ask {adapter} {question}    # Query state
-garden-rake hey watch {adapter}             # Stream events
-garden-rake hey link {adapter} {device}     # Associate hardware
+garden-rake hey ask {Companion} {question}    # Query state
+garden-rake hey watch {Companion}             # Stream events
+garden-rake hey link {Companion} {device}     # Associate hardware
 ```
 
 ### Natural Language (Maybe)
@@ -459,8 +459,8 @@ garden-rake hey tell cricket play mr-robot
 
 ## Related Documents
 
-- [ADAPTER-SERVICE-REGISTRY.md](ADAPTER-SERVICE-REGISTRY.md) - Service registration
-- [ADAPTER-COMMAND-PROTOCOL.md](ADAPTER-COMMAND-PROTOCOL.md) - Command flow
+- [Companion-SERVICE-REGISTRY.md](Companion-SERVICE-REGISTRY.md) - Service registration
+- [Companion-COMMAND-PROTOCOL.md](Companion-COMMAND-PROTOCOL.md) - Command flow
 - [CRICKET-SPEC.md](CRICKET-SPEC.md) - Cricket implementation
 
 ---

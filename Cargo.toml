@@ -12,7 +12,7 @@ members = [
   "src/rake",
   "src/cricket",
   "src/firefly",
-  "src/adapter-sdk",
+  "src/companion-sdk",
   "src/build-utils",
   "src/probe",
 ]

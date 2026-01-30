@@ -50,7 +50,7 @@ pub struct ServiceState {
     pub health: String,      // "healthy", "unhealthy"
 }
 
-/// Client-initiated notification (Rake → Moss → Adapters)
+/// Client-initiated notification (Rake → Moss → Companions)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientNotification {
     pub event_type: String,  // "tended", "observed", etc.

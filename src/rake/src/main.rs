@@ -1,4 +1,4 @@
-// Binary-only modules (not needed by library)
+﻿// Binary-only modules (not needed by library)
 mod dispatch;
 
 // Use shared modules from the library
@@ -613,7 +613,12 @@ enum Commands {
         garden-rake prepare seed-bank                    # Auto-detect single USB device\n  \
         garden-rake prepare seed-bank /dev/sdb           # Specific device\n  \
         garden-rake prepare seed-bank named garden-data  # Custom name\n  \
-        garden-rake prepare seed-bank --fs ext4          # Use ext4 instead of btrfs\n\n\
+        garden-rake prepare seed-bank --fs ext4          # Use ext4 instead of btrfs\n  \
+        garden-rake prepare seed-bank --group primary --replica 1  # Create replica #1 of 'primary'\n  \
+        garden-rake prepare seed-bank --group offsite              # Create standalone 'offsite' group\n\n\
+        Replication: Use --group and --replica to create replicated seed banks that form\n\
+        a single logical backup target. Multiple devices with the same group name will\n\
+        receive the same data for redundancy.\n\n\
         WARNING: This will ERASE ALL DATA on the device."
     )]
     Prepare {
@@ -634,6 +639,14 @@ enum Commands {
         /// Filesystem type (btrfs or ext4, default: btrfs)
         #[arg(long)]
         fs: Option<String>,
+
+        /// Logical group for replicated seed banks (e.g., "primary", "offsite")
+        #[arg(long)]
+        group: Option<String>,
+
+        /// Replica number within a group (1, 2, ...). Auto-assigned if not specified.
+        #[arg(long)]
+        replica: Option<u32>,
 
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
@@ -818,19 +831,19 @@ enum Commands {
         at: Option<String>,
     },
 
-    /// Send commands to adapters (Cricket, Firefly, etc.)
+    /// Send commands to Companions (Cricket, Firefly, etc.)
     #[command(
-        long_about = "Communicate with Zen Garden adapters.\n\n\
-        Adapters extend Moss with additional capabilities like audio feedback (Cricket),\n\
+        long_about = "Communicate with Zen Garden Companions.\n\n\
+        Companions extend Moss with additional capabilities like audio feedback (Cricket),\n\
         LED displays (Firefly), and more.\n\n\
         Examples:\n  \
-        garden-rake hey tell                     # List adapters\n  \
+        garden-rake hey tell                     # List Companions\n  \
         garden-rake hey tell cricket?            # Show cricket commands\n  \
         garden-rake hey tell cricket select mr-robot\n  \
         garden-rake hey stone-01 tell cricket volume 50"
     )]
     Hey {
-        /// Raw arguments passed to adapter subsystem
+        /// Raw arguments passed to Companion subsystem
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         
@@ -893,6 +906,87 @@ enum Commands {
         #[arg(long)]
         at: Option<String>,
     },
+
+    /// Restore an offering from backup
+    #[command(
+        long_about = "Restore an offering from a nurturing backup.\n\n\
+        Supports restoring from local A/B slots or remote seed banks.\n\n\
+        Examples:\n  \
+        garden-rake restore mongodb                    # Restore from current slot\n  \
+        garden-rake restore mongodb from slot A       # Restore from slot A\n  \
+        garden-rake restore mongodb from slot B       # Restore from slot B\n  \
+        garden-rake restore mongodb from seed-bank garden-data  # Restore from seed bank\n  \
+        garden-rake restore mongodb --dry-run         # Preview without restoring"
+    )]
+    Restore {
+        /// Offering name to restore
+        offering: String,
+
+        /// Source: "from slot A|B" or "from seed-bank <name>"
+        #[arg(trailing_var_arg = true)]
+        source: Vec<String>,
+
+        /// Preview what would be restored without executing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Specific harvest ID (for seed bank restore)
+        #[arg(long)]
+        harvest_id: Option<String>,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
+    /// Manage nurturing (backup) operations
+    #[command(
+        long_about = "Manage nurturing (backup) operations for offerings.\n\n\
+        Examples:\n  \
+        garden-rake nurturing status                  # Show backup status for all offerings\n  \
+        garden-rake nurturing status mongodb          # Detailed status for mongodb\n  \
+        garden-rake nurturing list mongodb            # List all backups for mongodb\n  \
+        garden-rake nurturing list mongodb --local    # Local backups only\n  \
+        garden-rake nurturing list mongodb --remote   # Remote backups only\n  \
+        garden-rake nurturing trigger mongodb         # Trigger backup for mongodb\n  \
+        garden-rake nurturing trigger-all             # Trigger backup for all offerings"
+    )]
+    Nurturing {
+        #[command(subcommand)]
+        action: NurturingAction,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long, global = true)]
+        at: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum NurturingAction {
+    /// Show nurturing status
+    Status {
+        /// Specific offering to show detailed status for
+        offering: Option<String>,
+    },
+    /// List all backups for an offering
+    List {
+        /// Offering name
+        offering: String,
+        /// Show only local backups
+        #[arg(long)]
+        local: bool,
+        /// Show only remote backups
+        #[arg(long)]
+        remote: bool,
+    },
+    /// Trigger backup workflow for an offering
+    Trigger {
+        /// Offering name
+        offering: String,
+    },
+    /// Trigger backup workflow for all offerings
+    #[command(name = "trigger-all")]
+    TriggerAll,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1155,6 +1249,16 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.extend(parsed.args.clone());
         }
 
+        // === NURTURING (BACKUP) ===
+        "restore" => {
+            args.push("restore".to_string());
+            args.extend(parsed.args.clone());
+        }
+        "nurturing" => {
+            args.push("nurturing".to_string());
+            args.extend(parsed.args.clone());
+        }
+
         // === POND ===
         "place" => {
             args.push("place".to_string());
@@ -1210,7 +1314,7 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.extend(parsed.args.clone());
         }
         
-        // === ADAPTERS ===
+        // === Companions ===
         "hey" => {
             args.push("hey".to_string());
             args.extend(parsed.args.clone());
@@ -1618,11 +1722,11 @@ async fn async_main() -> anyhow::Result<()> {
             dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
         }
 
-        Commands::Prepare { target, device, name, random, fs, at } => {
+        Commands::Prepare { target, device, name, random, fs, group, replica, at } => {
             if target != "seed-bank" {
-                anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>]");
+                anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>] [--group <name>] [--replica <id>]");
             }
-            let cmd = commands::storage::PrepareSeedBankCommand::new(device, name, random, fs);
+            let cmd = commands::storage::PrepareSeedBankCommand::new(device, name, random, fs, group, replica);
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
         }
 
@@ -1830,6 +1934,69 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Reconcile { drop_invalid, at } => {
             let cmd = commands::management::ReconcileCommand::new(drop_invalid, quiet_mode);
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::Restore { offering, source, dry_run, harvest_id, at } => {
+            // Parse source: "from slot A|B" or "from seed-bank <name>"
+            let source_str = source.join(" ").to_lowercase();
+
+            if source_str.contains("seed-bank") || source_str.contains("seedbank") {
+                // Remote restore from seed bank
+                let seed_bank = source.iter()
+                    .skip_while(|s| s.to_lowercase() != "seed-bank" && s.to_lowercase() != "seedbank")
+                    .nth(1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Missing seed bank name. Usage: garden-rake restore {} from seed-bank <name>",
+                        offering
+                    ))?;
+
+                let cmd = commands::nurturing::RestoreRemoteCommand::new(
+                    offering,
+                    seed_bank,
+                    harvest_id,
+                    dry_run,
+                );
+                dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+            } else {
+                // Local restore from slot
+                let slot = if source_str.contains("slot") {
+                    source.iter()
+                        .skip_while(|s| s.to_lowercase() != "slot")
+                        .nth(1)
+                        .cloned()
+                } else if source.iter().any(|s| s.to_uppercase() == "A" || s.to_uppercase() == "B") {
+                    source.iter()
+                        .find(|s| s.to_uppercase() == "A" || s.to_uppercase() == "B")
+                        .cloned()
+                } else {
+                    None
+                };
+
+                let cmd = commands::nurturing::RestoreLocalCommand::new(offering, slot, dry_run);
+                dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+            }
+        }
+
+        Commands::Nurturing { action, at } => {
+            match action {
+                NurturingAction::Status { offering } => {
+                    let cmd = commands::nurturing::NurturingStatusCommand::new(offering);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                NurturingAction::List { offering, local, remote } => {
+                    let cmd = commands::nurturing::NurturingListCommand::new(offering, local, remote);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                NurturingAction::Trigger { offering } => {
+                    let cmd = commands::nurturing::NurturingTriggerCommand::new(Some(offering));
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                NurturingAction::TriggerAll => {
+                    let cmd = commands::nurturing::NurturingTriggerCommand::new(None);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+            }
         }
         }
     }

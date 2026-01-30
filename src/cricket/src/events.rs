@@ -2,7 +2,7 @@
 //!
 //! Handles presence events from Moss and triggers audio playback.
 
-use garden_adapter_sdk::{async_trait, AdapterState, EventHandler, SseEvent};
+use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -49,13 +49,13 @@ impl DebounceState {
 pub struct CricketEventHandler {
     mixer: Arc<Mixer>,
     tune_manager: Arc<TuneManager>,
-    state: Arc<AdapterState>,
+    state: Arc<CompanionState>,
     debounce: Arc<RwLock<DebounceState>>,
 }
 
 impl CricketEventHandler {
     /// Create a new event handler
-    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<AdapterState>) -> Self {
+    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<CompanionState>) -> Self {
         Self {
             mixer,
             tune_manager,

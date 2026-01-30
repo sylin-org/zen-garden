@@ -11,7 +11,7 @@ This document provides step-by-step implementation instructions for Phase 1 of t
 
 **Architecture Summary:**
 ```
-Service Handlers → DomainEvent → EventBus → SSE Handler → Adapters
+Service Handlers → DomainEvent → EventBus → SSE Handler → Companions
    (emit)           (StoneEvent)   (event_tx)  (filter+translate)
 ```
 
@@ -65,7 +65,7 @@ Service Handlers → DomainEvent → EventBus → SSE Handler → Adapters
 
 ### Step 1: Create Presence Types (1 hour)
 
-**Objective:** Define protocol contracts in `garden_common` for adapters to use.
+**Objective:** Define protocol contracts in `garden_common` for Companions to use.
 
 #### 1.1 Create module structure
 
@@ -73,7 +73,7 @@ Service Handlers → DomainEvent → EventBus → SSE Handler → Adapters
 ```rust
 //! Stone Presence Protocol types (PRESENCE-0001)
 //!
-//! Protocol contracts for SSE communication between Moss and adapters.
+//! Protocol contracts for SSE communication between Moss and Companions.
 //! Contains ONLY data structures, no implementation logic.
 
 pub mod types;
@@ -296,7 +296,7 @@ use garden_common::presence::{PresenceSnapshot, StoneState, ServiceState};
 /// GET /api/v1/stone/presence/stream - Local stone presence stream
 ///
 /// **Scope:** Stone-level (local events only)
-/// **Consumer:** Local adapters (Cricket, Firefly, OLED)
+/// **Consumer:** Local Companions (Cricket, Firefly, OLED)
 /// 
 /// Returns SSE stream of domain events translated to presence vocabulary.
 /// Only emits events relevant to THIS stone (filters out garden-wide events).
@@ -314,7 +314,7 @@ use garden_common::presence::{PresenceSnapshot, StoneState, ServiceState};
 pub async fn stream_stone_presence(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    tracing::info!("Local presence adapter connected");
+    tracing::info!("Local presence Companion connected");
     
     let stone_name = state.stone_name.clone();
     
@@ -339,7 +339,7 @@ pub async fn stream_stone_presence(
                 match result {
                     Ok(event) => Some(event),
                     Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                        tracing::warn!("Presence adapter lagged {} events", n);
+                        tracing::warn!("Presence Companion lagged {} events", n);
                         None
                     }
                 }
@@ -840,7 +840,7 @@ curl -N http://localhost:7185/api/v1/stone/presence/stream | grep -i "load"
 1. **Real metrics:** Integrate `sysinfo` crate for CPU/memory/disk
 2. **EventBus migration:** Replace MossEvent with DomainEvent
 3. **Testing harness:** Automated tests for snapshot generation
-4. **Cricket adapter:** Implement audio adapter on Wyse 5070
+4. **Cricket Companion:** Implement audio Companion on Wyse 5070
 5. **Performance:** Add filtering by stone_name when DomainEvent is used
 
 ---

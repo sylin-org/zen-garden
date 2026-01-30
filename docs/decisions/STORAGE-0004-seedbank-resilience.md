@@ -58,23 +58,42 @@ Six-method detection for maximum reliability:
 
 Additionally, devices with `zen-seed` filesystem label are trusted (user explicitly prepared them).
 
-### 3. Hot-Plug Detection (coordinator.rs)
+### 3. Resilient Mount System (coordinator.rs, registry.rs)
 
-Background task runs every 10 seconds:
+Two-task architecture for maximum resilience:
+
+**Task 1: Mount Persistence (5 second interval)**
+- Tracks all successful mounts in a shared `MountTracker`
+- Verifies tracked mounts are still active via `/proc/mounts`
+- Automatically re-mounts if device exists but mount disappeared
+- Handles race conditions with udisks2 or other system processes
+- Continues retrying indefinitely (devices can recover)
+
+**Task 2: Hot-Plug Detection (10 second interval)**
 - Scans for new `zen-seed` labeled devices
 - Triggers auto-mount for unmounted devices
 - Updates storage cache and broadcasts beacon
+- Registers new mounts with the tracker
 
 ```rust
-pub fn start_seedbank_hotplug_detection(state: AppState) {
+pub fn start_seedbank_resilient_mount_system(state: AppState) {
+    let tracker = create_mount_tracker();
+
+    // Task 1: Mount persistence (5s)
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
         loop {
             interval.tick().await;
-            // Scan triggers auto-mount for any new zen-seed devices
-            if let Ok(registry) = SeedBankRegistry::scan().await {
-                // Update storage cache and broadcast
-            }
+            let recovered = SeedBankRegistry::verify_and_recover_mounts(&tracker).await;
+            // Update storage cache if mounts recovered
+        }
+    });
+
+    // Task 2: Hot-plug detection (10s)
+    tokio::spawn(async move {
+        loop {
+            interval.tick().await;
+            SeedBankRegistry::auto_mount_seed_banks_with_tracker(Some(&tracker)).await;
+            // Update storage cache and broadcast
         }
     });
 }
@@ -101,11 +120,13 @@ async fn cleanup_stale_mount(mount_path: &str) {
 
 | Scenario | Detection | Action | Time |
 |----------|-----------|--------|------|
-| Device plugged in | Hot-plug scan | Auto-mount, announce | ~10s |
-| Moss restart | Bootstrap scan | Re-discover mounts | Immediate |
-| System reboot | Bootstrap scan | Auto-mount via label | Immediate |
+| Device plugged in | Hot-plug scan | Auto-mount, announce, track | ~10s |
+| Moss restart | Bootstrap scan | Re-discover mounts, track | Immediate |
+| System reboot | Bootstrap scan | Auto-mount via label, track | Immediate |
 | Device yanked | I/O error or 0 capacity | Lazy unmount, notify garden | ~10s |
 | USB detection fails | zen-seed label trusted | Proceed with mount | Immediate |
+| Mount disappears (udisks2) | Persistence check | Re-mount if device exists | ~5s |
+| Mount failure (busy) | Persistence retry | Continue retrying | Ongoing |
 
 ## File Changes
 
@@ -128,8 +149,12 @@ Physical validation tests in `src/probe/src/tests/nurturing.rs`:
 - Frictionless user experience: plug in and go
 - Self-healing: recovers from failures automatically
 - No manual intervention needed for hot-plug or device removal
+- Mount persistence: survives interference from udisks2 or other system processes
+- Resilient to race conditions at startup
 
 ### Negative
 - 10-second detection delay for hot-plug (acceptable trade-off)
+- 5-second detection delay for mount recovery (fast enough for resilience)
 - Requires `sudo` for mount operations
 - Extra `lsblk` calls for USB detection fallback
+- Two background tasks instead of one (minimal overhead)

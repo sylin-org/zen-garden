@@ -1,6 +1,6 @@
 ﻿//! Embedded Assets
 //!
-//! Provides access to embedded manifests and adapters compiled into the Moss binary.
+//! Provides access to embedded manifests and Companions compiled into the Moss binary.
 //! Uses overlay pattern: filesystem files take precedence over embedded files.
 //!
 //! # Directory Structure (embedded/)
@@ -13,7 +13,7 @@
 //! │       │   ├── mongodb.snippet.yaml
 //! │       │   └── ...
 //! │       └── ...
-//! └── adapters/            # Platform-specific adapter binaries
+//! └── Companions/            # Platform-specific Companion binaries
 //!     ├── windows/
 //!     │   └── garden-cricket.exe
 //!     └── linux/
@@ -22,12 +22,12 @@
 //!
 //! # Loading Priority
 //!
-//! 1. **Filesystem first**: Check `{data_dir}/manifests/` and `{data_dir}/adapters/`
+//! 1. **Filesystem first**: Check `{data_dir}/manifests/` and `{data_dir}/companions/`
 //! 2. **Embedded fallback**: If file not found on filesystem, use embedded version
 //!
 //! # Extraction
 //!
-//! Embedded assets allow Moss to ship with manifests and adapters directly compiled in.
+//! Embedded assets allow Moss to ship with manifests and Companions directly compiled in.
 //! The overlay pattern allows filesystem files to override embedded defaults.
 
 use rust_embed::Embed;
@@ -67,42 +67,42 @@ impl EmbeddedManifests {
 }
 
 // ============================================================================
-// Embedded Adapters (Platform-Specific)
+// Embedded Companions (Platform-Specific)
 // ============================================================================
 
-/// Embedded Windows adapters
+/// Embedded Windows Companions
 #[cfg(target_os = "windows")]
 #[derive(Embed)]
-#[folder = "embedded/adapters/windows/"]
+#[folder = "embedded/companions/windows/"]
 #[prefix = ""]
-pub struct EmbeddedAdapters;
+pub struct EmbeddedCompanions;
 
-/// Embedded Linux adapters
+/// Embedded Linux Companions
 #[cfg(target_os = "linux")]
 #[derive(Embed)]
-#[folder = "embedded/adapters/linux/"]
+#[folder = "embedded/companions/linux/"]
 #[prefix = ""]
-pub struct EmbeddedAdapters;
+pub struct EmbeddedCompanions;
 
 /// Fallback for other platforms (empty)
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[derive(Embed)]
-#[folder = "embedded/adapters/linux/"]
+#[folder = "embedded/companions/linux/"]
 #[prefix = ""]
-pub struct EmbeddedAdapters;
+pub struct EmbeddedCompanions;
 
-impl EmbeddedAdapters {
-    /// Get embedded adapter binary by name
-    pub fn get_adapter(name: &str) -> Option<Vec<u8>> {
+impl EmbeddedCompanions {
+    /// Get embedded Companion binary by name
+    pub fn get_companion(name: &str) -> Option<Vec<u8>> {
         Self::get(name).map(|f| f.data.to_vec())
     }
     
-    /// List all embedded adapters
-    pub fn list_adapters() -> Vec<String> {
+    /// List all embedded Companions
+    pub fn list_companions() -> Vec<String> {
         Self::iter().map(|s| s.to_string()).collect()
     }
     
-    /// Check if an embedded adapter exists
+    /// Check if an embedded Companion exists
     pub fn exists(name: &str) -> bool {
         Self::get(name).is_some()
     }
@@ -181,7 +181,7 @@ pub fn list_all_manifests(manifests_dir: &Path) -> Vec<ManifestSource> {
     result
 }
 
-/// Source of a manifest/adapter
+/// Source of a manifest/Companion
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssetSource {
     /// Loaded from filesystem (takes precedence)
@@ -401,10 +401,10 @@ mod tests {
     }
     
     #[test]
-    fn test_embedded_adapters_list() {
-        // This will be empty if no adapters are in embedded/adapters/{platform}/
-        let adapters = EmbeddedAdapters::list_adapters();
+    fn test_embedded_companions_list() {
+        // This will be empty if no companions are in embedded/companions/{platform}/
+        let companions = EmbeddedCompanions::list_companions();
         // Just verify it doesn't panic
-        println!("Embedded adapters: {:?}", adapters);
+        println!("Embedded companions: {:?}", companions);
     }
 }

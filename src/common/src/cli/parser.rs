@@ -113,8 +113,10 @@ fn is_zen_verb(verb: &str) -> bool {
         "explore" | "touch" | "garden" |
         // Test/Diagnostic (zen)
         "election" |
-        // Adapters (zen)
-        "hey"
+        // Companions (zen)
+        "hey" |
+        // Nurturing (backup/restore)
+        "restore" | "nurturing"
     )
 }
 

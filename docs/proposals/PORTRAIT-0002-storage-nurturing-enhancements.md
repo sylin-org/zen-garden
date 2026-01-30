@@ -1,4 +1,4 @@
-# Portrait Enhancement Proposal: Storage & Nurturing Visibility
+﻿# Portrait Enhancement Proposal: Storage & Nurturing Visibility
 
 **Status**: Draft
 **Author**: Claude
@@ -324,7 +324,7 @@ async fn get_seed_bank_backup_details(seed_bank: &SeedBankInfo) -> Vec<SeedBankO
 ├─────────────────────────────────────────────────────────────────┤
 │  SEED BANKS: Backup counts, last sync, retention status         │  ← ENHANCED
 ├─────────────────────────────────────────────────────────────────┤
-│  COMPANIONS: Adapters (unchanged)                               │
+│  COMPANIONS: Companions (unchanged)                               │
 ├─────────────────────────────────────────────────────────────────┤
 │  HORIZON: Visible stones (unchanged)                            │
 └─────────────────────────────────────────────────────────────────┘

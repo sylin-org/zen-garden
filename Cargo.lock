@@ -1148,25 +1148,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "garden-adapter-sdk"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "clap",
- "futures-util",
- "garden-common",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "garden-build-utils"
 version = "0.1.0"
 
@@ -1207,6 +1188,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "garden-companion-sdk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "clap",
+ "futures-util",
+ "garden-common",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "garden-cricket"
 version = "0.1.0"
 dependencies = [
@@ -1214,8 +1214,8 @@ dependencies = [
  "clap",
  "crossterm",
  "futures-util",
- "garden-adapter-sdk",
  "garden-common",
+ "garden-companion-sdk",
  "notify",
  "reqwest 0.11.27",
  "rodio",
@@ -1235,8 +1235,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "garden-adapter-sdk",
  "garden-common",
+ "garden-companion-sdk",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -1339,6 +1339,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "uuid",
 ]

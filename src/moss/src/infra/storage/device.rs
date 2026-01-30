@@ -420,6 +420,151 @@ pub fn analyze_device(device_path: &str) -> Result<StorageDetectedInfo> {
     })
 }
 
+/// Information about an unmounted removable device
+#[derive(Debug, Clone)]
+pub struct UnmountedDevice {
+    /// Device path (e.g., "/dev/sdb1")
+    pub device: String,
+    /// Device name without /dev/ prefix (e.g., "sdb1")
+    pub name: String,
+    /// Capacity in bytes
+    pub capacity_bytes: u64,
+    /// Filesystem label if available
+    pub label: Option<String>,
+}
+
+/// List all unmounted removable/USB partitions on the system
+///
+/// This is used for manifest-first discovery - returns devices that:
+/// 1. Are removable (USB, SD card, etc.)
+/// 2. Are NOT currently mounted anywhere
+/// 3. Have a filesystem (not raw/unpartitioned)
+///
+/// These devices are candidates for temp-mounting to check for manifests.
+pub fn list_unmounted_removable_devices() -> Result<Vec<UnmountedDevice>> {
+    let mut results = Vec::new();
+
+    // Get all currently mounted devices from /proc/mounts
+    let mounted_devices: std::collections::HashSet<String> = std::fs::read_to_string("/proc/mounts")
+        .map(|content| {
+            content.lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Read /sys/block to get all block devices
+    let sys_block = Path::new("/sys/block");
+    let entries = std::fs::read_dir(sys_block)
+        .context("Failed to read /sys/block")?;
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let device_name = entry.file_name();
+        let device_name_str = device_name.to_string_lossy();
+
+        // Skip non-disk devices (loop, dm, sr, ram, etc.)
+        if !device_name_str.starts_with("sd") && !device_name_str.starts_with("nvme") {
+            continue;
+        }
+
+        let device_path = format!("/dev/{}", device_name_str);
+
+        // Check if this base device is removable/USB
+        if !DeviceAnalyzer::is_removable(&device_path).unwrap_or(false) {
+            continue;
+        }
+
+        debug!(device = %device_path, "Found removable device, checking partitions for manifest discovery");
+
+        // Find partitions for this device
+        let device_sys_path = entry.path();
+        if let Ok(contents) = std::fs::read_dir(&device_sys_path) {
+            for part_entry in contents.filter_map(|e| e.ok()) {
+                let part_name = part_entry.file_name();
+                let part_name_str = part_name.to_string_lossy();
+
+                // Partitions are named like sdb1, sdb2, nvme0n1p1
+                if part_name_str.starts_with(&*device_name_str) && part_name_str != device_name_str {
+                    let part_path = format!("/dev/{}", part_name_str);
+
+                    // Skip if already mounted
+                    if mounted_devices.contains(&part_path) {
+                        debug!(device = %part_path, "Partition already mounted, skipping");
+                        continue;
+                    }
+
+                    // Check if it has a filesystem (not raw)
+                    #[cfg(target_os = "linux")]
+                    {
+                        let output = std::process::Command::new("blkid")
+                            .args(["-o", "value", "-s", "TYPE", &part_path])
+                            .output();
+
+                        if let Ok(output) = output {
+                            if !output.status.success() || output.stdout.is_empty() {
+                                // No filesystem - skip
+                                continue;
+                            }
+                        }
+                    }
+
+                    let capacity = DeviceAnalyzer::get_capacity(&part_path).unwrap_or(0);
+                    let label = DeviceAnalyzer::get_label(&part_path);
+
+                    debug!(
+                        device = %part_path,
+                        capacity = capacity,
+                        label = ?label,
+                        "Found unmounted removable partition"
+                    );
+
+                    results.push(UnmountedDevice {
+                        device: part_path,
+                        name: part_name_str.to_string(),
+                        capacity_bytes: capacity,
+                        label,
+                    });
+                }
+            }
+        }
+
+        // If no partitions found, check if the device itself has a filesystem
+        let whole_disk_path = format!("/dev/{}", device_name_str);
+        if !mounted_devices.contains(&whole_disk_path) {
+            #[cfg(target_os = "linux")]
+            {
+                let output = std::process::Command::new("blkid")
+                    .args(["-o", "value", "-s", "TYPE", &whole_disk_path])
+                    .output();
+
+                if let Ok(output) = output {
+                    if output.status.success() && !output.stdout.is_empty() {
+                        let capacity = DeviceAnalyzer::get_capacity(&whole_disk_path).unwrap_or(0);
+                        let label = DeviceAnalyzer::get_label(&whole_disk_path);
+
+                        debug!(
+                            device = %whole_disk_path,
+                            capacity = capacity,
+                            "Found unmounted whole-disk removable device"
+                        );
+
+                        results.push(UnmountedDevice {
+                            device: whole_disk_path,
+                            name: device_name_str.to_string(),
+                            capacity_bytes: capacity,
+                            label,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    debug!(count = results.len(), "Total unmounted removable devices found");
+    Ok(results)
+}
+
 /// List all USB/removable storage partitions on the system
 /// This is the main entry point for device discovery - scans all partitions
 /// and uses robust USB detection (not relying on unreliable RM flag)

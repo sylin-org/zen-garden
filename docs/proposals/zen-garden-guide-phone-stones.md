@@ -1,4 +1,4 @@
-# Phone Stones: Smartphones as Zen Garden Nodes
+﻿# Phone Stones: Smartphones as Zen Garden Nodes
 
 **Turn old smartphones into full-featured Stones with wired power, wired network, and real Linux.**
 
@@ -65,20 +65,20 @@ You need a hub that provides both Gigabit Ethernet and Power Delivery through a 
 
 | Product | Ethernet | PD | Price | Notes |
 |---------|----------|-----|-------|-------|
-| [uni USB-C to Ethernet + 100W PD](https://www.amazon.com/uni-Ethernet-Adapter-Charging-Gigabit/dp/B0C3GHBLB6) | 1Gbps | 100W | ~$20 | Minimal, just Ethernet + power |
+| [uni USB-C to Ethernet + 100W PD](https://www.amazon.com/uni-Ethernet-Companion-Charging-Gigabit/dp/B0C3GHBLB6) | 1Gbps | 100W | ~$20 | Minimal, just Ethernet + power |
 | [Anker 655 USB-C Hub 8-in-1](https://www.anker.com/products/a8382) | 1Gbps | 100W | ~$70 | Additional USB-A ports, HDMI |
 | [StarTech US1GC30PD](https://www.startech.com/en-us/networking-io/us1gc30pd) | 1Gbps | 60W | ~$45 | Industrial quality, 2-year warranty |
 | [UGREEN Revodok 6-in-1](https://www.ugreen.com/products/ugreen-6-in-1-usb-c-hub) | 1Gbps | 100W | ~$35 | Good balance of features/price |
 
 **Chipset compatibility:**
-The RTL8153 chipset has native Linux kernel support (no additional drivers needed). Most USB-C Ethernet adapters use this chipset. Verify by checking product specifications or reviews mentioning Linux compatibility.
+The RTL8153 chipset has native Linux kernel support (no additional drivers needed). Most USB-C Ethernet Companions use this chipset. Verify by checking product specifications or reviews mentioning Linux compatibility.
 
 ### Power Supply
 
 Use a USB-C Power Delivery charger connected to the hub's PD input port.
 
 **Requirements:**
-- USB-C PD output (not just USB-A with adapter)
+- USB-C PD output (not just USB-A with Companion)
 - 18W minimum (phone draws 3-5W, hub overhead)
 - 30W+ recommended for headroom
 
@@ -312,7 +312,7 @@ done
 
 ### Wired Ethernet
 
-USB-C Ethernet adapters appear as standard network interfaces:
+USB-C Ethernet Companions appear as standard network interfaces:
 
 ```bash
 # Check interface name
@@ -336,13 +336,13 @@ iface eth0 inet static
 
 ### Performance Notes
 
-USB Ethernet adapters on phones may show reduced throughput compared to native ports:
+USB Ethernet Companions on phones may show reduced throughput compared to native ports:
 
 | Configuration | Typical Speed |
 |---------------|---------------|
 | Native Gigabit (desktop) | 940 Mbps |
-| USB 3.0 Gigabit adapter (laptop) | 800-940 Mbps |
-| USB-C Gigabit adapter (phone) | 75-300 Mbps |
+| USB 3.0 Gigabit Companion (laptop) | 800-940 Mbps |
+| USB-C Gigabit Companion (phone) | 75-300 Mbps |
 
 The reduced speed is still adequate for most Stone workloads (databases, caches, APIs). For high-throughput storage (MinIO), prefer traditional hardware.
 
@@ -499,10 +499,10 @@ Avoid these workloads on Phone Stones:
 
 ### Ethernet Not Working
 
-1. **Check adapter connection:** LED should light up
+1. **Check Companion connection:** LED should light up
 2. **Verify interface exists:** `ip link show`
 3. **Check dmesg:** `dmesg | grep -i eth`
-4. **Try different adapter:** Some chipsets have compatibility issues
+4. **Try different Companion:** Some chipsets have compatibility issues
 
 ### Overheating
 
@@ -534,7 +534,7 @@ Avoid these workloads on Phone Stones:
 | **Power draw** | 3-5W | 10-20W | 5-15W |
 | **Built-in UPS** | ✅ Yes | ❌ No | ❌ No |
 | **Built-in screen** | ✅ Yes | ❌ No | ❌ No |
-| **Native Ethernet** | ❌ USB adapter | ✅ Yes | ✅ Yes |
+| **Native Ethernet** | ❌ USB Companion | ✅ Yes | ✅ Yes |
 | **Sensors** | ✅ GPS, camera, etc | ❌ None | ❌ None |
 | **Docker support** | ⚠️ Requires setup | ✅ Standard | ✅ Standard |
 | **Support lifespan** | ⚠️ Community | ✅ Stable | ✅ Stable |
@@ -572,7 +572,7 @@ Avoid these workloads on Phone Stones:
 **Working:**
 - PostmarketOS edge with Phosh UI
 - SSH access
-- USB-C Ethernet (RTL8153 adapters)
+- USB-C Ethernet (RTL8153 Companions)
 - WiFi
 - Display (for debugging)
 - Audio

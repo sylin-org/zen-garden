@@ -26,8 +26,8 @@ canonical: true
   - **Rationale**: Version compatibility policies for service offerings
   - **Impact**: Clear upgrade/downgrade rules, semantic versioning for offerings
 
-### Adapters
-- **[CRICKET-0001](CRICKET-0001-audio-adapter-spec.md)**: Cricket Audio Adapter Specification
+### Companions
+- **[CRICKET-0001](CRICKET-0001-audio-Companion-spec.md)**: Cricket Audio Companion Specification
   - **Status**: Accepted (2026-01-26)
   - **Rationale**: Sonify infrastructure with 4-channel mixer and tune system
   - **Impact**: Physical presence feedback, event-to-audio mapping, 180 CC0 samples

@@ -98,29 +98,29 @@ p2p::send_announcement(
 **Why:** Prevents port conflicts (7184), enforces SoC/DDD, enables testing.  
 **Reference:** [COMM-0001](decisions/COMM-0001-p2p-transport-singleton.md)
 
-### Adapter Framework (CRITICAL)
-**Moss manages adapters via port ledger and command routing.**
+### Companion Framework (CRITICAL)
+**Moss manages Companions via port ledger and command routing.**
 
 **Port Assignment:**
-- Base port: 7187 (ASCII sum "moss adapter" = 1187 + 6000)
-- Range: 7187-7199 (13 adapters max)
-- Ledger: `{data_dir}/adapter-ports.json` - persistent HashMap<adapter_id, port>
+- Base port: 7187 (ASCII sum "moss Companion" = 1187 + 6000)
+- Range: 7187-7199 (13 Companions max)
+- Ledger: `{data_dir}/companion-ports.json` - persistent HashMap<Companion_id, port>
 - Assignment: Incremental (7187, 7188, 7189...) via `PortLedger::get_or_assign()`
 
-**Adapter Discovery Protocol:**
-1. Moss scans `{data_dir}/adapters/` directory for executables
-2. For each adapter: `{executable} --dump-commands --port {assigned_port}`
-3. Adapter outputs JSON CommandManifest to stdout
-4. Moss caches manifest and starts adapter with `--stone {endpoint} --port {assigned_port}`
+**Companion Discovery Protocol:**
+1. Moss scans `{data_dir}/companions/` directory for executables
+2. For each Companion: `{executable} --dump-commands --port {assigned_port}`
+3. Companion outputs JSON CommandManifest to stdout
+4. Moss caches manifest and starts Companion with `--stone {endpoint} --port {assigned_port}`
 
 **Command Routing:**
 ```
-Rake → POST /api/v1/stone/adapters/{id}/command
+Rake → POST /api/v1/stone/companions/{id}/command
   → Moss forwards to http://127.0.0.1:{assigned_port}/command
-  → Adapter executes and returns result (5s timeout)
+  → Companion executes and returns result (5s timeout)
 ```
 
-**Required Adapter Endpoints:**
+**Required Companion Endpoints:**
 | Method | Path | Purpose |
 |--------|------|---------|
 | `POST` | `/command` | Execute commands from Moss |
@@ -128,41 +128,41 @@ Rake → POST /api/v1/stone/adapters/{id}/command
 | `GET` | `/health` | Health check |
 
 **Rules:**
-- ❌ **NEVER** hardcode adapter ports (use ledger)
-- ❌ **NEVER** adopt non-adapter ports (ledger is source of truth)
+- ❌ **NEVER** hardcode Companion ports (use ledger)
+- ❌ **NEVER** adopt non-Companion ports (ledger is source of truth)
 - ✅ **ALWAYS** pass `--port` during `--dump-commands` and startup
-- ✅ **ALWAYS** route commands through Moss (never direct to adapters)
+- ✅ **ALWAYS** route commands through Moss (never direct to Companions)
 - ✅ **ALWAYS** implement `/shutdown` for graceful upgrade support
 
-**Adapter SDK (garden-adapter-sdk):**
-For Rust adapters, use the SDK which provides all standard infrastructure:
-- `AdapterConfig` - CLI parsing (`--stone`, `--port`, `--dump-commands`)
+**Companion SDK (garden-companion-sdk):**
+For Rust Companions, use the SDK which provides all standard infrastructure:
+- `CompanionConfig` - CLI parsing (`--stone`, `--port`, `--dump-commands`)
 - `CommandHandler` trait - Implement to handle commands
-- `AdapterRuntime` - HTTP server, shutdown coordination, signals
+- `CompanionRuntime` - HTTP server, shutdown coordination, signals
 - `SseClient` - Optional presence event subscription
 
 **Pattern:**
 ```rust
-// Adapter registration (infra/adapters.rs)
-let port = port_ledger.get_or_assign(&adapter_id).await?;
+// Companion registration (infra/Companions.rs)
+let port = port_ledger.get_or_assign(&Companion_id).await?;
 invoke_dump_commands(&executable, port).await?;
 
-// Adapter startup
-spawn_adapter(&executable, &stone_endpoint, port).await?;
+// Companion startup
+spawn_Companion(&executable, &stone_endpoint, port).await?;
 
-// Command forwarding (api/v1/adapters.rs)
-let url = format!("http://127.0.0.1:{}/command", adapter.port);
+// Command forwarding (api/v1/Companions.rs)
+let url = format!("http://127.0.0.1:{}/command", Companion.port);
 let response = client.post(&url)
     .json(&command_request)
-    .timeout(Duration::from_millis(ADAPTER_COMMAND_TIMEOUT_MS))
+    .timeout(Duration::from_millis(Companion_COMMAND_TIMEOUT_MS))
     .send().await?;
 
-// Graceful shutdown before upgrade (infra/adapters.rs)
-adapter_registry.stop_all().await;  // Calls /shutdown on each adapter
+// Graceful shutdown before upgrade (infra/Companions.rs)
+Companion_registry.stop_all().await;  // Calls /shutdown on each Companion
 ```
 
-**Why:** Centralizes port management, prevents port conflicts, enables adapter hot-reload.  
-**Reference:** [ADAPTER-COMMAND-PROTOCOL](specs/ADAPTER-COMMAND-PROTOCOL.md), [ADAPTER-SERVICE-REGISTRY](specs/ADAPTER-SERVICE-REGISTRY.md), [adapter-development.md](guides/adapter-development.md)
+**Why:** Centralizes port management, prevents port conflicts, enables Companion hot-reload.  
+**Reference:** [Companion-COMMAND-PROTOCOL](specs/Companion-COMMAND-PROTOCOL.md), [Companion-SERVICE-REGISTRY](specs/Companion-SERVICE-REGISTRY.md), [companion-development.md](guides/companion-development.md)
 
 ### Discovery Transport (Multicast-First)
 **UDP discovery uses multicast-first strategy to solve multi-homed system failures.**
@@ -187,7 +187,7 @@ adapter_registry.stop_all().await;  // Calls /shutdown on each adapter
    - Sends to multicast group `239.255.42.99:7184`
    - Falls back to directed broadcast (computed from IP + netmask)
    - Example: `192.168.32.10/20` → broadcast to `192.168.47.255`
-   - Skips virtual adapters (VMware, Hyper-V, VirtualBox, Docker, WSL)
+   - Skips virtual Companions (VMware, Hyper-V, VirtualBox, Docker, WSL)
 
 2. **Receiver** (single socket, multiple joins):
    - Binds to `0.0.0.0:7184`
@@ -196,9 +196,9 @@ adapter_registry.stop_all().await;  // Calls /shutdown on each adapter
 
 **Why Multicast?**
 
-Limited broadcast (`255.255.255.255`) fails on multi-homed Windows 11 systems (WSL/Hyper-V adapters). The OS routes broadcast packets through the default interface, which may be a virtual adapter instead of the physical NIC. Multicast join operations explicitly specify which interface to listen on, and per-interface sender binding ensures packets egress the correct NIC.
+Limited broadcast (`255.255.255.255`) fails on multi-homed Windows 11 systems (WSL/Hyper-V Companions). The OS routes broadcast packets through the default interface, which may be a virtual Companion instead of the physical NIC. Multicast join operations explicitly specify which interface to listen on, and per-interface sender binding ensures packets egress the correct NIC.
 
-**Virtual Adapter Detection:**
+**Virtual Companion Detection:**
 
 Skips interfaces matching:
 - Name patterns: `veth`, `virbr`, `docker`, `br-`, `vmnet`, `vboxnet`, `hyperv`, `wsl`
@@ -244,29 +244,29 @@ state.docker.create_container(
 
 ---
 
-## Adapter Endpoints
+## Companion Endpoints
 
-**Stone adapter endpoints:**
+**Stone Companion endpoints:**
 | Method | Endpoint | Purpose |
 |--------|----------|---------|  
-| GET | `/api/v1/stone/adapters` | List registered adapters with status/PIDs |
-| GET | `/api/v1/stone/adapters/:id` | Get specific adapter details and manifest |
-| POST | `/api/v1/stone/adapters/:id/command` | Forward command to adapter (5s timeout) |
-| POST | `/api/v1/stone/adapters/:id/up` | Start adapter process |
-| POST | `/api/v1/stone/adapters/:id/down` | Stop adapter process |
-| POST | `/api/v1/stone/adapters/refresh` | Rescan adapters directory and reload manifests |
+| GET | `/api/v1/stone/companions` | List registered Companions with status/PIDs |
+| GET | `/api/v1/stone/companions/:id` | Get specific Companion details and manifest |
+| POST | `/api/v1/stone/companions/:id/command` | Forward command to Companion (5s timeout) |
+| POST | `/api/v1/stone/companions/:id/up` | Start Companion process |
+| POST | `/api/v1/stone/companions/:id/down` | Stop Companion process |
+| POST | `/api/v1/stone/companions/refresh` | Rescan Companions directory and reload manifests |
 
 **Command forwarding flow:**
-1. Rake → `POST /api/v1/stone/adapters/cricket/command` with `{"args": ["play", "stone-online"]}`
+1. Rake → `POST /api/v1/stone/companions/cricket/command` with `{"args": ["play", "stone-online"]}`
 2. Moss looks up Cricket's assigned port (7187) from ledger
 3. Moss forwards to `http://127.0.0.1:7187/command` with timeout
 4. Cricket executes command, returns JSON response
 5. Moss proxies response back to Rake
 
-**Adapters (current):**
-- **Cricket** (7187): Audio adapter with 4-channel mixer, 180 CC0 samples, tune system
-- **Firefly** (planned): LED control adapter for visual presence indicators
-- **OLED** (planned): Display adapter for Stone status screens
+**Companions (current):**
+- **Cricket** (7187): Audio Companion with 4-channel mixer, 180 CC0 samples, tune system
+- **Firefly** (planned): LED control Companion for visual presence indicators
+- **OLED** (planned): display adapter for Stone status screens
 
 ---
 
@@ -459,7 +459,7 @@ src/moss/src/
 ### Paths → `common/src/constants/paths.rs`
 - `data_dir()` → `/var/lib/zen-garden` (Linux) or `.zen-garden` (Windows)
 - `config_dir()` → `/etc/zen-garden` (Linux) or `.zen-garden` (Windows)
-- `adapters_dir()` → `/usr/local/bin/adapters/` (adapter executables)
+- `Companions_dir()` → `/usr/local/bin/companions/` (Companion executables)
 - `harvest_dir()`, `stored_dir()`, `stone_home()`, `stone_user()`, `first_run_flag()`
 
 ### Network → `common/src/constants/mod.rs`
@@ -467,21 +467,21 @@ src/moss/src/
 
 ### Timeouts → `common/src/constants/timeouts.rs`
 - `DISCOVERY_TIMEOUT_MS = 3000`, `HTTP_REQUEST_TIMEOUT_MS = 30000`
-- `ADAPTER_COMMAND_TIMEOUT_MS = 5000` (command forwarding timeout)
+- `Companion_COMMAND_TIMEOUT_MS = 5000` (command forwarding timeout)
 
 ### Limits → `common/src/constants/limits.rs`
 - `MAX_OFFERING_NAME_LENGTH = 64`, `MAX_SERVICES_PER_STONE = 100`
 
-### Adapter Types → `common/src/adapter.rs`
-- `AdapterCommandRequest` - Command forwarding request (args: Vec<String>)
-- `AdapterCommandResponse` - Command result (success: bool, output: String)
-- `AdapterManifest` - Adapter metadata (name, version, description, port)
+### Companion Types → `common/src/Companion.rs`
+- `CompanionCommandRequest` - Command forwarding request (args: Vec<String>)
+- `CompanionCommandResponse` - Command result (success: bool, output: String)
+- `CompanionManifest` - Companion metadata (name, version, description, port)
 
 ### Command Manifest → `common/src/command_manifest/`
-- `CommandManifest` - Full adapter command manifest
+- `CommandManifest` - Full Companion command manifest
 - `CommandParameter` - Parameter definition (name, type, required, description)
 - `CommandExample` - Usage example (command, description, expected output)
-- Helper: `check_dump_commands()` - Outputs manifest and exits (for adapters)
+- Helper: `check_dump_commands()` - Outputs manifest and exits (for Companions)
 
 ### Offering Search → `common/src/offerings.rs`
 - `TaxonomyDictionary` - Synonym mapping for search normalization (nosql → mongodb)

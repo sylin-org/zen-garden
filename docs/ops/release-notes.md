@@ -24,14 +24,14 @@
 
 **What's New:**
 
-#### Adapter SDK and Physical Presence
+#### Companion SDK and Physical Presence
 
-**AdapterState Persistence:**
-- Adapters can now persist on/off state across restarts
-- New `AdapterState` module in adapter-sdk handles file-based persistence
-- Moss passes `--state-dir` to adapters on spawn
+**CompanionState Persistence:**
+- Companions can now persist on/off state across restarts
+- New `CompanionState` module in companion-sdk handles file-based persistence
+- Moss passes `--state-dir` to Companions on spawn
 
-**Firefly LED Adapter (NEW):**
+**Firefly LED Companion (NEW):**
 - Ambient "firefly" animation on Waveshare RP2040-Matrix 5x5 RGB LED
 - Zen garden-inspired visual language:
   - Warm white pixels fade in/out like fireflies
@@ -44,7 +44,7 @@
 - Display cleared on SIGTERM/shutdown for clean exit
 - SSE subscription to Moss presence events
 
-**Cricket Audio Adapter Updates:**
+**Cricket Audio Companion Updates:**
 - SSE event handling for automatic sound playback
 - On/off state persistence across restarts
 - Event-to-sound mapping for health changes, service events

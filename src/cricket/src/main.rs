@@ -1,12 +1,12 @@
-﻿// Garden Cricket - Ambient Audio Adapter for Stone Presence
+﻿// Garden Cricket - Ambient Audio Companion for Stone Presence
 // Provides audio feedback for garden events and stone presence
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
-use garden_adapter_sdk::{
-    check_dump_commands, AdapterRuntime, AdapterState, CommandArg, CommandDef, CommandManifest,
+use garden_companion_sdk::{
+    check_dump_commands, CompanionRuntime, CompanionState, CommandArg, CommandDef, CommandManifest,
 };
 
 mod events;
@@ -26,7 +26,7 @@ fn build_manifest() -> CommandManifest {
         "cricket",
         "Garden Cricket",
         env!("CARGO_PKG_VERSION"),
-        "Ambient audio adapter for Zen Garden stone presence events",
+        "Ambient audio Companion for Zen Garden stone presence events",
     )
     .command(
         CommandDef::new("select", "Switch active tune")
@@ -75,7 +75,7 @@ fn build_manifest() -> CommandManifest {
 
 #[derive(Parser, Debug)]
 #[command(name = "garden-cricket")]
-#[command(about = "Ambient audio adapter for Zen Garden stone presence")]
+#[command(about = "Ambient audio Companion for Zen Garden stone presence")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -97,7 +97,7 @@ struct Cli {
     volume: u8,
     
     /// Command server port (for receiving hey-tell commands)
-    /// Default is computed from adapter ID (7188-7199 range)
+    /// Default is computed from Companion ID (7188-7199 range)
     #[arg(long, env = "CRICKET_PORT")]
     port: Option<u16>,
 
@@ -139,11 +139,11 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Check for --dump-commands before any other processing
-    // This is used by Moss adapter registry to discover Cricket's commands
+    // This is used by Moss Companion registry to discover Cricket's commands
     check_dump_commands(&build_manifest());
     
     // Initialize tracing (from SDK)
-    garden_adapter_sdk::runtime::init_tracing();
+    garden_companion_sdk::runtime::init_tracing();
     
     let cli = Cli::parse();
     
@@ -174,11 +174,11 @@ async fn main() -> Result<()> {
     
     // Port is assigned by Moss and passed via --port
     let port = cli.port
-        .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss when starting adapter)"))?;
+        .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss when starting Companion)"))?;
 
-    // Create adapter state (handles on/off persistence)
+    // Create Companion state (handles on/off persistence)
     let state_dir = cli.state_dir.map(std::path::PathBuf::from);
-    let adapter_state = Arc::new(AdapterState::new(state_dir));
+    let companion_state = Arc::new(CompanionState::new(state_dir));
 
     // Ensure audio dependencies are installed (alsa-utils on Linux)
     mixer::ensure_audio_dependencies()?;
@@ -205,22 +205,22 @@ async fn main() -> Result<()> {
     let command_handler = CricketHandler::new(
         Arc::clone(&mixer),
         Arc::clone(&tune_manager),
-        Arc::clone(&adapter_state),
+        Arc::clone(&companion_state),
     );
     let event_handler = CricketEventHandler::new(
         Arc::clone(&mixer),
         Arc::clone(&tune_manager),
-        Arc::clone(&adapter_state),
+        Arc::clone(&companion_state),
     );
 
-    // Build and run adapter using SDK runtime
-    let config = garden_adapter_sdk::AdapterConfig {
+    // Build and run Companion using SDK runtime
+    let config = garden_companion_sdk::CompanionConfig {
         stone: Some(stone),
         port: Some(port),
         dump_commands: false,
     };
 
-    AdapterRuntime::new(config, "cricket")
+    CompanionRuntime::new(config, "cricket")
         .command_handler(command_handler)
         .event_handler(event_handler)
         .run()

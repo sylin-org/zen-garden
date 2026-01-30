@@ -1,4 +1,4 @@
-//! HTTP router configuration
+﻿//! HTTP router configuration
 //!
 //! Defines all API routes for the Moss HTTP server.
 //!
@@ -75,13 +75,13 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/services/:service/destroy", post(api::v1::services::destroy_service_v1))
         .route("/api/v1/stone/services/:service/cordon", post(api::v1::services::cordon_service_v1))
 
-        // Stone adapters (Cricket, Firefly, etc.)
-        .route("/api/v1/stone/adapters", get(api::v1::adapters::get_adapters))
-        .route("/api/v1/stone/adapters/refresh", post(api::v1::adapters::refresh_adapters))
-        .route("/api/v1/stone/adapters/:id", get(api::v1::adapters::get_adapter_manifest))
-        .route("/api/v1/stone/adapters/:id/command", post(api::v1::adapters::send_adapter_command))
-        .route("/api/v1/stone/adapters/:id/up", post(api::v1::adapters::start_adapter))
-        .route("/api/v1/stone/adapters/:id/down", post(api::v1::adapters::stop_adapter))
+        // Stone Companions (Cricket, Firefly, etc.)
+        .route("/api/v1/stone/companions", get(api::v1::companions::get_companions))
+        .route("/api/v1/stone/companions/refresh", post(api::v1::companions::refresh_companions))
+        .route("/api/v1/stone/companions/:id", get(api::v1::companions::get_companion_manifest))
+        .route("/api/v1/stone/companions/:id/command", post(api::v1::companions::send_companion_command))
+        .route("/api/v1/stone/companions/:id/up", post(api::v1::companions::start_companion))
+        .route("/api/v1/stone/companions/:id/down", post(api::v1::companions::stop_companion))
 
         // Stone storage (seed banks on THIS stone)
         .route("/api/v1/stone/storage", get(api::v1::storage::storage_overview_v1))

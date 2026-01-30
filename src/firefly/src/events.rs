@@ -1,11 +1,11 @@
-//! SSE event handler for Firefly
+﻿//! SSE event handler for Firefly
 //!
 //! Subscribes to Moss presence stream and updates animation context.
 //! Events override the baseline animation temporarily.
 
 use std::sync::Arc;
 
-use garden_adapter_sdk::{async_trait, AdapterState, EventHandler, SseEvent};
+use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
 use garden_common::presence::event_types;
 use serde::Deserialize;
 use tokio::sync::RwLock;
@@ -54,11 +54,11 @@ struct TendedEvent {
 /// Firefly event handler - updates animation context based on SSE events
 pub struct FireflyEventHandler {
     context: Arc<RwLock<AnimationContext>>,
-    state: Arc<AdapterState>,
+    state: Arc<CompanionState>,
 }
 
 impl FireflyEventHandler {
-    pub fn new(context: Arc<RwLock<AnimationContext>>, state: Arc<AdapterState>) -> Self {
+    pub fn new(context: Arc<RwLock<AnimationContext>>, state: Arc<CompanionState>) -> Self {
         Self { context, state }
     }
 

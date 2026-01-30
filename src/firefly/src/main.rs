@@ -1,4 +1,4 @@
-// Garden Firefly - Visual Status Indicator Adapter
+﻿// Garden Firefly - Visual Status Indicator Companion
 // Controls Waveshare RP2040-Matrix 5x5 RGB LED for system status display
 
 use anyhow::Result;
@@ -6,8 +6,8 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use std::time::Duration;
 
-use garden_adapter_sdk::{
-    check_dump_commands, AdapterRuntime, AdapterState, CommandArg, CommandDef, CommandManifest,
+use garden_companion_sdk::{
+    check_dump_commands, CompanionRuntime, CompanionState, CommandArg, CommandDef, CommandManifest,
     SseClient,
     sse::SseClientConfig,
 };
@@ -100,7 +100,7 @@ fn build_manifest() -> CommandManifest {
 
 #[derive(Parser, Debug)]
 #[command(name = "garden-firefly")]
-#[command(about = "Visual status indicator adapter for Zen Garden")]
+#[command(about = "Visual status indicator Companion for Zen Garden")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
     check_dump_commands(&build_manifest());
 
     // Initialize tracing
-    garden_adapter_sdk::runtime::init_tracing();
+    garden_companion_sdk::runtime::init_tracing();
 
     let cli = Cli::parse();
 
@@ -167,7 +167,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Normal adapter mode: require stone and port
+    // Normal Companion mode: require stone and port
     let stone = cli.stone.ok_or_else(|| {
         anyhow::anyhow!("--stone endpoint required (or use 'test'/'probe' subcommand)")
     })?;
@@ -176,9 +176,9 @@ async fn main() -> Result<()> {
         .port
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss)"))?;
 
-    // Create adapter state (handles on/off persistence)
+    // Create Companion state (handles on/off persistence)
     let state_dir = cli.state_dir.map(std::path::PathBuf::from);
-    let adapter_state = Arc::new(AdapterState::new(state_dir.clone()));
+    let companion_state = Arc::new(CompanionState::new(state_dir.clone()));
 
     // Create animation context (handles brightness persistence)
     let animation_context = Arc::new(RwLock::new(AnimationContext::new(state_dir)));
@@ -239,7 +239,7 @@ async fn main() -> Result<()> {
         .with_path("/api/v1/stone/presence/stream");
     let event_handler = Arc::new(FireflyEventHandler::new(
         Arc::clone(&animation_context),
-        Arc::clone(&adapter_state),
+        Arc::clone(&companion_state),
     ));
     let _sse_handle = SseClient::start(sse_config, event_handler);
     tracing::info!(endpoint = %stone, "SSE client started for presence events");
@@ -247,12 +247,12 @@ async fn main() -> Result<()> {
     // Create command handler
     let handler = FireflyHandler::new(
         Arc::clone(&connection),
-        Arc::clone(&adapter_state),
+        Arc::clone(&companion_state),
         Arc::clone(&animation_context),
     );
 
-    // Build and run adapter
-    let config = garden_adapter_sdk::AdapterConfig {
+    // Build and run Companion
+    let config = garden_companion_sdk::CompanionConfig {
         stone: Some(stone),
         port: Some(port),
         dump_commands: false,
@@ -261,13 +261,13 @@ async fn main() -> Result<()> {
     // Clone connection for shutdown handler
     let conn_for_shutdown = Arc::clone(&connection);
 
-    // Run adapter with graceful shutdown
+    // Run Companion with graceful shutdown
     tokio::select! {
-        result = AdapterRuntime::new(config, "firefly")
+        result = CompanionRuntime::new(config, "firefly")
             .command_handler(handler)
             .run() => {
-            // Adapter stopped normally - clear display
-            tracing::info!("Adapter stopped, clearing display");
+            // Companion stopped normally - clear display
+            tracing::info!("Companion stopped, clearing display");
             let _ = conn_for_shutdown.with_device(|serial| serial.clear());
             result
         }

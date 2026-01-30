@@ -1,4 +1,4 @@
-/// Command manifest system for Zen Garden Rake
+﻿/// Command manifest system for Zen Garden Rake
 /// 
 /// This module provides a declarative way to define commands with compile-time validation
 /// that ensures every clap command has a corresponding manifest entry.
@@ -79,7 +79,7 @@ pub mod cmd {
     pub const ELECTION: &str = "election";
     pub const PRESENCE: &str = "presence";
     
-    // Adapters
+    // Companions
     pub const HEY: &str = "hey";
     
     // Developer Tools
@@ -90,6 +90,10 @@ pub mod cmd {
     pub const RELEASE_SEED_BANK: &str = "release-seed-bank";
     pub const SEED_BANKS: &str = "seed-banks";
     pub const STORE: &str = "store";
+
+    // Nurturing (Backup/Restore)
+    pub const RESTORE: &str = "restore";
+    pub const NURTURING: &str = "nurturing";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,8 +110,8 @@ pub enum CommandCategory {
     System,
     /// Pond security commands: place, invite, lift
     Pond,
-    /// Adapter commands: hey tell
-    Adapter,
+    /// Companion commands: hey tell
+    Companion,
     /// Storage commands: prepare, release-seed-bank, seed-banks, store
     Storage,
 }
@@ -121,7 +125,7 @@ impl CommandCategory {
             Self::Management => "Management",
             Self::System => "System",
             Self::Pond => "Pond",
-            Self::Adapter => "Adapter",
+            Self::Companion => "Companion",
             Self::Storage => "Storage",
         }
     }
@@ -1812,36 +1816,36 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "observe"],
     });
 
-    // === ADAPTER COMMANDS ===
+    // === Companion COMMANDS ===
     
     manifest.add(CommandDef {
         name: "hey",
         zen_name: "hey",
         normative_name: None,
-        category: CommandCategory::Adapter,
-        description: "Communicate with adapters (Cricket, Firefly, etc.)",
-        long_description: "Send commands to registered Zen Garden adapters.\n\n\
-            Adapters extend Moss with additional capabilities like audio feedback (Cricket),\n\
+        category: CommandCategory::Companion,
+        description: "Communicate with Companions (Cricket, Firefly, etc.)",
+        long_description: "Send commands to registered Zen Garden Companions.\n\n\
+            Companions extend Moss with additional capabilities like audio feedback (Cricket),\n\
             LED displays (Firefly), and more. Use 'hey tell' to interact with them.\n\n\
-            Rake passes commands through to Moss, which forwards them to the adapter.",
+            Rake passes commands through to Moss, which forwards them to the Companion.",
         remote_capable: true,
         params: vec![
             CommandParam {
                 name: "tell",
-                zen_syntax: "tell <adapter> [args...]",
+                zen_syntax: "tell <Companion> [args...]",
                 normative_syntax: None,
-                description: "Send command to adapter with raw arguments",
+                description: "Send command to Companion with raw arguments",
                 required: false,
             },
         ],
         examples: vec![
             CommandExample {
-                description: "List all registered adapters",
+                description: "List all registered Companions",
                 zen_syntax: Some("garden-rake hey tell"),
                 normative_syntax: None,
             },
             CommandExample {
-                description: "Show adapter commands",
+                description: "Show Companion commands",
                 zen_syntax: Some("garden-rake hey tell cricket?"),
                 normative_syntax: None,
             },
@@ -2054,6 +2058,162 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["seed-banks", "prepare"],
     });
 
+    // === NURTURING (BACKUP/RESTORE) COMMANDS ===
+
+    manifest.add(CommandDef {
+        name: cmd::RESTORE,
+        zen_name: "restore",
+        normative_name: None,
+        category: CommandCategory::Storage,
+        description: "Restore an offering from backup",
+        long_description: "Restore an offering from a nurturing backup.\n\n\
+            Supports restoring from local A/B slots or remote seed banks.\n\
+            Use --dry-run to preview without executing.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "offering",
+                zen_syntax: "<offering>",
+                normative_syntax: None,
+                description: "Offering name to restore",
+                required: true,
+            },
+            CommandParam {
+                name: "source",
+                zen_syntax: "from slot A|B | from seed-bank <name>",
+                normative_syntax: None,
+                description: "Source: local slot or seed bank",
+                required: false,
+            },
+            CommandParam {
+                name: "dry-run",
+                zen_syntax: "--dry-run",
+                normative_syntax: None,
+                description: "Preview without executing",
+                required: false,
+            },
+            CommandParam {
+                name: "harvest-id",
+                zen_syntax: "--harvest-id <id>",
+                normative_syntax: None,
+                description: "Specific harvest ID (for seed bank restore)",
+                required: false,
+            },
+            CommandParam {
+                name: "at",
+                zen_syntax: "at <stone>",
+                normative_syntax: Some("--at <stone>"),
+                description: "Target stone (omit to use tended stone)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Restore from current slot",
+                zen_syntax: Some("garden-rake restore mongodb"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Restore from specific slot",
+                zen_syntax: Some("garden-rake restore mongodb from slot A"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Restore from seed bank",
+                zen_syntax: Some("garden-rake restore mongodb from seed-bank garden-data"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Dry run preview",
+                zen_syntax: Some("garden-rake restore mongodb --dry-run"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["nurturing", "seed-banks"],
+    });
+
+    manifest.add(CommandDef {
+        name: cmd::NURTURING,
+        zen_name: "nurturing",
+        normative_name: None,
+        category: CommandCategory::Storage,
+        description: "Manage nurturing (backup) operations",
+        long_description: "Manage nurturing (backup) operations for offerings.\n\n\
+            View backup status, list available snapshots, and trigger backup workflows.\n\
+            Nurturing provides A/B local slots plus remote seed bank replication.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "action",
+                zen_syntax: "status|list|trigger|trigger-all",
+                normative_syntax: None,
+                description: "Action to perform",
+                required: true,
+            },
+            CommandParam {
+                name: "offering",
+                zen_syntax: "<offering>",
+                normative_syntax: None,
+                description: "Offering name (for status/list/trigger)",
+                required: false,
+            },
+            CommandParam {
+                name: "local",
+                zen_syntax: "--local",
+                normative_syntax: None,
+                description: "Show only local backups (for list)",
+                required: false,
+            },
+            CommandParam {
+                name: "remote",
+                zen_syntax: "--remote",
+                normative_syntax: None,
+                description: "Show only remote backups (for list)",
+                required: false,
+            },
+            CommandParam {
+                name: "at",
+                zen_syntax: "at <stone>",
+                normative_syntax: Some("--at <stone>"),
+                description: "Target stone (omit to use tended stone)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Show backup status for all offerings",
+                zen_syntax: Some("garden-rake nurturing status"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Show detailed status for specific offering",
+                zen_syntax: Some("garden-rake nurturing status mongodb"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "List all backups for an offering",
+                zen_syntax: Some("garden-rake nurturing list mongodb"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "List local backups only",
+                zen_syntax: Some("garden-rake nurturing list mongodb --local"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Trigger backup for an offering",
+                zen_syntax: Some("garden-rake nurturing trigger mongodb"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Trigger backup for all offerings",
+                zen_syntax: Some("garden-rake nurturing trigger-all"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["restore", "seed-banks", "nourish"],
+    });
+
     // === DEVELOPER TOOLS ===
     
     manifest.add(CommandDef {
@@ -2145,12 +2305,14 @@ pub fn validate_manifest() {
         "pond", "place", "invite", "lift",
         // Test/Diagnostic
         "election",
-        // Adapters
+        // Companions
         "hey",
         // Developer Tools
         "api",
         // Storage
         "prepare", "release-seed-bank", "seed-banks", "store",
+        // Nurturing
+        "restore", "nurturing",
     ];
 
     for cmd_name in expected_commands {

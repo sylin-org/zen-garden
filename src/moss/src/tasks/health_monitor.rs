@@ -1,4 +1,4 @@
-//! Health monitoring background task
+﻿//! Health monitoring background task
 //!
 //! Continuous monitoring loop that:
 //! - Polls Docker container health every 30 seconds
@@ -44,10 +44,10 @@ pub async fn health_monitor_task(state: AppState) {
     loop {
         interval.tick().await;
 
-        // Reap any terminated adapter processes to prevent zombies
-        let reaped = state.adapter_registry.reap_terminated().await;
+        // Reap any terminated Companion processes to prevent zombies
+        let reaped = state.companion_registry.reap_terminated().await;
         if reaped > 0 {
-            tracing::debug!(reaped = reaped, "Reaped terminated adapter processes");
+            tracing::debug!(reaped = reaped, "Reaped terminated Companion processes");
         }
 
         let registry_snapshot = { state.registry.read().await.clone() };

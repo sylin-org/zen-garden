@@ -43,7 +43,7 @@ pub const STONE_TENDED: &str = "stone.tended";
 
 ### 2. Event Filtering (Per-Connection)
 
-Adapters can optionally filter events by category via query parameters:
+Companions can optionally filter events by category via query parameters:
 
 **Endpoint**: `GET /api/v1/stone/presence/stream?categories=service,stone`
 

@@ -153,5 +153,5 @@ rg "send_to\(" --glob '!**/p2p.rs' src/moss/
 ## References
 
 - ELECTION-0001: Distributed Election Protocol (specifies UDP on 7184)
-- Clean Architecture: Infrastructure adapters calling domain
-- Hexagonal Architecture: Ports & adapters pattern
+- Clean Architecture: Infrastructure Companions calling domain
+- Hexagonal Architecture: Ports & Companions pattern

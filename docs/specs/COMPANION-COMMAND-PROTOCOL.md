@@ -1,16 +1,16 @@
-﻿# Adapter Command Protocol Specification
+﻿# Companion Command Protocol Specification
 
 **Status:** Draft  
 **Date:** 2026-01-26  
-**Scope:** Synchronous command flow between Rake → Moss → Adapters
+**Scope:** Synchronous command flow between Rake → Moss → Companions
 
 ---
 
 ## Overview
 
-The Adapter Command Protocol defines how Rake communicates with presence adapters (Cricket, Firefly, OLED, etc.) through Moss as a synchronous proxy. Commands are passed **raw** to adapters, which parse and validate internally.
+The Companion Command Protocol defines how Rake communicates with presence Companions (Cricket, Firefly, OLED, etc.) through Moss as a synchronous proxy. Commands are passed **raw** to Companions, which parse and validate internally.
 
-**Key principle:** Moss is a thin proxy. Adapters own their command structure.
+**Key principle:** Moss is a thin proxy. Companions own their command structure.
 
 ---
 
@@ -18,16 +18,16 @@ The Adapter Command Protocol defines how Rake communicates with presence adapter
 
 ```
 ┌─────────┐       ┌─────────┐       ┌─────────────┐
-│  RAKE   │──────▶│  MOSS   │──────▶│  ADAPTER    │
+│  RAKE   │──────▶│  MOSS   │──────▶│  Companion    │
 │         │       │ (proxy) │       │  (Cricket)  │
 │         │◀──────│         │◀──────│             │
 └─────────┘       └─────────┘       └─────────────┘
     HTTP              IPC              Internal
 ```
 
-1. **Rake** sends HTTP POST to Moss with adapter name + raw args
-2. **Moss** validates adapter exists, forwards via internal channel
-3. **Adapter** parses args, executes command, returns response
+1. **Rake** sends HTTP POST to Moss with Companion name + raw args
+2. **Moss** validates Companion exists, forwards via internal channel
+3. **Companion** parses args, executes command, returns response
 4. **Moss** forwards response back to Rake (5s timeout)
 5. **Rake** formats and displays response
 
@@ -37,12 +37,12 @@ The Adapter Command Protocol defines how Rake communicates with presence adapter
 
 ### `POST /api/v1/stone/presence/command`
 
-Send a command to a presence adapter.
+Send a command to a presence Companion.
 
 **Request:**
 ```json
 {
-  "adapter": "cricket",
+  "Companion": "cricket",
   "raw_args": ["select", "mr-robot"]
 }
 ```
@@ -75,7 +75,7 @@ Send a command to a presence adapter.
 ```
 HTTP 504 Gateway Timeout
 {
-  "error": "Adapter 'cricket' did not respond within 5 seconds"
+  "error": "Companion 'cricket' did not respond within 5 seconds"
 }
 ```
 
@@ -83,24 +83,24 @@ HTTP 504 Gateway Timeout
 
 ## Common Types
 
-### AdapterCommandRequest
+### CompanionCommandRequest
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterCommandRequest {
-    /// Target adapter name (e.g., "cricket", "firefly")
-    pub adapter: String,
+pub struct CompanionCommandRequest {
+    /// Target Companion name (e.g., "cricket", "firefly")
+    pub Companion: String,
     
-    /// Raw command arguments (adapter parses these)
+    /// Raw command arguments (Companion parses these)
     pub raw_args: Vec<String>,
 }
 ```
 
-### AdapterCommandResponse
+### CompanionCommandResponse
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterCommandResponse {
+pub struct CompanionCommandResponse {
     /// Command result status
     pub status: ResponseStatus,
     
@@ -133,16 +133,16 @@ pub enum ResponseStatus {
 
 ```rust
 /// POST /api/v1/stone/presence/command
-pub async fn send_adapter_command(
+pub async fn send_Companion_command(
     State(state): State<AppState>,
-    Json(cmd): Json<AdapterCommandRequest>,
-) -> Result<Json<AdapterCommandResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // 1. Validate adapter is registered
-    if !state.adapter_registry.contains(&cmd.adapter) {
+    Json(cmd): Json<CompanionCommandRequest>,
+) -> Result<Json<CompanionCommandResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // 1. Validate Companion is registered
+    if !state.Companion_registry.contains(&cmd.Companion) {
         return Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse::from_message(&format!(
-                "Adapter '{}' not registered", cmd.adapter
+                "Companion '{}' not registered", cmd.Companion
             )))
         ));
     }
@@ -150,14 +150,14 @@ pub async fn send_adapter_command(
     // 2. Create response channel
     let (tx, rx) = tokio::sync::oneshot::channel();
     
-    // 3. Send command to adapter via internal bus
-    let internal = InternalAdapterCommand {
-        adapter: cmd.adapter.clone(),
+    // 3. Send command to Companion via internal bus
+    let internal = InternalCompanionCommand {
+        Companion: cmd.Companion.clone(),
         raw_args: cmd.raw_args,
         response_tx: tx,
     };
     
-    state.adapter_command_bus.send(internal).await
+    state.Companion_command_bus.send(internal).await
         .map_err(|e| (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse::from_message(&format!(
@@ -170,13 +170,13 @@ pub async fn send_adapter_command(
         Ok(Ok(response)) => Ok(Json(response)),
         Ok(Err(_)) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::from_message("Adapter dropped response channel"))
+            Json(ErrorResponse::from_message("Companion dropped response channel"))
         )),
         Err(_) => Err((
             StatusCode::GATEWAY_TIMEOUT,
             Json(ErrorResponse::from_message(&format!(
-                "Adapter '{}' did not respond within 5 seconds", 
-                cmd.adapter
+                "Companion '{}' did not respond within 5 seconds", 
+                cmd.Companion
             )))
         )),
     }
@@ -186,36 +186,36 @@ pub async fn send_adapter_command(
 ### Internal Command Structure
 
 ```rust
-pub struct InternalAdapterCommand {
-    pub adapter: String,
+pub struct InternalCompanionCommand {
+    pub Companion: String,
     pub raw_args: Vec<String>,
-    pub response_tx: oneshot::Sender<AdapterCommandResponse>,
+    pub response_tx: oneshot::Sender<CompanionCommandResponse>,
 }
 ```
 
 ---
 
-## Adapter Implementation
+## Companion Implementation
 
 ### Command Handler Interface
 
-Each adapter implements its own command parsing:
+Each Companion implements its own command parsing:
 
 ```rust
-/// Adapter trait for command handling
-pub trait AdapterCommandHandler {
+/// Companion trait for command handling
+pub trait CompanionCommandHandler {
     /// Process raw command args and return response
-    fn handle_command(&self, raw_args: &[String]) -> AdapterCommandResponse;
+    fn handle_command(&self, raw_args: &[String]) -> CompanionCommandResponse;
 }
 ```
 
 ### Example: Cricket Handler
 
 ```rust
-impl AdapterCommandHandler for CricketAdapter {
-    fn handle_command(&self, raw_args: &[String]) -> AdapterCommandResponse {
+impl CompanionCommandHandler for CricketCompanion {
+    fn handle_command(&self, raw_args: &[String]) -> CompanionCommandResponse {
         if raw_args.is_empty() {
-            return AdapterCommandResponse {
+            return CompanionCommandResponse {
                 status: ResponseStatus::Error,
                 output: None,
                 message: "No command provided".to_string(),
@@ -235,7 +235,7 @@ impl AdapterCommandHandler for CricketAdapter {
             "pull" => self.cmd_pull(args),
             "remove" => self.cmd_remove(args),
             "status" => self.cmd_status(),
-            _ => AdapterCommandResponse {
+            _ => CompanionCommandResponse {
                 status: ResponseStatus::Error,
                 output: None,
                 message: format!("Unknown command: {}", command),
@@ -262,8 +262,8 @@ pub async fn hey_tell_command(
 ) -> Result<()> {
     let url = format!("{}/api/v1/stone/presence/command", endpoint);
     
-    let request = AdapterCommandRequest {
-        adapter: service.to_string(),
+    let request = CompanionCommandRequest {
+        Companion: service.to_string(),
         raw_args: args,
     };
     
@@ -275,8 +275,8 @@ pub async fn hey_tell_command(
         .await?;
     
     if response.status().is_success() {
-        let result: AdapterCommandResponse = response.json().await?;
-        format_adapter_response(&result);
+        let result: CompanionCommandResponse = response.json().await?;
+        format_Companion_response(&result);
     } else {
         let error: ErrorResponse = response.json().await?;
         eprintln!("✗ {}", error.error);
@@ -289,7 +289,7 @@ pub async fn hey_tell_command(
 ### Response Formatter
 
 ```rust
-pub fn format_adapter_response(response: &AdapterCommandResponse) {
+pub fn format_Companion_response(response: &CompanionCommandResponse) {
     // Status icon + message
     match response.status {
         ResponseStatus::Success => {
@@ -325,9 +325,9 @@ pub fn format_adapter_response(response: &AdapterCommandResponse) {
 
 | Scenario | Timeout | Behavior |
 |----------|---------|----------|
-| Moss → Adapter | 5s | Return 504 Gateway Timeout |
+| Moss → Companion | 5s | Return 504 Gateway Timeout |
 | Rake → Moss | 10s | Return network error to user |
-| Adapter crashed | - | oneshot channel drops, return 500 |
+| Companion crashed | - | oneshot channel drops, return 500 |
 
 **Philosophy:** Fast feedback. If something is broken, user knows quickly.
 
@@ -335,21 +335,21 @@ pub fn format_adapter_response(response: &AdapterCommandResponse) {
 
 ## Error Responses
 
-### Adapter Not Found
+### Companion Not Found
 
 ```
 HTTP 404 Not Found
 {
-  "error": "Adapter 'nonexistent' not registered"
+  "error": "Companion 'nonexistent' not registered"
 }
 ```
 
-### Adapter Timeout
+### Companion Timeout
 
 ```
 HTTP 504 Gateway Timeout
 {
-  "error": "Adapter 'cricket' did not respond within 5 seconds"
+  "error": "Companion 'cricket' did not respond within 5 seconds"
 }
 ```
 
@@ -367,9 +367,9 @@ HTTP 500 Internal Server Error
 ## Security Considerations
 
 1. **No authentication required** - Local/LAN only, same as Presence API
-2. **Adapter isolation** - Commands go only to specified adapter
-3. **No shell execution** - Adapters validate all input, no command injection
-4. **Timeout protection** - Hung adapters don't block Moss
+2. **Companion isolation** - Commands go only to specified Companion
+3. **No shell execution** - Companions validate all input, no command injection
+4. **Timeout protection** - Hung Companions don't block Moss
 
 ---
 
@@ -378,13 +378,13 @@ HTTP 500 Internal Server Error
 1. **Batch commands** - Send multiple commands in one request
 2. **Async commands** - For long-running operations (pull large tune)
 3. **Streaming responses** - For progress updates during downloads
-4. **Command history** - Track recent commands per adapter
+4. **Command history** - Track recent commands per Companion
 
 ---
 
 ## Related Documents
 
-- [ADAPTER-SERVICE-REGISTRY.md](ADAPTER-SERVICE-REGISTRY.md) - Service registration and lifecycle
+- [Companion-SERVICE-REGISTRY.md](Companion-SERVICE-REGISTRY.md) - Service registration and lifecycle
 - [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md) - Rake syntax specification
 - [CRICKET-SPEC.md](CRICKET-SPEC.md) - Cricket-specific implementation
 

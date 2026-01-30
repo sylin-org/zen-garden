@@ -1,5 +1,5 @@
-pub mod admin;
-pub mod adapters;
+﻿pub mod admin;
+pub mod companions;
 pub mod adoption;
 pub mod capabilities;
 pub mod console;

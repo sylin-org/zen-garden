@@ -1,4 +1,4 @@
-// Stone Software Operations API
+﻿// Stone Software Operations API
 //
 // Purpose: Software-level operations on the stone (upgrade, deploy, info)
 // Custom actions using single-colon format: :upgrade, :deploy
@@ -531,7 +531,7 @@ pub async fn deploy_stone_v1(
         Ok(())
     }
     
-    // Copy bin/ directory recursively (includes adapters subdirectories)
+    // Copy bin/ directory recursively (includes Companions subdirectories)
     let validated_bin_dir = std::path::Path::new(&validated_dir).join("bin");
     if let Err(e) = copy_dir_recursive(&bin_dir, &validated_bin_dir) {
         tracing::error!(error = ?e, "Failed to copy bin directory");
@@ -586,7 +586,7 @@ pub async fn deploy_stone_v1(
         }
     }
 
-    // Copy dependencies.json if present (for adapter dependency installation)
+    // Copy dependencies.json if present (for Companion dependency installation)
     let deps_file = package_dir.join("dependencies.json");
     if deps_file.exists() {
         let dest = format!("{}/dependencies.json", validated_dir);

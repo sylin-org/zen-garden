@@ -1,17 +1,17 @@
-# FIREFLY-0001: V0 Implementation Strategy
+﻿# FIREFLY-0001: V0 Implementation Strategy
 
 **Status**: Accepted
 **Date**: 2026-01-29
 **Deciders**: Architecture Team
-**Related**: [Firefly Specification](../proposals/firefly.md), Adapter SDK
+**Related**: [Firefly Specification](../proposals/firefly.md), Companion SDK
 
 ---
 
 ## Context
 
-The Firefly adapter requires two components:
+The Firefly Companion requires two components:
 
-1. **Firefly Adapter** (Rust) - Runs on Stone, implements Moss adapter protocol
+1. **Firefly Companion** (Rust) - Runs on Stone, implements Moss Companion protocol
 2. **RP2040 Firmware** - Runs on Waveshare RP2040-Matrix, controls 5×5 RGB LED matrix
 
 The full specification describes sophisticated visual modes (Firefly, Pond, Normative), complex animations, and a binary serial protocol. Implementing everything at once is high-risk and slow to iterate.
@@ -52,7 +52,7 @@ The full specification describes sophisticated visual modes (Firefly, Pond, Norm
 │                                                                      │
 │  ┌─────────┐      ┌─────────────────┐      ┌────────────────────┐   │
 │  │         │ HTTP │                 │ Text │                    │   │
-│  │  Moss   │─────▶│ Firefly Adapter │─────▶│ RP2040-Matrix      │   │
+│  │  Moss   │─────▶│ Firefly Companion │─────▶│ RP2040-Matrix      │   │
 │  │ :7185   │      │ (Rust, :718x)   │Serial│ (CircuitPython)    │   │
 │  │         │      │                 │      │                    │   │
 │  └─────────┘      └─────────────────┘      └────────────────────┘   │
@@ -95,9 +95,9 @@ ERR,message
 - Debuggable with serial monitor (`screen /dev/ttyACM0`)
 - No byte-alignment issues
 - Easy to implement in CircuitPython
-- Can be replaced with binary protocol later (adapter handles translation)
+- Can be replaced with binary protocol later (Companion handles translation)
 
-### V0 Adapter Commands
+### V0 Companion Commands
 
 ```bash
 # Direct LED control
@@ -158,16 +158,16 @@ garden-rake hey tell firefly info
 
 **Testing**:
 ```bash
-# Direct serial test (no adapter needed)
+# Direct serial test (no Companion needed)
 screen /dev/ttyACM0 115200
 F,0,255,0   # Should turn all LEDs green
 P,2,2,255,0,0   # Red pixel in center
 C   # Clear
 ```
 
-### Phase 2: Firefly Adapter (V0.2)
+### Phase 2: Firefly Companion (V0.2)
 
-**Goal**: Adapter integrates with Moss, controls firmware via serial
+**Goal**: Companion integrates with Moss, controls firmware via serial
 
 **Files**:
 - `src/firefly/Cargo.toml`
@@ -176,7 +176,7 @@ C   # Clear
 - `src/firefly/src/serial.rs`
 
 **Deliverables**:
-1. Adapter implements Moss protocol (`--dump-commands`, `/command`, `/shutdown`)
+1. Companion implements Moss protocol (`--dump-commands`, `/command`, `/shutdown`)
 2. Serial port auto-detection (finds RP2040-Matrix)
 3. Command translation (Moss commands → serial protocol)
 4. Health endpoint
@@ -198,7 +198,7 @@ C   # Clear
 **When**: After V0 is stable and command set is finalized
 
 **Migration path**:
-1. Serial protocol remains the same (adapter unchanged)
+1. Serial protocol remains the same (Companion unchanged)
 2. Rewrite firmware in Rust using embassy-rs
 3. Implement full spec animations (breathing, sparkles, waves)
 4. Add Firefly/Pond visual modes
@@ -213,8 +213,8 @@ C   # Clear
 - ✅ **Fast Iteration**: CircuitPython allows live editing (save file → firmware restarts)
 - ✅ **Debuggable**: Text protocol visible in serial monitor
 - ✅ **Low Risk**: Simple V0 validates hardware and command structure
-- ✅ **Decoupled**: Firmware can be replaced without changing adapter
-- ✅ **Testable**: Can test firmware without adapter, adapter without firmware
+- ✅ **Decoupled**: Firmware can be replaced without changing Companion
+- ✅ **Testable**: Can test firmware without Companion, Companion without firmware
 
 ### Negative
 
@@ -227,7 +227,7 @@ C   # Clear
 
 ### Neutral
 
-- ℹ️ **Two Codebases**: CircuitPython firmware + Rust adapter
+- ℹ️ **Two Codebases**: CircuitPython firmware + Rust Companion
   - *Rationale*: Different concerns, different optimal languages
 
 ---
@@ -264,7 +264,7 @@ zen-garden/
 │           ├── Cargo.toml
 │           └── src/
 └── src/
-    └── firefly/                # Moss adapter (Rust)
+    └── firefly/                # Moss Companion (Rust)
         ├── Cargo.toml
         ├── src/
         │   ├── main.rs
@@ -279,19 +279,19 @@ zen-garden/
 
 V0 is complete when:
 
-1. [ ] `garden-rake hey list` shows firefly adapter
+1. [ ] `garden-rake hey list` shows firefly Companion
 2. [ ] `garden-rake hey tell firefly status healthy` turns LEDs green
 3. [ ] `garden-rake hey tell firefly status error` blinks LEDs red
 4. [ ] `garden-rake hey tell firefly animate rainbow` shows rainbow animation
-5. [ ] Adapter auto-detects RP2040-Matrix serial port
-6. [ ] Adapter handles device disconnect/reconnect gracefully
+5. [ ] Companion auto-detects RP2040-Matrix serial port
+6. [ ] Companion handles device disconnect/reconnect gracefully
 
 ---
 
 ## References
 
 - [Firefly Specification](../proposals/firefly.md) - Full visual design spec
-- [Adapter Development Guide](../guides/adapter-development.md) - Moss adapter protocol
+- [Companion Development Guide](../guides/companion-development.md) - Moss Companion protocol
 - [Waveshare RP2040-Matrix Wiki](https://www.waveshare.com/wiki/RP2040-Matrix)
 - [CircuitPython NeoPixel Guide](https://learn.adafruit.com/circuitpython-essentials/circuitpython-neopixel)
 - [Embassy-rs](https://embassy.dev/) - Rust embedded async framework

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "Visual status indicator adapter for Zen Garden (Waveshare RP2040-Matrix)"
+description = "Visual status indicator companion for Zen Garden (Waveshare RP2040-Matrix)"
 
 [[bin]]
 name = "garden-firefly"
@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 garden-common = { path = "../common" }
-garden-adapter-sdk = { path = "../adapter-sdk" }
+garden-companion-sdk = { path = "../companion-sdk" }
 
 # Core
 anyhow.workspace = true

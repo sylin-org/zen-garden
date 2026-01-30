@@ -112,45 +112,53 @@ impl std::fmt::Display for SeedBankVisibility {
 pub struct SeedBankInfo {
     /// Unique identifier for the seed bank (GUIDv7)
     pub id: String,
-    
+
     /// Human-readable name (e.g., "backup-vault", "seed-bank-zengarden")
     pub name: String,
-    
+
     /// Pool identifier for sync groups (first 4 hex digits of origin GUIDv7)
     pub pool_id: String,
-    
+
+    /// Logical group for replicated seed banks (e.g., "primary", "offsite")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+
+    /// Replica number within a group (1, 2, ...)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<u32>,
+
     /// Device path (e.g., "/dev/sdb1")
     pub device: String,
-    
+
     /// Mount path under data_dir (e.g., "/var/lib/zen-garden/mounts/backup-vault")
     pub mount_path: String,
-    
+
     /// Total capacity in bytes
     pub capacity_bytes: u64,
-    
+
     /// Used space in bytes
     pub used_bytes: u64,
-    
+
     /// Visibility setting
     pub visibility: SeedBankVisibility,
-    
+
     /// Whether the filesystem is btrfs (vs ext4)
     pub btrfs: bool,
-    
+
     /// Stone that created this seed bank
     pub origin_stone: String,
-    
+
     /// When the seed bank was created
     pub created_at: DateTime<Utc>,
-    
+
     /// Last sync timestamp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sync: Option<DateTime<Utc>>,
-    
+
     /// Whether this is a roaming seed bank (detected at boot, not originally created here)
     #[serde(default)]
     pub roaming: bool,
-    
+
     /// Whether the device is currently mounted and accessible
     #[serde(default = "default_true")]
     pub online: bool,
@@ -181,18 +189,28 @@ impl SeedBankInfo {
 pub struct PrepareSeedBankRequest {
     /// Device path (e.g., "/dev/sdb1")
     pub device: String,
-    
+
     /// Name for the seed bank (default: "seed-bank-zengarden")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    
+
     /// Generate a random name (e.g., "seed-kind-meadow")
     #[serde(default)]
     pub random_name: bool,
-    
+
     /// Filesystem to use: "btrfs" (default) or "ext4"
     #[serde(default = "default_btrfs")]
     pub filesystem: String,
+
+    /// Logical group for replicated seed banks (e.g., "primary", "offsite")
+    /// When set, this device becomes part of a replicated seed bank group.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+
+    /// Replica number within a group (1, 2, ...)
+    /// Only meaningful when `group` is set. Auto-assigned if not specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<u32>,
 }
 
 fn default_btrfs() -> String {
@@ -327,52 +345,135 @@ impl JournalEntry {
 // ============================================================================
 
 /// Manifest stored at `.zen-garden/manifest.json` on the seed bank
+///
+/// The manifest is the single source of truth for seed bank identity and configuration.
+/// Mount paths are derived from this manifest, not from filesystem labels.
+///
+/// ## Version History
+/// - v1: Original format (name, pool_id, visibility, origin_stone, filesystem)
+/// - v2: Added group/replica_id for multi-device seed banks (STORAGE-0005)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeedBankManifest {
-    /// Version of the manifest format
+    /// Version of the manifest format (current: 2)
+    #[serde(default = "default_manifest_version")]
     pub version: u32,
-    
+
     /// Unique seed bank identifier (GUIDv7)
     pub id: String,
-    
+
     /// Human-readable name
     pub name: String,
-    
+
     /// Pool identifier (first 4 hex of origin GUIDv7)
     pub pool_id: String,
-    
+
+    /// Logical group for replicated seed banks (e.g., "primary", "offsite")
+    ///
+    /// When set, multiple devices can form one logical seed bank.
+    /// Mount path: `/mounts/{group}/replica-{replica_id}`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+
+    /// Replica number within a group (1, 2, ...)
+    ///
+    /// Only meaningful when `group` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<u32>,
+
     /// Visibility setting
     pub visibility: SeedBankVisibility,
-    
+
     /// Stone that created this seed bank
     pub origin_stone: String,
-    
+
     /// Filesystem type ("btrfs" or "ext4")
     pub filesystem: String,
-    
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 }
 
+fn default_manifest_version() -> u32 {
+    1 // Default for v1 manifests that don't have version field
+}
+
 impl SeedBankManifest {
     /// Current manifest version
-    pub const CURRENT_VERSION: u32 = 1;
-    
-    /// Create a new manifest
+    pub const CURRENT_VERSION: u32 = 2;
+
+    /// Create a new manifest (simple, non-replicated seed bank)
     pub fn new(name: &str, origin_stone: &str, filesystem: &str, visibility: SeedBankVisibility) -> Self {
         let id = crate::utils::ids::generate_guidv7();
         let pool_id = SeedBankInfo::pool_id_from_guid(&id);
-        
+
         Self {
             version: Self::CURRENT_VERSION,
             id,
             name: name.to_string(),
             pool_id,
+            group: None,
+            replica_id: None,
             visibility,
             origin_stone: origin_stone.to_string(),
             filesystem: filesystem.to_string(),
             created_at: Utc::now(),
         }
+    }
+
+    /// Create a new manifest for a replicated seed bank
+    pub fn new_replica(
+        name: &str,
+        group: &str,
+        replica_id: u32,
+        origin_stone: &str,
+        filesystem: &str,
+        visibility: SeedBankVisibility,
+    ) -> Self {
+        let id = crate::utils::ids::generate_guidv7();
+        let pool_id = SeedBankInfo::pool_id_from_guid(&id);
+
+        Self {
+            version: Self::CURRENT_VERSION,
+            id,
+            name: name.to_string(),
+            pool_id,
+            group: Some(group.to_string()),
+            replica_id: Some(replica_id),
+            visibility,
+            origin_stone: origin_stone.to_string(),
+            filesystem: filesystem.to_string(),
+            created_at: Utc::now(),
+        }
+    }
+
+    /// Derive the mount path for this seed bank
+    ///
+    /// - Replicated: `{base}/mounts/{group}/replica-{id}`
+    /// - Grouped without replica: `{base}/mounts/{group}`
+    /// - Simple: `{base}/mounts/{name}`
+    pub fn derive_mount_path(&self, base_dir: &str) -> String {
+        let mounts_dir = format!("{}/mounts", base_dir);
+
+        match (&self.group, self.replica_id) {
+            // Replicated seed bank: /mounts/{group}/replica-{id}
+            (Some(group), Some(id)) => format!("{}/{}/replica-{}", mounts_dir, group, id),
+
+            // Named group without replica: /mounts/{group}
+            (Some(group), None) => format!("{}/{}", mounts_dir, group),
+
+            // Simple seed bank: /mounts/{name}
+            (None, _) => format!("{}/{}", mounts_dir, self.name),
+        }
+    }
+
+    /// Get the logical seed bank identifier (group name or seed bank name)
+    pub fn logical_name(&self) -> &str {
+        self.group.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Check if this is a replicated seed bank
+    pub fn is_replica(&self) -> bool {
+        self.group.is_some() && self.replica_id.is_some()
     }
 }
 
@@ -526,10 +627,45 @@ mod tests {
             "btrfs",
             SeedBankVisibility::Open,
         );
-        
-        assert_eq!(manifest.version, 1);
+
+        assert_eq!(manifest.version, 2);
         assert_eq!(manifest.name, "test-bank");
         assert_eq!(manifest.pool_id.len(), 4);
         assert!(manifest.pool_id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(manifest.group.is_none());
+        assert!(manifest.replica_id.is_none());
+    }
+
+    #[test]
+    fn test_replica_manifest_creation() {
+        let manifest = SeedBankManifest::new_replica(
+            "primary-backup",
+            "primary",
+            1,
+            "stone-alpha",
+            "ext4",
+            SeedBankVisibility::Open,
+        );
+
+        assert_eq!(manifest.version, 2);
+        assert_eq!(manifest.name, "primary-backup");
+        assert_eq!(manifest.group, Some("primary".to_string()));
+        assert_eq!(manifest.replica_id, Some(1));
+        assert!(manifest.is_replica());
+    }
+
+    #[test]
+    fn test_mount_path_derivation() {
+        let base = "/var/lib/zen-garden";
+
+        // Simple seed bank
+        let simple = SeedBankManifest::new("my-backup", "stone", "ext4", SeedBankVisibility::Open);
+        assert_eq!(simple.derive_mount_path(base), "/var/lib/zen-garden/mounts/my-backup");
+
+        // Replicated seed bank
+        let replica = SeedBankManifest::new_replica(
+            "primary-backup", "primary", 2, "stone", "ext4", SeedBankVisibility::Open
+        );
+        assert_eq!(replica.derive_mount_path(base), "/var/lib/zen-garden/mounts/primary/replica-2");
     }
 }

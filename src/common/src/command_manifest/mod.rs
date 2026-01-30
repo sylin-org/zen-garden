@@ -2,7 +2,7 @@
 //!
 //! Shared types for command manifests used by:
 //! - Rake CLI (for its own commands)
-//! - Adapters (Cricket, Firefly, etc.)
+//! - Companions (Cricket, Firefly, etc.)
 //! - Moss (for proxying commands and generating help)
 //!
 //! Philosophy: Single source of truth for command structure.
@@ -215,10 +215,10 @@ impl CommandDef {
     }
 }
 
-/// Command manifest for an adapter or tool
+/// Command manifest for an Companion or tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandManifest {
-    /// Adapter/tool identifier (e.g., "cricket", "rake")
+    /// Companion/tool identifier (e.g., "cricket", "rake")
     pub id: String,
     
     /// Display name
@@ -297,7 +297,7 @@ impl CommandManifest {
 
 /// Helper to handle --dump-commands CLI flag
 /// 
-/// Usage in adapter's main.rs:
+/// Usage in Companion's main.rs:
 /// ```ignore
 /// if args.contains(&"--dump-commands".to_string()) {
 ///     dump_commands_and_exit(&my_manifest());
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_command_manifest_builder() {
-        let manifest = CommandManifest::new("cricket", "Cricket", "0.1.0", "Audio adapter")
+        let manifest = CommandManifest::new("cricket", "Cricket", "0.1.0", "Audio Companion")
             .command(
                 CommandDef::new("select", "Switch tune")
                     .arg(CommandArg::required_string("tune", "Tune name"))

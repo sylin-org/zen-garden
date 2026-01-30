@@ -289,7 +289,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
         election_service: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),
-        adapter_registry: Arc::new(infra::AdapterRegistry::new().await),
+        companion_registry: Arc::new(infra::CompanionRegistry::new().await),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -375,19 +375,19 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         crate::tasks::run_metrics_collector(metrics_collector_state).await;
     });
 
-    // Adapter registry scan and auto-start (discover and start adapters)
-    tracing::info!("Scanning adapter registry");
-    let adapter_scan_state = state.clone();
+    // Companion registry scan and auto-start (discover and start Companions)
+    tracing::info!("Scanning Companion registry");
+    let companion_scan_state = state.clone();
     tokio::spawn(async move {
-        // Get endpoint for adapter communication
-        let endpoint = adapter_scan_state.self_entry.read().await.endpoint.clone();
-        match adapter_scan_state.adapter_registry.scan_and_autostart(&endpoint).await {
+        // Get endpoint for Companion communication
+        let endpoint = companion_scan_state.self_entry.read().await.endpoint.clone();
+        match companion_scan_state.companion_registry.scan_and_autostart(&endpoint).await {
             Ok((registered, started)) => tracing::info!(
                 registered = registered, 
                 started = started, 
-                "Adapter scan and auto-start complete"
+                "Companion scan and auto-start complete"
             ),
-            Err(e) => tracing::warn!(error = ?e, "Adapter scan failed"),
+            Err(e) => tracing::warn!(error = ?e, "Companion scan failed"),
         }
     });
 
@@ -712,7 +712,7 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
 
                             tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
                             let _ = console::tty_write("");
-                            let _ = console::display_success(&format!("✓ Stone configured as: {}", new_name));
+                            let _ = console::display_success(&format!("? Stone configured as: {}", new_name));
                             let _ = console::display_wait("Restarting to apply new configuration...");
                             let _ = console::tty_write("");
 

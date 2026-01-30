@@ -113,7 +113,7 @@ d-i preseed/late_command string \
     test -d /cdrom/stone-root && cp -r /cdrom/stone-root/* /target/ && echo "✓ Copied stone-root to target filesystem" || echo "⚠ stone-root not found"; \
     in-target mkdir -p /etc/zen-garden /var/lib/zen-garden /var/lib/zen-garden/staging /home/{{USERNAME}}/bin; \
     in-target chmod +x /usr/local/bin/garden-moss /usr/local/bin/garden-rake /usr/local/bin/garden-lantern /usr/local/bin/moss-update-helper.sh || true; \
-    in-target find /usr/local/bin/adapters -type f -exec chmod +x {} \; || true; \
+    in-target find /usr/local/bin/companions -type f -exec chmod +x {} \; || true; \
     in-target chmod 0440 /etc/sudoers.d/moss || true; \
     in-target chown -R {{USERNAME}}:{{USERNAME}} /home/{{USERNAME}} /etc/zen-garden; \
     in-target chown {{USERNAME}}:{{USERNAME}} /var/lib/zen-garden; \

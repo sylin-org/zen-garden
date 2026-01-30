@@ -1,4 +1,4 @@
-# Manifest Directory Restructuring Plan
+﻿# Manifest Directory Restructuring Plan
 
 **Status:** Draft
 **Created:** 2026-01-24
@@ -141,7 +141,7 @@ pub struct AppState {
 
 ### Implementation Approach
 
-**IMPORTANT: Complete revamp, not adapter pattern.**
+**IMPORTANT: Complete revamp, not Companion pattern.**
 
 - `TemplateLoader` is **removed**, not wrapped
 - `manifest_loader.rs` is **deleted**, not abstracted

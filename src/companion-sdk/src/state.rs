@@ -1,16 +1,16 @@
-//! Adapter state management
+﻿//! Companion state management
 //!
-//! Provides shared state for adapters including:
+//! Provides shared state for Companions including:
 //! - Enabled/disabled state for SSE event handling
 //! - Persistent state across restarts
 //!
 //! # Example
 //!
 //! ```ignore
-//! use garden_adapter_sdk::AdapterState;
+//! use garden_companion_sdk::CompanionState;
 //!
 //! // Create state with persistence
-//! let state = AdapterState::new(Some("/var/lib/garden/my-adapter"));
+//! let state = CompanionState::new(Some("/var/lib/garden/my-Companion"));
 //!
 //! // Check if enabled
 //! if state.is_enabled() {
@@ -25,11 +25,11 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Shared adapter state
+/// Shared Companion state
 ///
-/// Thread-safe state container for adapter-wide settings.
+/// Thread-safe state container for Companion-wide settings.
 /// Automatically persists enabled state to disk when changed.
-pub struct AdapterState {
+pub struct CompanionState {
     /// Whether SSE event handling is enabled
     enabled: AtomicBool,
 
@@ -37,8 +37,8 @@ pub struct AdapterState {
     state_dir: Option<PathBuf>,
 }
 
-impl AdapterState {
-    /// Create new adapter state
+impl CompanionState {
+    /// Create new Companion state
     ///
     /// If `state_dir` is provided, the enabled state will be loaded from
     /// `{state_dir}/sse_enabled` and persisted on changes.
@@ -53,7 +53,7 @@ impl AdapterState {
             tracing::debug!(
                 path = %dir.display(),
                 enabled = enabled,
-                "Loaded adapter state"
+                "Loaded Companion state"
             );
         }
 
@@ -131,13 +131,13 @@ mod tests {
 
     #[test]
     fn test_default_enabled() {
-        let state = AdapterState::new(None);
+        let state = CompanionState::new(None);
         assert!(state.is_enabled());
     }
 
     #[test]
     fn test_enable_disable() {
-        let state = AdapterState::new(None);
+        let state = CompanionState::new(None);
 
         state.disable();
         assert!(!state.is_enabled());
@@ -153,7 +153,7 @@ mod tests {
 
         // Create state and disable
         {
-            let state = AdapterState::new(Some(state_dir.clone()));
+            let state = CompanionState::new(Some(state_dir.clone()));
             state.disable();
         }
 
@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(content, "off");
 
         // Create new state - should load disabled
-        let state = AdapterState::new(Some(state_dir));
+        let state = CompanionState::new(Some(state_dir));
         assert!(!state.is_enabled());
     }
 
@@ -176,7 +176,7 @@ mod tests {
         fs::write(state_dir.join("sse_enabled"), "off").unwrap();
 
         // Load and enable
-        let state = AdapterState::new(Some(state_dir.clone()));
+        let state = CompanionState::new(Some(state_dir.clone()));
         assert!(!state.is_enabled());
 
         state.enable();

@@ -1,4 +1,4 @@
-﻿//! Adapter tests - registry, command forwarding, health
+//! Companion tests - registry, command forwarding, health
 
 use crate::registry::TestDef;
 use crate::{Bag, LiveGarden, StepResult};
@@ -7,35 +7,35 @@ use std::sync::Arc;
 use std::time::Instant;
 
 // ============================================================================
-// adapters.registry - Verify adapter registry on each stone
+// Companions.registry - Verify Companion registry on each stone
 // ============================================================================
 
 pub fn registry_test() -> TestDef {
     TestDef {
-        id: "adapters.registry",
-        name: "Adapter Registry",
-        description: "Check registered adapters on each stone",
-        category: "adapters",
-        tags: &["adapters", "registry"],
+        id: "Companions.registry",
+        name: "Companion Registry",
+        description: "Check registered Companions on each stone",
+        category: "companions",
+        tags: &["companions", "registry"],
         run: |garden, bag| Box::pin(test_registry(garden, bag)),
     }
 }
 
 async fn test_registry(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
-    let mut total_adapters = 0;
-    let mut running_adapters = 0;
+    let mut total_companions = 0;
+    let mut running_companions = 0;
 
     for stone in &garden.stones {
         let start = Instant::now();
-        let result = stone.get_json("/api/v1/stone/adapters").await;
+        let result = stone.get_json("/api/v1/stone/companions").await;
         let duration = start.elapsed();
 
         match result {
             Ok(resp) => {
-                // API returns { data: { adapters: [...] } }
-                let adapters = resp
+                // API returns { data: { Companions: [...] } }
+                let companions = resp
                     .get("data")
-                    .and_then(|d| d.get("adapters"))
+                    .and_then(|d| d.get("companions"))
                     .and_then(|d| d.as_array())
                     .map(|arr| {
                         arr.iter()
@@ -52,18 +52,18 @@ async fn test_registry(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
                     })
                     .unwrap_or_default();
 
-                let count = adapters.len();
-                let running = adapters.iter().filter(|(_, s)| s == "running").count();
+                let count = companions.len();
+                let running = companions.iter().filter(|(_, s)| s == "running").count();
 
-                total_adapters += count;
-                running_adapters += running;
+                total_companions += count;
+                running_companions += running;
 
                 bag.record_step(
-                    format!("adapters_{}", stone.name),
-                    format!("{}: {} adapters ({} running)", stone.name, count, running),
+                    format!("companions_{}", stone.name),
+                    format!("{}: {} companions ({} running)", stone.name, count, running),
                     duration.as_millis() as u64,
                     StepResult::ok_with(serde_json::json!({
-                        "adapters": adapters,
+                        "companions": companions,
                         "count": count,
                         "running": running,
                     })),
@@ -71,8 +71,8 @@ async fn test_registry(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
             }
             Err(e) => {
                 bag.record_step(
-                    format!("adapters_{}", stone.name),
-                    format!("{} adapter registry check failed", stone.name),
+                    format!("companions_{}", stone.name),
+                    format!("{} Companion registry check failed", stone.name),
                     duration.as_millis() as u64,
                     StepResult::failed(e.to_string()),
                 );
@@ -80,23 +80,23 @@ async fn test_registry(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
         }
     }
 
-    bag.put("total_adapters", total_adapters);
-    bag.put("running_adapters", running_adapters);
+    bag.put("total_companions", total_companions);
+    bag.put("running_companions", running_companions);
 
     Ok(bag)
 }
 
 // ============================================================================
-// adapters.cricket - Check Cricket audio adapter specifically
+// Companions.cricket - Check Cricket audio Companion specifically
 // ============================================================================
 
 pub fn cricket_test() -> TestDef {
     TestDef {
-        id: "adapters.cricket",
-        name: "Cricket Adapter",
-        description: "Verify Cricket audio adapter is running and responsive",
-        category: "adapters",
-        tags: &["adapters", "cricket", "audio"],
+        id: "Companions.cricket",
+        name: "Cricket Companion",
+        description: "Verify Cricket audio Companion is running and responsive",
+        category: "companions",
+        tags: &["companions", "cricket", "audio"],
         run: |garden, bag| Box::pin(test_cricket(garden, bag)),
     }
 }
@@ -106,7 +106,7 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
 
     for stone in &garden.stones {
         let start = Instant::now();
-        let result = stone.get_json("/api/v1/stone/adapters/cricket").await;
+        let result = stone.get_json("/api/v1/stone/companions/cricket").await;
         let duration = start.elapsed();
 
         match result {
@@ -131,9 +131,9 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
                     // Play a sound to verify Cricket is working
                     let play_result = stone
                         .post_json(
-                            "/api/v1/stone/adapters/cricket/command",
+                            "/api/v1/stone/companions/cricket/command",
                             &serde_json::json!({
-                                "adapter": "cricket",
+                                "companion": "cricket",
                                 "raw_args": ["play", "stone-online"]
                             }),
                         )
@@ -150,7 +150,7 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
                     bag.record_step(
                         format!("cricket_{}", stone.name),
                         format!("{}: Cricket {} (port {:?}) - played sound: {}", 
-                            stone.name, status, port, if play_ok { "✓" } else { "✗" }),
+                            stone.name, status, port, if play_ok { "?" } else { "?" }),
                         duration.as_millis() as u64,
                         if play_ok {
                             StepResult::ok_with(serde_json::json!({
@@ -182,7 +182,7 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
                         format!("cricket_{}", stone.name),
                         format!("{}: Cricket not installed", stone.name),
                         duration.as_millis() as u64,
-                        StepResult::skipped("Cricket adapter not installed"),
+                        StepResult::skipped("Cricket Companion not installed"),
                     );
                 } else {
                     bag.record_step(
@@ -199,7 +199,7 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     if !found_cricket {
         bag.record_step(
             "cricket_summary",
-            "No Cricket adapters found in garden",
+            "No Cricket Companions found in garden",
             0,
             StepResult::skipped("Cricket not installed on any stone"),
         );
@@ -209,16 +209,16 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
 }
 
 // ============================================================================
-// adapters.command_forwarding - Test command forwarding to adapters
+// Companions.command_forwarding - Test command forwarding to Companions
 // ============================================================================
 
 pub fn command_forwarding_test() -> TestDef {
     TestDef {
-        id: "adapters.command_forwarding",
+        id: "Companions.command_forwarding",
         name: "Command Forwarding",
-        description: "Test command forwarding to running adapters",
-        category: "adapters",
-        tags: &["adapters", "commands"],
+        description: "Test command forwarding to running Companions",
+        category: "companions",
+        tags: &["companions", "commands"],
         run: |garden, bag| Box::pin(test_command_forwarding(garden, bag)),
     }
 }
@@ -226,9 +226,9 @@ pub fn command_forwarding_test() -> TestDef {
 async fn test_command_forwarding(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     // Find a stone with Cricket running
     for stone in &garden.stones {
-        let adapter_result = stone.get_json("/api/v1/stone/adapters/cricket").await;
+        let companion_result = stone.get_json("/api/v1/stone/companions/cricket").await;
 
-        if let Ok(resp) = adapter_result {
+        if let Ok(resp) = companion_result {
             // API returns { data: { running: bool, ... } }
             let running = resp
                 .get("data")
@@ -244,9 +244,9 @@ async fn test_command_forwarding(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
             let start = Instant::now();
             let cmd_result = stone
                 .post_json(
-                    "/api/v1/stone/adapters/cricket/command",
+                    "/api/v1/stone/companions/cricket/command",
                     &serde_json::json!({
-                        "adapter": "cricket",
+                        "companion": "cricket",
                         "raw_args": ["list"]
                     }),
                 )
@@ -269,7 +269,7 @@ async fn test_command_forwarding(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
                         if success {
                             StepResult::ok_with(serde_json::json!({
                                 "stone": stone.name,
-                                "adapter": "cricket",
+                                "companion": "cricket",
                                 "command": "list",
                             }))
                         } else {
@@ -294,9 +294,9 @@ async fn test_command_forwarding(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
 
     bag.record_step(
         "command_skipped",
-        "No running adapters found",
+        "No running Companions found",
         0,
-        StepResult::skipped("No running adapters to test command forwarding"),
+        StepResult::skipped("No running Companions to test command forwarding"),
     );
 
     Ok(bag)

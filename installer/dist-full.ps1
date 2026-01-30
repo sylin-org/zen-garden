@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    Build full Zen Garden distribution (all binaries including adapters)
+    Build full Zen Garden distribution (all binaries including Companions)
 
 .DESCRIPTION
     Convenience wrapper for dist.ps1 -Tier full.

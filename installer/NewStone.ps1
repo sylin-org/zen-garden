@@ -981,7 +981,7 @@ function Write-StoneFiles {
     # Deploy from Linux package (single source of truth)
     # Package structure → Target filesystem mapping:
     #   bin/*           → /usr/local/bin/* 
-    #   bin/adapters/*  → /usr/local/bin/adapters/*
+    #   bin/companions/*  → /usr/local/bin/companions/*
     #   manifests/*     → /var/lib/zen-garden/manifests/*
     #   scripts/*.sh    → /usr/local/bin/*.sh
     # =========================================================================

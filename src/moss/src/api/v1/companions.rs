@@ -1,20 +1,20 @@
-﻿//! Adapter management endpoints for Moss
-//! Provides adapter registry and command proxy functionality
+//! Companion management endpoints for Moss
+//! Provides Companion registry and command proxy functionality
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use garden_common::command_manifest::{AdapterCommandRequest, CommandManifest, CommandResponse};
+use garden_common::command_manifest::{CompanionCommandRequest, CommandManifest, CommandResponse};
 use garden_common::api_utils::{ApiResponse, ApiErrorResponse};
 use crate::app_state::AppState;
 use crate::error_response;
 use serde::{Deserialize, Serialize};
 
-/// Summary of a registered adapter
+/// Summary of a registered Companion
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterSummary {
+pub struct CompanionSummary {
     pub id: String,
     pub name: String,
     pub version: String,
@@ -24,23 +24,23 @@ pub struct AdapterSummary {
     pub pid: Option<u32>,
 }
 
-/// Response for adapter listing
+/// Response for Companion listing
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterListResponse {
-    pub adapters: Vec<AdapterSummary>,
+pub struct CompanionListResponse {
+    pub companions: Vec<CompanionSummary>,
 }
 
-/// GET /api/v1/stone/adapters
-/// Returns list of available adapters with running status
-pub async fn get_adapters(
+/// GET /api/v1/stone/Companions
+/// Returns list of available Companions with running status
+pub async fn get_companions(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<AdapterListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let adapters = state.adapter_registry.list().await;
+) -> Result<Json<ApiResponse<CompanionListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let companions = state.companion_registry.list().await;
     
     let mut summaries = Vec::new();
-    for a in adapters {
-        let running = state.adapter_registry.is_running(&a.id).await;
-        summaries.push(AdapterSummary {
+    for a in companions {
+        let running = state.companion_registry.is_running(&a.id).await;
+        summaries.push(CompanionSummary {
             id: a.manifest.id.clone(),
             name: a.manifest.name.clone(),
             version: a.manifest.version.clone(),
@@ -50,14 +50,14 @@ pub async fn get_adapters(
             pid: if running { a.pid() } else { None },
         });
     }
-    
-    Ok(Json(ApiResponse::new(AdapterListResponse { adapters: summaries })))
+
+    Ok(Json(ApiResponse::new(CompanionListResponse { companions: summaries })))
 }
 
-/// GET /api/v1/stone/adapters/:id
-/// Returns adapter manifest with running status
+/// GET /api/v1/stone/companions/:id
+/// Returns Companion manifest with running status
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterDetailResponse {
+pub struct CompanionDetailResponse {
     #[serde(flatten)]
     pub manifest: CommandManifest,
     pub running: bool,
@@ -65,38 +65,38 @@ pub struct AdapterDetailResponse {
     pub port: Option<u16>,
 }
 
-pub async fn get_adapter_manifest(
+pub async fn get_companion_manifest(
     State(state): State<AppState>,
-    Path(adapter_id): Path<String>,
-) -> Result<Json<ApiResponse<AdapterDetailResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.adapter_registry.get(&adapter_id).await {
-        Some(adapter) => {
-            let running = adapter.is_running();
-            Ok(Json(ApiResponse::new(AdapterDetailResponse {
-                manifest: adapter.manifest.clone(),
+    Path(companion_id): Path<String>,
+) -> Result<Json<ApiResponse<CompanionDetailResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    match state.companion_registry.get(&companion_id).await {
+        Some(c) => {
+            let running = c.is_running();
+            Ok(Json(ApiResponse::new(CompanionDetailResponse {
+                manifest: c.manifest.clone(),
                 running,
-                pid: if running { adapter.pid() } else { None },
-                port: adapter.port(),
+                pid: if running { c.pid() } else { None },
+                port: c.port(),
             })))
         }
         None => Err(error_response(
             StatusCode::NOT_FOUND,
-            "ADAPTER_NOT_FOUND",
-            format!("Adapter '{}' not found", adapter_id),
+            "COMPANION_NOT_FOUND",
+            format!("Companion '{}' not found", companion_id),
             None,
         )),
     }
 }
 
-/// POST /api/v1/stone/adapters/:id/command
-/// Proxy command to adapter (5s timeout)
+/// POST /api/v1/stone/companions/:id/command
+/// Proxy command to Companion (5s timeout)
 /// 
 /// If the first arg is "all", broadcasts to all stones in topology AND runs locally.
-/// The "all" keyword is stripped before forwarding to the adapter.
-pub async fn send_adapter_command(
+/// The "all" keyword is stripped before forwarding to the Companion.
+pub async fn send_companion_command(
     State(state): State<AppState>,
-    Path(adapter_id): Path<String>,
-    Json(request): Json<AdapterCommandRequest>,
+    Path(companion_id): Path<String>,
+    Json(request): Json<CompanionCommandRequest>,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
     // Check for "all" broadcast modifier
     let is_broadcast = request.raw_args.first().map(|s| s == "all").unwrap_or(false);
@@ -109,78 +109,78 @@ pub async fn send_adapter_command(
     };
     
     // Build local request (without "all")
-    let local_request = AdapterCommandRequest::new(&adapter_id, local_args);
+    let local_request = CompanionCommandRequest::new(&companion_id, local_args);
     
     // Execute locally first
-    let local_result = execute_adapter_command_local(&state, &adapter_id, &local_request).await;
+    let local_result = execute_companion_command_local(&state, &companion_id, &local_request).await;
     
     // If broadcast, fan out to all other stones
     if is_broadcast {
-        broadcast_to_topology(&state, &adapter_id, &local_request).await;
+        broadcast_to_topology(&state, &companion_id, &local_request).await;
     }
     
     local_result
 }
 
-/// Execute adapter command on this stone only
-async fn execute_adapter_command_local(
+/// Execute Companion command on this stone only
+async fn execute_companion_command_local(
     state: &AppState,
-    adapter_id: &str,
-    request: &AdapterCommandRequest,
+    companion_id: &str,
+    request: &CompanionCommandRequest,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
-    // Get adapter and its assigned port
-    let adapter = match state.adapter_registry.get(&adapter_id).await {
+    // Get Companion and its assigned port
+    let companion = match state.companion_registry.get(&companion_id).await {
         Some(a) => a,
         None => {
             return Err((
                 StatusCode::NOT_FOUND,
-                Json(CommandResponse::error(format!("Adapter '{}' not found", adapter_id))),
+                Json(CommandResponse::error(format!("Companion '{}' not found", companion_id))),
             ));
         }
     };
     
-    // Auto-start adapter if not running
-    if !adapter.is_running() {
-        tracing::info!(adapter_id = %adapter_id, "Adapter not running, auto-starting before command execution");
+    // Auto-start Companion if not running
+    if !companion.is_running() {
+        tracing::info!(companion_id = %companion_id, "Companion not running, auto-starting before command execution");
         
-        // Get moss endpoint for adapter to connect to
+        // Get moss endpoint for Companion to connect to
         let self_entry = state.self_entry.read().await;
         let moss_endpoint = self_entry.endpoint.clone();
         drop(self_entry);
         
-        if let Err(e) = state.adapter_registry.start(&adapter_id, &moss_endpoint).await {
+        if let Err(e) = state.companion_registry.start(&companion_id, &moss_endpoint).await {
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(CommandResponse::error(format!(
-                    "Failed to auto-start adapter '{}': {}", 
-                    adapter_id, e
+                    "Failed to auto-start Companion '{}': {}", 
+                    companion_id, e
                 ))),
             ));
         }
         
-        // Give the adapter a moment to initialize
+        // Give the Companion a moment to initialize
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     
     // Get the pre-assigned port
-    let port = adapter.port().ok_or_else(|| {
+    let port = companion.port().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(CommandResponse::error(format!(
-                "Adapter '{}' has no assigned port", 
-                adapter_id
+                "Companion '{}' has no assigned port", 
+                companion_id
             ))),
         )
     })?;
     
     tracing::info!(
-        adapter_id = %adapter_id,
+        companion_id = %companion_id,
         port = port,
         args = ?request.raw_args,
-        "Forwarding command to adapter"
+        "Forwarding command to Companion"
     );
     
-    // Forward command to adapter's command server
+    // Forward command to Companion's command server
     let url = format!("http://127.0.0.1:{}/command", port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -205,7 +205,7 @@ async fn execute_adapter_command_local(
                 }
                 Err(e) => Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(CommandResponse::error(format!("Failed to parse adapter response: {}", e))),
+                    Json(CommandResponse::error(format!("Failed to parse Companion response: {}", e))),
                 )),
             }
         }
@@ -214,35 +214,35 @@ async fn execute_adapter_command_local(
                 Err((
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(CommandResponse::error(format!(
-                        "Adapter '{}' is not responding on port {}. Is it running?", 
-                        adapter_id, port
+                        "Companion '{}' is not responding on port {}. Is it running?", 
+                        companion_id, port
                     ))),
                 ))
             } else if e.is_timeout() {
                 Err((
                     StatusCode::GATEWAY_TIMEOUT,
                     Json(CommandResponse::error(format!(
-                        "Adapter '{}' command timed out (5s)", 
-                        adapter_id
+                        "Companion '{}' command timed out (5s)", 
+                        companion_id
                     ))),
                 ))
             } else {
                 Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(CommandResponse::error(format!("Failed to reach adapter: {}", e))),
+                    Json(CommandResponse::error(format!("Failed to reach Companion: {}", e))),
                 ))
             }
         }
     }
 }
 
-/// Broadcast adapter command to all other stones in topology
+/// Broadcast Companion command to all other stones in topology
 /// 
 /// Runs in parallel with best-effort delivery. Errors are logged but not propagated.
 async fn broadcast_to_topology(
     state: &AppState,
-    adapter_id: &str,
-    request: &AdapterCommandRequest,
+    companion_id: &str,
+    request: &CompanionCommandRequest,
 ) {
     use crate::domain::topology;
     
@@ -259,15 +259,15 @@ async fn broadcast_to_topology(
         .collect();
     
     if other_stones.is_empty() {
-        tracing::debug!(adapter_id = %adapter_id, "No other stones to broadcast to");
+        tracing::debug!(companion_id = %companion_id, "No other stones to broadcast to");
         return;
     }
     
     tracing::info!(
-        adapter_id = %adapter_id,
+        companion_id = %companion_id,
         stone_count = other_stones.len(),
         args = ?request.raw_args,
-        "Broadcasting adapter command to all stones"
+        "Broadcasting Companion command to all stones"
     );
     
     // Fan out requests in parallel
@@ -278,9 +278,9 @@ async fn broadcast_to_topology(
     
     let futures: Vec<_> = other_stones.iter().map(|stone| {
         let client = client.clone();
-        let url = format!("{}/api/v1/stone/adapters/{}/command", 
+        let url = format!("{}/api/v1/stone/companions/{}/command", 
             stone.endpoint.trim_end_matches('/'), 
-            adapter_id
+            companion_id
         );
         let request = request.clone();
         let stone_name = stone.stone_name.clone();
@@ -314,88 +314,88 @@ async fn broadcast_to_topology(
     });
 }
 
-/// Response for adapter lifecycle operations
+/// Response for Companion lifecycle operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterLifecycleResponse {
-    pub adapter_id: String,
+pub struct CompanionLifecycleResponse {
+    pub companion_id: String,
     pub running: bool,
     pub pid: Option<u32>,
     pub message: String,
 }
 
-/// POST /api/v1/stone/adapters/:id/up
-/// Start an adapter process and enable auto-start
+/// POST /api/v1/stone/companions/:id/up
+/// Start an Companion process and enable auto-start
 /// 
-/// When user explicitly starts an adapter, it should also be marked
+/// When user explicitly starts an Companion, it should also be marked
 /// to auto-start on boot.
-pub async fn start_adapter(
+pub async fn start_companion(
     State(state): State<AppState>,
-    Path(adapter_id): Path<String>,
-) -> Result<Json<ApiResponse<AdapterLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // Build this Moss's endpoint for the adapter to connect to
+    Path(companion_id): Path<String>,
+) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    // Build this Moss's endpoint for the Companion to connect to
     let self_entry = state.self_entry.read().await;
     let moss_endpoint = self_entry.endpoint.clone();
     drop(self_entry);
     
-    // Enable the adapter (mark for auto-start on boot)
-    if let Err(e) = state.adapter_registry.enable(&adapter_id).await {
-        tracing::warn!(adapter_id = %adapter_id, error = %e, "Failed to enable adapter");
+    // Enable the Companion (mark for auto-start on boot)
+    if let Err(e) = state.companion_registry.enable(&companion_id).await {
+        tracing::warn!(companion_id = %companion_id, error = %e, "Failed to enable Companion");
     }
     
-    match state.adapter_registry.start(&adapter_id, &moss_endpoint).await {
-        Ok(pid) => Ok(Json(ApiResponse::new(AdapterLifecycleResponse {
-            adapter_id: adapter_id.clone(),
+    match state.companion_registry.start(&companion_id, &moss_endpoint).await {
+        Ok(pid) => Ok(Json(ApiResponse::new(CompanionLifecycleResponse {
+            companion_id: companion_id.clone(),
             running: true,
             pid: Some(pid),
-            message: format!("Adapter '{}' started and enabled for auto-start (PID {})", adapter_id, pid),
+            message: format!("Companion '{}' started and enabled for auto-start (PID {})", companion_id, pid),
         }))),
         Err(e) => Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "ADAPTER_START_FAILED",
-            format!("Failed to start adapter '{}': {}", adapter_id, e),
+            "COMPANION_START_FAILED",
+            format!("Failed to start Companion '{}': {}", companion_id, e),
             None,
         )),
     }
 }
 
-/// POST /api/v1/stone/adapters/:id/down
-/// Stop an adapter process and disable auto-start
+/// POST /api/v1/stone/companions/:id/down
+/// Stop an Companion process and disable auto-start
 /// 
-/// When user explicitly stops an adapter, it should stay off until
+/// When user explicitly stops an Companion, it should stay off until
 /// manually started again. This persists the disabled state.
-pub async fn stop_adapter(
+pub async fn stop_companion(
     State(state): State<AppState>,
-    Path(adapter_id): Path<String>,
-) -> Result<Json<ApiResponse<AdapterLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.adapter_registry.stop_and_disable(&adapter_id).await {
-        Ok(()) => Ok(Json(ApiResponse::new(AdapterLifecycleResponse {
-            adapter_id: adapter_id.clone(),
+    Path(companion_id): Path<String>,
+) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    match state.companion_registry.stop_and_disable(&companion_id).await {
+        Ok(()) => Ok(Json(ApiResponse::new(CompanionLifecycleResponse {
+            companion_id: companion_id.clone(),
             running: false,
             pid: None,
-            message: format!("Adapter '{}' stopped and disabled (will not auto-start)", adapter_id),
+            message: format!("Companion '{}' stopped and disabled (will not auto-start)", companion_id),
         }))),
         Err(e) => Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "ADAPTER_STOP_FAILED",
-            format!("Failed to stop adapter '{}': {}", adapter_id, e),
+            "COMPANION_STOP_FAILED",
+            format!("Failed to stop Companion '{}': {}", companion_id, e),
             None,
         )),
     }
 }
 
-/// POST /api/v1/stone/adapters/refresh
-/// Re-scan adapters directory
-pub async fn refresh_adapters(
+/// POST /api/v1/stone/companions/refresh
+/// Re-scan Companions directory
+pub async fn refresh_companions(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<AdapterListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.adapter_registry.refresh_all().await {
+) -> Result<Json<ApiResponse<CompanionListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    match state.companion_registry.refresh_all().await {
         Ok(_) => {
             // Return updated list with running status
-            let adapters = state.adapter_registry.list().await;
+            let companions = state.companion_registry.list().await;
             let mut summaries = Vec::new();
-            for a in adapters {
-                let running = state.adapter_registry.is_running(&a.id).await;
-                summaries.push(AdapterSummary {
+            for a in companions {
+                let running = state.companion_registry.is_running(&a.id).await;
+                summaries.push(CompanionSummary {
                     id: a.manifest.id.clone(),
                     name: a.manifest.name.clone(),
                     version: a.manifest.version.clone(),
@@ -405,11 +405,11 @@ pub async fn refresh_adapters(
                     pid: if running { a.pid() } else { None },
                 });
             }
-            Ok(Json(ApiResponse::new(AdapterListResponse { adapters: summaries })))
+            Ok(Json(ApiResponse::new(CompanionListResponse { companions: summaries })))
         }
         Err(e) => Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "ADAPTER_REFRESH_FAILED",
+            "COMPANION_REFRESH_FAILED",
             e.to_string(),
             None,
         )),

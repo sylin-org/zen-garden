@@ -355,7 +355,7 @@
           "duration": "0:23",
           "format": "wav",
           "tags": ["enable", "disable", "effect", "ui"],
-          "use_case": "adapter on/off events",
+          "use_case": "Companion on/off events",
           "loopable": false
         }
       ]

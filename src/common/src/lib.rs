@@ -24,7 +24,7 @@ pub mod ui;
 pub mod detection;
 pub mod console;
 pub mod presence;
-pub mod adapter;
+pub mod companion;
 pub mod command_manifest;
 pub mod offerings;
 pub mod api_manifest;

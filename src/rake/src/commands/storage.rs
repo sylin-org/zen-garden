@@ -62,6 +62,10 @@ pub struct PrepareSeedBankCommand {
     pub random_name: bool,
     /// Filesystem preference
     pub filesystem: String,
+    /// Logical group for replicated seed banks
+    pub group: Option<String>,
+    /// Replica number within a group
+    pub replica_id: Option<u32>,
     /// Quiet mode
     pub quiet: bool,
 }
@@ -72,12 +76,16 @@ impl PrepareSeedBankCommand {
         name: Option<String>,
         random_name: bool,
         filesystem: Option<String>,
+        group: Option<String>,
+        replica_id: Option<u32>,
     ) -> Self {
         Self {
             device,
             name,
             random_name,
             filesystem: filesystem.unwrap_or_else(|| "btrfs".to_string()),
+            group,
+            replica_id,
             quiet: false,
         }
     }
@@ -179,6 +187,8 @@ impl Command for PrepareSeedBankCommand {
             name: self.name.clone(),
             random_name: self.random_name,
             filesystem: self.filesystem.clone(),
+            group: self.group.clone(),
+            replica_id: self.replica_id,
         };
         
         // Submit preparation request

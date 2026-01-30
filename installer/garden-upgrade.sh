@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # garden-upgrade.sh - Install pre-validated binaries from staging
 #
 # This script runs as ExecStartPre in the systemd unit.
@@ -53,10 +53,10 @@ if [[ -d "$STAGING_DIR/scripts" ]]; then
     done
 fi
 
-# Install binaries (moss, rake, lantern, etc.) and adapters (cricket, etc.)
+# Install binaries (moss, rake, lantern, etc.) and Companions (cricket, etc.)
 if [[ -d "$STAGING_DIR/bin" ]]; then
     log "Installing binaries..."
-    # Copy recursively to preserve bin/adapters/ subdirectory
+    # Copy recursively to preserve bin/companions/ subdirectory
     cp -r "$STAGING_DIR/bin/"* "$TARGET_BIN/"
     # Set permissions on all files recursively
     find "$TARGET_BIN" -type f -exec chmod 755 {} \;
@@ -66,10 +66,10 @@ if [[ -d "$STAGING_DIR/bin" ]]; then
             log "  Installed $(basename "$binary")"
         fi
     done
-    # Log installed adapters (adapters are in subdirectories)
-    if [[ -d "$STAGING_DIR/bin/adapters" ]]; then
-        find "$STAGING_DIR/bin/adapters" -type f | while read -r adapter; do
-            rel_path="${adapter#$STAGING_DIR/bin/}"
+    # Log installed Companions (Companions are in subdirectories)
+    if [[ -d "$STAGING_DIR/bin/companions" ]]; then
+        find "$STAGING_DIR/bin/companions" -type f | while read -r Companion; do
+            rel_path="${Companion#$STAGING_DIR/bin/}"
             log "  Installed $rel_path"
         done
     fi

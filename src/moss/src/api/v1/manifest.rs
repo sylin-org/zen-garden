@@ -150,28 +150,28 @@ fn build_manifest(base_url: &str) -> ApiManifest {
     );
     
     endpoints.push(
-        EndpointSpec::new("GET", "/api/v1/stone/adapters", "stone")
-            .description("List registered adapters (Cricket, Firefly, OLED)")
-            .response_type("Array<AdapterInfo>")
+        EndpointSpec::new("GET", "/api/v1/stone/companions", "stone")
+            .description("List registered Companions (Cricket, Firefly, OLED)")
+            .response_type("Array<CompanionInfo>")
             .example(
-                "List adapters",
-                "curl http://stone-01:7185/api/v1/stone/adapters",
-                r#"{"data": {"adapters": [{"id": "cricket", "port": 7187, "running": true}]}}"#
+                "List Companions",
+                "curl http://stone-01:7185/api/v1/stone/companions",
+                r#"{"data": {"companions": [{"id": "cricket", "port": 7187, "running": true}]}}"#
             )
     );
     
     endpoints.push(
-        EndpointSpec::new("POST", "/api/v1/stone/adapters/:id/command", "stone")
-            .description("Send command to adapter (forwarded to adapter HTTP port)")
-            .path_param("id", "Adapter ID (e.g., cricket)", "string")
-            .body_schema("AdapterCommandRequest { args: string[] }")
-            .response_type("AdapterCommandResponse")
+        EndpointSpec::new("POST", "/api/v1/stone/companions/:id/command", "stone")
+            .description("Send command to Companion (forwarded to Companion HTTP port)")
+            .path_param("id", "Companion ID (e.g., cricket)", "string")
+            .body_schema("CompanionCommandRequest { args: string[] }")
+            .response_type("CompanionCommandResponse")
             .example(
                 "Play audio via Cricket",
-                r#"curl -X POST http://stone-01:7185/api/v1/stone/adapters/cricket/command -H "Content-Type: application/json" -d '{"args": ["play", "stone-online"]}'"#,
+                r#"curl -X POST http://stone-01:7185/api/v1/stone/companions/cricket/command -H "Content-Type: application/json" -d '{"args": ["play", "stone-online"]}'"#,
                 r#"{"data": {"success": true, "output": "Playing: stone-online.mp3"}}"#
             )
-            .note("Timeout: 5 seconds. Forwarded to http://127.0.0.1:{adapter_port}/command")
+            .note("Timeout: 5 seconds. Forwarded to http://127.0.0.1:{companion_port}/command")
     );
     
     endpoints.push(
@@ -257,7 +257,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
                 "curl -X POST http://stone-01:7185/api/v1/admin/moss/shutdown",
                 r#"{"data": {"status": "shutting_down"}}"#
             )
-            .note("Stops adapters, flushes logs, closes connections. Stone remains on.")
+            .note("Stops Companions, flushes logs, closes connections. Stone remains on.")
     );
     
     endpoints.push(
@@ -302,7 +302,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
                 description: "Stone-level operations".into(),
                 endpoints: vec![
                     "/api/v1/stone/info".into(),
-                    "/api/v1/stone/adapters".into(),
+                    "/api/v1/stone/companions".into(),
                     "/api/v1/stone/presence/stream".into(),
                 ],
             },

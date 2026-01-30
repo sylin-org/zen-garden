@@ -6,7 +6,7 @@ All notable changes to Zen Garden will be documented in this file.
 - **Package Structure v2.0** - Simplified to mirror target filesystem exactly
   - Package now has just `bin/` (→ /usr/local/bin) and `lib/` (→ /var/lib) folders
   - Deploy is now two `cp -r` operations instead of multiple conditional blocks
-  - Removed `dependencies` block from dist.json (adapters install deps at runtime)
+  - Removed `dependencies` block from dist.json (Companions install deps at runtime)
   - Updated `moss-update-helper.sh` and `NewStone.ps1` to use new structure
 - **Timezone/NTP Configuration** - Stones now sync timezone on deploy
   - New `garden.conf` with timezone setting (default: America/New_York)
@@ -14,25 +14,25 @@ All notable changes to Zen Garden will be documented in this file.
   - `debian-preseed.template` applies timezone on first boot
 - **Path Cleanup** - Removed all stale `/etc/zen-garden/templates` references
   - Manifests at `/var/lib/zen-garden/manifests/{sw,hw}/`
-  - Adapters at `/usr/local/bin/adapters/{adapter}/`
+  - Companions at `/usr/local/bin/companions/{Companion}/`
   - Fixed `RUNTIME_MANIFESTS_DIR` and `RUNTIME_HW_MANIFESTS_DIR` constants
 - **NewStone.ps1: Package-based deployment** - USB creator now extracts from Linux package directly
-  - Single source of truth: binaries, adapters, manifests, scripts all from `dist/packages/*.tar.gz`
+  - Single source of truth: binaries, Companions, manifests, scripts all from `dist/packages/*.tar.gz`
   - Matches deployment layout used by `garden-upgrade.sh` and `moss-update-helper.sh`
-  - Includes `dependencies.json` for post-install adapter dependency resolution
+  - Includes `dependencies.json` for post-install Companion dependency resolution
 - **Test: storage.object_roundtrip** - new probe test verifying PUT/GET/DELETE object lifecycle in seed banks
-- **Adapter SDK: System Dependency Management** - adapters can auto-install missing dependencies
-  - New `garden_adapter_sdk::dependencies` module with `ensure_dependencies()` helper
+- **Companion SDK: System Dependency Management** - Companions can auto-install missing dependencies
+  - New `garden_companion_sdk::dependencies` module with `ensure_dependencies()` helper
   - `SystemDependency::apt_package(pkg, binary)` for declaring apt package requirements
   - Cricket now auto-installs `alsa-utils` (aplay/amixer) on first run if missing
-- **Adapter Endpoints: ApiResponse Wrapper** - consistent response format across all adapter APIs
-  - All adapter endpoints now return `ApiResponse<T>` with `data` field
-  - Adapter detail endpoint includes `running`, `port`, `pid` fields alongside manifest
-- **Adapter Auto-Start with State Persistence** - adapters now start automatically on boot
-  - Moss auto-starts all registered adapters unless explicitly disabled
-  - New `adapter-state.json` ledger persists enabled/disabled state across restarts
-  - `POST /adapters/:id/down` now disables adapter (won't auto-start until `/up`)
-  - `POST /adapters/:id/up` re-enables adapter for auto-start
+- **Companion Endpoints: ApiResponse Wrapper** - consistent response format across all Companion APIs
+  - All Companion endpoints now return `ApiResponse<T>` with `data` field
+  - Companion detail endpoint includes `running`, `port`, `pid` fields alongside manifest
+- **Companion Auto-Start with State Persistence** - Companions now start automatically on boot
+  - Moss auto-starts all registered Companions unless explicitly disabled
+  - New `Companion-state.json` ledger persists enabled/disabled state across restarts
+  - `POST /companions/:id/down` now disables Companion (won't auto-start until `/up`)
+  - `POST /companions/:id/up` re-enables Companion for auto-start
   - New `scan_and_autostart()` replaces simple `scan()` at startup
 - **Storage Cache as Unified View** - storage_cache now serves as boundary between local and remote storage
   - Local seed banks are self-registered into storage_cache at startup
@@ -100,7 +100,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Stone color derived from stone_id hash for unique identity across garden
   - Vellum aesthetic with dark mode support, 4-second polling for "breathing" updates
   - See: docs/decisions/PORTRAIT-0001-stone-landing-page.md
-- **API Manifest system** - structured endpoint documentation like CommandManifest for adapters
+- **API Manifest system** - structured endpoint documentation like CommandManifest for Companions
   - Created `garden_common::api_manifest` module with EndpointSpec, ApiManifest types
   - New endpoint: `GET /api/v1/manifest` returns live API documentation from Moss
   - New command: `garden-rake api` displays formatted API reference with curl examples
@@ -117,13 +117,13 @@ All notable changes to Zen Garden will be documented in this file.
   - Election delay: corrected `* 10` (0-2550ms) to `* 30` (0-7650ms) per implementation
   - Updated format string: `stone_name + request_id` → `election:{stone_id}:{request_id}`
   - Affected: discovery.md, moss-daemon-lifecycle.md, rake-commands.md, config.md, connection-strings.md, glossary.md, ports.md
-- **garden-adapter-sdk crate** - shared infrastructure for adapters (DDD/SoC)
-  - Created `src/adapter-sdk/` with CommandHandler trait, AdapterRuntime, SSE client
-  - Adapters focus on domain logic only, SDK handles: HTTP server, shutdown, signals
-  - Re-exports: AdapterConfig, CommandResult, EventHandler, SseEvent, async_trait
+- **garden-companion-sdk crate** - shared infrastructure for Companions (DDD/SoC)
+  - Created `src/companion-sdk/` with CommandHandler trait, CompanionRuntime, SSE client
+  - Companions focus on domain logic only, SDK handles: HTTP server, shutdown, signals
+  - Re-exports: CompanionConfig, CommandResult, EventHandler, SseEvent, async_trait
   - Standard endpoints: POST /command, POST /shutdown, GET /health
   - Refactored Cricket to use SDK - removed 200+ lines of boilerplate (command.rs, sse.rs)
-- **Embedded asset framework for Moss** - manifests and adapters compiled into binary for portability
+- **Embedded asset framework for Moss** - manifests and Companions compiled into binary for portability
   - Added `rust-embed` v8 dependency to Moss for compile-time asset embedding
   - Created `src/moss/embedded/manifests/` - moved manifests from repo root for binary embedding
   - Created `src/moss/src/infra/embedded.rs` - overlay loading (filesystem > embedded), asset extraction
@@ -136,35 +136,35 @@ All notable changes to Zen Garden will be documented in this file.
   - Tests for scoring functions moved from Rake to Moss
 
 ## 2026-01-26
-- **Adapter port ledger system** - Moss-managed persistent port assignments (base 7187, range 7187-7199)
-  - Created PortLedger: load/save to `{data_dir}/adapter-ports.json`, incremental assignment from base 7187
-  - Moss passes `--port {assigned}` to adapters during both `--dump-commands` and runtime startup
-  - Command routing: Rake → Moss:7185/api/v1/stone/adapters/{id}/command → Adapter:{assigned_port}/command
+- **Companion port ledger system** - Moss-managed persistent port assignments (base 7187, range 7187-7199)
+  - Created PortLedger: load/save to `{data_dir}/companion-ports.json`, incremental assignment from base 7187
+  - Moss passes `--port {assigned}` to Companions during both `--dump-commands` and runtime startup
+  - Command routing: Rake → Moss:7185/api/v1/stone/companions/{id}/command → Companion:{assigned_port}/command
   - Removed computed port logic from command_manifest, Cricket now requires port from Moss
   - Tested end-to-end: Cricket assigned 7187, plays audio via `hey tell cricket play stone-online`
-- **Adapter registry & service discovery** - adapters auto-discovered via `--dump-commands` protocol
-  - Added `adapters_dir()` path function: `/usr/local/bin/adapters/` (Linux), `.zen-garden/adapters/` (Windows)
-  - Added `CommandManifest::check_dump_commands()` helper for adapter main.rs
-  - Created `infra/adapters.rs`: scans adapters folder, spawns `--dump-commands`, caches manifests
-  - Updated Moss API: GET /stone/adapters, GET /stone/adapters/:id, POST :id/command, POST refresh
+- **Companion registry & service discovery** - Companions auto-discovered via `--dump-commands` protocol
+  - Added `Companions_dir()` path function: `/usr/local/bin/companions/` (Linux), `.zen-garden/companions/` (Windows)
+  - Added `CommandManifest::check_dump_commands()` helper for Companion main.rs
+  - Created `infra/Companions.rs`: scans Companions folder, spawns `--dump-commands`, caches manifests
+  - Updated Moss API: GET /stone/Companions, GET /stone/companions/:id, POST :id/command, POST refresh
   - Updated Rake hey.rs: fetches CommandManifest from Moss, displays rich help with examples
   - Cricket now implements `--dump-commands` (6 commands: select, volume, list, show, play, stop)
-- **Cricket audio adapter implemented** - full adapter framework and Cricket crate with 180 CC0 samples
+- **Cricket audio Companion implemented** - full Companion framework and Cricket crate with 180 CC0 samples
   - Expanded audio library: 42 → 180 samples (5x growth, emphasis on notifications as requested)
-  - Added garden_common::adapter module: AdapterCommandRequest/Response, AdapterManifest types
-  - Added Moss endpoints: GET /api/v1/stone/adapters, POST /api/v1/stone/presence/command
+  - Added garden_common::Companion module: CompanionCommandRequest/Response, CompanionManifest types
+  - Added Moss endpoints: GET /api/v1/stone/companions, POST /api/v1/stone/presence/command
   - Created garden-cricket crate: 4-channel mixer (rodio), tune system (zen-garden/mr-robot/lo-fi-ops)
-  - Created Rake hey-tell command: natural language adapter control (`hey cricket, play zen-garden`)
+  - Created Rake hey-tell command: natural language Companion control (`hey cricket, play zen-garden`)
   - Implemented SSE client for presence stream, command server (port 7188), mixer with Send+Sync safety
   - Attribution maintained: full credit in attribution-extended.json despite CC0 license
-- **Cricket & Adapter Framework specs complete** - universal service communication layer designed
-  - Created ADAPTER-COMMAND-PROTOCOL.md: synchronous command flow via Moss proxy (5s timeout)
-  - Created ADAPTER-SERVICE-REGISTRY.md: service registration, manifests, lifecycle management
-  - Created HEY-TELL-SYNTAX.md: Rake command grammar (`garden-rake hey tell {adapter} {cmd}`)
+- **Cricket & Companion Framework specs complete** - universal service communication layer designed
+  - Created Companion-COMMAND-PROTOCOL.md: synchronous command flow via Moss proxy (5s timeout)
+  - Created Companion-SERVICE-REGISTRY.md: service registration, manifests, lifecycle management
+  - Created HEY-TELL-SYNTAX.md: Rake command grammar (`garden-rake hey tell {Companion} {cmd}`)
   - Created CRICKET-SPEC.md: Cricket implementation details (rodio, 4-channel mixer, tune system)
   - Created audio-sample-library.json: 52 CC0 samples from Freesound.org for official tunes
-- **Cricket audio adapter proposal complete** - comprehensive spec with 6-expert specialist team assessment
-  - Created CRICKET-0001-audio-adapter-spec.md: full design (4-layer audio, event mappings, config schema)
+- **Cricket audio Companion proposal complete** - comprehensive spec with 6-expert specialist team assessment
+  - Created CRICKET-0001-audio-Companion-spec.md: full design (4-layer audio, event mappings, config schema)
   - Created CRICKET-IMPLEMENTATION-ROADMAP.md: 3-phase build plan (6-8 weeks to v0.1.0)
   - Created CRICKET-EXECUTIVE-SUMMARY.md: stakeholder reference document
   - Validated against PRESENCE-0001: zero protocol deviations, pure consumer pattern
@@ -213,7 +213,7 @@ All notable changes to Zen Garden will be documented in this file.
 ## 2026-01-25
 - Implemented multicast-first UDP discovery (239.255.42.99:7184) with directed broadcast fallback to solve multi-homed Windows 11 failures
 - Added per-interface sender sockets to prevent OS routing packets through wrong interfaces (WSL/Hyper-V)
-- Added virtual adapter detection and filtering (skips veth, docker, vmnet, vboxnet, hyperv, wsl interfaces)
+- Added virtual Companion detection and filtering (skips veth, docker, vmnet, vboxnet, hyperv, wsl interfaces)
 - Added configurable discovery transport via environment variables (DISCOVERY_PORT, DISCOVERY_MCAST_GROUP, DISCOVERY_ENABLE_BCAST_FALLBACK)
 - Reduced topology offline threshold from 90s to 45s (1.5 chirp cycles) for faster stale stone detection
 - Added automatic topology maintenance task (runs every 30s, marks stale stones offline, evicts old entries)
@@ -268,7 +268,7 @@ Successfully implemented multicast-first UDP discovery transport to solve multi-
 **Before**: Limited broadcast to `255.255.255.255:7184`
 - Single sender socket bound to `0.0.0.0:0`
 - Broadcast to `255.255.255.255`
-- Failed on multi-homed Windows (WSL/Hyper-V adapters)
+- Failed on multi-homed Windows (WSL/Hyper-V Companions)
 
 **After**: Multicast-first with directed broadcast fallback
 1. **Primary**: Multicast to `239.255.42.99:7184` (TTL=1)
@@ -302,7 +302,7 @@ DISCOVERY_ENABLE_LIMITED_BCAST=false
 Filters network interfaces to exclude:
 - Loopback (`127.x.x.x`)
 - Link-local (`169.254.x.x`)
-- Virtual adapters:
+- Virtual Companions:
   - **Name patterns**: `veth`, `virbr`, `docker`, `br-`, `vmnet`, `vboxnet`, `hyperv`, `wsl`
   - **Docker bridge**: `172.17.x.x`
 
@@ -420,7 +420,7 @@ leo-main                [thriving]           192.168.1.166
    - Version: 2026-01-25 (multicast-first implementation)
    - Added: `DiscoveryConfig` struct with env var loading
    - Added: `NetworkInterface` struct for interface management
-   - Added: `enumerate_eligible_interfaces()` with virtual adapter filtering
+   - Added: `enumerate_eligible_interfaces()` with virtual Companion filtering
    - Added: `is_virtual_interface()` detection heuristics
    - Added: `NetworkInterface::compute_broadcast()` for directed broadcast
    - Changed: `UDP_SENDER` → `UDP_SENDERS` (per-interface sockets)
@@ -431,7 +431,7 @@ leo-main                [thriving]           192.168.1.166
 
 3. **`docs/ARCHITECTURE-REFERENCE.md`**
    - Added: "Discovery Transport (Multicast-First)" section
-   - Documented: Configuration, strategy, virtual adapter detection
+   - Documented: Configuration, strategy, virtual Companion detection
    - Referenced: `discovery-transport.md` design doc
 
 4. **`src/moss/src/domain/topology.rs`**
@@ -485,7 +485,7 @@ OS routes through default interface
     ↓
 Default interface = vEthernet (WSL)  ← WRONG!
     ↓
-Packet egresses virtual adapter
+Packet egresses virtual Companion
     ↓
 Physical NIC never receives packet
     ↓
@@ -623,7 +623,7 @@ Announcement frequency: **~1/second** (STONE_CHIRP debounced to 100ms)
 - [x] Discovery works on Linux stones
 - [x] Cross-platform interop verified
 - [x] Configuration via environment variables works
-- [x] Virtual adapter detection filters correctly
+- [x] Virtual Companion detection filters correctly
 - [x] Broadcast computation handles /16, /20, /24 networks
 - [x] Documentation updated (ARCHITECTURE-REFERENCE.md)
 - [x] Design doc complete (discovery-transport.md)

@@ -573,7 +573,7 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
         .args([
             "-NoProfile",
             "-Command",
-            "Get-WmiObject Win32_VideoController | Select-Object Name, AdapterRAM, PNPDeviceID, AdapterCompatibility | ConvertTo-Json"
+            "Get-WmiObject Win32_VideoController | Select-Object Name, CompanionRAM, PNPDeviceID, CompanionCompatibility | ConvertTo-Json"
         ])
         .output()?;
     
@@ -606,25 +606,25 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
         .filter_map(|gpu| {
             let name = gpu["Name"].as_str()?.to_string();
             let pnp_id = gpu["PNPDeviceID"].as_str().unwrap_or("");
-            let adapter_compat = gpu["AdapterCompatibility"].as_str().unwrap_or("");
+            let companion_compat = gpu["CompanionCompatibility"].as_str().unwrap_or("");
 
             // Filter out non-compute GPUs:
             // - USB devices (DisplayLink, etc.)
-            // - Microsoft Basic Display Adapter
+            // - Microsoft Basic Display Companion
             // - Virtual/software renderers
             if pnp_id.starts_with("USB\\") {
-                tracing::debug!("Skipping USB display adapter: {}", name);
+                tracing::debug!("Skipping USB display Companion: {}", name);
                 return None;
             }
             if name.contains("DisplayLink") || name.contains("Basic Display") || name.contains("Microsoft Basic") {
-                tracing::debug!("Skipping virtual/display-only adapter: {}", name);
+                tracing::debug!("Skipping virtual/display-only Companion: {}", name);
                 return None;
             }
 
-            let vram_bytes = gpu["AdapterRAM"].as_u64();
+            let vram_bytes = gpu["CompanionRAM"].as_u64();
             let mut vram_mb = vram_bytes.map(|b| b / 1024 / 1024);
 
-            // If WMI AdapterRAM is unreliable, try to get from enhanced WMI detection
+            // If WMI CompanionRAM is unreliable, try to get from enhanced WMI detection
             // Trigger fallback if: None, < 1GB, or 4000-4096 MB (indicates 32-bit truncation at 4GB)
             // Try both exact and normalized name matching
             let needs_fallback = vram_mb.is_none()
@@ -641,7 +641,7 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
             
             // Detect vendor and capabilities from name and compatibility
             let name_lower = name.to_lowercase();
-            let compat_lower = adapter_compat.to_lowercase();
+            let compat_lower = companion_compat.to_lowercase();
             
             let (vendor, capabilities): (&str, Vec<String>) = 
                 if name_lower.contains("nvidia") || name_lower.contains("geforce") || name_lower.contains("quadro") || name_lower.contains("rtx") {
@@ -707,9 +707,9 @@ fn get_vram_from_wmi() -> std::collections::HashMap<String, u64> {
                 $_.Name -notlike "*Basic*" -and
                 $_.Name -notlike "*DisplayLink*"
             } | ForEach-Object {
-                $vramBytes = $_.AdapterRAM
+                $vramBytes = $_.CompanionRAM
 
-                # WMI AdapterRAM can be unreliable (32-bit field capped at ~4GB), try to get from device properties
+                # WMI CompanionRAM can be unreliable (32-bit field capped at ~4GB), try to get from device properties
                 # Trigger fallback if: null, zero, < 1GB, or suspiciously close to 4GB (4000-4096 MB indicates truncation)
                 $vramMB = [Math]::Round($vramBytes / 1MB)
                 if ($vramBytes -eq $null -or $vramBytes -eq 0 -or $vramBytes -lt 1GB -or ($vramMB -ge 4000 -and $vramMB -le 4096)) {
@@ -726,7 +726,7 @@ fn get_vram_from_wmi() -> std::collections::HashMap<String, u64> {
                     }
                 }
 
-                # If still no valid VRAM and AdapterRAM is capped at 4GB, it's likely truncated
+                # If still no valid VRAM and CompanionRAM is capped at 4GB, it's likely truncated
                 # Use a heuristic: if it's exactly 4095 MB, the actual value is likely higher
                 if ($vramBytes -gt 0) {
                     [PSCustomObject]@{
@@ -818,7 +818,7 @@ fn get_vram_from_dxgi() -> std::collections::HashMap<String, u64> {
 
                     if vram_mb > 0 {
                         tracing::debug!(
-                            "DXGI Adapter {}: {} - {} MB VRAM",
+                            "DXGI adapter {}: {} - {} MB VRAM",
                             adapter_index,
                             description,
                             vram_mb
@@ -1290,9 +1290,9 @@ pub fn scan_ai_runtime_containers(gpus: &[GpuInfo]) -> Vec<String> {
 /// Returns (runtime_name, optional_version)
 ///
 /// # Examples
-/// - `rocm/pytorch:rocm5.7_ubuntu22.04_py3.10` → Some(("rocm", Some("5.7")))
-/// - `nvidia/cuda:12.2.0-base` → Some(("cuda", Some("12.2")))
-/// - `tensorflow/tensorflow:latest-gpu` → Some(("tensorflow", None))
+/// - `rocm/pytorch:rocm5.7_ubuntu22.04_py3.10` ? Some(("rocm", Some("5.7")))
+/// - `nvidia/cuda:12.2.0-base` ? Some(("cuda", Some("12.2")))
+/// - `tensorflow/tensorflow:latest-gpu` ? Some(("tensorflow", None))
 fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)> {
     let image_lower = image.to_lowercase();
 
@@ -1300,7 +1300,7 @@ fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)
     if image_lower.contains("rocm") {
         // Try to extract version from tag (e.g., rocm5.7, rocm/pytorch:rocm5.7_...)
         let version = if let Some(tag) = image.split(':').nth(1) {
-            // Extract version like "rocm5.7" → "5.7"
+            // Extract version like "rocm5.7" ? "5.7"
             if let Some(rocm_part) = tag.split('_').find(|s| s.starts_with("rocm")) {
                 rocm_part.trim_start_matches("rocm").split('_').next()
                     .filter(|v| !v.is_empty())
@@ -1318,10 +1318,10 @@ fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)
     // CUDA images
     if image_lower.contains("cuda") {
         let version = if let Some(tag) = image.split(':').nth(1) {
-            // Extract version like "12.2.0-base" → "12.2"
+            // Extract version like "12.2.0-base" ? "12.2"
             tag.split('-').next()
                 .and_then(|v| {
-                    // Take major.minor from semver (12.2.0 → 12.2)
+                    // Take major.minor from semver (12.2.0 ? 12.2)
                     let parts: Vec<&str> = v.split('.').collect();
                     if parts.len() >= 2 {
                         Some(format!("{}.{}", parts[0], parts[1]))

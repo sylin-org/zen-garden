@@ -82,10 +82,10 @@ impl TestRegistry {
         self.register(crate::tests::nourishment::garden_aggregation_test());
         self.register(crate::tests::nourishment::scope_filtering_test());
 
-        // Adapter tests (registry, commands)
-        self.register(crate::tests::adapters::registry_test());
-        self.register(crate::tests::adapters::cricket_test());
-        self.register(crate::tests::adapters::command_forwarding_test());
+        // Companion tests (registry, commands)
+        self.register(crate::tests::companions::registry_test());
+        self.register(crate::tests::companions::cricket_test());
+        self.register(crate::tests::companions::command_forwarding_test());
 
         // Storage tests (seed banks, beacon)
         self.register(crate::tests::storage::overview_test());
@@ -105,6 +105,16 @@ impl TestRegistry {
         self.register(crate::tests::nurturing::trigger_workflow_test());
         self.register(crate::tests::nurturing::trigger_all_workflow_test());
         self.register(crate::tests::nurturing::seed_bank_routing_test());
+        self.register(crate::tests::nurturing::restore_local_test());
+        self.register(crate::tests::nurturing::restore_remote_test());
+        self.register(crate::tests::nurturing::retention_pruning_test());
+        self.register(crate::tests::nurturing::failover_test());
+
+        // Nurturing physical validation tests (SSH-based)
+        self.register(crate::tests::nurturing::physical_restore_local_test());
+        self.register(crate::tests::nurturing::physical_restore_remote_test());
+        self.register(crate::tests::nurturing::physical_retention_test());
+        self.register(crate::tests::nurturing::physical_failover_test());
 
         // Resolution tests (protocol and offering resolution)
         self.register(crate::tests::resolution::offering_lookup_test());

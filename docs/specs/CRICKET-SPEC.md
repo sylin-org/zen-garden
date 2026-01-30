@@ -2,13 +2,13 @@
 
 **Status:** Draft  
 **Date:** 2026-01-26  
-**Scope:** Cricket audio presence adapter implementation details
+**Scope:** Cricket audio presence Companion implementation details
 
 ---
 
 ## Overview
 
-Cricket is an audio presence adapter that transforms Zen Garden events into ambient soundscapes. It subscribes to the PRESENCE-0001 SSE stream and plays contextual audio based on infrastructure activity.
+Cricket is an audio presence Companion that transforms Zen Garden events into ambient soundscapes. It subscribes to the PRESENCE-0001 SSE stream and plays contextual audio based on infrastructure activity.
 
 **Binary:** `garden-cricket`  
 **Package:** `garden-cricket`  
@@ -472,9 +472,9 @@ pub struct CommandHandler {
 }
 
 impl CommandHandler {
-    pub async fn handle(&self, raw_args: Vec<String>) -> AdapterCommandResponse {
+    pub async fn handle(&self, raw_args: Vec<String>) -> CompanionCommandResponse {
         if raw_args.is_empty() {
-            return AdapterCommandResponse::error("No command specified")
+            return CompanionCommandResponse::error("No command specified")
                 .with_suggestion("Try: select, list, volume, status, pull, remove");
         }
         
@@ -489,28 +489,28 @@ impl CommandHandler {
             "pull" => self.cmd_pull(args).await,
             "remove" => self.cmd_remove(args).await,
             _ => {
-                AdapterCommandResponse::error(format!("Unknown command: {}", command))
+                CompanionCommandResponse::error(format!("Unknown command: {}", command))
                     .with_suggestions(self.suggest_commands(command))
             }
         }
     }
     
-    async fn cmd_select(&self, args: &[String]) -> AdapterCommandResponse {
+    async fn cmd_select(&self, args: &[String]) -> CompanionCommandResponse {
         let Some(tune_name) = args.first() else {
-            return AdapterCommandResponse::error("Usage: select <tune>")
+            return CompanionCommandResponse::error("Usage: select <tune>")
                 .with_suggestion("Use 'list' to see available tunes");
         };
         
         match self.tune_manager.select(tune_name, &self.mixer).await {
-            Ok(()) => AdapterCommandResponse::success(
+            Ok(()) => CompanionCommandResponse::success(
                 format!("Switched to tune '{}'", tune_name)
             ),
-            Err(e) => AdapterCommandResponse::error(format!("Failed: {}", e))
+            Err(e) => CompanionCommandResponse::error(format!("Failed: {}", e))
                 .with_suggestions(self.suggest_tunes(tune_name)),
         }
     }
     
-    async fn cmd_list(&self) -> AdapterCommandResponse {
+    async fn cmd_list(&self) -> CompanionCommandResponse {
         let tunes = self.tune_manager.list_tunes();
         let current = self.tune_manager.current.read().await;
         let current_name = current.as_ref().map(|t| t.name.as_str());
@@ -538,29 +538,29 @@ impl CommandHandler {
             }
         }
         
-        AdapterCommandResponse::success("Listed tunes")
+        CompanionCommandResponse::success("Listed tunes")
             .with_output(output)
     }
     
-    async fn cmd_volume(&self, args: &[String]) -> AdapterCommandResponse {
+    async fn cmd_volume(&self, args: &[String]) -> CompanionCommandResponse {
         let Some(level_str) = args.first() else {
-            return AdapterCommandResponse::error("Usage: volume <0-100>");
+            return CompanionCommandResponse::error("Usage: volume <0-100>");
         };
         
         let Ok(level) = level_str.parse::<u32>() else {
-            return AdapterCommandResponse::error("Volume must be a number 0-100");
+            return CompanionCommandResponse::error("Volume must be a number 0-100");
         };
         
         if level > 100 {
-            return AdapterCommandResponse::error("Volume must be 0-100");
+            return CompanionCommandResponse::error("Volume must be 0-100");
         }
         
         self.mixer.set_master_volume(level as f32 / 100.0);
         
-        AdapterCommandResponse::success(format!("Volume set to {}%", level))
+        CompanionCommandResponse::success(format!("Volume set to {}%", level))
     }
     
-    async fn cmd_status(&self) -> AdapterCommandResponse {
+    async fn cmd_status(&self) -> CompanionCommandResponse {
         let current = self.tune_manager.current.read().await;
         
         let tune_name = current.as_ref()
@@ -579,34 +579,34 @@ impl CommandHandler {
         output.push_str(&format!("    ambient:     {}\n", self.channel_meter(Channel::Ambient)));
         output.push_str(&format!("    background:  {}\n", self.channel_meter(Channel::Background)));
         
-        AdapterCommandResponse::success("Status retrieved")
+        CompanionCommandResponse::success("Status retrieved")
             .with_output(output)
     }
     
-    async fn cmd_pull(&self, args: &[String]) -> AdapterCommandResponse {
+    async fn cmd_pull(&self, args: &[String]) -> CompanionCommandResponse {
         let Some(url) = args.first() else {
-            return AdapterCommandResponse::error("Usage: pull <url>");
+            return CompanionCommandResponse::error("Usage: pull <url>");
         };
         
         match self.tune_manager.pull(url).await {
-            Ok(info) => AdapterCommandResponse::success(
+            Ok(info) => CompanionCommandResponse::success(
                 format!("Tune '{}' installed ({} samples, {})", 
                         info.name, info.sample_count, info.size_human)
             ),
-            Err(e) => AdapterCommandResponse::error(format!("Failed: {}", e)),
+            Err(e) => CompanionCommandResponse::error(format!("Failed: {}", e)),
         }
     }
     
-    async fn cmd_remove(&self, args: &[String]) -> AdapterCommandResponse {
+    async fn cmd_remove(&self, args: &[String]) -> CompanionCommandResponse {
         let Some(name) = args.first() else {
-            return AdapterCommandResponse::error("Usage: remove <tune>");
+            return CompanionCommandResponse::error("Usage: remove <tune>");
         };
         
         match self.tune_manager.remove(name) {
-            Ok(()) => AdapterCommandResponse::success(
+            Ok(()) => CompanionCommandResponse::success(
                 format!("Tune '{}' removed", name)
             ),
-            Err(e) => AdapterCommandResponse::error(format!("{}", e)),
+            Err(e) => CompanionCommandResponse::error(format!("{}", e)),
         }
     }
     
@@ -676,7 +676,7 @@ log_level = "warn"
 
 ```ini
 [Unit]
-Description=Zen Garden Cricket Audio Adapter
+Description=Zen Garden Cricket Audio Companion
 After=network.target garden-moss.service
 Wants=garden-moss.service
 
@@ -730,10 +730,10 @@ clap = { version = "4", features = ["derive"] }
 
 ## Related Documents
 
-- [ADAPTER-COMMAND-PROTOCOL.md](ADAPTER-COMMAND-PROTOCOL.md) - Command flow
-- [ADAPTER-SERVICE-REGISTRY.md](ADAPTER-SERVICE-REGISTRY.md) - Service registration  
+- [Companion-COMMAND-PROTOCOL.md](Companion-COMMAND-PROTOCOL.md) - Command flow
+- [Companion-SERVICE-REGISTRY.md](Companion-SERVICE-REGISTRY.md) - Service registration  
 - [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md) - Rake syntax
-- [CRICKET-0001-audio-adapter-spec.md](../decisions/CRICKET-0001-audio-adapter-spec.md) - Design decision
+- [CRICKET-0001-audio-Companion-spec.md](../decisions/CRICKET-0001-audio-Companion-spec.md) - Design decision
 
 ---
 

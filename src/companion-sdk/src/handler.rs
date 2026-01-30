@@ -1,18 +1,18 @@
-﻿//! Command handler trait for adapters
+﻿//! Command handler trait for Companions
 //!
 //! Implement [`CommandHandler`] to process commands from Moss.
 
 // Re-export CommandResponse for convenience
 pub use garden_common::command_manifest::CommandResponse;
 
-/// Trait for handling adapter commands
+/// Trait for handling Companion commands
 ///
 /// Implement this trait to process commands dispatched from Moss.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use garden_adapter_sdk::prelude::*;
+/// use garden_companion_sdk::prelude::*;
 /// use garden_common::command_manifest::CommandResponse;
 ///
 /// struct MyHandler;
@@ -46,7 +46,7 @@ pub trait CommandHandler: Send + Sync + 'static {
 
     /// Optional: Called before shutdown
     ///
-    /// Override this to perform cleanup when the adapter is shutting down.
+    /// Override this to perform cleanup when the Companion is shutting down.
     async fn on_shutdown(&self) {
         // Default: no-op
     }

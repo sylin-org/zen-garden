@@ -1,6 +1,6 @@
 ﻿//! Stone Presence Protocol types (PRESENCE-0001)
 //!
-//! Protocol contracts for SSE communication between Moss and adapters.
+//! Protocol contracts for SSE communication between Moss and Companions.
 //! Contains ONLY data structures, no implementation logic.
 
 pub mod types;

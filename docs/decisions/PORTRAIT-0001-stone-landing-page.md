@@ -82,11 +82,11 @@ List of planted offerings (managed containers):
 
 Empty state: *"No offerings planted."*
 
-### 4. Companions — Adapters
+### 4. Companions — Companions
 
-List of adapters running on this stone:
+List of Companions running on this stone:
 - ID (cricket, firefly)
-- Description (audio adapter, LED control)
+- Description (audio Companion, LED control)
 - Port
 - Status (running/stopped)
 
@@ -210,7 +210,7 @@ Returns JSON payload with all data needed for the portrait:
     { "name": "mongodb", "container": "zen-offering-mongodb", "port": 27017, "status": "running", "health": "healthy" }
   ],
   "companions": [
-    { "id": "cricket", "description": "audio adapter", "port": 7187, "status": "running" }
+    { "id": "cricket", "description": "audio Companion", "port": 7187, "status": "running" }
   ],
   "horizon": {
     "count": 5,
@@ -284,7 +284,7 @@ A future enhancement could detect `Accept: text/plain` or `curl` user-agent and 
 
 ### Companion Color Chips
 
-Adapters like Cricket could display a small indicator in the stone's color, creating visual association across the garden.
+Companions like Cricket could display a small indicator in the stone's color, creating visual association across the garden.
 
 ---
 

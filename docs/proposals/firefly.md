@@ -17,7 +17,7 @@
 > - **Brightness persistence**: User setting saved across restarts
 > - **Graceful shutdown**: Display cleared on SIGTERM
 >
-> The full Pond mode (water metaphor) and Normative mode are reserved for future implementation. See [adapters.md](../guides/adapters.md) for current commands and usage.
+> The full Pond mode (water metaphor) and Normative mode are reserved for future implementation. See [Companions.md](../guides/Companions.md) for current commands and usage.
 
 ---
 

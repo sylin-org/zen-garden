@@ -1,20 +1,20 @@
-﻿# Adapter Service Registry Specification
+﻿# Companion Service Registry Specification
 
 **Status:** Draft  
 **Date:** 2026-01-26  
-**Scope:** Universal service management and communication layer for Zen Garden adapters
+**Scope:** Universal service management and communication layer for Zen Garden Companions
 
 ---
 
 ## Overview
 
-The Adapter Service Registry provides a universal mechanism for:
-1. **Registration** - Adapters declare their capabilities
-2. **Discovery** - Rake queries available adapters
-3. **Lifecycle** - Enable/disable adapters without uninstalling
-4. **Introspection** - Query adapter commands dynamically
+The Companion Service Registry provides a universal mechanism for:
+1. **Registration** - Companions declare their capabilities
+2. **Discovery** - Rake queries available Companions
+3. **Lifecycle** - Enable/disable Companions without uninstalling
+4. **Introspection** - Query Companion commands dynamically
 
-**Key principle:** Self-documenting services. Each adapter owns its command manifest.
+**Key principle:** Self-documenting services. Each Companion owns its command manifest.
 
 ---
 
@@ -25,7 +25,7 @@ The Adapter Service Registry provides a universal mechanism for:
 │  STONE                                                      │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐ │
-│  │  Adapter Registry (Moss-managed)                      │ │
+│  │  Companion Registry (Moss-managed)                      │ │
 │  │                                                       │ │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │ │
 │  │  │   Cricket   │  │   Firefly   │  │    OLED     │   │ │
@@ -55,7 +55,7 @@ The Adapter Service Registry provides a universal mechanism for:
 ### Service Manifests
 
 ```
-/etc/zen-garden/adapters.d/
+/etc/zen-garden/Companions.d/
 ├── cricket.json           # Cricket's service manifest
 ├── firefly.json           # Firefly's service manifest (if installed)
 └── oled.json              # OLED's service manifest (if installed)
@@ -64,7 +64,7 @@ The Adapter Service Registry provides a universal mechanism for:
 ### Command Manifests (Read-Only)
 
 ```
-/usr/share/zen-garden/adapters/
+/usr/share/zen-garden/companions/
 └── commands/
     ├── cricket.json       # Cricket's command manifest
     ├── firefly.json       # Firefly's command manifest
@@ -75,17 +75,17 @@ The Adapter Service Registry provides a universal mechanism for:
 
 ## Service Manifest Schema
 
-**File:** `/etc/zen-garden/adapters.d/{adapter}.json`
+**File:** `/etc/zen-garden/Companions.d/{Companion}.json`
 
 ```json
 {
-  "adapter": "cricket",
+  "Companion": "cricket",
   "type": "presence",
   "version": "0.1.0",
-  "description": "Audio presence adapter - ambient soundscapes",
+  "description": "Audio presence Companion - ambient soundscapes",
   "binary": "/usr/local/bin/garden-cricket",
   "systemd_unit": "garden-cricket.service",
-  "command_manifest": "/usr/share/zen-garden/adapters/commands/cricket.json",
+  "command_manifest": "/usr/share/zen-garden/companions/commands/cricket.json",
   "enabled": true
 }
 ```
@@ -94,24 +94,24 @@ The Adapter Service Registry provides a universal mechanism for:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `adapter` | string | ✓ | Unique adapter identifier |
-| `type` | string | ✓ | Adapter type (`presence`, `display`, `hardware`) |
+| `Companion` | string | ✓ | Unique Companion identifier |
+| `type` | string | ✓ | Companion type (`presence`, `display`, `hardware`) |
 | `version` | string | ✓ | Semantic version (e.g., "0.1.0") |
 | `description` | string | ✓ | Human-readable description |
 | `binary` | string | ✓ | Path to executable |
 | `systemd_unit` | string | ✓ | Systemd service name |
 | `command_manifest` | string | ✓ | Path to command manifest JSON |
-| `enabled` | boolean | ✓ | Whether adapter is enabled |
+| `enabled` | boolean | ✓ | Whether Companion is enabled |
 
 ---
 
 ## Command Manifest Schema
 
-**File:** `/usr/share/zen-garden/adapters/commands/{adapter}.json`
+**File:** `/usr/share/zen-garden/companions/commands/{Companion}.json`
 
 ```json
 {
-  "adapter": "cricket",
+  "Companion": "cricket",
   "version": "0.1.0",
   "commands": [
     {
@@ -204,7 +204,7 @@ The Adapter Service Registry provides a universal mechanism for:
 | `boolean` | `true` or `false` | `true` |
 | `enum` | One of listed values | `"on"`, `"off"` |
 
-**Note:** Command manifest is for **help generation only**. Adapters parse commands internally and may accept additional undocumented commands.
+**Note:** Command manifest is for **help generation only**. Companions parse commands internally and may accept additional undocumented commands.
 
 ---
 
@@ -219,22 +219,22 @@ garden-rake hey?
 
 # Help for tell command
 garden-rake hey tell?
-# Output: "Allows communication with Zen Garden adapters"
+# Output: "Allows communication with Zen Garden Companions"
 
-# List registered adapters
+# List registered Companions
 garden-rake hey tell
-# Output: List of adapters with status
+# Output: List of Companions with status
 
-# Adapter lifecycle
-garden-rake hey tell {adapter} on      # Enable + start
-garden-rake hey tell {adapter} off     # Disable + stop
+# Companion lifecycle
+garden-rake hey tell {Companion} on      # Enable + start
+garden-rake hey tell {Companion} off     # Disable + stop
 
-# Adapter help (query command manifest)
-garden-rake hey tell {adapter}?
+# Companion help (query command manifest)
+garden-rake hey tell {Companion}?
 # Output: Formatted command list from manifest
 
-# Adapter commands (passed raw to adapter)
-garden-rake hey tell {adapter} {command} [args...]
+# Companion commands (passed raw to Companion)
+garden-rake hey tell {Companion} {command} [args...]
 # Example: garden-rake hey tell cricket select mr-robot
 ```
 
@@ -242,38 +242,38 @@ garden-rake hey tell {adapter} {command} [args...]
 
 | Command | Handler | Description |
 |---------|---------|-------------|
-| `on` | Rake/systemd | Enable and start adapter |
-| `off` | Rake/systemd | Disable and stop adapter |
+| `on` | Rake/systemd | Enable and start Companion |
+| `off` | Rake/systemd | Disable and stop Companion |
 | `?` (suffix) | Rake | Show command help |
 
-All other commands are passed **raw** to the adapter.
+All other commands are passed **raw** to the Companion.
 
 ---
 
 ## API Endpoints
 
-### List Adapters
+### List Companions
 
-**`GET /api/v1/stone/adapters`**
+**`GET /api/v1/stone/companions`**
 
-Returns all registered adapters with status.
+Returns all registered Companions with status.
 
 ```json
 {
-  "adapters": [
+  "Companions": [
     {
-      "adapter": "cricket",
+      "Companion": "cricket",
       "type": "presence",
       "version": "0.1.0",
-      "description": "Audio presence adapter",
+      "description": "Audio presence Companion",
       "enabled": true,
       "running": true
     },
     {
-      "adapter": "firefly",
+      "Companion": "firefly",
       "type": "presence",
       "version": "0.1.0",
-      "description": "LED matrix adapter",
+      "description": "LED matrix Companion",
       "enabled": false,
       "running": false
     }
@@ -281,18 +281,18 @@ Returns all registered adapters with status.
 }
 ```
 
-### Get Adapter Info
+### Get Companion Info
 
-**`GET /api/v1/stone/adapters/{adapter}`**
+**`GET /api/v1/stone/companions/{Companion}`**
 
-Returns single adapter details including command manifest.
+Returns single Companion details including command manifest.
 
 ```json
 {
-  "adapter": "cricket",
+  "Companion": "cricket",
   "type": "presence",
   "version": "0.1.0",
-  "description": "Audio presence adapter",
+  "description": "Audio presence Companion",
   "enabled": true,
   "running": true,
   "commands": [
@@ -302,58 +302,58 @@ Returns single adapter details including command manifest.
 }
 ```
 
-### Enable/Disable Adapter
+### Enable/Disable Companion
 
-**`POST /api/v1/stone/adapters/{adapter}/enable`**
-**`POST /api/v1/stone/adapters/{adapter}/disable`**
+**`POST /api/v1/stone/companions/{Companion}/enable`**
+**`POST /api/v1/stone/companions/{Companion}/disable`**
 
-Manages adapter lifecycle via systemd.
+Manages Companion lifecycle via systemd.
 
 ```json
 // Response
 {
   "status": "success",
-  "message": "Adapter 'cricket' enabled and started"
+  "message": "Companion 'cricket' enabled and started"
 }
 ```
 
-### Send Adapter Command
+### Send Companion Command
 
 **`POST /api/v1/stone/presence/command`**
 
-See [ADAPTER-COMMAND-PROTOCOL.md](ADAPTER-COMMAND-PROTOCOL.md) for details.
+See [Companion-COMMAND-PROTOCOL.md](Companion-COMMAND-PROTOCOL.md) for details.
 
 ---
 
 ## Rake Implementation
 
-### `garden-rake hey tell` (List Adapters)
+### `garden-rake hey tell` (List Companions)
 
 ```rust
-pub async fn list_adapters(endpoint: &str) -> Result<()> {
-    let url = format!("{}/api/v1/stone/adapters", endpoint);
-    let response: AdapterListResponse = reqwest::get(&url).await?.json().await?;
+pub async fn list_Companions(endpoint: &str) -> Result<()> {
+    let url = format!("{}/api/v1/stone/companions", endpoint);
+    let response: CompanionListResponse = reqwest::get(&url).await?.json().await?;
     
-    if response.adapters.is_empty() {
-        println!("No adapters registered.");
+    if response.Companions.is_empty() {
+        println!("No Companions registered.");
         println!();
-        println!("  → Install an adapter: sudo apt install garden-cricket");
+        println!("  → Install an Companion: sudo apt install garden-cricket");
         return Ok(());
     }
     
-    println!("Registered Adapters:");
+    println!("Registered Companions:");
     println!();
     
-    for adapter in &response.adapters {
-        let status_icon = if adapter.running { "●" } else { "○" };
-        let enabled_text = if adapter.enabled { "" } else { " (disabled)" };
+    for Companion in &response.Companions {
+        let status_icon = if Companion.running { "●" } else { "○" };
+        let enabled_text = if Companion.enabled { "" } else { " (disabled)" };
         
         println!("  {} {} (v{}){}", 
                  status_icon, 
-                 adapter.adapter, 
-                 adapter.version,
+                 Companion.Companion, 
+                 Companion.version,
                  enabled_text);
-        println!("    {}", adapter.description);
+        println!("    {}", Companion.description);
     }
     
     Ok(())
@@ -362,22 +362,22 @@ pub async fn list_adapters(endpoint: &str) -> Result<()> {
 
 **Example output:**
 ```
-Registered Adapters:
+Registered Companions:
 
   ● cricket (v0.1.0)
-    Audio presence adapter - ambient soundscapes
+    Audio presence Companion - ambient soundscapes
   ○ firefly (v0.1.0) (disabled)
-    LED matrix adapter - visual presence
+    LED matrix Companion - visual presence
 ```
 
-### `garden-rake hey tell {adapter}?` (Show Commands)
+### `garden-rake hey tell {Companion}?` (Show Commands)
 
 ```rust
-pub async fn show_adapter_commands(endpoint: &str, adapter: &str) -> Result<()> {
-    let url = format!("{}/api/v1/stone/adapters/{}", endpoint, adapter);
-    let response: AdapterInfoResponse = reqwest::get(&url).await?.json().await?;
+pub async fn show_Companion_commands(endpoint: &str, Companion: &str) -> Result<()> {
+    let url = format!("{}/api/v1/stone/companions/{}", endpoint, Companion);
+    let response: CompanionInfoResponse = reqwest::get(&url).await?.json().await?;
     
-    println!("{} Commands:", adapter);
+    println!("{} Commands:", Companion);
     println!();
     
     for cmd in &response.commands {
@@ -420,12 +420,12 @@ cricket Commands:
     Example: garden-rake hey tell cricket volume 40
 ```
 
-### `garden-rake hey tell {adapter} on/off`
+### `garden-rake hey tell {Companion} on/off`
 
 ```rust
-pub async fn adapter_lifecycle(endpoint: &str, adapter: &str, action: &str) -> Result<()> {
-    let url = format!("{}/api/v1/stone/adapters/{}/{}", 
-                      endpoint, adapter, action);
+pub async fn Companion_lifecycle(endpoint: &str, Companion: &str, action: &str) -> Result<()> {
+    let url = format!("{}/api/v1/stone/companions/{}/{}", 
+                      endpoint, Companion, action);
     
     let response = reqwest::Client::new()
         .post(&url)
@@ -448,27 +448,27 @@ pub async fn adapter_lifecycle(endpoint: &str, adapter: &str, action: &str) -> R
 
 ## Moss Implementation
 
-### Adapter Registry
+### Companion Registry
 
 ```rust
-pub struct AdapterRegistry {
-    adapters: HashMap<String, AdapterInfo>,
-    command_bus: broadcast::Sender<InternalAdapterCommand>,
+pub struct CompanionRegistry {
+    Companions: HashMap<String, CompanionInfo>,
+    command_bus: broadcast::Sender<InternalCompanionCommand>,
 }
 
-impl AdapterRegistry {
-    /// Load adapters from /etc/zen-garden/adapters.d/
+impl CompanionRegistry {
+    /// Load Companions from /etc/zen-garden/Companions.d/
     pub async fn load_from_disk() -> Result<Self> {
-        let mut adapters = HashMap::new();
+        let mut Companions = HashMap::new();
         
-        let dir = Path::new("/etc/zen-garden/adapters.d");
+        let dir = Path::new("/etc/zen-garden/Companions.d");
         if dir.exists() {
             for entry in fs::read_dir(dir)? {
                 let path = entry?.path();
                 if path.extension() == Some(OsStr::new("json")) {
                     let content = fs::read_to_string(&path)?;
-                    let manifest: AdapterManifest = serde_json::from_str(&content)?;
-                    adapters.insert(manifest.adapter.clone(), AdapterInfo::from(manifest));
+                    let manifest: CompanionManifest = serde_json::from_str(&content)?;
+                    Companions.insert(manifest.Companion.clone(), CompanionInfo::from(manifest));
                 }
             }
         }
@@ -476,34 +476,34 @@ impl AdapterRegistry {
         let (tx, _) = broadcast::channel(100);
         
         Ok(Self {
-            adapters,
+            Companions,
             command_bus: tx,
         })
     }
     
-    /// Check if adapter is registered
+    /// Check if Companion is registered
     pub fn contains(&self, name: &str) -> bool {
-        self.adapters.contains_key(name)
+        self.Companions.contains_key(name)
     }
     
-    /// Get adapter info
-    pub fn get(&self, name: &str) -> Option<&AdapterInfo> {
-        self.adapters.get(name)
+    /// Get Companion info
+    pub fn get(&self, name: &str) -> Option<&CompanionInfo> {
+        self.Companions.get(name)
     }
     
-    /// List all adapters
-    pub fn list(&self) -> Vec<&AdapterInfo> {
-        self.adapters.values().collect()
+    /// List all Companions
+    pub fn list(&self) -> Vec<&CompanionInfo> {
+        self.Companions.values().collect()
     }
 }
 ```
 
-### Adapter Connection Handler
+### Companion Connection Handler
 
-Adapters connect to Moss and subscribe to command bus:
+Companions connect to Moss and subscribe to command bus:
 
 ```rust
-impl Adapter {
+impl Companion {
     pub async fn connect_to_moss(&self) -> Result<()> {
         // Subscribe to command bus
         let mut rx = self.command_rx.subscribe();
@@ -512,13 +512,13 @@ impl Adapter {
             tokio::select! {
                 // Handle incoming commands
                 Ok(cmd) = rx.recv() => {
-                    if cmd.adapter == self.name {
+                    if cmd.Companion == self.name {
                         let response = self.handle_command(&cmd.raw_args);
                         let _ = cmd.response_tx.send(response);
                     }
                 }
                 
-                // Handle SSE presence events (for adapter's main purpose)
+                // Handle SSE presence events (for Companion's main purpose)
                 event = self.sse_stream.next() => {
                     if let Some(event) = event {
                         self.handle_presence_event(event).await;
@@ -532,7 +532,7 @@ impl Adapter {
 
 ---
 
-## Adapter Lifecycle
+## Companion Lifecycle
 
 ### Installation
 
@@ -541,11 +541,11 @@ impl Adapter {
 sudo dpkg -i garden-cricket.deb
 # Installs:
 #   /usr/local/bin/garden-cricket
-#   /etc/zen-garden/adapters.d/cricket.json
-#   /usr/share/zen-garden/adapters/commands/cricket.json
+#   /etc/zen-garden/Companions.d/cricket.json
+#   /usr/share/zen-garden/companions/commands/cricket.json
 #   /etc/systemd/system/garden-cricket.service
 
-# 2. Moss detects new adapter on next API call
+# 2. Moss detects new Companion on next API call
 #    (or file watcher triggers reload)
 ```
 
@@ -555,7 +555,7 @@ sudo dpkg -i garden-cricket.deb
 garden-rake hey tell cricket on
 ```
 
-1. Rake calls `POST /api/v1/stone/adapters/cricket/enable`
+1. Rake calls `POST /api/v1/stone/companions/cricket/enable`
 2. Moss updates `enabled: true` in manifest
 3. Moss runs `systemctl enable garden-cricket`
 4. Moss runs `systemctl start garden-cricket`
@@ -567,11 +567,11 @@ garden-rake hey tell cricket on
 garden-rake hey tell cricket off
 ```
 
-1. Rake calls `POST /api/v1/stone/adapters/cricket/disable`
+1. Rake calls `POST /api/v1/stone/companions/cricket/disable`
 2. Moss runs `systemctl stop garden-cricket`
 3. Moss runs `systemctl disable garden-cricket`
 4. Moss updates `enabled: false` in manifest
-5. Returns success (adapter stays registered)
+5. Returns success (Companion stays registered)
 
 ### Uninstall
 
@@ -587,17 +587,17 @@ Package manager removes all files. Moss detects removal on next query.
 
 ## Future Extensions
 
-1. **Auto-discovery** - Adapters announce themselves to Moss on startup
-2. **Health checks** - Moss pings adapters periodically
-3. **Adapter groups** - Enable/disable multiple adapters at once
-4. **Remote adapters** - Adapters on different machines (ESP32, etc.)
-5. **Adapter dependencies** - Firefly requires specific USB device
+1. **Auto-discovery** - Companions announce themselves to Moss on startup
+2. **Health checks** - Moss pings Companions periodically
+3. **Companion groups** - Enable/disable multiple Companions at once
+4. **Remote Companions** - Companions on different machines (ESP32, etc.)
+5. **Companion dependencies** - Firefly requires specific USB device
 
 ---
 
 ## Related Documents
 
-- [ADAPTER-COMMAND-PROTOCOL.md](ADAPTER-COMMAND-PROTOCOL.md) - Command flow specification
+- [Companion-COMMAND-PROTOCOL.md](Companion-COMMAND-PROTOCOL.md) - Command flow specification
 - [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md) - Rake syntax specification
 - [CRICKET-SPEC.md](CRICKET-SPEC.md) - Cricket implementation
 

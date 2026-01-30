@@ -1,6 +1,6 @@
-﻿//! Response types for command execution
+//! Response types for command execution
 //!
-//! Used by adapters (Cricket, Firefly) and Moss command proxy.
+//! Used by Companions (Cricket, Firefly) and Moss command proxy.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,7 @@ pub enum ResponseStatus {
     Warning,
 }
 
-/// Response from adapter command execution
+/// Response from Companion command execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandResponse {
     /// Result status
@@ -110,20 +110,20 @@ impl CommandResponse {
     }
 }
 
-/// Request to send command to an adapter (Rake → Moss)
+/// Request to send command to an Companion (Rake ? Moss)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterCommandRequest {
-    /// Target adapter (e.g., "cricket", "firefly")
-    pub adapter: String,
+pub struct CompanionCommandRequest {
+    /// Target Companion (e.g., "cricket", "firefly")
+    pub companion: String,
     
-    /// Raw command arguments (adapter parses internally)
+    /// Raw command arguments (Companion parses internally)
     pub raw_args: Vec<String>,
 }
 
-impl AdapterCommandRequest {
-    pub fn new(adapter: impl Into<String>, args: Vec<String>) -> Self {
+impl CompanionCommandRequest {
+    pub fn new(companion: impl Into<String>, args: Vec<String>) -> Self {
         Self {
-            adapter: adapter.into(),
+            companion: companion.into(),
             raw_args: args,
         }
     }

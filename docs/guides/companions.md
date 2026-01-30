@@ -1,25 +1,25 @@
-﻿# Adapter Guide
+﻿# Companion Guide
 
-**Purpose:** Understand and use Moss adapters to extend Stone capabilities  
+**Purpose:** Understand and use Moss Companions to extend Stone capabilities  
 **Audience:** Operators and developers
 
 ---
 
-## What Are Adapters?
+## What Are Companions?
 
-Adapters are services that run on Stones to extend Moss capabilities beyond core service management. They provide:
+Companions are services that run on Stones to extend Moss capabilities beyond core service management. They provide:
 
 - **Physical presence indicators** (audio, LEDs, displays)
 - **Real-time monitoring dashboards** (OLED screens, web interfaces)
 - **Custom automation** (webhooks, scripts, integrations)
 
-Adapters subscribe to Stone presence events (service starts, container failures, firmware updates) and take action based on those events.
+Companions subscribe to Stone presence events (service starts, container failures, firmware updates) and take action based on those events.
 
 ---
 
-## Current Adapters
+## Current Companions
 
-### Cricket (Audio Adapter)
+### Cricket (Audio Companion)
 
 **Port:** 7187
 **Purpose:** Sonify infrastructure with 4-channel audio mixer
@@ -73,11 +73,11 @@ garden-rake hey tell cricket stop
 - SSE subscription to Moss presence events
 - Automatic event-to-sound mapping
 
-**Reference:** [CRICKET-0001-audio-adapter-spec.md](../decisions/CRICKET-0001-audio-adapter-spec.md)
+**Reference:** [CRICKET-0001-audio-Companion-spec.md](../decisions/CRICKET-0001-audio-Companion-spec.md)
 
 ---
 
-### Firefly (LED Adapter)
+### Firefly (LED Companion)
 
 **Port:** 7188
 **Purpose:** Visual presence indicator via Waveshare RP2040-Matrix 5x5 RGB LED
@@ -139,7 +139,7 @@ garden-rake hey tell firefly info
 
 ---
 
-### OLED (Display Adapter) - Planned
+### OLED (display adapter) - Planned
 
 **Port:** 7189 (when implemented)  
 **Purpose:** Real-time metrics on small OLED screens  
@@ -153,9 +153,9 @@ OLED will render Stone metrics on 128x64 OLED displays:
 
 ---
 
-## Using Adapters
+## Using Companions
 
-### List Available Adapters
+### List Available Companions
 
 ```bash
 garden-rake hey list
@@ -163,24 +163,24 @@ garden-rake hey list
 
 **Output:**
 ```
-Available Adapters:
-  cricket    Audio Adapter v0.1.0    ✅ Running (PID 12345)
-  firefly    LED Adapter v0.1.0      ✅ Running (PID 12346)
+Available Companions:
+  cricket    Audio Companion v0.1.0    ✅ Running (PID 12345)
+  firefly    LED Companion v0.1.0      ✅ Running (PID 12346)
 ```
 
 ---
 
-### Get Adapter Help
+### Get Companion Help
 
 ```bash
-garden-rake hey <adapter>
+garden-rake hey <Companion>
 ```
 
 **Example:**
 ```bash
 $ garden-rake hey cricket
 
-Cricket Audio Adapter v0.1.0
+Cricket Audio Companion v0.1.0
 Provides 4-channel audio mixer and tune system for Stone presence events.
 
 Commands:
@@ -208,7 +208,7 @@ Event Subscriptions:
 ### Send Commands
 
 ```bash
-garden-rake hey tell <adapter> <command> [args...]
+garden-rake hey tell <Companion> <command> [args...]
 ```
 
 **Examples:**
@@ -228,7 +228,7 @@ garden-rake hey tell oled show metrics
 
 ---
 
-## How Adapters Work
+## How Companions Work
 
 ### Architecture
 
@@ -236,7 +236,7 @@ garden-rake hey tell oled show metrics
 ┌─────────────┐
 │    Rake     │ garden-rake hey tell cricket play stone-online
 └──────┬──────┘
-       │ HTTP POST /api/v1/stone/adapters/cricket/command
+       │ HTTP POST /api/v1/stone/companions/cricket/command
        │ {"args": ["play", "stone-online"]}
        ▼
 ┌─────────────┐
@@ -253,7 +253,7 @@ garden-rake hey tell oled show metrics
 
 ### Port Assignment
 
-Moss maintains a persistent port ledger at `{data_dir}/adapter-ports.json`:
+Moss maintains a persistent port ledger at `{data_dir}/companion-ports.json`:
 
 ```json
 {
@@ -266,24 +266,24 @@ Moss maintains a persistent port ledger at `{data_dir}/adapter-ports.json`:
 }
 ```
 
-Ports are assigned incrementally starting from **7187** (base port). The ledger persists across restarts, ensuring adapters always get the same port.
+Ports are assigned incrementally starting from **7187** (base port). The ledger persists across restarts, ensuring Companions always get the same port.
 
 ### Discovery Protocol
 
 When Moss starts:
 
-1. Scans `{data_dir}/adapters/` for executables
-2. For each adapter:
+1. Scans `{data_dir}/companions/` for executables
+2. For each Companion:
    - Gets/assigns port from ledger
-   - Runs `{adapter} --dump-commands --port {port}` to get manifest
+   - Runs `{Companion} --dump-commands --port {port}` to get manifest
    - Caches manifest (commands, parameters, examples)
-   - Starts adapter: `{adapter} --stone http://localhost:7185 --port {port}`
-3. Adapter binds HTTP server on assigned port
-4. Adapter subscribes to presence SSE: `GET http://localhost:7185/api/v1/stone/presence/stream`
+   - Starts Companion: `{Companion} --stone http://localhost:7185 --port {port}`
+3. Companion binds HTTP server on assigned port
+4. Companion subscribes to presence SSE: `GET http://localhost:7185/api/v1/stone/presence/stream`
 
 ### Event Streaming
 
-Adapters receive Stone events via Server-Sent Events (SSE):
+Companions receive Stone events via Server-Sent Events (SSE):
 
 ```
 GET /api/v1/stone/presence/stream
@@ -299,24 +299,24 @@ event: health-degraded
 data: {"timestamp": "2026-01-26T12:05:00Z", "reason": "disk_usage_high", "value": 92}
 ```
 
-Adapters filter for events they care about and take action.
+Companions filter for events they care about and take action.
 
 ---
 
-## Installing Adapters
+## Installing Companions
 
 ### Manual Installation
 
-1. **Copy adapter executable** to adapters directory:
+1. **Copy Companion executable** to Companions directory:
    ```bash
    # Linux
-   sudo mkdir -p /usr/local/bin/adapters/cricket
-   sudo cp garden-cricket /usr/local/bin/adapters/cricket/
-   sudo chmod +x /usr/local/bin/adapters/cricket/garden-cricket
+   sudo mkdir -p /usr/local/bin/companions/cricket
+   sudo cp garden-cricket /usr/local/bin/companions/cricket/
+   sudo chmod +x /usr/local/bin/companions/cricket/garden-cricket
    
    # Windows
-   mkdir .zen-garden\adapters\cricket
-   copy garden-cricket.exe .zen-garden\adapters\cricket\
+   mkdir .zen-garden\Companions\cricket
+   copy garden-cricket.exe .zen-garden\Companions\cricket\
    ```
 
 2. **Restart Moss** to trigger discovery:
@@ -324,57 +324,57 @@ Adapters filter for events they care about and take action.
    sudo systemctl restart garden-moss
    ```
 
-3. **Verify adapter registered**:
+3. **Verify Companion registered**:
    ```bash
    garden-rake hey list
    ```
 
 ### Automatic Installation (Future)
 
-Planned: Adapters distributed as packages with automatic installation via Rake:
+Planned: Companions distributed as packages with automatic installation via Rake:
 ```bash
-garden-rake adapter install cricket
+garden-rake Companion install cricket
 ```
 
 ---
 
 ## Troubleshooting
 
-### Adapter Not Showing
+### Companion Not Showing
 
-**Check adapter directory:**
+**Check Companion directory:**
 ```bash
 # Linux
-ls -l /usr/local/bin/adapters/
+ls -l /usr/local/bin/companions/
 
 # Windows
-dir .zen-garden\adapters\
+dir .zen-garden\Companions\
 ```
 
 **Check Moss logs:**
 ```bash
-sudo journalctl -u garden-moss -n 50 | grep adapter
+sudo journalctl -u garden-moss -n 50 | grep Companion
 ```
 
 **Force refresh:**
 ```bash
-curl -X POST http://localhost:7185/api/v1/stone/adapters/refresh
+curl -X POST http://localhost:7185/api/v1/stone/companions/refresh
 ```
 
 ---
 
-### Adapter Not Starting
+### Companion Not Starting
 
 **Check executable permissions:**
 ```bash
 # Linux - must be executable
-chmod +x /usr/local/bin/adapters/cricket/garden-cricket
+chmod +x /usr/local/bin/companions/cricket/garden-cricket
 ```
 
 **Check port conflicts:**
 ```bash
 # View port ledger
-cat /var/lib/zen-garden/adapter-ports.json
+cat /var/lib/zen-garden/companion-ports.json
 
 # Check if port is in use
 netstat -tulpn | grep 7187
@@ -382,7 +382,7 @@ netstat -tulpn | grep 7187
 
 **Manual start for debugging:**
 ```bash
-/usr/local/bin/adapters/cricket/garden-cricket \
+/usr/local/bin/companions/cricket/garden-cricket \
   --stone http://localhost:7185 \
   --port 7187
 ```
@@ -391,28 +391,28 @@ netstat -tulpn | grep 7187
 
 ### Command Timeouts
 
-Commands have a 5-second timeout. If an adapter takes longer:
+Commands have a 5-second timeout. If an Companion takes longer:
 
-1. **Check adapter health:**
+1. **Check Companion health:**
    ```bash
    curl http://localhost:7187/health
    ```
 
-2. **Check adapter logs** (if supported)
+2. **Check Companion logs** (if supported)
 
-3. **Restart adapter:**
+3. **Restart Companion:**
    ```bash
-   curl -X POST http://localhost:7185/api/v1/stone/adapters/cricket/down
-   curl -X POST http://localhost:7185/api/v1/stone/adapters/cricket/up
+   curl -X POST http://localhost:7185/api/v1/stone/companions/cricket/down
+   curl -X POST http://localhost:7185/api/v1/stone/companions/cricket/up
    ```
 
 ---
 
-## Creating Custom Adapters
+## Creating Custom Companions
 
-See [ADAPTER-COMMAND-PROTOCOL.md](../specs/ADAPTER-COMMAND-PROTOCOL.md) for implementation guide.
+See [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md) for implementation guide.
 
-**Minimal adapter requirements:**
+**Minimal Companion requirements:**
 
 1. **Accept CLI flags:**
    - `--stone <moss-endpoint>` - Moss HTTP API URL
@@ -438,9 +438,9 @@ See [ADAPTER-COMMAND-PROTOCOL.md](../specs/ADAPTER-COMMAND-PROTOCOL.md) for impl
 
 ## Reference
 
-- [ADAPTER-COMMAND-PROTOCOL.md](../specs/ADAPTER-COMMAND-PROTOCOL.md) - Technical protocol specification
-- [ADAPTER-SERVICE-REGISTRY.md](../specs/ADAPTER-SERVICE-REGISTRY.md) - Registration and lifecycle
+- [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md) - Technical protocol specification
+- [Companion-SERVICE-REGISTRY.md](../specs/Companion-SERVICE-REGISTRY.md) - Registration and lifecycle
 - [HEY-TELL-SYNTAX.md](../specs/HEY-TELL-SYNTAX.md) - Command grammar
-- [CRICKET-0001-audio-adapter-spec.md](../decisions/CRICKET-0001-audio-adapter-spec.md) - Cricket design
+- [CRICKET-0001-audio-Companion-spec.md](../decisions/CRICKET-0001-audio-Companion-spec.md) - Cricket design
 - [how-to-create-a-tune.md](how-to-create-a-tune.md) - Cricket tune creation
 - [ports.md](../reference/ports.md) - Port allocation (7187-7199)

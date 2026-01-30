@@ -1,4 +1,4 @@
-﻿# Cricket Audio Adapter - Executive Summary
+﻿# Cricket Audio Companion - Executive Summary
 
 **Date:** 2026-01-26  
 **Status:** Proposal Complete, Ready for Implementation  
@@ -8,7 +8,7 @@
 
 ## What Is Cricket?
 
-Cricket is an **audio presence adapter** for Zen Garden that transforms infrastructure events into ambient soundscapes. It taps into the Stone Presence Protocol (PRESENCE-0001) and creates audio feedback that makes your hardware feel **alive without being alarming**.
+Cricket is an **audio presence Companion** for Zen Garden that transforms infrastructure events into ambient soundscapes. It taps into the Stone Presence Protocol (PRESENCE-0001) and creates audio feedback that makes your hardware feel **alive without being alarming**.
 
 **Example:** When you run `garden-rake tend stone-wyse`, the Wyse 5070 plays a gentle wind chime through its speakers. When a service starts, you hear a brief chime. When the stone is under load, the soundscape intensifies subtly—like wind picking up before rain.
 
@@ -132,7 +132,7 @@ Cricket is a **standalone service** that:
 Cricket does **NOT**:
 - Import `garden_moss` crates
 - Query other Moss endpoints
-- Coordinate with other adapters
+- Coordinate with other Companions
 - Require Moss to know about audio
 
 ### Dependencies
@@ -253,7 +253,7 @@ Cricket succeeds if:
 - Audio provides **peripheral awareness** (works without looking)
 - Faster development feedback loop (easier than LED matrix)
 - Wyse 5070 has built-in speakers (no external hardware needed)
-- Complements visual adapters (Firefly) rather than competing
+- Complements visual Companions (Firefly) rather than competing
 
 ### Why Not Volume Auto-Adjustment?
 
@@ -336,7 +336,7 @@ garden-rake deploy mongodb --on stone-wyse-5070
 ## Documents Created
 
 ### 1. Full Specification
-**[CRICKET-0001-audio-adapter-spec.md](docs/decisions/CRICKET-0001-audio-adapter-spec.md)**
+**[CRICKET-0001-audio-Companion-spec.md](docs/decisions/CRICKET-0001-audio-Companion-spec.md)**
 - Complete specialist team assessments (6 experts)
 - Event-to-sound mappings
 - Configuration schema
@@ -362,7 +362,7 @@ Quick reference for stakeholders and future contributors.
 
 **Cricket is feasible, aligned with Zen Garden's philosophy, and ready for implementation.**
 
-The Stone Presence Protocol (PRESENCE-0001) is already implemented and functional in Moss. Cricket will be the first adapter to demonstrate the protocol's value—proving that infrastructure can feel **intimate, tactile, and real** without dashboards or constant monitoring.
+The Stone Presence Protocol (PRESENCE-0001) is already implemented and functional in Moss. Cricket will be the first Companion to demonstrate the protocol's value—proving that infrastructure can feel **intimate, tactile, and real** without dashboards or constant monitoring.
 
 **Recommendation:** Proceed with Phase 1 implementation.
 

@@ -1,9 +1,9 @@
-﻿//! Adapter types for Zen Garden
+//! Companion types for Zen Garden
 //!
 //! NOTE: This module is being consolidated. Prefer using:
-//! - `garden_common::command_manifest::CommandManifest` for adapter manifests
+//! - `garden_common::command_manifest::CommandManifest` for Companion manifests
 //! - `garden_common::command_manifest::CommandResponse` for responses
-//! - `garden_common::command_manifest::AdapterCommandRequest` for requests
+//! - `garden_common::command_manifest::CompanionCommandRequest` for requests
 //!
 //! This module will be deprecated in a future version.
 
@@ -12,18 +12,18 @@ use std::collections::HashMap;
 
 // Re-export from command_manifest for backwards compatibility
 pub use crate::command_manifest::{
-    CommandResponse as AdapterCommandResponse,
-    AdapterCommandRequest,
-    CommandManifest as AdapterManifest,
-    CommandDef as AdapterCommand,
+    CommandResponse as CompanionCommandResponse,
+    CompanionCommandRequest,
+    CommandManifest as CompanionManifest,
+    CommandDef as CompanionCommand,
 };
 
-/// Legacy adapter command request (deprecated - use AdapterCommandRequest)
-#[deprecated(since = "0.2.0", note = "Use command_manifest::AdapterCommandRequest")]
+/// Legacy Companion command request (deprecated - use CompanionCommandRequest)
+#[deprecated(since = "0.2.0", note = "Use command_manifest::CompanionCommandRequest")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LegacyAdapterCommandRequest {
-    /// Adapter ID (e.g., "cricket", "lantern", future adapters)
-    pub adapter_id: String,
+pub struct LegacyCompanionCommandRequest {
+    /// Companion ID (e.g., "cricket", "lantern", future Companions)
+    pub companion_id: String,
     
     /// Command name (e.g., "play", "stop", "set_tune", "set_volume")
     pub command: String,
@@ -33,21 +33,21 @@ pub struct LegacyAdapterCommandRequest {
     pub params: HashMap<String, String>,
 }
 
-/// Adapter registry response (list of available adapters)
+/// Companion registry response (list of available companions)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterRegistryResponse {
-    pub adapters: Vec<AdapterSummary>,
+pub struct CompanionRegistryResponse {
+    pub companions: Vec<CompanionSummary>,
 }
 
-/// Summary of an adapter for registry listing
+/// Summary of an Companion for registry listing
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterSummary {
-    /// Adapter ID
-    pub adapter: String,
+pub struct CompanionSummary {
+    /// Companion ID
+    pub companion: String,
     
-    /// Adapter type (presence, display, hardware)
+    /// Companion type (presence, display, hardware)
     #[serde(rename = "type")]
-    pub adapter_type: String,
+    pub companion_type: String,
     
     /// Version
     pub version: String,
@@ -67,20 +67,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_adapter_registry_response() {
-        let resp = AdapterRegistryResponse {
-            adapters: vec![
-                AdapterSummary {
-                    adapter: "cricket".to_string(),
-                    adapter_type: "presence".to_string(),
+    fn test_companion_registry_response() {
+        let resp = CompanionRegistryResponse {
+            companions: vec![
+                CompanionSummary {
+                    companion: "cricket".to_string(),
+                    companion_type: "presence".to_string(),
                     version: "0.1.0".to_string(),
-                    description: "Audio adapter".to_string(),
+                    description: "Audio Companion".to_string(),
                     enabled: true,
                     running: true,
                 },
             ],
         };
-        
+
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("cricket"));
         assert!(json.contains("presence"));

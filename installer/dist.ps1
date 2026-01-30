@@ -7,10 +7,10 @@
     All configuration is read from dist.json.
 
     By default, builds only core binaries (moss + rake) for fast iteration.
-    Use -Tier full or dist-full.ps1 to build all binaries including adapters.
+    Use -Tier full or dist-full.ps1 to build all binaries including Companions.
 
     Packages ALWAYS include all available binaries from dist/, so even when
-    building core-only, previously-built adapters are included in the package.
+    building core-only, previously-built Companions are included in the package.
 
 .PARAMETER Tier
     Build tier: "core" (moss + rake only) or "full" (all binaries)
@@ -43,7 +43,7 @@
 
 .EXAMPLE
     .\dist.ps1 -Tier full
-    Build all binaries including adapters
+    Build all binaries including Companions
 
 .EXAMPLE
     .\dist.ps1 -SkipWindows -Release

@@ -1,10 +1,10 @@
-﻿//! Garden Adapter SDK
+﻿//! Garden Companion SDK
 //!
-//! A framework for building Zen Garden adapters that connect to Moss.
+//! A framework for building Zen Garden Companions that connect to Moss.
 //!
 //! # Overview
 //!
-//! Adapters are standalone executables that:
+//! Companions are standalone executables that:
 //! - Receive commands from Moss via HTTP (`POST /command`)
 //! - Optionally subscribe to presence events via SSE
 //! - Support graceful shutdown via `POST /shutdown`
@@ -13,7 +13,7 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use garden_adapter_sdk::prelude::*;
+//! use garden_companion_sdk::prelude::*;
 //! use garden_common::command_manifest::CommandResponse;
 //!
 //! struct MyHandler;
@@ -31,9 +31,9 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
-//!     let config = AdapterConfig::from_cli()?;
+//!     let config = CompanionConfig::from_cli()?;
 //!     
-//!     AdapterRuntime::new(config, "my-adapter")
+//!     CompanionRuntime::new(config, "my-Companion")
 //!         .command_handler(MyHandler)
 //!         .run()
 //!         .await
@@ -42,12 +42,12 @@
 //!
 //! # Modules
 //!
-//! - [`server`] - HTTP server with standard adapter endpoints
+//! - [`server`] - HTTP server with standard Companion endpoints
 //! - [`sse`] - SSE client for presence event subscription
 //! - [`runtime`] - Main loop and shutdown coordination
 //! - [`cli`] - Standard CLI argument parsing
 //! - [`handler`] - Command handler trait
-//! - [`state`] - Adapter state management (on/off, persistence)
+//! - [`state`] - Companion state management (on/off, persistence)
 
 pub mod cli;
 pub mod dependencies;
@@ -59,23 +59,23 @@ pub mod state;
 
 /// Prelude for convenient imports
 pub mod prelude {
-    pub use crate::cli::AdapterConfig;
+    pub use crate::cli::CompanionConfig;
     pub use crate::dependencies::{ensure_dependencies, SystemDependency, DependencyCheckResult};
     pub use crate::handler::CommandHandler;
-    pub use crate::runtime::AdapterRuntime;
+    pub use crate::runtime::CompanionRuntime;
     pub use crate::sse::{EventHandler, SseClient, SseEvent};
-    pub use crate::state::AdapterState;
+    pub use crate::state::CompanionState;
     pub use garden_common::command_manifest::CommandResponse;
     pub use anyhow::Result;
     pub use async_trait::async_trait;
 }
 
 // Re-export commonly used items at crate root
-pub use cli::AdapterConfig;
+pub use cli::CompanionConfig;
 pub use handler::CommandHandler;
-pub use runtime::AdapterRuntime;
+pub use runtime::CompanionRuntime;
 pub use sse::{EventHandler, SseClient, SseEvent};
-pub use state::AdapterState;
+pub use state::CompanionState;
 
 // Re-export async_trait for implementors
 pub use async_trait::async_trait;

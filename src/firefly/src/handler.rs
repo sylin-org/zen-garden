@@ -1,8 +1,8 @@
-//! Command handler for Firefly adapter
+﻿//! Command handler for Firefly Companion
 //!
 //! Implements the SDK's CommandHandler trait for Firefly-specific commands.
 
-use garden_adapter_sdk::{async_trait, AdapterState, CommandHandler, CommandResponse};
+use garden_companion_sdk::{async_trait, CompanionState, CommandHandler, CommandResponse};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -12,7 +12,7 @@ use crate::serial::{parse_color, FireflyConnection};
 /// Firefly command handler
 pub struct FireflyHandler {
     connection: Arc<FireflyConnection>,
-    state: Arc<AdapterState>,
+    state: Arc<CompanionState>,
     animation: Arc<RwLock<AnimationContext>>,
 }
 
@@ -20,7 +20,7 @@ impl FireflyHandler {
     /// Create a new Firefly command handler
     pub fn new(
         connection: Arc<FireflyConnection>,
-        state: Arc<AdapterState>,
+        state: Arc<CompanionState>,
         animation: Arc<RwLock<AnimationContext>>,
     ) -> Self {
         Self { connection, state, animation }
@@ -315,7 +315,7 @@ impl FireflyHandler {
 
         if !self.connection.is_connected() {
             return CommandResponse::success_with_details(
-                "Firefly adapter running (no device)",
+                "Firefly Companion running (no device)",
                 format!(
                     "Status: {}\nSSE events: {}\nBrightness: {}%\n\nConnect a Waveshare RP2040-Matrix to enable LED control.",
                     status, sse_status, brightness

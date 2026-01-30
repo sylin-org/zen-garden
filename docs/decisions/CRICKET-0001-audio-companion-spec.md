@@ -1,4 +1,4 @@
-﻿# CRICKET-0001: Audio Presence Adapter Specification
+﻿# CRICKET-0001: Audio Presence Companion Specification
 
 **Status:** Proposal  
 **Date:** 2026-01-26  
@@ -8,9 +8,9 @@
 
 ## Executive Summary
 
-**Cricket** is an audio presence adapter that transforms infrastructure events into spatial soundscapes. It consumes the Stone Presence Protocol (PRESENCE-0001) and creates ambient audio feedback that makes hardware feel **alive without being alarming**.
+**Cricket** is an audio presence Companion that transforms infrastructure events into spatial soundscapes. It consumes the Stone Presence Protocol (PRESENCE-0001) and creates ambient audio feedback that makes hardware feel **alive without being alarming**.
 
-Cricket runs as a standalone service on stones with audio capability (Wyse 5070, desktop PCs, Raspberry Pi with speakers) and connects to the local Moss instance via SSE. The adapter is **completely autonomous**—Moss knows nothing about audio, Cricket knows nothing about Docker.
+Cricket runs as a standalone service on stones with audio capability (Wyse 5070, desktop PCs, Raspberry Pi with speakers) and connects to the local Moss instance via SSE. The Companion is **completely autonomous**—Moss knows nothing about audio, Cricket knows nothing about Docker.
 
 **Core principle:** Infrastructure is not silent. It breathes, chirps, and occasionally chimes. You hear your garden without watching dashboards.
 
@@ -36,7 +36,7 @@ Cricket runs as a standalone service on stones with audio capability (Wyse 5070,
 - Event vocabulary: `service.started`, `stone.tended`, `stone.health.changed`, etc.
 - Garden-native semantics: thriving, withering, wilting, sprouted, uprooted
 - Connection-based presence detection
-- No adapter authentication required
+- No Companion authentication required
 
 ### What Needs Building
 
@@ -105,7 +105,7 @@ Cricket's sound palette should evoke a **natural environment**, not a data cente
 
 1. **Alarm Fatigue**: If `stone.health.changed` → "withering" triggers a loud alarm, users will disable Cricket. Instead: cricket voice becomes strained/irregular (subtle but noticeable).
 
-2. **Sensory Coherence**: If user also has Firefly (LED adapter), both should reinforce the same message:
+2. **Sensory Coherence**: If user also has Firefly (LED Companion), both should reinforce the same message:
    - Cricket: Strained chirp
    - Firefly: Amber glow
    - User perception: "Something needs attention" (converged signal, not conflict)
@@ -281,7 +281,7 @@ Cricket must **never**:
 - Import `garden_moss` crates
 - Query Moss HTTP endpoints beyond presence stream
 - Assume Moss implementation details
-- Coordinate with other adapters (Firefly, OLED)
+- Coordinate with other Companions (Firefly, OLED)
 
 **Recommendation:**
 
@@ -623,7 +623,7 @@ sudo journalctl -u garden-cricket -f
 
 ```ini
 [Unit]
-Description=Cricket - Zen Garden Audio Presence Adapter
+Description=Cricket - Zen Garden Audio Presence Companion
 Documentation=https://github.com/zen-garden/garden-cricket
 After=network.target garden-moss.service
 Requires=garden-moss.service
@@ -799,7 +799,7 @@ Cricket succeeds if:
 
 ## Decision
 
-**Accepted.** Cricket audio adapter will be implemented as specified.
+**Accepted.** Cricket audio Companion will be implemented as specified.
 
 **Next Steps:**
 

@@ -101,29 +101,29 @@ POST   /api/v1/offerings:refresh           # Refresh catalog from disk
 
 ---
 
-## Adapter Management API
+## Companion Management API
 
-**Target:** Adapter control and command routing  
+**Target:** Companion control and command routing  
 **Philosophy:** Extend Stone capabilities with pluggable services
 
-### Adapter Operations
+### Companion Operations
 
 ```http
-GET  /api/v1/stone/adapters                # List all registered adapters
-GET  /api/v1/stone/adapters/{id}           # Get adapter details and manifest
-POST /api/v1/stone/adapters/{id}/command   # Forward command to adapter (5s timeout)
-POST /api/v1/stone/adapters/{id}/up        # Start adapter process
-POST /api/v1/stone/adapters/{id}/down      # Stop adapter process
-POST /api/v1/stone/adapters/refresh        # Rescan adapter directory
+GET  /api/v1/stone/companions                # List all registered Companions
+GET  /api/v1/stone/companions/{id}           # Get Companion details and manifest
+POST /api/v1/stone/companions/{id}/command   # Forward command to Companion (5s timeout)
+POST /api/v1/stone/companions/{id}/up        # Start Companion process
+POST /api/v1/stone/companions/{id}/down      # Stop Companion process
+POST /api/v1/stone/companions/refresh        # Rescan Companion directory
 ```
 
-**GET /api/v1/stone/adapters response:**
+**GET /api/v1/stone/companions response:**
 ```json
 {
-  "adapters": [
+  "Companions": [
     {
       "id": "cricket",
-      "name": "Cricket Audio Adapter",
+      "name": "Cricket Audio Companion",
       "version": "0.1.0",
       "port": 7187,
       "running": true,
@@ -134,7 +134,7 @@ POST /api/v1/stone/adapters/refresh        # Rescan adapter directory
 }
 ```
 
-**POST /api/v1/stone/adapters/cricket/command:**
+**POST /api/v1/stone/companions/cricket/command:**
 ```json
 // Request
 {
@@ -150,19 +150,19 @@ POST /api/v1/stone/adapters/refresh        # Rescan adapter directory
 // Response (500 Internal Server Error) - timeout/connection failure
 {
   "success": false,
-  "output": "Failed to connect to adapter on port 7187"
+  "output": "Failed to connect to Companion on port 7187"
 }
 ```
 
 **Architecture:**
-- Adapters bind HTTP servers on assigned ports (7187-7199)
-- Moss maintains port ledger in `{data_dir}/adapter-ports.json`
-- Commands routed: Rake → Moss → Adapter (localhost)
-- Adapters receive presence events via SSE subscription to Moss
+- Companions bind HTTP servers on assigned ports (7187-7199)
+- Moss maintains port ledger in `{data_dir}/companion-ports.json`
+- Commands routed: Rake → Moss → Companion (localhost)
+- Companions receive presence events via SSE subscription to Moss
 
 **Reference:**
-- [ADAPTER-COMMAND-PROTOCOL.md](ADAPTER-COMMAND-PROTOCOL.md)
-- [ADAPTER-SERVICE-REGISTRY.md](ADAPTER-SERVICE-REGISTRY.md)
+- [Companion-COMMAND-PROTOCOL.md](Companion-COMMAND-PROTOCOL.md)
+- [Companion-SERVICE-REGISTRY.md](Companion-SERVICE-REGISTRY.md)
 - [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md)
 
 ---

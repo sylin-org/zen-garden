@@ -37,7 +37,7 @@ This document tracks the step-by-step implementation of the multicast-first disc
 ### Phase 2: Interface Enumeration
 
 1. Implement `enumerate_eligible_interfaces()` using `if-addrs` crate
-2. Add virtual adapter detection heuristics
+2. Add virtual Companion detection heuristics
 3. Compute directed broadcast addresses per interface
 
 ### Phase 3: Sender Refactoring

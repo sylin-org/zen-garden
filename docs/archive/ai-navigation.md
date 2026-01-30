@@ -39,7 +39,7 @@ These documents are the single source of truth for their respective topics. When
 - **[CONSOLIDATION-MAP.md](CONSOLIDATION-MAP.md)** - Content consolidation strategy
 - **[UUID-V7-DESIGN.md](UUID-V7-DESIGN.md)** - UUID design rationale: RFC 9562, time-ordered IDs, 30-40% faster DB inserts
 - **[SNAPSHOT-DESIGN.md](SNAPSHOT-DESIGN.md)** - Snapshot design patterns
-- **[ADAPTER-COMPARISON.md](ADAPTER-COMPARISON.md)** - Service adapter comparison
+- **[Companion-COMPARISON.md](Companion-COMPARISON.md)** - Service Companion comparison
 - **[DEPLOYMENT-TESTING.md](DEPLOYMENT-TESTING.md)** - Deployment procedures
 - **[BOOT-FAILURE-RECOVERY.md](BOOT-FAILURE-RECOVERY.md)** - Recovery procedures
 - **[FIRST-BOOT.md](FIRST-BOOT.md)** - First boot procedures
@@ -278,7 +278,7 @@ These documents are the single source of truth for their respective topics. When
 **Service Templates**: [technical.md § Service Templates & Offerings](../specs/technical.md#service-templates--offerings)  
 **Service Catalog**: [service-catalog.md](../reference/service-catalog.md) (moved from SERVICE-INVENTORY.md)  
 **Supported Services**: [protocols.md § Supported Service Types](../reference/protocols.md#supported-service-types)  
-**Adapter Comparison**: [ADAPTER-COMPARISON.md](ADAPTER-COMPARISON.md)
+**Companion Comparison**: [Companion-COMPARISON.md](Companion-COMPARISON.md)
 
 ### Configuration
 

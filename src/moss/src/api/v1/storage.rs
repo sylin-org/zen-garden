@@ -742,13 +742,15 @@ pub async fn prepare_seed_bank_v1(
     let name_clone = name.clone();
     let device = request.device.clone();
     let filesystem = request.filesystem.clone();
+    let group = request.group.clone();
+    let replica_id = request.replica_id;
     let stone_name = state.stone_name.clone();
     let stone_id = state.stone_id.clone();
     let api_port = state.api_port;
     let event_tx = state.event_tx.clone();
-    
+
     tokio::spawn(async move {
-        match run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, &stone_name, event_tx.clone()).await {
+        match run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, group.as_deref(), replica_id, &stone_name, event_tx.clone()).await {
             Ok(()) => {
                 // STORAGE-0003: Broadcast storage beacon on successful preparation
                 let endpoint = format!("http://{}:{}", stone_name, api_port);
@@ -789,16 +791,18 @@ async fn run_prepare_job(
     device: &str,
     name: &str,
     filesystem: &str,
+    group: Option<&str>,
+    replica_id: Option<u32>,
     stone_name: &str,
     event_tx: tokio::sync::broadcast::Sender<crate::app_state::MossEvent>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
     use chrono::Utc;
     use garden_common::storage::{SeedBankManifest, SeedBankVisibility};
-    
-    info!(job_id, device, name, "Starting seed bank preparation");
+
+    info!(job_id, device, name, group = ?group, replica_id = ?replica_id, "Starting seed bank preparation");
     emit_progress(&event_tx, job_id, "analyzing", "Analyzing device...");
-    
+
     // Determine actual filesystem
     let actual_fs = if filesystem == "btrfs" && check_btrfs_support().await {
         "btrfs"
@@ -808,10 +812,18 @@ async fn run_prepare_job(
         }
         "ext4"
     };
-    
-    // Create mount point
+
+    // Create manifest first to derive mount path
+    let manifest = if let Some(grp) = group {
+        let rid = replica_id.unwrap_or(1);
+        SeedBankManifest::new_replica(name, grp, rid, stone_name, actual_fs, SeedBankVisibility::Open)
+    } else {
+        SeedBankManifest::new(name, stone_name, actual_fs, SeedBankVisibility::Open)
+    };
+
+    // Derive mount path from manifest (supports groups and replicas)
     let data_dir = garden_common::constants::paths::data_dir();
-    let mount_dir = PathBuf::from(&data_dir).join("mounts").join(name);
+    let mount_dir = PathBuf::from(manifest.derive_mount_path(&data_dir));
     
     #[cfg(target_os = "linux")]
     {
@@ -846,12 +858,12 @@ async fn run_prepare_job(
     }
     
     emit_progress(&event_tx, job_id, "creating", "Creating seed bank structure...");
-    
+
     // Create .zen-garden structure on the device
     let zen_dir = mount_dir.join(".zen-garden");
     tokio::fs::create_dir_all(&zen_dir).await.context("Failed to create .zen-garden directory")?;
-    
-    let manifest = SeedBankManifest::new(name, stone_name, actual_fs, SeedBankVisibility::Open);
+
+    // Serialize manifest (already created above with group/replica support)
     let manifest_json = serde_json::to_string_pretty(&manifest)?;
     
     // Atomic manifest write: temp file → fsync → rename

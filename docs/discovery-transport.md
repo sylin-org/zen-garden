@@ -19,11 +19,11 @@ Listeners bound to `0.0.0.0:7184` with `SO_REUSEADDR` enabled.
 
 ### Observed Failure Mode
 
-**Multi-homed Windows 11 systems** (Hyper-V, WSL, VPN adapters) experienced unreliable discovery:
+**Multi-homed Windows 11 systems** (Hyper-V, WSL, VPN Companions) experienced unreliable discovery:
 
 - **Symptom**: Stones on same LAN couldn't discover each other
 - **Root cause**: Limited broadcast (`255.255.255.255`) egresses via the system's **default route interface**
-- **Impact**: With WSL/Hyper-V vEthernet adapters active, Windows may route broadcasts through virtual interfaces instead of physical NICs
+- **Impact**: With WSL/Hyper-V vEthernet Companions active, Windows may route broadcasts through virtual interfaces instead of physical NICs
 
 **Example topology where discovery fails:**
 
@@ -36,7 +36,7 @@ Windows 11 Host (192.168.1.100)
 Other Stone (192.168.1.135) ← never receives broadcast
 ```
 
-The socket sends to `255.255.255.255`, but the OS routes it through `172.24.32.1` (WSL adapter), which never reaches the physical LAN.
+The socket sends to `255.255.255.255`, but the OS routes it through `172.24.32.1` (WSL Companion), which never reaches the physical LAN.
 
 ---
 
@@ -111,11 +111,11 @@ fn is_eligible_interface(iface: &Interface) -> bool {
     iface.is_up()                    // Interface running
     && !iface.is_loopback()          // Not 127.0.0.1
     && iface.has_ipv4()              // Has IPv4 address
-    && !is_likely_virtual(iface)     // Deprioritize VPN/VM adapters
+    && !is_likely_virtual(iface)     // Deprioritize VPN/VM Companions
 }
 ```
 
-**Virtual adapter heuristics** (deprioritize, don't exclude):
+**Virtual Companion heuristics** (deprioritize, don't exclude):
 
 - Name contains: `vEthernet`, `WSL`, `VirtualBox`, `VMware`, `Hyper-V`, `tun`, `tap`
 - MAC prefix: `00:05:69`, `00:0c:29`, `00:50:56` (VMware), `00:15:5d` (Hyper-V)
@@ -318,9 +318,9 @@ Check logs for "multicast send failed, trying broadcast" warnings.
 
 **Check 1: Windows Hyper-V/WSL interference**
 
-Disable unused adapters:
+Disable unused Companions:
 ```powershell
-Get-NetAdapter | Where-Object {$_.InterfaceDescription -match "vEthernet|WSL"} | Disable-NetAdapter
+Get-NetCompanion | Where-Object {$_.InterfaceDescription -match "vEthernet|WSL"} | Disable-NetCompanion
 ```
 
 Or verify Moss is sending on physical NIC (check logs).

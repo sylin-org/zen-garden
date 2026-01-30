@@ -1,4 +1,4 @@
-//! Tend command - manage which stone to tend to
+﻿//! Tend command - manage which stone to tend to
 //!
 //! The tend command manages the tending state, which determines
 //! which stone commands target by default.
@@ -68,7 +68,7 @@ impl Command for TendCommand {
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), local_endpoint.clone())?;
                             
-                            // Notify stone of tending (for visual feedback in adapters)
+                            // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &local_endpoint).await;
                             
                             println!("Now tending to: {} (localhost)", caps.stone_name);
@@ -110,7 +110,7 @@ impl Command for TendCommand {
                                     let caps = response.data;
                                     tending::write_tending(caps.stone_name.clone(), alternative.endpoint.clone())?;
                                     
-                                    // Notify stone of tending (for visual feedback in adapters)
+                                    // Notify stone of tending (for visual feedback in Companions)
                                     let _ = notify_tending(ctx, &alternative.endpoint).await;
                                     
                                     println!(
@@ -164,7 +164,7 @@ impl Command for TendCommand {
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), endpoint.clone())?;
                             
-                            // Notify stone of tending (for visual feedback in adapters)
+                            // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &endpoint).await;
                             
                             println!(
@@ -202,7 +202,7 @@ impl Command for TendCommand {
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), url.to_string())?;
                             
-                            // Notify stone of tending (for visual feedback in adapters)
+                            // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, url).await;
                             
                             println!("Now tending to: {} ({})", caps.stone_name, url);
@@ -242,7 +242,7 @@ impl Command for TendCommand {
                                 .data;
                             tending::write_tending(caps.stone_name.clone(), endpoint.to_string())?;
                             
-                            // Notify stone of tending (for visual feedback in adapters)
+                            // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &endpoint).await;
                             
                             println!(
@@ -407,7 +407,7 @@ async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> 
 /// Send tending notification to stone (for visual feedback)
 /// 
 /// POSTs to /api/v1/stone/presence/notify to trigger stone.tended event.
-/// Adapters (Firefly, Cricket) can react with temporary glow/pulse.
+/// Companions (Firefly, Cricket) can react with temporary glow/pulse.
 /// 
 /// Used by:
 /// - Explicit tend commands

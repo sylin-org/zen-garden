@@ -1,4 +1,4 @@
-# Zen Garden Driver Specification
+﻿# Zen Garden Driver Specification
 
 **Version:** 2.0  
 **Status:** Reference Implementation  
@@ -45,7 +45,7 @@ curl -s http://stone-topaz-basin.local:7185/api/v1/services | jq '.data'
 5. [Tending (Stone Pinning)](#5-tending-stone-pinning)
 6. [HTTP API Reference](#6-http-api-reference)
 7. [Service Discovery](#7-service-discovery)
-8. [Adapter Integration](#8-adapter-integration)
+8. [Companion Integration](#8-Companion-integration)
 9. [Connection Strings](#9-connection-strings)
 10. [Caching Strategy](#10-caching-strategy)
 11. [Error Handling](#11-error-handling)
@@ -90,7 +90,7 @@ curl -s http://stone-topaz-basin.local:7185/api/v1/services | jq '.data'
 | **Moss** | 7185 (HTTP) | Per-stone daemon. Manages containers, announces services, handles API requests. |
 | **P2P Transport** | 7184 (UDP) | Discovery broadcasts, chirps, elections. Multicast + directed broadcast. |
 | **Lantern** | 7186 (HTTP) | Optional registry for cross-subnet discovery or Windows without mDNS. |
-| **Adapters** | 7187-7199 | Optional presence adapters (Cricket audio, Firefly LEDs, OLED display). |
+| **Companions** | 7187-7199 | Optional presence Companions (Cricket audio, Firefly LEDs, OLED display). |
 
 ### 1.3 Key Concepts
 
@@ -991,31 +991,31 @@ When port information is unavailable, use these defaults:
 
 ---
 
-## 8. Adapter Integration
+## 8. Companion Integration
 
-### 8.1 Adapter Overview
+### 8.1 Companion Overview
 
-Adapters extend Stone capabilities with audio, visual, and display feedback.
+Companions extend Stone capabilities with audio, visual, and display feedback.
 
-| Adapter | Port | Purpose |
+| Companion | Port | Purpose |
 |---------|------|---------|
 | **Cricket** | 7187 | Audio feedback (4-channel mixer, 180 CC0 samples) |
 | **Firefly** | TBD | LED control |
 | **OLED** | TBD | Display status screens |
 
-### 8.2 Listing Adapters
+### 8.2 Listing Companions
 
 ```http
-GET /api/v1/stone/adapters
+GET /api/v1/stone/companions
 ```
 
 ```json
 {
   "data": {
-    "adapters": [
+    "Companions": [
       {
         "id": "cricket",
-        "name": "Cricket Audio Adapter",
+        "name": "Cricket Audio Companion",
         "version": "0.1.0",
         "port": 7187,
         "running": true,
@@ -1030,7 +1030,7 @@ GET /api/v1/stone/adapters
 ### 8.3 Sending Commands
 
 ```http
-POST /api/v1/stone/adapters/{id}/command
+POST /api/v1/stone/companions/{id}/command
 Content-Type: application/json
 
 {
@@ -1053,13 +1053,13 @@ Response:
 
 ```
 ┌─────────┐       ┌─────────┐       ┌─────────────┐
-│  YOUR   │──────►│  MOSS   │──────►│  ADAPTER    │
+│  YOUR   │──────►│  MOSS   │──────►│  Companion    │
 │  DRIVER │ HTTP  │ (proxy) │  HTTP │  (Cricket)  │
 │         │ 7185  │         │ 7187  │             │
 └─────────┘       └─────────┘       └─────────────┘
 
 Timeout: 5 seconds per command
-Port ledger: {data_dir}/adapter-ports.json
+Port ledger: {data_dir}/companion-ports.json
 ```
 
 ---
@@ -1415,7 +1415,7 @@ interface TendingState {
 | HTTP request (default) | 30s |
 | HTTP connect | 5s |
 | mDNS probe | 800ms |
-| Adapter command | 5s |
+| Companion command | 5s |
 
 ### 13.4 Environment Variables
 
@@ -1511,8 +1511,8 @@ GET  /api/v1/offerings                  # List offerings
 GET  /api/v1/offerings/search?q=nosql   # Search offerings
 POST /api/v1/offerings                  # Install offering
 GET  /api/v1/garden/topology            # All Stones
-GET  /api/v1/stone/adapters             # List adapters
-POST /api/v1/stone/adapters/{id}/command # Send adapter command
+GET  /api/v1/stone/companions             # List Companions
+POST /api/v1/stone/companions/{id}/command # Send Companion command
 ```
 
 ### Port Summary
@@ -1521,7 +1521,7 @@ POST /api/v1/stone/adapters/{id}/command # Send adapter command
 UDP  7184    Discovery (multicast + broadcast)
 HTTP 7185    Moss API (per-Stone)
 HTTP 7186    Lantern API (optional registry)
-HTTP 7187-7199  Adapters (Cricket, Firefly, OLED)
+HTTP 7187-7199  Companions (Cricket, Firefly, OLED)
 ```
 
 ### Vitality Language (CLI Display)
@@ -1541,7 +1541,7 @@ Map technical health to human-friendly terms:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.0 | 2026-01-27 | Complete rewrite with real-world scenarios, multicast transport, adapter integration |
+| 2.0 | 2026-01-27 | Complete rewrite with real-world scenarios, multicast transport, Companion integration |
 | 1.0 | 2026-01-23 | Initial specification |
 
 ---
@@ -1553,6 +1553,6 @@ Map technical health to human-friendly terms:
 | [ARCHITECTURE-REFERENCE.md](../ARCHITECTURE-REFERENCE.md) | Internal development guide |
 | [discovery-transport.md](../discovery-transport.md) | Multicast transport details |
 | [api-v1.md](../specs/api-v1.md) | Complete API specification |
-| [ADAPTER-COMMAND-PROTOCOL.md](../specs/ADAPTER-COMMAND-PROTOCOL.md) | Adapter integration |
+| [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md) | Companion integration |
 | [connection-strings.md](connection-strings.md) | Connection string resolution |
 | [glossary.md](../glossary.md) | Terminology reference |

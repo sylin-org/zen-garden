@@ -329,7 +329,7 @@ common/src/cli/
 - **Do NOT extract**:
   - Domain logic (service_discovery, placement, topology, etc.)
   - Orchestration (tasks/, bootstrap/run.rs)
-  - Domain-specific adapters (docker.rs, mdns.rs)
+  - Domain-specific Companions (docker.rs, mdns.rs)
 
 - **Already Extracted** (Phases 1 & 2):
   - Archive, Process, Platform

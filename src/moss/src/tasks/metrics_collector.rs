@@ -7,7 +7,7 @@
 //! - Disk metrics: every 30 seconds (slower, involves filesystem stat calls)
 //!
 //! This is the authoritative source for runtime system metrics used by:
-//! - Presence protocol (SSE streaming to adapters)
+//! - Presence protocol (SSE streaming to Companions)
 //! - Topology chirps (future: include metrics in discovery)
 //! - Health monitoring (CPU/memory thresholds)
 

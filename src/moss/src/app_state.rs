@@ -1,4 +1,4 @@
-//! Application state shared across HTTP handlers
+﻿//! Application state shared across HTTP handlers
 //!
 //! Holds all dependencies for moss daemon:
 //! - Service registry (Vec<ServiceInfo>)
@@ -159,8 +159,8 @@ pub struct AppState {
     /// System metrics cache (CPU/memory/disk usage, updated every 5s)
     pub system_resources: Arc<RwLock<Option<StoneResources>>>,
 
-    /// Adapter registry (external adapters like Cricket, Firefly)
-    pub adapter_registry: Arc<crate::infra::AdapterRegistry>,
+    /// Companion registry (external Companions like Cricket, Firefly)
+    pub companion_registry: Arc<crate::infra::CompanionRegistry>,
 }
 
 impl AppState {

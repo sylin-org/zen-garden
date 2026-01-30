@@ -1,4 +1,4 @@
-//! Infrastructure layer - I/O operations
+﻿//! Infrastructure layer - I/O operations
 //!
 //! This layer contains all external I/O:
 //! - Communications (UDP P2P, mDNS)
@@ -10,11 +10,11 @@
 //! - Archive operations (centralized compression/checksum)
 //! - Harvest storage
 //! - Ceremony journal (crash recovery)
-//! - Adapter registry (external adapters like Cricket)
+//! - Companion registry (external Companions like Cricket)
 //!
-//! No business logic here - pure I/O adapters.
+//! No business logic here - pure I/O Companions.
 
-pub mod adapters;
+pub mod companions;
 pub mod api_helpers;
 pub mod auth;
 pub mod ceremony_journal;
@@ -40,7 +40,7 @@ pub mod storage;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 
-pub use adapters::AdapterRegistry;
+pub use companions::CompanionRegistry;
 pub use api_helpers::{error_response, error_codes};
 pub use auth::NoAuth;
 pub use config::MossConfig;
@@ -63,7 +63,7 @@ pub use harvest_store::HarvestStore;
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use nurturing_store::NurturingStore;
 pub use embedded::{
-    EmbeddedManifests, EmbeddedAdapters,
+    EmbeddedManifests, EmbeddedCompanions,
     read_manifest_overlay, manifest_exists, list_all_manifests,
     load_sw_manifests_with_overlay,
     AssetSource, ManifestSource,

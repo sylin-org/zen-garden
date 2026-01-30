@@ -26,7 +26,7 @@ pub struct PresenceQuery {
 /// GET /api/v1/stone/presence/stream - Local stone presence stream
 ///
 /// **Scope:** Stone-level (local events only)
-/// **Consumer:** Local adapters (Cricket, Firefly, OLED), Rake presence command
+/// **Consumer:** Local Companions (Cricket, Firefly, OLED), Rake presence command
 /// 
 /// Returns SSE stream of domain events translated to presence vocabulary.
 /// Only emits events relevant to THIS stone (filters out garden-wide events).
@@ -48,7 +48,7 @@ pub async fn stream_stone_presence(
     Query(query): Query<PresenceQuery>,
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    tracing::info!("Local presence adapter connected");
+    tracing::info!("Local presence Companion connected");
     
     // Parse event filter from query params
     let filter = if let Some(cats) = query.categories {
@@ -83,7 +83,7 @@ pub async fn stream_stone_presence(
                 match result {
                     Ok(event) => translate_to_presence(&event, &filter, &stone_name),
                     Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                        tracing::warn!("Presence adapter lagged {} events", n);
+                        tracing::warn!("Presence Companion lagged {} events", n);
                         None
                     }
                 }
@@ -238,7 +238,7 @@ fn extract_service_name(message: &str) -> Option<String> {
 
 /// POST /api/v1/stone/presence/notify - Client-initiated presence notification
 ///
-/// Allows clients (Rake, Lantern) to send notifications that get broadcast to all presence adapters.
+/// Allows clients (Rake, Lantern) to send notifications that get broadcast to all presence Companions.
 /// Used for visual feedback like "I'm tending to you" that creates a temporary glow/pulse.
 ///
 /// **Use case**: When Rake runs `tend stone-01`, it POSTs to Moss, which broadcasts
@@ -301,7 +301,7 @@ pub async fn notify_presence(
     // Send to event bus - SSE subscribers will translate it
     let _ = state.event_tx.send(moss_event);
     
-    // Also emit directly to ensure presence adapters get it
+    // Also emit directly to ensure presence Companions get it
     // (in case they're not subscribed to regular MossEvents)
     tracing::info!(
         event_type = %event_type,

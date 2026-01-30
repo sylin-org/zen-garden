@@ -1,7 +1,7 @@
-﻿//! HTTP server for adapter command handling
+﻿//! HTTP server for Companion command handling
 //!
 //! Provides standard endpoints:
-//! - `POST /command` - Execute adapter commands
+//! - `POST /command` - Execute Companion commands
 //! - `POST /shutdown` - Graceful shutdown
 //! - `GET /health` - Health check
 
@@ -21,33 +21,33 @@ use crate::handler::CommandHandler;
 pub(crate) struct ServerState<H: CommandHandler> {
     pub handler: Arc<H>,
     pub shutdown_tx: watch::Sender<bool>,
-    pub adapter_name: String,
+    pub companion_name: String,
 }
 
 /// Command request from Moss
-/// Note: Field is `raw_args` to match AdapterCommandRequest from garden_common
+/// Note: Field is `raw_args` to match CompanionCommandRequest from garden_common
 #[derive(Debug, serde::Deserialize)]
 pub struct CommandRequest {
-    /// Raw command arguments (matches AdapterCommandRequest.raw_args)
+    /// Raw command arguments (matches CompanionCommandRequest.raw_args)
     #[serde(default)]
     pub raw_args: Vec<String>,
 }
 
-/// Start the adapter HTTP server
+/// Start the Companion HTTP server
 ///
 /// Returns the server task handle and a shutdown receiver.
 /// The receiver signals `true` when `/shutdown` is called.
 pub async fn start_server<H: CommandHandler>(
     port: u16,
     handler: Arc<H>,
-    adapter_name: impl Into<String>,
+    companion_name: impl Into<String>,
 ) -> anyhow::Result<(tokio::task::JoinHandle<()>, watch::Receiver<bool>)> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let state = Arc::new(ServerState {
         handler,
         shutdown_tx,
-        adapter_name: adapter_name.into(),
+        companion_name: companion_name.into(),
     });
 
     let app = Router::new()
@@ -57,13 +57,13 @@ pub async fn start_server<H: CommandHandler>(
         .with_state(state);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!(port = port, "Starting adapter command server");
+    tracing::info!(port = port, "Starting Companion command server");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     let handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
-            tracing::error!(error = %e, "Adapter server error");
+            tracing::error!(error = %e, "Companion server error");
         }
     });
 
@@ -86,7 +86,7 @@ async fn handle_command<H: CommandHandler>(
 async fn handle_shutdown<H: CommandHandler>(
     State(state): State<Arc<ServerState<H>>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    tracing::info!(adapter = %state.adapter_name, "Shutdown requested by Moss");
+    tracing::info!(Companion = %state.companion_name, "Shutdown requested by Moss");
 
     // Notify handler of shutdown
     state.handler.on_shutdown().await;
@@ -98,8 +98,8 @@ async fn handle_shutdown<H: CommandHandler>(
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "shutting_down",
-            "adapter": state.adapter_name,
-            "message": "Adapter is shutting down gracefully"
+            "Companion": state.companion_name,
+            "message": "Companion is shutting down gracefully"
         })),
     )
 }
@@ -112,7 +112,7 @@ async fn handle_health<H: CommandHandler>(
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "healthy",
-            "adapter": state.adapter_name
+            "Companion": state.companion_name
         })),
     )
 }

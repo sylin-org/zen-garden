@@ -1,4 +1,4 @@
-# Zen Garden AWS Bridge Specification
+﻿# Zen Garden AWS Bridge Specification
 
 **AWS-compatible APIs for your homelab cloud**
 
@@ -25,7 +25,7 @@
    - [CloudWatch Logs](#cloudwatch-logs)
    - [Parameter Store (SSM)](#parameter-store-ssm)
    - [KMS (Key Management)](#kms-key-management)
-6. [Backend Adapters](#backend-adapters)
+6. [Backend Companions](#backend-Companions)
 7. [Auto-Provisioning](#auto-provisioning)
 8. [Managed Offerings](#managed-offerings)
 9. [Bridge UI](#bridge-ui)
@@ -173,8 +173,8 @@ The bridge and its backends are all offerings:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│   │ S3 Adapter  │ │ SQS Adapter │ │DynamoDB     │               │
-│   │ Port: 4100  │ │ Port: 4101  │ │Adapter 4102 │  ...          │
+│   │ S3 Companion  │ │ SQS Companion │ │DynamoDB     │               │
+│   │ Port: 4100  │ │ Port: 4101  │ │Companion 4102 │  ...          │
 │   └──────┬──────┘ └──────┬──────┘ └──────┬──────┘               │
 │          │               │               │                      │
 │   ┌──────┴───────────────┴───────────────┴──────┐               │
@@ -227,7 +227,7 @@ The bridge and its backends are all offerings:
 │      c. If missing and !auto_provision: mark degraded           │
 │      d. If available: connect and verify                        │
 │                                                                 │
-│   5. Start service adapters on their ports:                     │
+│   5. Start service Companions on their ports:                     │
 │      S3       → 4100                                            │
 │      SQS      → 4101                                            │
 │      DynamoDB → 4102                                            │
@@ -1209,15 +1209,15 @@ const dataKey = await kms.send(new GenerateDataKeyCommand({
 
 ---
 
-## Backend Adapters
+## Backend Companions
 
-### Adapter Interface
+### Companion Interface
 
 All backends implement a common interface:
 
 ```rust
 #[async_trait]
-trait BackendAdapter: Send + Sync {
+trait BackendCompanion: Send + Sync {
     /// Check if backend is healthy
     async fn health_check(&self) -> Result<HealthStatus>;
     
@@ -1229,18 +1229,18 @@ trait BackendAdapter: Send + Sync {
 }
 ```
 
-### SQS Adapters
+### SQS Companions
 
-#### Redis Adapter
+#### Redis Companion
 
 ```rust
-struct RedisSqsAdapter {
+struct RedisSqsCompanion {
     redis: RedisClient,
     app: String,
 }
 
 #[async_trait]
-impl SqsAdapter for RedisSqsAdapter {
+impl SqsCompanion for RedisSqsCompanion {
     async fn send_message(&self, queue: &str, message: &SqsMessage) -> Result<String> {
         let key = format!("sqs:{}:{}:messages", self.app, queue);
         let message_json = serde_json::to_string(message)?;
@@ -1291,16 +1291,16 @@ impl SqsAdapter for RedisSqsAdapter {
 }
 ```
 
-#### RabbitMQ Adapter
+#### RabbitMQ Companion
 
 ```rust
-struct RabbitMqSqsAdapter {
+struct RabbitMqSqsCompanion {
     connection: RabbitMqConnection,
     app: String,
 }
 
 #[async_trait]
-impl SqsAdapter for RabbitMqSqsAdapter {
+impl SqsCompanion for RabbitMqSqsCompanion {
     async fn send_message(&self, queue: &str, message: &SqsMessage) -> Result<String> {
         let channel = self.connection.create_channel().await?;
         let queue_name = format!("sqs.{}.{}", self.app, queue);
@@ -1321,12 +1321,12 @@ impl SqsAdapter for RabbitMqSqsAdapter {
 }
 ```
 
-### DynamoDB Adapters
+### DynamoDB Companions
 
-#### MongoDB Adapter
+#### MongoDB Companion
 
 ```rust
-struct MongoDynamoAdapter {
+struct MongoDynamoCompanion {
     client: MongoClient,
     db: Database,
     app: String,
@@ -1334,7 +1334,7 @@ struct MongoDynamoAdapter {
 }
 
 #[async_trait]
-impl DynamoAdapter for MongoDynamoAdapter {
+impl DynamoCompanion for MongoDynamoCompanion {
     async fn put_item(&self, table: &str, item: &DynamoItem) -> Result<()> {
         let collection = self.db.collection::<Document>(
             &format!("dynamodb_{}_{}", self.app, table)
@@ -1390,16 +1390,16 @@ impl DynamoAdapter for MongoDynamoAdapter {
 }
 ```
 
-#### SQLite Adapter
+#### SQLite Companion
 
 ```rust
-struct SqliteDynamoAdapter {
+struct SqliteDynamoCompanion {
     pool: SqlitePool,
     app: String,
 }
 
 #[async_trait]
-impl DynamoAdapter for SqliteDynamoAdapter {
+impl DynamoCompanion for SqliteDynamoCompanion {
     async fn put_item(&self, table: &str, item: &DynamoItem) -> Result<()> {
         let schema = self.get_table_schema(table).await?;
         
@@ -1468,7 +1468,7 @@ When a user enables a service that requires a backend, the bridge can automatica
 │                                                                 │
 │   6. Wait for offering to be healthy                            │
 │                                                                 │
-│   7. Connect and configure adapter                              │
+│   7. Connect and configure Companion                              │
 │                                                                 │
 │   8. Announce protocol handler                                  │
 │                                                                 │

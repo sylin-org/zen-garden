@@ -10,7 +10,7 @@
 
     The package always includes all binaries found in dist/linux/, even if only
     core binaries were built. This allows fast iteration on core components while
-    including previously-built adapters in the package.
+    including previously-built Companions in the package.
 
 .PARAMETER Version
     Version string (e.g., "0.1.202601251234")
@@ -117,7 +117,7 @@ if (-not $SkipPackage) {
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
     # Copy ALL available binaries (not just tier-specific ones)
-    # This allows packages to include previously-built adapters even when only core was built
+    # This allows packages to include previously-built Companions even when only core was built
     $binaries = Get-PlatformBinaries -Config $config -Platform "linux"
     $includedCount = 0
     $skippedCount = 0

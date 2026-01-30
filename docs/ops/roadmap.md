@@ -22,7 +22,7 @@ The Rust implementation is complete and functional:
 ✅ **Discovery & Topology** (Completed 2026-01-25)
 - Multicast-first UDP discovery (239.255.42.99:7184) with directed broadcast fallback
 - Per-interface sender sockets for multi-homed Windows 11 support
-- Virtual adapter detection/filtering (skips Docker/WSL/Hyper-V interfaces)
+- Virtual Companion detection/filtering (skips Docker/WSL/Hyper-V interfaces)
 - Automatic topology maintenance (45s offline threshold, 30s cleanup interval)
 - P2P stone chirping and announcement system
 
@@ -73,7 +73,7 @@ Near-term priorities:
 
 - ✅ Multicast-first UDP discovery with broadcast fallback
 - ✅ Per-interface sender sockets for multi-homed systems
-- ✅ Virtual adapter detection and filtering
+- ✅ Virtual Companion detection and filtering
 - ✅ Topology maintenance (offline detection, cache eviction)
 - ✅ Stone chirping and P2P announcement system
 

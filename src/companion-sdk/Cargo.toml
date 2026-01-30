@@ -1,13 +1,13 @@
 ﻿[package]
-name = "garden-adapter-sdk"
+name = "garden-companion-sdk"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "SDK for building Zen Garden adapters"
+description = "SDK for building Zen Garden companions"
 
 [lib]
-name = "garden_adapter_sdk"
+name = "garden_companion_sdk"
 path = "src/lib.rs"
 
 [dependencies]

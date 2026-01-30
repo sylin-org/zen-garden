@@ -1,4 +1,4 @@
----
+﻿---
 audience: [contributor, operator, developer]
 doc_type: reference
 status: current
@@ -24,12 +24,12 @@ note: "Authoritative port registry for all Zen Garden services."
 | **7184** | P2P Discovery | UDP | Stone-to-Stone peer discovery broadcasts | ✅ Active |
 | **7185** | Garden-Moss HTTP API | HTTP/TCP | Stone management API endpoint | ✅ Active |
 | **7186** | Garden-Lantern Registry | HTTP/TCP | Centralized service registry and topology API | 🔜 Planned |
-| **7187-7199** | Moss Adapters | HTTP/TCP | Adapter command servers (Cricket, Firefly, OLED, etc.) | ✅ Active |
+| **7187-7199** | Moss Companions | HTTP/TCP | Companion command servers (Cricket, Firefly, OLED, etc.) | ✅ Active |
 
-**Adapter Port Allocation:**
-- **Base:** 7187 (ASCII sum "moss adapter" = 1187 + 6000)
-- **Range:** 7187-7199 (13 adapters maximum)
-- **Assignment:** Managed by Moss via `adapter-ports.json` ledger, incremental from base
+**Companion Port Allocation:**
+- **Base:** 7187 (ASCII sum "moss Companion" = 1187 + 6000)
+- **Range:** 7187-7199 (13 Companions maximum)
+- **Assignment:** Managed by Moss via `companion-ports.json` ledger, incremental from base
 - **Current:** Cricket (7187), Firefly (planned), OLED (planned)
 
 ---
@@ -73,7 +73,7 @@ Moss → Rake IP:ephemeral (unicast)
 - `/metrics` - Prometheus metrics
 - `/api/v1/services` - List running services
 - `/api/v1/offerings` - List/install offerings
-- `/api/v1/stone/adapters` - Adapter management
+- `/api/v1/stone/companions` - Companion management
 - `/api/v1/garden/topology` - Cross-stone topology
 
 **Configuration Priority:**
@@ -94,55 +94,55 @@ Moss → Rake IP:ephemeral (unicast)
 
 ---
 
-### 7187-7199 - Moss Adapters (TCP)
+### 7187-7199 - Moss Companions (TCP)
 
-**Function:** HTTP command servers for Moss adapters (Cricket, Firefly, OLED, etc.)  
+**Function:** HTTP command servers for Moss Companions (Cricket, Firefly, OLED, etc.)  
 **Protocol:** HTTP/1.1  
-**Port Assignment:** Managed by Moss via persistent ledger (`{data_dir}/adapter-ports.json`)
+**Port Assignment:** Managed by Moss via persistent ledger (`{data_dir}/companion-ports.json`)
 
-**Adapter Discovery Protocol:**
-1. Moss scans `{data_dir}/adapters/` for executables
+**Companion Discovery Protocol:**
+1. Moss scans `{data_dir}/companions/` for executables
 2. Assigns port from ledger (incremental from 7187)
-3. Invokes `{adapter} --dump-commands --port {assigned}` to get manifest
-4. Starts adapter with `--stone {moss_endpoint} --port {assigned}`
-5. Adapter binds HTTP server on assigned port
+3. Invokes `{Companion} --dump-commands --port {assigned}` to get manifest
+4. Starts Companion with `--stone {moss_endpoint} --port {assigned}`
+5. Companion binds HTTP server on assigned port
 
 **Command Routing:**
 ```
-Rake → POST /api/v1/stone/adapters/{id}/command
+Rake → POST /api/v1/stone/companions/{id}/command
   → Moss → POST http://127.0.0.1:{assigned_port}/command
-  → Adapter executes, returns JSON response (5s timeout)
+  → Companion executes, returns JSON response (5s timeout)
 ```
 
 **Currently Allocated:**
-- **7187:** Cricket audio adapter (4-channel mixer, tune system)
-- **7188+:** Available for Firefly (LEDs), OLED (display), future adapters
+- **7187:** Cricket audio Companion (4-channel mixer, tune system)
+- **7188+:** Available for Firefly (LEDs), OLED (display), future Companions
 
-**Endpoints (per adapter):**
-- `POST /command` - Execute adapter command with args array
+**Endpoints (per Companion):**
+- `POST /command` - Execute Companion command with args array
 - `GET /health` - Health check (optional)
 - `GET /manifest` - Return command manifest (optional, Moss caches from --dump-commands)
 
 **Implementation Files:**
-- Registry: `src/moss/src/infra/adapters.rs` - Port ledger, adapter registration
-- API: `src/moss/src/api/v1/adapters.rs` - Command forwarding endpoints
-- Example: `src/cricket/src/main.rs` - Cricket adapter implementation
+- Registry: `src/moss/src/infra/Companions.rs` - Port ledger, Companion registration
+- API: `src/moss/src/api/v1/Companions.rs` - Command forwarding endpoints
+- Example: `src/cricket/src/main.rs` - Cricket Companion implementation
 
 **Security:**
 - Bind: `127.0.0.1:{port}` (localhost only, not exposed to network)
-- Authentication: None (adapters trusted as local services)
+- Authentication: None (Companions trusted as local services)
 - Timeout: 5000ms for command execution
 
 **Reference:**
-- [ADAPTER-COMMAND-PROTOCOL.md](../specs/ADAPTER-COMMAND-PROTOCOL.md)
-- [ADAPTER-SERVICE-REGISTRY.md](../specs/ADAPTER-SERVICE-REGISTRY.md)
-- [CRICKET-0001-audio-adapter-spec.md](../decisions/CRICKET-0001-audio-adapter-spec.md)
+- [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md)
+- [Companion-SERVICE-REGISTRY.md](../specs/Companion-SERVICE-REGISTRY.md)
+- [CRICKET-0001-audio-Companion-spec.md](../decisions/CRICKET-0001-audio-Companion-spec.md)
 
 ---
 
 ### Deprecated Port Assignments
 
-**7187 - Garden-Lantern Election (UDP)** - ❌ Superseded by adapter framework
+**7187 - Garden-Lantern Election (UDP)** - ❌ Superseded by Companion framework
 
 **Status:** Planned (Phase 1 implementation)  
 **Function:** Centralized service registry and topology management  

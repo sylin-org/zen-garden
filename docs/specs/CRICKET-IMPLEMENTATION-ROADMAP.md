@@ -8,7 +8,7 @@
 
 ## Overview
 
-Cricket is the first presence adapter for Zen Garden. This roadmap defines the incremental build plan, starting with a minimal viable implementation and expanding to full soundscape capability.
+Cricket is the first presence Companion for Zen Garden. This roadmap defines the incremental build plan, starting with a minimal viable implementation and expanding to full soundscape capability.
 
 **Protocol:** Cricket consumes PRESENCE-0001 (already implemented in Moss)  
 **Repository:** `zen-garden/garden-cricket` (separate during development)  
@@ -360,7 +360,7 @@ level = "info"
 5. Include in `garden-rake observe` output:
    ```
    Stone: stone-wyse-5070
-   Presence Adapters: 🔊 Cricket v0.1.0
+   Presence Companions: 🔊 Cricket v0.1.0
    ```
 
 ---
@@ -455,7 +455,7 @@ level = "info"
 ## References
 
 - [PRESENCE-0001](../decisions/PRESENCE-0001-stone-presence-protocol.md) - Protocol specification
-- [CRICKET-0001](../decisions/CRICKET-0001-audio-adapter-spec.md) - Detailed design & specialist assessment
+- [CRICKET-0001](../decisions/CRICKET-0001-audio-Companion-spec.md) - Detailed design & specialist assessment
 - [Moss Presence API](../../src/moss/src/api/v1/presence.rs) - Existing implementation
 - [Rake Presence Client](../../src/rake/src/commands/presence.rs) - Reference consumer
 

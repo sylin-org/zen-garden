@@ -1,6 +1,6 @@
 ﻿//! API Manifest - structured metadata for all Moss HTTP endpoints
 //!
-//! Similar to CommandManifest for adapters, this provides:
+//! Similar to CommandManifest for Companions, this provides:
 //! - Single source of truth for API documentation
 //! - Structured metadata that developers reference when creating endpoints
 //! - Dynamic generation of API specs for tools/docs
@@ -241,7 +241,7 @@ impl EndpointRegistry {
             },
             ApiCategory {
                 name: "stone".into(),
-                description: "Stone-level operations (upgrade, adapters, presence)".into(),
+                description: "Stone-level operations (upgrade, Companions, presence)".into(),
                 endpoints: categories_map.get("stone").cloned().unwrap_or_default(),
             },
             ApiCategory {

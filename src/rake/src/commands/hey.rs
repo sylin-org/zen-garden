@@ -1,17 +1,17 @@
-﻿//! Hey-tell command for adapter communication
+//! Hey-tell command for Companion communication
 //!
 //! Syntax:
-//!   hey tell {adapter} [args...]           → Send to tended stone
-//!   hey {stone} tell {adapter} [args...]   → Send to specific stone
+//!   hey tell {Companion} [args...]           ? Send to tended stone
+//!   hey {stone} tell {Companion} [args...]   ? Send to specific stone
 //!
-//! Rake is a thin pass-through. All args after adapter name are passed raw.
-//! The adapter owns its command structure and validation.
+//! Rake is a thin pass-through. All args after Companion name are passed raw.
+//! The Companion owns its command structure and validation.
 
 use async_trait::async_trait;
 
 use crate::context::CommandContext;
 use crate::commands::{Command, CommandResult};
-use garden_common::command_manifest::{AdapterCommandRequest, CommandManifest, CommandResponse};
+use garden_common::command_manifest::{CompanionCommandRequest, CommandManifest, CommandResponse};
 
 /// Parsed hey command
 #[derive(Debug, Clone)]
@@ -20,17 +20,17 @@ pub enum HeyCommand {
     Help,
     /// Show help for a specific token (e.g., "tell", "cricket")
     HelpFor(String),
-    /// List all registered adapters
-    ListAdapters,
-    /// Show adapter's command manifest
-    AdapterHelp(String),
-    /// Enable adapter
-    EnableAdapter(String),
-    /// Disable adapter
-    DisableAdapter(String),
-    /// Send raw command to adapter
+    /// List all registered Companions
+    ListCompanions,
+    /// Show Companion's command manifest
+    CompanionHelp(String),
+    /// Enable Companion
+    EnableCompanion(String),
+    /// Disable Companion
+    DisableCompanion(String),
+    /// Send raw command to Companion
     SendCommand {
-        adapter: String,
+        companion: String,
         raw_args: Vec<String>,
     },
     /// Unknown subcommand
@@ -40,14 +40,14 @@ pub enum HeyCommand {
 /// Parse hey command from args
 /// 
 /// Syntax:
-///   hey?                              → Help
-///   hey tell?                         → Help for tell
-///   hey tell                          → List adapters  
-///   hey tell {adapter}?               → Adapter help
-///   hey tell {adapter} on             → Enable
-///   hey tell {adapter} off            → Disable
-///   hey tell {adapter} [args...]      → Send command
-///   hey {stone} tell {adapter} [...]  → Send to specific stone (returns stone name)
+///   hey?                              ? Help
+///   hey tell?                         ? Help for tell
+///   hey tell                          ? List Companions  
+///   hey tell {Companion}?               ? Companion help
+///   hey tell {Companion} on             ? Enable
+///   hey tell {Companion} off            ? Disable
+///   hey tell {Companion} [args...]      ? Send command
+///   hey {stone} tell {Companion} [...]  ? Send to specific stone (returns stone name)
 pub fn parse_hey_command(args: &[String]) -> (HeyCommand, Option<String>) {
     if args.is_empty() {
         return (HeyCommand::Help, None);
@@ -84,34 +84,34 @@ pub fn parse_hey_command(args: &[String]) -> (HeyCommand, Option<String>) {
 
 /// Parse the tell subcommand
 fn parse_tell_command(args: &[String]) -> (HeyCommand, Option<String>) {
-    // No args = list adapters
+    // No args = list Companions
     if args.is_empty() {
-        return (HeyCommand::ListAdapters, None);
+        return (HeyCommand::ListCompanions, None);
     }
     
     let target = &args[0];
     
-    // Help for adapter (ends with ?)
+    // Help for companion (ends with ?)
     if target.ends_with('?') {
-        let adapter = target.trim_end_matches('?');
-        if adapter.is_empty() {
+        let companion = target.trim_end_matches('?');
+        if companion.is_empty() {
             return (HeyCommand::HelpFor("tell".to_string()), None);
         }
-        return (HeyCommand::AdapterHelp(adapter.to_string()), None);
+        return (HeyCommand::CompanionHelp(companion.to_string()), None);
     }
     
     // Lifecycle commands: up/down
     if args.len() >= 2 {
         match args[1].as_str() {
-            "up" => return (HeyCommand::EnableAdapter(target.clone()), None),
-            "down" => return (HeyCommand::DisableAdapter(target.clone()), None),
+            "up" => return (HeyCommand::EnableCompanion(target.clone()), None),
+            "down" => return (HeyCommand::DisableCompanion(target.clone()), None),
             _ => {}
         }
     }
     
-    // Pass remaining args to adapter (raw, no parsing)
+    // Pass remaining args to Companion (raw, no parsing)
     (HeyCommand::SendCommand {
-        adapter: target.clone(),
+        companion: target.clone(),
         raw_args: args[1..].to_vec(),
     }, None)
 }
@@ -175,29 +175,29 @@ async fn execute_hey_command(cmd: HeyCommand, endpoint: &str, ctx: &CommandConte
         HeyCommand::HelpFor(token) => {
             match token.as_str() {
                 "tell" => print_tell_help(),
-                adapter => show_adapter_commands(endpoint, adapter, ctx).await?,
+                companion => show_companion_commands(endpoint, companion, ctx).await?,
             }
             Ok(())
         }
-        
-        HeyCommand::ListAdapters => {
-            list_adapters(endpoint, ctx).await
+
+        HeyCommand::ListCompanions => {
+            list_companions(endpoint, ctx).await
+        }
+
+        HeyCommand::CompanionHelp(companion) => {
+            show_companion_commands(endpoint, &companion, ctx).await
+        }
+
+        HeyCommand::EnableCompanion(companion) => {
+            companion_lifecycle(endpoint, &companion, "enable", ctx).await
+        }
+
+        HeyCommand::DisableCompanion(companion) => {
+            companion_lifecycle(endpoint, &companion, "disable", ctx).await
         }
         
-        HeyCommand::AdapterHelp(adapter) => {
-            show_adapter_commands(endpoint, &adapter, ctx).await
-        }
-        
-        HeyCommand::EnableAdapter(adapter) => {
-            adapter_lifecycle(endpoint, &adapter, "enable", ctx).await
-        }
-        
-        HeyCommand::DisableAdapter(adapter) => {
-            adapter_lifecycle(endpoint, &adapter, "disable", ctx).await
-        }
-        
-        HeyCommand::SendCommand { adapter, raw_args } => {
-            send_adapter_command(endpoint, &adapter, &raw_args, ctx).await
+        HeyCommand::SendCommand { companion, raw_args } => {
+            send_companion_command(endpoint, &companion, &raw_args, ctx).await
         }
         
         HeyCommand::Unknown(token) => {
@@ -213,15 +213,15 @@ async fn execute_hey_command(cmd: HeyCommand, endpoint: &str, ctx: &CommandConte
 // =============================================================================
 
 fn print_hey_help() {
-    println!("hey - Communicate with Zen Garden adapters");
+    println!("hey - Communicate with Zen Garden Companions");
     println!();
     println!("Subcommands:");
-    println!("  tell    Send commands to registered adapters");
+    println!("  tell    Send commands to registered Companions");
     println!();
     println!("Usage:");
-    println!("  garden-rake hey tell                     List adapters");
-    println!("  garden-rake hey tell {{adapter}}           Send command to adapter");
-    println!("  garden-rake hey {{stone}} tell {{adapter}}  Send to specific stone");
+    println!("  garden-rake hey tell                     List Companions");
+    println!("  garden-rake hey tell {{Companion}}           Send command to Companion");
+    println!("  garden-rake hey {{stone}} tell {{Companion}}  Send to specific stone");
     println!();
     println!("Examples:");
     println!("  garden-rake hey tell cricket select mr-robot");
@@ -230,59 +230,59 @@ fn print_hey_help() {
 }
 
 fn print_tell_help() {
-    println!("hey tell - Send commands to adapters");
+    println!("hey tell - Send commands to Companions");
     println!();
     println!("Usage:");
-    println!("  hey tell                    List registered adapters");
-    println!("  hey tell {{adapter}}?        Show adapter commands");
-    println!("  hey tell {{adapter}} on      Enable adapter");
-    println!("  hey tell {{adapter}} off     Disable adapter");
-    println!("  hey tell {{adapter}} [args]  Send command (args passed raw)");
+    println!("  hey tell                    List registered Companions");
+    println!("  hey tell {{Companion}}?        Show Companion commands");
+    println!("  hey tell {{Companion}} on      Enable Companion");
+    println!("  hey tell {{Companion}} off     Disable Companion");
+    println!("  hey tell {{Companion}} [args]  Send command (args passed raw)");
     println!();
-    println!("Tip: Use 'hey tell {{adapter}}?' to see available commands");
+    println!("Tip: Use 'hey tell {{Companion}}?' to see available commands");
 }
 
 // =============================================================================
 // API functions - thin pass-through
 // =============================================================================
 
-/// List all registered adapters
-async fn list_adapters(endpoint: &str, ctx: &CommandContext) -> CommandResult {
-    let url = format!("{}/api/v1/stone/adapters", endpoint);
+/// List all registered Companions
+async fn list_companions(endpoint: &str, ctx: &CommandContext) -> CommandResult {
+    let url = format!("{}/api/v1/stone/companions", endpoint);
     let response = ctx.client.get(&url).send().await?;
     
     if !response.status().is_success() {
-        anyhow::bail!("Failed to list adapters: {}", response.status());
+        anyhow::bail!("Failed to list Companions: {}", response.status());
     }
     
-    // ApiResponse wraps data in { "data": { "adapters": [...] } }
+    // ApiResponse wraps data in { "data": { "companions": [...] } }
     let body: serde_json::Value = response.json().await?;
 
-    let adapters = body.get("data")
-        .and_then(|d| d.get("adapters"))
+    let companions = body.get("data")
+        .and_then(|d| d.get("companions"))
         .and_then(|a| a.as_array())
         .map(|a| a.to_vec())
         .unwrap_or_default();
     
-    if adapters.is_empty() {
-        println!("No adapters registered.");
+    if companions.is_empty() {
+        println!("No Companions registered.");
         println!();
-        println!("  → Install an adapter: sudo apt install garden-cricket");
-        println!("  → Or copy adapter to {}/adapters/", garden_common::constants::paths::data_dir());
+        println!("  ? Install an Companion: sudo apt install garden-cricket");
+        println!("  ? Or copy Companion to {}/companions/", garden_common::constants::paths::data_dir());
         return Ok(());
     }
     
-    println!("Registered Adapters:");
+    println!("Registered Companions:");
     println!();
     
-    for adapter in &adapters {
-        let id = adapter.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-        let version = adapter.get("version").and_then(|v| v.as_str()).unwrap_or("?");
-        let description = adapter.get("description").and_then(|v| v.as_str()).unwrap_or("");
-        let running = adapter.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
-        let pid = adapter.get("pid").and_then(|v| v.as_u64());
-        
-        let status_icon = if running { "●" } else { "○" };
+    for companion in &companions {
+        let id = companion.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        let version = companion.get("version").and_then(|v| v.as_str()).unwrap_or("?");
+        let description = companion.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let running = companion.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
+        let pid = companion.get("pid").and_then(|v| v.as_u64());
+
+        let status_icon = if running { "?" } else { "?" };
         let status_text = if running {
             if let Some(p) = pid {
                 format!(" [PID {}]", p)
@@ -292,29 +292,29 @@ async fn list_adapters(endpoint: &str, ctx: &CommandContext) -> CommandResult {
         } else {
             " [stopped]".to_string()
         };
-        
+
         println!("  {} {} (v{}){}", status_icon, id, version, status_text);
         if !description.is_empty() {
             println!("    {}", description);
         }
     }
-    
+
     println!();
-    println!("Tip: Use 'hey tell {{adapter}} up' to start, 'hey tell {{adapter}}?' for commands");
+    println!("Tip: Use 'hey tell {{companion}} up' to start, 'hey tell {{companion}}?' for commands");
     
     Ok(())
 }
 
-/// Show adapter's command manifest (fetched from Moss)
-async fn show_adapter_commands(endpoint: &str, adapter: &str, ctx: &CommandContext) -> CommandResult {
-    let url = format!("{}/api/v1/stone/adapters/{}", endpoint, adapter);
+/// Show companion's command manifest (fetched from Moss)
+async fn show_companion_commands(endpoint: &str, companion: &str, ctx: &CommandContext) -> CommandResult {
+    let url = format!("{}/api/v1/stone/companions/{}", endpoint, companion);
     let response = ctx.client.get(&url).send().await?;
-    
+
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::NOT_FOUND {
-            anyhow::bail!("Adapter '{}' not found", adapter);
+            anyhow::bail!("Companion '{}' not found", companion);
         }
-        anyhow::bail!("Failed to get adapter info: {}", response.status());
+        anyhow::bail!("Failed to get companion info: {}", response.status());
     }
     
     // ApiResponse wraps in { "data": { ...manifest fields... } }
@@ -358,8 +358,8 @@ async fn show_adapter_commands(endpoint: &str, adapter: &str, ctx: &CommandConte
     Ok(())
 }
 
-/// Start or stop adapter
-async fn adapter_lifecycle(endpoint: &str, adapter: &str, action: &str, _ctx: &CommandContext) -> CommandResult {
+/// Start or stop Companion
+async fn companion_lifecycle(endpoint: &str, companion: &str, action: &str, _ctx: &CommandContext) -> CommandResult {
     // Map enable/disable to up/down
     let api_action = match action {
         "enable" => "up",
@@ -367,30 +367,30 @@ async fn adapter_lifecycle(endpoint: &str, adapter: &str, action: &str, _ctx: &C
         _ => action,
     };
     
-    let url = format!("{}/api/v1/stone/adapters/{}/{}", endpoint, adapter, api_action);
+    let url = format!("{}/api/v1/stone/companions/{}/{}", endpoint, companion, api_action);
     let client = reqwest::Client::new();
     let response = client.post(&url).send().await?;
-    
+
     if response.status().is_success() {
         let body: serde_json::Value = response.json().await.unwrap_or_default();
         let running = body.get("running").and_then(|r| r.as_bool()).unwrap_or(false);
         let pid = body.get("pid").and_then(|p| p.as_u64());
         let message = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
-        
+
         if running {
             if let Some(p) = pid {
-                println!("✓ Adapter '{}' started (PID {})", adapter, p);
+                println!("Companion '{}' started (PID {})", companion, p);
             } else {
-                println!("✓ Adapter '{}' started", adapter);
+                println!("Companion '{}' started", companion);
             }
         } else {
-            println!("✓ Adapter '{}' stopped", adapter);
+            println!("Companion '{}' stopped", companion);
         }
-        
-        if !message.is_empty() && !message.contains(&adapter.to_string()) {
+
+        if !message.is_empty() && !message.contains(&companion.to_string()) {
             println!("  {}", message);
         }
-        
+
         Ok(())
     } else {
         let status = response.status();
@@ -402,16 +402,16 @@ async fn adapter_lifecycle(endpoint: &str, adapter: &str, action: &str, _ctx: &C
     }
 }
 
-/// Send command to adapter - raw pass-through
-async fn send_adapter_command(
-    endpoint: &str, 
-    adapter: &str, 
+/// Send command to companion - raw pass-through
+async fn send_companion_command(
+    endpoint: &str,
+    companion: &str,
     raw_args: &[String],
     ctx: &CommandContext,
 ) -> CommandResult {
-    let url = format!("{}/api/v1/stone/adapters/{}/command", endpoint, adapter);
-    
-    let request = AdapterCommandRequest::new(adapter, raw_args.to_vec());
+    let url = format!("{}/api/v1/stone/companions/{}/command", endpoint, companion);
+
+    let request = CompanionCommandRequest::new(companion, raw_args.to_vec());
     
     let response = ctx.client
         .post(&url)
@@ -427,13 +427,13 @@ async fn send_adapter_command(
         // Display based on status
         match body.status {
             garden_common::command_manifest::ResponseStatus::Success => {
-                println!("✓ {}", body.message);
+                println!("? {}", body.message);
             }
             garden_common::command_manifest::ResponseStatus::Warning => {
-                println!("⚠ {}", body.message);
+                println!("? {}", body.message);
             }
             garden_common::command_manifest::ResponseStatus::Error => {
-                eprintln!("✗ {}", body.message);
+                eprintln!("? {}", body.message);
             }
         }
         
@@ -444,7 +444,7 @@ async fn send_adapter_command(
         
         // Show suggestions
         for suggestion in &body.suggestions {
-            println!("  → {}", suggestion);
+            println!("  ? {}", suggestion);
         }
         
         if body.is_error() {
@@ -460,7 +460,7 @@ async fn send_adapter_command(
         
         // Show suggestions if available
         for suggestion in &body.suggestions {
-            eprintln!("  → {}", suggestion);
+            eprintln!("  ? {}", suggestion);
         }
         
         anyhow::bail!("{}: {}", status, body.message)
@@ -481,12 +481,12 @@ mod tests {
     #[test]
     fn test_parse_hey_tell_list() {
         let (cmd, stone) = parse_hey_command(&["tell".to_string()]);
-        assert!(matches!(cmd, HeyCommand::ListAdapters));
+        assert!(matches!(cmd, HeyCommand::ListCompanions));
         assert!(stone.is_none());
     }
     
     #[test]
-    fn test_parse_hey_tell_adapter_raw_args() {
+    fn test_parse_hey_tell_companion_raw_args() {
         let (cmd, stone) = parse_hey_command(&[
             "tell".to_string(),
             "cricket".to_string(),
@@ -495,15 +495,15 @@ mod tests {
         ]);
         
         match cmd {
-            HeyCommand::SendCommand { adapter, raw_args } => {
-                assert_eq!(adapter, "cricket");
+            HeyCommand::SendCommand { companion, raw_args } => {
+                assert_eq!(companion, "cricket");
                 assert_eq!(raw_args, vec!["select", "mr-robot"]);
             }
             _ => panic!("Expected SendCommand"),
         }
         assert!(stone.is_none());
     }
-    
+
     #[test]
     fn test_parse_hey_stone_tell() {
         let (cmd, stone) = parse_hey_command(&[
@@ -513,10 +513,10 @@ mod tests {
             "volume".to_string(),
             "50".to_string(),
         ]);
-        
+
         match cmd {
-            HeyCommand::SendCommand { adapter, raw_args } => {
-                assert_eq!(adapter, "cricket");
+            HeyCommand::SendCommand { companion, raw_args } => {
+                assert_eq!(companion, "cricket");
                 assert_eq!(raw_args, vec!["volume", "50"]);
             }
             _ => panic!("Expected SendCommand"),
@@ -525,17 +525,17 @@ mod tests {
     }
     
     #[test]
-    fn test_parse_adapter_help() {
+    fn test_parse_companion_help() {
         let (cmd, _) = parse_hey_command(&["tell".to_string(), "cricket?".to_string()]);
-        assert!(matches!(cmd, HeyCommand::AdapterHelp(a) if a == "cricket"));
+        assert!(matches!(cmd, HeyCommand::CompanionHelp(a) if a == "cricket"));
     }
     
     #[test]
-    fn test_parse_adapter_on_off() {
+    fn test_parse_companion_on_off() {
         let (cmd, _) = parse_hey_command(&["tell".to_string(), "cricket".to_string(), "up".to_string()]);
-        assert!(matches!(cmd, HeyCommand::EnableAdapter(a) if a == "cricket"));
+        assert!(matches!(cmd, HeyCommand::EnableCompanion(a) if a == "cricket"));
         
         let (cmd, _) = parse_hey_command(&["tell".to_string(), "cricket".to_string(), "down".to_string()]);
-        assert!(matches!(cmd, HeyCommand::DisableAdapter(a) if a == "cricket"));
+        assert!(matches!(cmd, HeyCommand::DisableCompanion(a) if a == "cricket"));
     }
 }

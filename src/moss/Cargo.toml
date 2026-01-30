@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "garden-moss"
 version = "0.1.0"
 edition = "2021"
@@ -51,7 +51,7 @@ md5 = "0.7"
 hex = "0.4"
 mime_guess = "2.0"
 
-# Embedded assets (manifests + default adapters)
+# Embedded assets (manifests + default Companions)
 rust-embed = "8"
 
 [target.'cfg(windows)'.dependencies]

@@ -1,4 +1,4 @@
-﻿//! Adapter runtime - main loop and shutdown coordination
+﻿//! Companion runtime - main loop and shutdown coordination
 //!
 //! The runtime manages:
 //! - HTTP command server lifecycle
@@ -8,40 +8,40 @@
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-use crate::cli::AdapterConfig;
+use crate::cli::CompanionConfig;
 use crate::handler::CommandHandler;
 use crate::server;
 use crate::sse::{EventHandler, SseClient, SseClientConfig};
 
-/// Adapter runtime builder and executor
+/// Companion runtime builder and executor
 ///
 /// # Example
 ///
 /// ```ignore
-/// AdapterRuntime::new(config, "my-adapter")
+/// CompanionRuntime::new(config, "my-Companion")
 ///     .command_handler(my_handler)
 ///     .event_handler(my_event_handler)  // optional
 ///     .run()
 ///     .await
 /// ```
-pub struct AdapterRuntime<H: CommandHandler> {
-    config: AdapterConfig,
-    adapter_name: String,
+pub struct CompanionRuntime<H: CommandHandler> {
+    config: CompanionConfig,
+    companion_name: String,
     handler: Option<Arc<H>>,
     event_handler: Option<Box<dyn FnOnce(SseClientConfig) -> JoinHandle<()> + Send>>,
 }
 
-impl<H: CommandHandler> AdapterRuntime<H> {
+impl<H: CommandHandler> CompanionRuntime<H> {
     /// Create a new runtime
     ///
     /// # Arguments
     ///
     /// * `config` - Parsed CLI config
-    /// * `adapter_name` - Adapter identifier (e.g., "cricket")
-    pub fn new(config: AdapterConfig, adapter_name: impl Into<String>) -> Self {
+    /// * `companion_name` - Companion identifier (e.g., "cricket")
+    pub fn new(config: CompanionConfig, companion_name: impl Into<String>) -> Self {
         Self {
             config,
-            adapter_name: adapter_name.into(),
+            companion_name: companion_name.into(),
             handler: None,
             event_handler: None,
         }
@@ -70,7 +70,7 @@ impl<H: CommandHandler> AdapterRuntime<H> {
         self
     }
 
-    /// Run the adapter
+    /// Run the Companion
     ///
     /// Starts the HTTP server, optionally the SSE client, and waits
     /// for shutdown (Ctrl+C or /shutdown endpoint).
@@ -82,15 +82,15 @@ impl<H: CommandHandler> AdapterRuntime<H> {
             .ok_or_else(|| anyhow::anyhow!("Command handler not set"))?;
 
         tracing::info!(
-            adapter = %self.adapter_name,
+            Companion = %self.companion_name,
             stone = %stone,
             port = port,
-            "Starting adapter"
+            "Starting Companion"
         );
 
         // Start command server
         let (server_handle, mut shutdown_rx) =
-            server::start_server(port, Arc::clone(&handler), &self.adapter_name).await?;
+            server::start_server(port, Arc::clone(&handler), &self.companion_name).await?;
 
         // Start SSE client if handler provided
         let sse_handle = if let Some(start_sse) = self.event_handler {
@@ -101,24 +101,24 @@ impl<H: CommandHandler> AdapterRuntime<H> {
         };
 
         tracing::info!(
-            adapter = %self.adapter_name,
-            "Adapter running. Press Ctrl+C to stop."
+            Companion = %self.companion_name,
+            "Companion running. Press Ctrl+C to stop."
         );
 
         // Wait for shutdown signal
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                tracing::info!(adapter = %self.adapter_name, "Ctrl+C received, shutting down");
+                tracing::info!(Companion = %self.companion_name, "Ctrl+C received, shutting down");
             }
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
-                    tracing::info!(adapter = %self.adapter_name, "Shutdown signal received");
+                    tracing::info!(Companion = %self.companion_name, "Shutdown signal received");
                 }
             }
         }
 
         // Cleanup
-        tracing::info!(adapter = %self.adapter_name, "Shutting down adapter");
+        tracing::info!(Companion = %self.companion_name, "Shutting down Companion");
 
         // Notify handler
         handler.on_shutdown().await;
@@ -129,12 +129,12 @@ impl<H: CommandHandler> AdapterRuntime<H> {
             handle.abort();
         }
 
-        tracing::info!(adapter = %self.adapter_name, "Adapter stopped");
+        tracing::info!(Companion = %self.companion_name, "Companion stopped");
         Ok(())
     }
 }
 
-/// Initialize tracing with standard adapter configuration
+/// Initialize tracing with standard Companion configuration
 ///
 /// Call this early in main() before other logging.
 pub fn init_tracing() {
@@ -163,13 +163,13 @@ mod tests {
 
     #[test]
     fn test_runtime_builder() {
-        let config = AdapterConfig {
+        let config = CompanionConfig {
             stone: Some("http://localhost:7185".into()),
             port: Some(7187),
             dump_commands: false,
         };
 
-        let _runtime = AdapterRuntime::new(config, "test").command_handler(TestHandler);
+        let _runtime = CompanionRuntime::new(config, "test").command_handler(TestHandler);
         // Just verify it builds without running
     }
 }

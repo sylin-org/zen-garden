@@ -1,4 +1,4 @@
-# Rust Refactoring Implementation Status
+﻿# Rust Refactoring Implementation Status
 
 **Proposal:** [rust-refactoring-proposal.md](proposals/rust-refactoring-proposal.md)
 **Status:** ✅ Complete (100%)
@@ -36,7 +36,7 @@ moss/src/
 │   ├── modes/        ✅ Offering modes
 │   ├── offerings/    ✅ Offering management
 │   └── reconciliation/✅ Service reconciliation
-├── infra/            ✅ Infrastructure adapters (18 files, 2,837 lines)
+├── infra/            ✅ Infrastructure Companions (18 files, 2,837 lines)
 │   ├── auth/         ✅ Authentication
 │   ├── config/       ✅ Configuration
 │   ├── container/    ✅ Container runtime
@@ -113,7 +113,7 @@ The `run_daemon()` function in `bootstrap/run.rs` handles 14 startup phases:
 | Directory | Files | Lines | Purpose |
 |-----------|-------|-------|---------|
 | api/ | 12 | 2,890 | HTTP endpoints |
-| infra/ | 19 | 2,920 | Infrastructure adapters |
+| infra/ | 19 | 2,920 | Infrastructure Companions |
 | tasks/ | 7 | 1,834 | Background tasks |
 | domain/ | 15 | 1,819 | Business logic |
 | bootstrap/ | 8 | 1,023 | Initialization |
@@ -224,7 +224,7 @@ These modules work correctly but could move to proper directories for consistenc
 ## Validation Checklist
 
 - [x] Domain/ directory exists and contains business logic
-- [x] Infra/ directory exists and contains I/O adapters
+- [x] Infra/ directory exists and contains I/O Companions
 - [x] API/ directory exists with versioned endpoints (v1/)
 - [x] Bootstrap/ directory exists for initialization
 - [x] Tasks/ directory exists for background operations

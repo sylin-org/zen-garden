@@ -2,7 +2,7 @@
 //!
 //! Implements the SDK's CommandHandler trait for Cricket-specific commands.
 
-use garden_adapter_sdk::{async_trait, AdapterState, CommandHandler, CommandResponse};
+use garden_companion_sdk::{async_trait, CompanionState, CommandHandler, CommandResponse};
 use std::sync::Arc;
 
 use crate::manifest::TuneManager;
@@ -10,16 +10,16 @@ use crate::mixer::{Channel, Mixer};
 
 /// Cricket command handler
 ///
-/// Implements the adapter SDK's CommandHandler trait.
+/// Implements the Companion SDK's CommandHandler trait.
 pub struct CricketHandler {
     pub mixer: Arc<Mixer>,
     pub tune_manager: Arc<TuneManager>,
-    pub state: Arc<AdapterState>,
+    pub state: Arc<CompanionState>,
 }
 
 impl CricketHandler {
     /// Create a new Cricket command handler
-    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<AdapterState>) -> Self {
+    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<CompanionState>) -> Self {
         Self { mixer, tune_manager, state }
     }
 }

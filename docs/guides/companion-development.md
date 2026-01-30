@@ -1,34 +1,34 @@
-﻿# Adapter Development Guide
+﻿# Companion Development Guide
 
-**Purpose:** Build custom adapters that extend Moss capabilities  
+**Purpose:** Build custom Companions that extend Moss capabilities  
 **Audience:** Developers
 
 ---
 
 ## Overview
 
-Adapters are standalone executables that:
+Companions are standalone executables that:
 1. Receive a port assignment from Moss via CLI arguments
 2. Expose an HTTP command server on that port
 3. Subscribe to Stone presence events via SSE (optional)
 4. Execute commands and return results
 5. Support graceful shutdown via `/shutdown` endpoint
 
-**Language:** Rust (recommended, uses `garden-adapter-sdk`) or any language supporting HTTP servers
+**Language:** Rust (recommended, uses `garden-companion-sdk`) or any language supporting HTTP servers
 
 ---
 
 ## Quick Start with Rust SDK
 
-The `garden-adapter-sdk` crate provides all common adapter infrastructure:
+The `garden-companion-sdk` crate provides all common Companion infrastructure:
 
 ```rust
-use garden_adapter_sdk::prelude::*;
+use garden_companion_sdk::prelude::*;
 use std::sync::Arc;
 
 // 1. Define your manifest
 fn build_manifest() -> CommandManifest {
-    CommandManifest::new("my-adapter", "My Adapter", "0.1.0", "Does cool things")
+    CommandManifest::new("my-Companion", "My Companion", "0.1.0", "Does cool things")
         .command(CommandDef::new("hello", "Say hello"))
         .command(
             CommandDef::new("greet", "Greet someone")
@@ -69,13 +69,13 @@ async fn main() -> Result<()> {
     check_dump_commands(&build_manifest());
     
     // Initialize logging
-    garden_adapter_sdk::runtime::init_tracing();
+    garden_companion_sdk::runtime::init_tracing();
     
     // Parse CLI
-    let config = AdapterConfig::from_cli();
+    let config = CompanionConfig::from_cli();
     
-    // Run adapter (handles HTTP server, shutdown, etc.)
-    AdapterRuntime::new(config, "my-adapter")
+    // Run Companion (handles HTTP server, shutdown, etc.)
+    CompanionRuntime::new(config, "my-Companion")
         .command_handler(MyHandler)
         .run()
         .await
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
 **Cargo.toml:**
 ```toml
 [dependencies]
-garden-adapter-sdk = { path = "../adapter-sdk" }
+garden-companion-sdk = { path = "../companion-sdk" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -93,7 +93,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 ## SDK Features
 
-The `garden-adapter-sdk` provides:
+The `garden-companion-sdk` provides:
 
 | Module | Purpose |
 |--------|---------|
@@ -136,7 +136,7 @@ impl EventHandler for MyEventHandler {
     }
 }
 
-AdapterRuntime::new(config, "my-adapter")
+CompanionRuntime::new(config, "my-Companion")
     .command_handler(cmd_handler)
     .event_handler(event_handler)  // Optional
     .run()
@@ -160,7 +160,7 @@ AdapterRuntime::new(config, "my-adapter")
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/command` | Execute adapter commands |
+| `POST` | `/command` | Execute Companion commands |
 | `POST` | `/shutdown` | Graceful shutdown (called by Moss before upgrades) |
 | `GET` | `/health` | Health check |
 
@@ -177,22 +177,22 @@ AdapterRuntime::new(config, "my-adapter")
 
 **POST /shutdown Response:**
 ```json
-{ "status": "shutting_down", "adapter": "my-adapter" }
+{ "status": "shutting_down", "Companion": "my-Companion" }
 ```
 
-The `/shutdown` endpoint is critical for graceful upgrades. When Moss receives a deployment package, it calls `/shutdown` on all running adapters before installing new binaries.
+The `/shutdown` endpoint is critical for graceful upgrades. When Moss receives a deployment package, it calls `/shutdown` on all running Companions before installing new binaries.
 
 ---
 
 ### 3. Timeout
 
-Commands must respond within **5 seconds**. Moss will timeout and return error if adapter takes longer.
+Commands must respond within **5 seconds**. Moss will timeout and return error if Companion takes longer.
 
 ---
 
 ## Quick Start (Non-Rust)
 
-### Python Minimal Adapter
+### Python Minimal Companion
 
 ```python
 #!/usr/bin/env python3
@@ -204,10 +204,10 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 shutdown_flag = threading.Event()
 
-class AdapterHandler(BaseHTTPRequestHandler):
+class CompanionHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/health':
-            self.send_json(200, {'status': 'healthy', 'adapter': 'my-adapter'})
+            self.send_json(200, {'status': 'healthy', 'Companion': 'my-Companion'})
         else:
             self.send_response(404)
             self.end_headers()
@@ -221,7 +221,7 @@ class AdapterHandler(BaseHTTPRequestHandler):
         elif self.path == '/shutdown':
             self.send_json(200, {
                 'status': 'shutting_down',
-                'adapter': 'my-adapter'
+                'Companion': 'my-Companion'
             })
             # Signal main thread to shutdown
             shutdown_flag.set()
@@ -245,7 +245,7 @@ class AdapterHandler(BaseHTTPRequestHandler):
         
         command = args[0]
         if command == 'hello':
-            return {'success': True, 'output': 'Hello from my adapter!'}
+            return {'success': True, 'output': 'Hello from my Companion!'}
         else:
             return {'success': False, 'output': f'Unknown command: {command}'}
 
@@ -259,10 +259,10 @@ def main():
     
     if args.dump_commands:
         manifest = {
-            'id': 'my-adapter',
-            'name': 'My Adapter',
+            'id': 'my-Companion',
+            'name': 'My Companion',
             'version': '0.1.0',
-            'description': 'Example adapter',
+            'description': 'Example Companion',
             'commands': [{'name': 'hello', 'description': 'Say hello'}]
         }
         print(json.dumps(manifest))
@@ -272,8 +272,8 @@ def main():
         print('--stone and --port required', file=sys.stderr)
         sys.exit(1)
     
-    server = HTTPServer(('0.0.0.0', args.port), AdapterHandler)
-    print(f'Adapter running on port {args.port}', file=sys.stderr)
+    server = HTTPServer(('0.0.0.0', args.port), CompanionHandler)
+    print(f'Companion running on port {args.port}', file=sys.stderr)
     
     # Run server in thread, check shutdown flag
     server_thread = threading.Thread(target=server.serve_forever)
@@ -281,7 +281,7 @@ def main():
     
     shutdown_flag.wait()  # Block until /shutdown called
     server.shutdown()
-    print('Adapter stopped', file=sys.stderr)
+    print('Companion stopped', file=sys.stderr)
 
 if __name__ == '__main__':
     main()
@@ -290,10 +290,10 @@ if __name__ == '__main__':
 **Usage:**
 ```bash
 # Test manifest output
-python my-adapter.py --dump-commands --port 7187
+python my-Companion.py --dump-commands --port 7187
 
-# Start adapter
-python my-adapter.py --stone http://localhost:7185 --port 7187
+# Start Companion
+python my-Companion.py --stone http://localhost:7185 --port 7187
 
 # Send command
 curl -X POST http://localhost:7187/command \
@@ -314,8 +314,8 @@ curl -X POST http://localhost:7187/command \
 
 **Example:**
 ```bash
-garden-my-adapter --stone http://localhost:7185 --port 7187
-garden-my-adapter --dump-commands --port 7187
+garden-my-Companion --stone http://localhost:7185 --port 7187
+garden-my-Companion --dump-commands --port 7187
 ```
 
 ---
@@ -326,9 +326,9 @@ Output JSON manifest when invoked with `--dump-commands`:
 
 ```json
 {
-  "name": "My Adapter",
+  "name": "My Companion",
   "version": "0.1.0",
-  "description": "Short description of adapter purpose",
+  "description": "Short description of Companion purpose",
   "commands": [
     {
       "name": "command-name",
@@ -386,7 +386,7 @@ Output JSON manifest when invoked with `--dump-commands`:
 }
 ```
 
-**Timeout:** Commands must respond within 5 seconds. Moss will timeout and return error if adapter takes longer.
+**Timeout:** Commands must respond within 5 seconds. Moss will timeout and return error if Companion takes longer.
 
 ---
 
@@ -463,7 +463,7 @@ async fn handle_command(Json(req): Json<CommandRequest>) -> Json<CommandResponse
     match command {
         "hello" => Json(CommandResponse {
             success: true,
-            output: "Hello from Rust adapter!".to_string(),
+            output: "Hello from Rust Companion!".to_string(),
         }),
         _ => Json(CommandResponse {
             success: false,
@@ -479,9 +479,9 @@ async fn main() {
     if args.dump_commands {
         // Output manifest
         let manifest = serde_json::json!({
-            "name": "My Rust Adapter",
+            "name": "My Rust Companion",
             "version": "0.1.0",
-            "description": "Example Rust adapter",
+            "description": "Example Rust Companion",
             "commands": [
                 {
                     "name": "hello",
@@ -500,7 +500,7 @@ async fn main() {
     let addr = format!("127.0.0.1:{}", args.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
     
-    eprintln!("Adapter listening on {}", addr);
+    eprintln!("Companion listening on {}", addr);
     axum::serve(listener, app).await.unwrap();
 }
 ```
@@ -524,9 +524,9 @@ const opts = program.opts();
 
 if (opts.dumpCommands) {
   const manifest = {
-    name: 'My Node Adapter',
+    name: 'My Node Companion',
     version: '0.1.0',
-    description: 'Example Node.js adapter',
+    description: 'Example Node.js Companion',
     commands: [
       {
         name: 'hello',
@@ -559,28 +559,28 @@ app.post('/command', (req, res) => {
 });
 
 app.listen(opts.port, '127.0.0.1', () => {
-  console.error(`Adapter listening on port ${opts.port}`);
+  console.error(`Companion listening on port ${opts.port}`);
 });
 ```
 
 ---
 
-## Testing Your Adapter
+## Testing Your Companion
 
 ### 1. Test Manifest Output
 
 ```bash
-./my-adapter --dump-commands --port 7187 | jq
+./my-Companion --dump-commands --port 7187 | jq
 ```
 
 Verify JSON is valid and contains all required fields.
 
 ---
 
-### 2. Start Adapter Manually
+### 2. Start Companion Manually
 
 ```bash
-./my-adapter --stone http://localhost:7185 --port 7187
+./my-Companion --stone http://localhost:7185 --port 7187
 ```
 
 ---
@@ -604,10 +604,10 @@ curl -X POST http://localhost:7187/command \
 ### 4. Register with Moss
 
 ```bash
-# Copy to adapters directory
-sudo mkdir -p /usr/local/bin/adapters/my-adapter
-sudo cp my-adapter /usr/local/bin/adapters/my-adapter/
-sudo chmod +x /usr/local/bin/adapters/my-adapter/my-adapter
+# Copy to Companions directory
+sudo mkdir -p /usr/local/bin/companions/my-Companion
+sudo cp my-Companion /usr/local/bin/companions/my-Companion/
+sudo chmod +x /usr/local/bin/companions/my-Companion/my-Companion
 
 # Restart Moss (or trigger refresh)
 sudo systemctl restart garden-moss
@@ -621,8 +621,8 @@ garden-rake hey list
 ### 5. Test via Rake
 
 ```bash
-garden-rake hey my-adapter          # Show help
-garden-rake hey tell my-adapter hello   # Send command
+garden-rake hey my-Companion          # Show help
+garden-rake hey tell my-Companion hello   # Send command
 ```
 
 ---
@@ -671,9 +671,9 @@ Log to stderr, not stdout (stdout reserved for manifest):
 import sys
 
 def log(message):
-    print(f'[my-adapter] {message}', file=sys.stderr)
+    print(f'[my-Companion] {message}', file=sys.stderr)
 
-log('Starting adapter...')
+log('Starting Companion...')
 ```
 
 ---
@@ -715,23 +715,23 @@ def do_GET(self):
 
 ### Option 1: Manual Installation
 
-Provide compiled binary/script for users to copy to adapters directory.
+Provide compiled binary/script for users to copy to Companions directory.
 
 ---
 
 ### Option 2: Package Manager (Future)
 
-Planned: Adapter packages installable via Rake:
+Planned: Companion packages installable via Rake:
 ```bash
-garden-rake adapter install my-adapter
+garden-rake Companion install my-Companion
 ```
 
 ---
 
 ## Reference
 
-- [ADAPTER-COMMAND-PROTOCOL.md](../specs/ADAPTER-COMMAND-PROTOCOL.md) - Full protocol spec
-- [ADAPTER-SERVICE-REGISTRY.md](../specs/ADAPTER-SERVICE-REGISTRY.md) - Registration details
+- [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md) - Full protocol spec
+- [Companion-SERVICE-REGISTRY.md](../specs/Companion-SERVICE-REGISTRY.md) - Registration details
 - [HEY-TELL-SYNTAX.md](../specs/HEY-TELL-SYNTAX.md) - Command grammar
 - [Cricket source](../../src/cricket/) - Reference implementation in Rust
 - [ports.md](../reference/ports.md) - Port allocation (7187-7199)
@@ -742,7 +742,7 @@ garden-rake adapter install my-adapter
 
 ### Complete Examples
 
-1. **Cricket** (`src/cricket/`) - Full-featured audio adapter with SSE, mixer, tune system
+1. **Cricket** (`src/cricket/`) - Full-featured audio Companion with SSE, mixer, tune system
 2. **Minimal Python** (above) - Bare minimum command server
 3. **Rust with Axum** (above) - Async Rust implementation
 4. **Node.js with Express** (above) - JavaScript implementation
@@ -751,6 +751,6 @@ garden-rake adapter install my-adapter
 
 ## Getting Help
 
-- Open issue on GitHub with `[adapter]` prefix
-- Check existing adapters for patterns
+- Open issue on GitHub with `[Companion]` prefix
+- Check existing Companions for patterns
 - Review Cricket source for complex examples

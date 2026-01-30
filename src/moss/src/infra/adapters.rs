@@ -567,11 +567,16 @@ impl AdapterRegistry {
             "Starting adapter"
         );
         
+        // Create adapter-specific state directory
+        let adapter_state_dir = self.data_path.join("adapters").join(id);
+
         let child = Command::new(&executable)
             .arg("--stone")
             .arg(moss_endpoint)
             .arg("--port")
             .arg(port.to_string())
+            .arg("--state-dir")
+            .arg(&adapter_state_dir)
             .kill_on_drop(false) // Keep running if Moss restarts
             .spawn()
             .with_context(|| format!("Failed to start adapter {}", id))?;

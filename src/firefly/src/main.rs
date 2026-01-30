@@ -258,10 +258,44 @@ async fn main() -> Result<()> {
         dump_commands: false,
     };
 
-    AdapterRuntime::new(config, "firefly")
-        .command_handler(handler)
-        .run()
-        .await
+    // Clone connection for shutdown handler
+    let conn_for_shutdown = Arc::clone(&connection);
+
+    // Run adapter with graceful shutdown
+    tokio::select! {
+        result = AdapterRuntime::new(config, "firefly")
+            .command_handler(handler)
+            .run() => {
+            // Adapter stopped normally - clear display
+            tracing::info!("Adapter stopped, clearing display");
+            let _ = conn_for_shutdown.with_device(|serial| serial.clear());
+            result
+        }
+        _ = shutdown_signal() => {
+            // Received shutdown signal - clear display
+            tracing::info!("Shutdown signal received, clearing display");
+            let _ = conn_for_shutdown.with_device(|serial| serial.clear());
+            Ok(())
+        }
+    }
+}
+
+/// Wait for shutdown signal (SIGTERM on Unix, Ctrl+C everywhere)
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+        tokio::select! {
+            _ = sigterm.recv() => {}
+            _ = sigint.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+    }
 }
 
 /// List available serial ports

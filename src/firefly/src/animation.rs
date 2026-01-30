@@ -266,6 +266,8 @@ pub struct AnimationEngine {
     occupied: [bool; TOTAL_PIXELS],
     /// Track which pixels were lit last frame (for clearing)
     prev_lit: [bool; TOTAL_PIXELS],
+    /// Track if we were in override last frame (for clean transition)
+    was_in_override: bool,
     rng: StdRng,
 }
 
@@ -281,6 +283,7 @@ impl AnimationEngine {
             last_spawn: Instant::now(),
             occupied: [false; TOTAL_PIXELS],
             prev_lit: [false; TOTAL_PIXELS],
+            was_in_override: false,
             rng: StdRng::from_entropy(),
         }
     }
@@ -317,7 +320,15 @@ impl AnimationEngine {
                 }
                 // Update/expire override
                 self.context.write().await.update_override();
+                self.was_in_override = true;
             } else {
+                // Transitioning from override back to baseline - clear for fresh start
+                if self.was_in_override {
+                    self.clear_all();
+                    self.reset_fireflies();
+                    self.was_in_override = false;
+                    tracing::debug!("Override ended, cleared display for baseline");
+                }
                 // Baseline firefly animation
                 self.update_baseline().await;
             }
@@ -523,6 +534,14 @@ impl AnimationEngine {
     /// Clear all pixels
     fn clear_all(&self) {
         let _ = self.connection.with_device(|serial| serial.clear());
+    }
+
+    /// Reset firefly state for fresh start after override
+    fn reset_fireflies(&mut self) {
+        self.fireflies.clear();
+        self.occupied = [false; TOTAL_PIXELS];
+        self.prev_lit = [false; TOTAL_PIXELS];
+        self.last_spawn = Instant::now();
     }
 }
 

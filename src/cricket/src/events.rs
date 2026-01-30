@@ -2,7 +2,7 @@
 //!
 //! Handles presence events from Moss and triggers audio playback.
 
-use garden_adapter_sdk::{async_trait, EventHandler, SseEvent};
+use garden_adapter_sdk::{async_trait, AdapterState, EventHandler, SseEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -49,15 +49,17 @@ impl DebounceState {
 pub struct CricketEventHandler {
     mixer: Arc<Mixer>,
     tune_manager: Arc<TuneManager>,
+    state: Arc<AdapterState>,
     debounce: Arc<RwLock<DebounceState>>,
 }
 
 impl CricketEventHandler {
     /// Create a new event handler
-    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>) -> Self {
+    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<AdapterState>) -> Self {
         Self {
             mixer,
             tune_manager,
+            state,
             debounce: Arc::new(RwLock::new(DebounceState::new())),
         }
     }
@@ -66,6 +68,15 @@ impl CricketEventHandler {
 #[async_trait]
 impl EventHandler for CricketEventHandler {
     async fn on_event(&self, event: SseEvent) {
+        // Skip processing if disabled (user ran "off" command)
+        if !self.state.is_enabled() {
+            tracing::trace!(
+                event_type = %event.event_type,
+                "Ignoring event - Cricket disabled"
+            );
+            return;
+        }
+
         // Get mapping from active tune
         let Some(mapping) = self.tune_manager.get_event_mapping(&event.event_type) else {
             tracing::trace!(event = %event.event_type, "No mapping for event");

@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
 use garden_adapter_sdk::{
-    check_dump_commands, AdapterRuntime, CommandArg, CommandDef, CommandManifest,
+    check_dump_commands, AdapterRuntime, AdapterState, CommandArg, CommandDef, CommandManifest,
 };
 
 mod events;
@@ -100,6 +100,10 @@ struct Cli {
     /// Default is computed from adapter ID (7188-7199 range)
     #[arg(long, env = "CRICKET_PORT")]
     port: Option<u16>,
+
+    /// State directory for persisting settings
+    #[arg(long, env = "CRICKET_STATE_DIR")]
+    state_dir: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -171,7 +175,11 @@ async fn main() -> Result<()> {
     // Port is assigned by Moss and passed via --port
     let port = cli.port
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss when starting adapter)"))?;
-    
+
+    // Create adapter state (handles on/off persistence)
+    let state_dir = cli.state_dir.map(std::path::PathBuf::from);
+    let adapter_state = Arc::new(AdapterState::new(state_dir));
+
     // Ensure audio dependencies are installed (alsa-utils on Linux)
     mixer::ensure_audio_dependencies()?;
     
@@ -194,8 +202,16 @@ async fn main() -> Result<()> {
     );
     
     // Create handlers
-    let command_handler = CricketHandler::new(Arc::clone(&mixer), Arc::clone(&tune_manager));
-    let event_handler = CricketEventHandler::new(Arc::clone(&mixer), Arc::clone(&tune_manager));
+    let command_handler = CricketHandler::new(
+        Arc::clone(&mixer),
+        Arc::clone(&tune_manager),
+        Arc::clone(&adapter_state),
+    );
+    let event_handler = CricketEventHandler::new(
+        Arc::clone(&mixer),
+        Arc::clone(&tune_manager),
+        Arc::clone(&adapter_state),
+    );
 
     // Build and run adapter using SDK runtime
     let config = garden_adapter_sdk::AdapterConfig {

@@ -2,7 +2,7 @@
 //!
 //! Implements the SDK's CommandHandler trait for Cricket-specific commands.
 
-use garden_adapter_sdk::{async_trait, CommandHandler, CommandResponse};
+use garden_adapter_sdk::{async_trait, AdapterState, CommandHandler, CommandResponse};
 use std::sync::Arc;
 
 use crate::manifest::TuneManager;
@@ -14,12 +14,13 @@ use crate::mixer::{Channel, Mixer};
 pub struct CricketHandler {
     pub mixer: Arc<Mixer>,
     pub tune_manager: Arc<TuneManager>,
+    pub state: Arc<AdapterState>,
 }
 
 impl CricketHandler {
     /// Create a new Cricket command handler
-    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>) -> Self {
-        Self { mixer, tune_manager }
+    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<AdapterState>) -> Self {
+        Self { mixer, tune_manager, state }
     }
 }
 
@@ -49,6 +50,9 @@ impl CommandHandler for CricketHandler {
             "play" => self.handle_play(cmd_args).await,
             "stop" => self.handle_stop(cmd_args).await,
             "volume" | "vol" => self.handle_volume(cmd_args).await,
+            // On/off for SSE event handling
+            "on" => self.handle_on().await,
+            "off" => self.handle_off().await,
             // Internal/legacy commands
             "tune" => self.handle_select(cmd_args).await, // alias for select
             "status" => self.handle_status().await,
@@ -61,6 +65,8 @@ impl CommandHandler for CricketHandler {
                     "play <event>",
                     "stop",
                     "volume <0-100>",
+                    "on",
+                    "off",
                 ]),
         }
     }
@@ -303,8 +309,10 @@ impl CricketHandler {
             .active_name()
             .unwrap_or_else(|| "(none)".to_string());
         let tune = self.tune_manager.active();
+        let sse_status = if self.state.is_enabled() { "on" } else { "off" };
 
         let mut output = format!("Active tune: {}\n", active);
+        output.push_str(&format!("SSE events: {}\n", sse_status));
 
         if let Some(t) = tune {
             output.push_str(&format!("Version: {}\n", t.version));
@@ -312,6 +320,29 @@ impl CricketHandler {
         }
 
         CommandResponse::success_with_details("Cricket status", output)
+    }
+
+    /// Handle on command - enable SSE event handling
+    async fn handle_on(&self) -> CommandResponse {
+        self.state.enable();
+        CommandResponse::success("Cricket enabled - now responding to system events")
+    }
+
+    /// Handle off command - disable SSE event handling and stop all audio
+    async fn handle_off(&self) -> CommandResponse {
+        self.state.disable();
+
+        // Stop all channels
+        for channel in [
+            Channel::Foreground,
+            Channel::Midground,
+            Channel::Ambient,
+            Channel::Background,
+        ] {
+            self.mixer.stop(channel).await;
+        }
+
+        CommandResponse::success("Cricket disabled - ignoring system events")
     }
 
     /// Get event suggestions from active tune

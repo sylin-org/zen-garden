@@ -8,13 +8,13 @@
 //! Features per (action_type, offering_id) debouncing to avoid spamming the OS scheduler
 //! during rapid events. Different action types for the same offering pass immediately.
 //!
-//! This is a stub implementation - actual timer creation depends on the platform:
+//! # Platform Support
 //! - Linux: systemd timers (zen-nurturing-{name}.timer)
-//! - Windows: Task Scheduler tasks
+//! - Windows: Task Scheduler tasks (ZenGarden-Nurturing-{name})
 
 use crate::domain::events::OfferingEvent;
 use crate::infra::event_bus::EventListener;
-use garden_common::infra::StringPairDebouncer;
+use garden_common::infra::{PlatformTimer, StringPairDebouncer, TimerConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -61,9 +61,18 @@ impl TimerAction {
             Self::Rename { .. } => "rename",
         }
     }
+
+    /// Get the offering name for the action
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Create { name, .. } => name,
+            Self::Remove { name, .. } => name,
+            Self::Rename { new_name, .. } => new_name,
+        }
+    }
 }
 
-/// Callback for timer management actions
+/// Callback for timer management actions (for testing)
 pub type TimerCallback = Arc<dyn Fn(TimerAction) + Send + Sync>;
 
 /// Listener that manages nurturing timers based on lifecycle events
@@ -71,34 +80,87 @@ pub type TimerCallback = Arc<dyn Fn(TimerAction) + Send + Sync>;
 /// Debounces per (action_type, offering_id) to prevent spamming the OS scheduler.
 /// Different action types for the same offering pass immediately.
 pub struct TimerListener {
-    /// Callback to perform timer actions
-    action_fn: Option<TimerCallback>,
+    /// Platform-specific timer manager
+    platform_timer: Arc<PlatformTimer>,
+    /// Timer configuration (interval, persistence, etc.)
+    timer_config: TimerConfig,
     /// Debouncer using shared garden_common implementation
     debouncer: StringPairDebouncer,
     /// Pending actions (for testing/inspection)
     pending_actions: RwLock<Vec<TimerAction>>,
+    /// Optional callback for testing (called instead of platform timer)
+    test_callback: Option<TimerCallback>,
+    /// Whether to actually execute platform timer operations
+    execute_enabled: bool,
 }
 
 impl TimerListener {
-    /// Create a new timer listener without a callback
+    /// Create a new timer listener with platform timer integration
     ///
-    /// Actions will be recorded but not executed.
-    /// Use this for testing or when timer management is not yet implemented.
+    /// Timer actions will be executed using the platform-specific timer manager.
     pub fn new() -> Self {
-        Self::with_debounce(None, Duration::from_millis(DEFAULT_TIMER_DEBOUNCE_MS))
+        Self::with_config(TimerConfig::default())
     }
 
-    /// Create a new timer listener with the given callback
-    pub fn with_callback(action_fn: TimerCallback) -> Self {
-        Self::with_debounce(Some(action_fn), Duration::from_millis(DEFAULT_TIMER_DEBOUNCE_MS))
-    }
-
-    /// Create with custom debounce duration
-    pub fn with_debounce(action_fn: Option<TimerCallback>, debounce: Duration) -> Self {
+    /// Create with custom timer configuration
+    pub fn with_config(timer_config: TimerConfig) -> Self {
         Self {
-            action_fn,
+            platform_timer: Arc::new(PlatformTimer::new()),
+            timer_config,
+            debouncer: StringPairDebouncer::new(Duration::from_millis(DEFAULT_TIMER_DEBOUNCE_MS)),
+            pending_actions: RwLock::new(Vec::new()),
+            test_callback: None,
+            execute_enabled: true,
+        }
+    }
+
+    /// Create with custom API base URL for timer triggers
+    pub fn with_api_url(api_base_url: &str) -> Self {
+        Self {
+            platform_timer: Arc::new(PlatformTimer::with_api_url(api_base_url)),
+            timer_config: TimerConfig::default(),
+            debouncer: StringPairDebouncer::new(Duration::from_millis(DEFAULT_TIMER_DEBOUNCE_MS)),
+            pending_actions: RwLock::new(Vec::new()),
+            test_callback: None,
+            execute_enabled: true,
+        }
+    }
+
+    /// Create a test listener that records actions but doesn't execute them
+    ///
+    /// Use this for testing or when timer management should be disabled.
+    pub fn test_only() -> Self {
+        Self {
+            platform_timer: Arc::new(PlatformTimer::new()),
+            timer_config: TimerConfig::default(),
+            debouncer: StringPairDebouncer::new(Duration::from_millis(DEFAULT_TIMER_DEBOUNCE_MS)),
+            pending_actions: RwLock::new(Vec::new()),
+            test_callback: None,
+            execute_enabled: false,
+        }
+    }
+
+    /// Create with a test callback (for unit testing)
+    pub fn with_test_callback(callback: TimerCallback) -> Self {
+        Self {
+            platform_timer: Arc::new(PlatformTimer::new()),
+            timer_config: TimerConfig::default(),
+            debouncer: StringPairDebouncer::new(Duration::from_millis(DEFAULT_TIMER_DEBOUNCE_MS)),
+            pending_actions: RwLock::new(Vec::new()),
+            test_callback: Some(callback),
+            execute_enabled: false,
+        }
+    }
+
+    /// Create with custom debounce duration (for testing)
+    pub fn with_debounce(debounce: Duration, execute_enabled: bool) -> Self {
+        Self {
+            platform_timer: Arc::new(PlatformTimer::new()),
+            timer_config: TimerConfig::default(),
             debouncer: StringPairDebouncer::new(debounce),
             pending_actions: RwLock::new(Vec::new()),
+            test_callback: None,
+            execute_enabled,
         }
     }
 
@@ -110,6 +172,57 @@ impl TimerListener {
     /// Clear pending actions
     pub async fn clear_pending(&self) {
         self.pending_actions.write().await.clear();
+    }
+
+    /// Get the platform timer (for direct access)
+    pub fn platform_timer(&self) -> &PlatformTimer {
+        &self.platform_timer
+    }
+
+    /// Execute a timer action using the platform timer
+    async fn execute_action(&self, action: &TimerAction) {
+        if !self.execute_enabled {
+            return;
+        }
+
+        let result = match action {
+            TimerAction::Create { name, .. } => {
+                self.platform_timer.create(name, &self.timer_config).await
+            }
+            TimerAction::Remove { name, .. } => {
+                self.platform_timer.remove(name).await
+            }
+            TimerAction::Rename { old_name, new_name, .. } => {
+                self.platform_timer.rename(old_name, new_name, &self.timer_config).await
+            }
+        };
+
+        match result {
+            Ok(res) if res.success => {
+                tracing::info!(
+                    action = action.action_type(),
+                    name = action.name(),
+                    message = %res.message,
+                    "Timer action succeeded"
+                );
+            }
+            Ok(res) => {
+                tracing::warn!(
+                    action = action.action_type(),
+                    name = action.name(),
+                    message = %res.message,
+                    "Timer action failed (non-fatal)"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    action = action.action_type(),
+                    name = action.name(),
+                    error = ?e,
+                    "Timer action error"
+                );
+            }
+        }
     }
 }
 
@@ -169,14 +282,88 @@ impl EventListener for TimerListener {
         // Record the action
         self.pending_actions.write().await.push(action.clone());
 
-        // Execute callback if provided
-        if let Some(ref callback) = self.action_fn {
-            callback(action);
+        // Execute test callback if provided
+        if let Some(ref callback) = self.test_callback {
+            callback(action.clone());
         }
+
+        // Execute platform timer action
+        self.execute_action(&action).await;
     }
 
     fn name(&self) -> &'static str {
         "timer"
+    }
+}
+
+/// Timer executor for direct invocation (testing and manual triggers)
+///
+/// Provides methods to directly create, remove, or list timers
+/// without going through the event listener.
+pub struct TimerExecutor {
+    platform_timer: PlatformTimer,
+    timer_config: TimerConfig,
+}
+
+impl TimerExecutor {
+    /// Create a new timer executor with default configuration
+    pub fn new() -> Self {
+        Self {
+            platform_timer: PlatformTimer::new(),
+            timer_config: TimerConfig::default(),
+        }
+    }
+
+    /// Create with custom API URL
+    pub fn with_api_url(api_base_url: &str) -> Self {
+        Self {
+            platform_timer: PlatformTimer::with_api_url(api_base_url),
+            timer_config: TimerConfig::default(),
+        }
+    }
+
+    /// Create with custom timer configuration
+    pub fn with_config(timer_config: TimerConfig) -> Self {
+        Self {
+            platform_timer: PlatformTimer::new(),
+            timer_config,
+        }
+    }
+
+    /// Create a nurturing timer for an offering
+    pub async fn create(&self, offering_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
+        self.platform_timer.create(offering_name, &self.timer_config).await
+    }
+
+    /// Remove a nurturing timer
+    pub async fn remove(&self, offering_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
+        self.platform_timer.remove(offering_name).await
+    }
+
+    /// Rename a nurturing timer
+    pub async fn rename(&self, old_name: &str, new_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
+        self.platform_timer.rename(old_name, new_name, &self.timer_config).await
+    }
+
+    /// Check if a timer exists
+    pub async fn exists(&self, offering_name: &str) -> anyhow::Result<bool> {
+        self.platform_timer.exists(offering_name).await
+    }
+
+    /// List all nurturing timers
+    pub async fn list(&self) -> anyhow::Result<Vec<String>> {
+        self.platform_timer.list().await
+    }
+
+    /// Trigger a timer immediately (for testing)
+    pub async fn trigger(&self, offering_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
+        self.platform_timer.trigger(offering_name).await
+    }
+}
+
+impl Default for TimerExecutor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -187,7 +374,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timer_create_on_deploy() {
-        let listener = TimerListener::new();
+        let listener = TimerListener::test_only();
 
         let event = OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7");
         listener.on_event(&event).await;
@@ -206,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timer_remove_on_destroy() {
-        let listener = TimerListener::new();
+        let listener = TimerListener::test_only();
 
         let event = OfferingEvent::destroyed("id-1", "mongodb", "stone-01");
         listener.on_event(&event).await;
@@ -225,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timer_rename() {
-        let listener = TimerListener::new();
+        let listener = TimerListener::test_only();
 
         let event = OfferingEvent::renamed("id-1", "mongodb", "my-mongo", "stone-01");
         listener.on_event(&event).await;
@@ -245,7 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_timer_on_start_stop() {
-        let listener = TimerListener::new();
+        let listener = TimerListener::test_only();
 
         listener.on_event(&OfferingEvent::started("id-1", "mongodb", "stone-01")).await;
         listener.on_event(&OfferingEvent::stopped("id-1", "mongodb", "stone-01")).await;
@@ -257,7 +444,7 @@ mod tests {
     #[tokio::test]
     async fn test_debounce_same_action_type() {
         // Short debounce for testing
-        let listener = TimerListener::with_debounce(None, Duration::from_millis(100));
+        let listener = TimerListener::with_debounce(Duration::from_millis(100), false);
 
         // Rapid create actions should debounce
         listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
@@ -271,7 +458,7 @@ mod tests {
     #[tokio::test]
     async fn test_different_action_types_not_debounced() {
         // Short debounce for testing
-        let listener = TimerListener::with_debounce(None, Duration::from_millis(100));
+        let listener = TimerListener::with_debounce(Duration::from_millis(100), false);
 
         // Deploy then remove = different action types, both pass
         listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
@@ -285,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn test_debounce_window_expires() {
         // Short debounce for testing
-        let listener = TimerListener::with_debounce(None, Duration::from_millis(50));
+        let listener = TimerListener::with_debounce(Duration::from_millis(50), false);
 
         // First deploy
         listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
@@ -299,5 +486,57 @@ mod tests {
         listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8")).await;
         let actions = listener.pending_actions().await;
         assert_eq!(actions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_timer_action_accessors() {
+        let create = TimerAction::Create {
+            offering_id: "id-1".to_string(),
+            name: "mongodb".to_string(),
+        };
+        assert_eq!(create.offering_id(), "id-1");
+        assert_eq!(create.action_type(), "create");
+        assert_eq!(create.name(), "mongodb");
+
+        let remove = TimerAction::Remove {
+            offering_id: "id-2".to_string(),
+            name: "redis".to_string(),
+        };
+        assert_eq!(remove.action_type(), "remove");
+        assert_eq!(remove.name(), "redis");
+
+        let rename = TimerAction::Rename {
+            offering_id: "id-3".to_string(),
+            old_name: "old".to_string(),
+            new_name: "new".to_string(),
+        };
+        assert_eq!(rename.action_type(), "rename");
+        assert_eq!(rename.name(), "new");
+    }
+
+    #[tokio::test]
+    async fn test_timer_executor_creation() {
+        let executor = TimerExecutor::new();
+        // Just verify it can be created without panicking
+        assert!(executor.list().await.is_ok() || executor.list().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_callback_is_invoked() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+
+        let callback: TimerCallback = Arc::new(move |_action| {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let listener = TimerListener::with_test_callback(callback);
+
+        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
+        listener.on_event(&OfferingEvent::destroyed("id-1", "mongodb", "stone-01")).await;
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }
 }

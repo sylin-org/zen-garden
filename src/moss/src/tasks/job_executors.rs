@@ -11,6 +11,7 @@
 //! - Don't block the HTTP response
 
 use crate::{AppState, JobStatus, emit_event};
+use crate::domain::events::OfferingEvent;
 use crate::domain::get_compiled_offering;
 use garden_common::console;
 use garden_common::utils::ids::generate_guidv7;
@@ -206,7 +207,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
 
     // Update existing registry entry (created with Installing status before job started)
     // Change status from Installing to Running and clear job_id
-    {
+    let offering_id = {
         let mut registry = state.registry.write().await;
         if let Some(existing) = registry.iter_mut().find(|svc| svc.name == offering) {
             existing.status = ServiceStatus::Running;
@@ -217,10 +218,12 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
                 native: native_port,
                 agnostic: None,
             };
+            existing.offering_id.clone()
         } else {
             // Fallback: entry was somehow removed, recreate it
+            let new_id = generate_guidv7();
             let info = ServiceInfo {
-                offering_id: generate_guidv7(),
+                offering_id: new_id.clone(),
                 name: offering.to_string(),
                 offering: offering.to_string(),
                 version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
@@ -235,13 +238,22 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
                 sub_capabilities: Vec::new(),
             };
             registry.push(info);
+            new_id
         }
-    }
+    };
 
     let _ = state.persist_registry().await;
-    
+
     // Sync services to self_entry and broadcast chirp so topology reflects the change immediately
     state.sync_self_services(true).await;
+
+    // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
+    state.event_bus.emit(OfferingEvent::deployed(
+        &offering_id,
+        offering,
+        state.stone_name(),
+        &compiled.image,
+    ));
 
     emit_event(state, "info", format!("✓ Service {} started successfully", offering), Some(job_id.to_string()));
 
@@ -370,8 +382,9 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let native_port = compiled.ports.first().map(|(host, _)| *host).unwrap_or(30000);
 
         // Add to registry
+        let offering_id = generate_guidv7();
         let info = ServiceInfo {
-            offering_id: generate_guidv7(),
+            offering_id: offering_id.clone(),
             name: offering.clone(),
             offering: offering.clone(),
             version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
@@ -396,9 +409,17 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         }
 
         let _ = state.persist_registry().await;
-        
+
         // Sync services to self_entry and broadcast chirp so topology reflects the change immediately
         state.sync_self_services(true).await;
+
+        // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
+        state.event_bus.emit(OfferingEvent::deployed(
+            &offering_id,
+            &offering,
+            state.stone_name(),
+            &compiled.image,
+        ));
 
         // Mark offering as completed
         {

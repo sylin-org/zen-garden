@@ -179,6 +179,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let (event_tx, _) = tokio::sync::broadcast::channel::<MossEvent>(100);
     let shutdown_tx = Arc::new(tokio::sync::Notify::new());
 
+    // Phase 8.5: Create offering lifecycle event bus
+    let event_bus = infra::EventBus::new();
+    tracing::debug!("Offering lifecycle event bus initialized");
+
     // Phase 9: Capabilities loading
     let capabilities_arc = init_capabilities(&stone_id, &stone_name, &console_printer).await;
 
@@ -266,6 +270,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),
         event_tx,
+        event_bus: event_bus.clone(),
         shutdown_tx: shutdown_tx.clone(),
         start_time: std::time::Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
@@ -321,6 +326,33 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     });
     tracing::info!("Discovery handler initialized (using p2p transport)");
+
+    // Phase 11.post4: Start offering lifecycle event listeners
+    {
+        // ChirpListener: Broadcasts topology changes via UDP
+        let self_entry_for_chirp = state.self_entry.clone();
+        let chirp_listener = Arc::new(infra::ChirpListener::new(Arc::new(move || {
+            let entry = self_entry_for_chirp.clone();
+            tokio::spawn(async move {
+                let topology_entry = entry.read().await.clone();
+                if let Err(e) = crate::announcement::announce(&topology_entry).await {
+                    tracing::warn!(error = ?e, "Failed to chirp from event listener");
+                }
+            });
+        })));
+        let _chirp_handle = infra::spawn_listener(&event_bus, chirp_listener);
+
+        // SseListener: Streams offering events to connected clients
+        // (creates its own broadcast channel - API endpoints can subscribe via event_bus)
+        let (sse_listener, _sse_rx) = infra::SseListener::with_channel(256);
+        let _sse_handle = infra::spawn_listener(&event_bus, Arc::new(sse_listener));
+
+        // TimerListener: Manages nurturing schedule timers (stub - no callback yet)
+        let timer_listener = Arc::new(infra::TimerListener::new());
+        let _timer_handle = infra::spawn_listener(&event_bus, timer_listener);
+
+        tracing::info!("Offering lifecycle event listeners started (chirp, sse, timer)");
+    }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
     match state.recover_ceremonies().await {

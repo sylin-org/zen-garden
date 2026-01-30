@@ -5,6 +5,7 @@ use axum::{
 };
 use crate::api::responses::{CreateServiceRequest, ServiceActionResponse, ApiResponse};
 use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::domain::events::OfferingEvent;
 use crate::{error_response, AppState};
 use garden_common::{
     api_utils::{ApiErrorResponse, sanitize_query, sanitize_name, sanitize_tag, is_suspicious},
@@ -360,7 +361,7 @@ pub async fn rest_service_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut registry = state.registry.write().await;
-    
+
     let service_info = registry
         .iter_mut()
         .find(|s| s.name == service)
@@ -372,6 +373,9 @@ pub async fn rest_service_v1(
                 None,
             )
         })?;
+
+    // Capture info for event before mutation
+    let offering_id = service_info.offering_id.clone();
 
     // Stop the Docker container
     if let Err(e) = state.docker.stop_service(&service, Some(&state.console)).await {
@@ -390,6 +394,13 @@ pub async fn rest_service_v1(
     if let Err(e) = state.persist_registry().await {
         tracing::warn!(error = ?e, "Failed to persist registry after rest");
     }
+
+    // Emit offering lifecycle event
+    state.event_bus.emit(OfferingEvent::stopped(
+        &offering_id,
+        &service,
+        state.stone_name(),
+    ));
 
     let ctx = SuggestionContext::from_headers(&headers, "rest_service");
     let suggestions = generate_suggestions(&ctx);
@@ -412,7 +423,7 @@ pub async fn wake_service_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut registry = state.registry.write().await;
-    
+
     let service_info = registry
         .iter_mut()
         .find(|s| s.name == service)
@@ -424,6 +435,9 @@ pub async fn wake_service_v1(
                 None,
             )
         })?;
+
+    // Capture info for event before mutation
+    let offering_id = service_info.offering_id.clone();
 
     // Start the Docker container
     if let Err(e) = state.docker.start_service(&service, Some(&state.console)).await {
@@ -442,6 +456,13 @@ pub async fn wake_service_v1(
     if let Err(e) = state.persist_registry().await {
         tracing::warn!(error = ?e, "Failed to persist registry after wake");
     }
+
+    // Emit offering lifecycle event
+    state.event_bus.emit(OfferingEvent::started(
+        &offering_id,
+        &service,
+        state.stone_name(),
+    ));
 
     let ctx = SuggestionContext::from_headers(&headers, "wake_service");
     let suggestions = generate_suggestions(&ctx);
@@ -491,6 +512,10 @@ pub async fn nourish_service_v1(
             suggestions,
         }));
     }
+
+    // Capture info for event before mutation
+    let offering_id = svc.offering_id.clone();
+    let old_version = svc.version.clone();
 
     svc.status = ServiceStatus::Maintenance;
     let offering = svc.offering.clone();
@@ -549,10 +574,13 @@ pub async fn nourish_service_v1(
         ));
     }
 
+    let new_version = template.image.split(':').next_back().unwrap_or("latest").to_string();
+    let new_image = template.image.clone();
+
     let mut registry = state.registry.write().await;
     if let Some(svc) = registry.iter_mut().find(|s| s.name == service_name) {
         svc.status = ServiceStatus::Running;
-        svc.version = template.image.split(':').next_back().unwrap_or("latest").into();
+        svc.version = new_version.clone();
     }
 
     drop(registry);
@@ -560,6 +588,16 @@ pub async fn nourish_service_v1(
     if let Err(e) = state.persist_registry().await {
         tracing::warn!(error = ?e, "Failed to persist registry after nourish");
     }
+
+    // Emit offering lifecycle event (old_image reconstructed from old_version)
+    let old_image = format!("{}:{}", template.image.split(':').next().unwrap_or(&offering), old_version);
+    state.event_bus.emit(OfferingEvent::updated(
+        &offering_id,
+        &service_name,
+        state.stone_name(),
+        &old_image,
+        &new_image,
+    ));
 
     let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
     let suggestions = generate_suggestions(&ctx);
@@ -597,6 +635,9 @@ pub async fn delete_service_v1(
             )
         })?;
 
+    // Capture info for event before removal
+    let offering_id = registry[pos].offering_id.clone();
+
     // Remove container first (preserves volumes by default)
     if let Err(e) = state.docker.remove_service(&service, Some(&state.console)).await {
         tracing::error!(error = ?e, service = %service, "Docker remove failed");
@@ -611,6 +652,13 @@ pub async fn delete_service_v1(
     if let Err(e) = state.persist_registry().await {
         tracing::warn!(error = ?e, "Failed to persist registry after delete");
     }
+
+    // Emit offering lifecycle event (removed = soft delete, volumes preserved)
+    state.event_bus.emit(OfferingEvent::removed(
+        &offering_id,
+        &service,
+        state.stone_name(),
+    ));
 
     // Update topology and broadcast change
     state.sync_self_services(true).await;
@@ -649,6 +697,9 @@ pub async fn destroy_service_v1(
             )
         })?;
 
+    // Capture info for event before removal
+    let offering_id = registry[pos].offering_id.clone();
+
     // Hard delete: destroy Docker container first
     if let Err(e) = state.docker.remove_service(&service, Some(&state.console)).await {
         tracing::error!(error = ?e, service = %service, "Docker remove failed");
@@ -667,6 +718,13 @@ pub async fn destroy_service_v1(
     if let Err(e) = state.persist_registry().await {
         tracing::warn!(error = ?e, "Failed to persist registry after destroy");
     }
+
+    // Emit offering lifecycle event (destroyed = hard delete)
+    state.event_bus.emit(OfferingEvent::destroyed(
+        &offering_id,
+        &service,
+        state.stone_name(),
+    ));
 
     // Update topology and broadcast change
     state.sync_self_services(true).await;

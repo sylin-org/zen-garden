@@ -14,7 +14,7 @@
 
 use crate::docker::DockerManager;
 use crate::domain::CeremonyRegistry;
-use crate::infra::{CeremonyJournal, HarvestStore, ManifestRegistry, NurturingStore};
+use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
@@ -98,6 +98,9 @@ pub struct AppState {
 
     /// Event broadcast channel for SSE streaming
     pub event_tx: tokio::sync::broadcast::Sender<MossEvent>,
+
+    /// Offering lifecycle event bus (unified event dispatch)
+    pub event_bus: EventBus,
 
     /// Shutdown coordination channel
     pub shutdown_tx: Arc<tokio::sync::Notify>,

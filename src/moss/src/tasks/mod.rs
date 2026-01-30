@@ -8,6 +8,7 @@
 //! - Network monitoring (IP change detection)
 //! - Topology announcements (periodic stone presence)
 //! - Task coordination (orchestrates all background tasks)
+//! - Nurturing scheduler (automated A/B backups with seed bank replication)
 //!
 //! All tasks are non-blocking and composable.
 //! Spawn with tokio::spawn() and communicate via channels/shared state.
@@ -23,6 +24,7 @@ pub mod health_monitor;
 pub mod job_executors;
 pub mod metrics_collector;
 pub mod network_monitor;
+pub mod nurturing_scheduler;
 pub mod presence_monitor;
 pub mod state_provider;
 
@@ -44,3 +46,7 @@ pub use job_executors::{
 };
 pub use metrics_collector::run_metrics_collector;
 pub use network_monitor::{NetworkMonitor, NetworkMonitorConfig, NetworkEvent};
+pub use nurturing_scheduler::{
+    NurturingScheduler, NurturingWorkflowConfig, NurturingWorkflowResult,
+    ReplicationAttempt, RoutingStrategy, trigger_nurturing, trigger_all_nurturing,
+};

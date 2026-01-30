@@ -13,6 +13,7 @@ use crate::domain::{
 };
 use crate::docker::DockerManager;
 use crate::infra::ManifestRegistry;
+use garden_common::utils::ids::generate_guidv7;
 use garden_common::{Ports, ServiceHealthStatus, ServiceStatus};
 
 /// Adopt a container for a specific offering into the registry
@@ -90,6 +91,7 @@ pub async fn adopt_offering_container(
         .to_string();
 
     let adopted = ServiceInfo {
+        offering_id: generate_guidv7(),
         name: offering.to_string(),
         offering: offering.to_string(),
         version,
@@ -105,6 +107,7 @@ pub async fn adopt_offering_container(
         },
         resources: None,
         job_id: None,
+        sub_capabilities: Vec::new(),
     };
 
     Ok(Some(adopted))

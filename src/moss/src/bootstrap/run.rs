@@ -244,6 +244,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
+    let nurturing_store = Arc::new(infra::NurturingStore::new(infra::HarvestStore::default_store()));
 
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
@@ -279,6 +280,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         ceremony_registry,
         ceremony_journal,
         harvest_store,
+        nurturing_store,
         nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
         election_service: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),

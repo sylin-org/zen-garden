@@ -8,6 +8,7 @@ use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::{error_response, AppState};
 use garden_common::{
     api_utils::{ApiErrorResponse, sanitize_query, sanitize_name, sanitize_tag, is_suspicious},
+    utils::ids::generate_guidv7,
     Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus,
 };
 
@@ -305,6 +306,7 @@ pub async fn create_service_v1(
     {
         let native_port = compiled.ports.first().map(|(host, _)| *host).unwrap_or(30000);
         let installing_info = ServiceInfo {
+            offering_id: generate_guidv7(),
             name: offering.clone(),
             offering: offering.clone(),
             version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
@@ -316,6 +318,7 @@ pub async fn create_service_v1(
             },
             resources: None,
             job_id: Some(job_id.clone()),
+            sub_capabilities: Vec::new(),
         };
 
         let mut registry = state.registry.write().await;
@@ -852,6 +855,83 @@ pub async fn refresh_manifests_v1(
             "count": idx.offerings.len(),
             "fingerprint": idx.fingerprint,
             "generated_at": idx.generated_at
+        })),
+    ))
+}
+
+// ============================================================================
+// Sub-Capability Discovery
+// ============================================================================
+
+/// Discover sub-capabilities for a specific service
+///
+/// GET /api/v1/stone/services/:service/capabilities
+pub async fn discover_service_capabilities_v1(
+    State(state): State<AppState>,
+    Path(service_name): Path<String>,
+) -> Result<Json<ApiResponse<Vec<garden_common::SubCapability>>>, (StatusCode, Json<ApiErrorResponse>)> {
+    // Find the service
+    let service = {
+        let registry = state.registry.read().await;
+        registry.iter()
+            .find(|s| s.name == service_name)
+            .cloned()
+            .ok_or_else(|| error_response(
+                StatusCode::NOT_FOUND,
+                "SERVICE_NOT_FOUND",
+                format!("Service '{}' not found", service_name),
+                None,
+            ))?
+    };
+
+    // Discover sub-capabilities
+    let capabilities = crate::domain::discover_sub_capabilities(&service, &state.docker).await
+        .map_err(|e| error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DISCOVERY_FAILED",
+            format!("Failed to discover sub-capabilities: {}", e),
+            None,
+        ))?;
+
+    // Update the service in registry with discovered capabilities
+    if !capabilities.is_empty() {
+        let mut registry = state.registry.write().await;
+        if let Some(svc) = registry.iter_mut().find(|s| s.name == service_name) {
+            svc.sub_capabilities = capabilities.clone();
+        }
+        drop(registry);
+        let _ = state.persist_registry().await;
+    }
+
+    Ok(Json(ApiResponse {
+        data: capabilities,
+        suggestions: None,
+    }))
+}
+
+/// Refresh sub-capabilities for all running services
+///
+/// POST /api/v1/stone/services/refresh-capabilities
+pub async fn refresh_all_capabilities_v1(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
+    let mut services = state.registry.read().await.clone();
+
+    let updated = crate::domain::refresh_all_sub_capabilities(&mut services, &state.docker).await;
+
+    // Persist updated capabilities
+    if updated > 0 {
+        let mut registry = state.registry.write().await;
+        *registry = services;
+        drop(registry);
+        let _ = state.persist_registry().await;
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "refreshed",
+            "updated_services": updated,
         })),
     ))
 }

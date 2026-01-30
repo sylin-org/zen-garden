@@ -405,6 +405,21 @@ impl SeedBankRegistry {
     pub fn find_by_mount(&self, mount_path: &str) -> Option<&SeedBankInfo> {
         self.banks.values().find(|b| b.mount_path == mount_path)
     }
+
+    /// Find seed bank by ID (GUIDv7)
+    pub fn find_by_id(&self, id: &str) -> Option<&SeedBankInfo> {
+        self.banks.values().find(|b| b.id == id)
+    }
+
+    /// Get seed bank by name (alias for get)
+    pub fn get_by_name(&self, name: &str) -> Option<&SeedBankInfo> {
+        self.get(name)
+    }
+
+    /// Get seed bank by ID (alias for find_by_id)
+    pub fn get_by_id(&self, id: &str) -> Option<&SeedBankInfo> {
+        self.find_by_id(id)
+    }
 }
 
 #[cfg(test)]

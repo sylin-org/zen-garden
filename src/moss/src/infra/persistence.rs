@@ -16,12 +16,35 @@ fn offerings_cache_path() -> PathBuf {
 /// Load registry from disk
 ///
 /// Returns empty vec if file doesn't exist.
+/// Migrates legacy entries without offering_id by generating new GUIDv7s.
 pub async fn load_registry() -> Result<Vec<ServiceInfo>> {
     let path = PathBuf::from(garden_common::names::CONFIG_DIR).join("moss-registry.json");
 
     match tokio::fs::read_to_string(path).await {
         Ok(content) => {
-            let services = serde_json::from_str(&content)?;
+            let mut services: Vec<ServiceInfo> = serde_json::from_str(&content)?;
+
+            // Migrate legacy entries without offering_id
+            let mut migrated = false;
+            for service in &mut services {
+                if service.offering_id.is_empty() {
+                    service.offering_id = garden_common::utils::ids::generate_guidv7();
+                    tracing::info!(
+                        name = %service.name,
+                        offering_id = %service.offering_id,
+                        "Migrated legacy service with new offering_id"
+                    );
+                    migrated = true;
+                }
+            }
+
+            // If we migrated any entries, persist the updated registry
+            if migrated {
+                if let Err(e) = save_registry_vec(&services).await {
+                    tracing::warn!(error = ?e, "Failed to persist migrated offering_ids");
+                }
+            }
+
             Ok(services)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),

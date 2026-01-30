@@ -76,7 +76,7 @@ param(
     [string]$SSHUser = 'stone',  # SSH username
     [string]$SSHPassword = 'stone',  # SSH password
     [Alias("Y")]
-    [switch]$Yes  # Accept all defaults (non-interactive mode)
+    [bool]$Yes = $true  # Accept all defaults (non-interactive mode) - default is now automatic
 )
 
 $ErrorActionPreference = "Stop"

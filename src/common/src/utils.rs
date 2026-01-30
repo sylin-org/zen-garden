@@ -20,3 +20,6 @@ pub use formatting::{
     format_memory_mb,
     format_uptime,
 };
+
+// Re-export ID generation utilities
+pub use ids::{generate_guidv7, generate_id, generate_timestamp_id};

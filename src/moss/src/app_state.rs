@@ -14,7 +14,7 @@
 
 use crate::docker::DockerManager;
 use crate::domain::CeremonyRegistry;
-use crate::infra::{CeremonyJournal, HarvestStore, ManifestRegistry};
+use crate::infra::{CeremonyJournal, HarvestStore, ManifestRegistry, NurturingStore};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
@@ -143,6 +143,9 @@ pub struct AppState {
 
     /// Harvest store (backup manifests and archives)
     pub harvest_store: Arc<HarvestStore>,
+
+    /// Nurturing store (A/B local backup slots)
+    pub nurturing_store: Arc<NurturingStore>,
 
     /// Nourishment job status channels (for SSE streaming)
     pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,

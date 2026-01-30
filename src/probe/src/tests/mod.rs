@@ -9,6 +9,7 @@ pub mod tend;
 pub mod interstone;
 pub mod offerings;
 pub mod nourishment;
+pub mod nurturing;
 pub mod adapters;
 pub mod storage;
 pub mod resolution;

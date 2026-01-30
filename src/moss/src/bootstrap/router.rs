@@ -62,7 +62,9 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/services/manifests", get(api::v1::services::list_manifests_v1))
         .route("/api/v1/stone/services/reconcile", post(api::v1::services::reconcile_inventory_v1))
         .route("/api/v1/stone/services/refresh", post(api::v1::services::refresh_manifests_v1))
+        .route("/api/v1/stone/services/refresh-capabilities", post(api::v1::services::refresh_all_capabilities_v1))
         .route("/api/v1/stone/services/:name/manifest", get(api::v1::services::get_manifest_v1))
+        .route("/api/v1/stone/services/:service/capabilities", get(api::v1::services::discover_service_capabilities_v1))
         .route("/api/v1/stone/services/:service", get(api::v1::services::get_service_v1))
         .route("/api/v1/stone/services/:service", delete(api::v1::services::delete_service_v1))
         .route("/api/v1/stone/services/:service/logs", get(api::v1::services::stream_service_logs_v1))
@@ -113,6 +115,17 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/nourishment", get(api::v1::nourishment::check_stone))
         .route("/api/v1/stone/nourishment/execute", post(api::v1::nourishment::execute_stone))
         .route("/api/v1/stone/nourishment/stream/:job_id", get(api::v1::nourishment::stream_status))
+
+        // Stone nurturing (A/B local backup slots)
+        .route("/api/v1/stone/nurturing", get(api::v1::nurturing::list_nurturing))
+        .route("/api/v1/stone/nurturing/:offering", get(api::v1::nurturing::get_offering_slots))
+        .route("/api/v1/stone/nurturing/:offering", post(api::v1::nurturing::create_snapshot))
+        .route("/api/v1/stone/nurturing/:offering", delete(api::v1::nurturing::delete_nurturing))
+        .route("/api/v1/stone/nurturing/:offering/restore", post(api::v1::nurturing::restore_snapshot))
+        // Stone nurturing - seed bank integration (remote backup)
+        .route("/api/v1/stone/nurturing/:offering/replicate", post(api::v1::nurturing::replicate_to_seed_bank))
+        .route("/api/v1/stone/nurturing/:offering/restore-remote", post(api::v1::nurturing::restore_from_seed_bank))
+        .route("/api/v1/stone/nurturing/remote/:seed_bank", get(api::v1::nurturing::list_remote_snapshots))
 
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/garden/* - Garden-wide operations (via tended stone)

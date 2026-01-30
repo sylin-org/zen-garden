@@ -13,6 +13,7 @@
 use crate::{AppState, JobStatus, emit_event};
 use crate::domain::get_compiled_offering;
 use garden_common::console;
+use garden_common::utils::ids::generate_guidv7;
 use garden_common::{Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus};
 
 /// Execute single service installation in background
@@ -219,6 +220,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
         } else {
             // Fallback: entry was somehow removed, recreate it
             let info = ServiceInfo {
+                offering_id: generate_guidv7(),
                 name: offering.to_string(),
                 offering: offering.to_string(),
                 version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
@@ -230,6 +232,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
                 },
                 resources: None,
                 job_id: None,
+                sub_capabilities: Vec::new(),
             };
             registry.push(info);
         }
@@ -368,6 +371,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 
         // Add to registry
         let info = ServiceInfo {
+            offering_id: generate_guidv7(),
             name: offering.clone(),
             offering: offering.clone(),
             version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
@@ -379,6 +383,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             },
             resources: None,
             job_id: None,
+            sub_capabilities: Vec::new(),
         };
 
         {

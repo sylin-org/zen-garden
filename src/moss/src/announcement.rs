@@ -233,6 +233,7 @@ mod tests {
         let hash1 = calculate_state_hash(&entry);
 
         entry.services.push(TopologyServiceEntry {
+            offering_id: "test-offering-id".to_string(),
             name: "redis".to_string(),
             offering: "redis".to_string(),
             category: "data".to_string(),

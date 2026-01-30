@@ -27,6 +27,20 @@ pub struct ServiceSearchCriteria {
     /// Search by tag (any match)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+
+    /// Search by sub-capability (type:item format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_capability: Option<SubCapabilityFilter>,
+}
+
+/// Filter for sub-capability search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubCapabilityFilter {
+    /// Capability type (e.g., "model", "collection")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cap_type: Option<String>,
+    /// Capability item to match (e.g., "llama2")
+    pub item: String,
 }
 
 impl ServiceSearchCriteria {
@@ -35,6 +49,7 @@ impl ServiceSearchCriteria {
             name: Some(name.to_string()),
             category: None,
             tag: None,
+            sub_capability: None,
         }
     }
 
@@ -43,6 +58,7 @@ impl ServiceSearchCriteria {
             name: None,
             category: Some(category.to_string()),
             tag: None,
+            sub_capability: None,
         }
     }
 
@@ -51,6 +67,33 @@ impl ServiceSearchCriteria {
             name: None,
             category: None,
             tag: Some(tag.to_string()),
+            sub_capability: None,
+        }
+    }
+
+    pub fn by_sub_capability(cap_type: Option<&str>, item: &str) -> Self {
+        Self {
+            name: None,
+            category: None,
+            tag: None,
+            sub_capability: Some(SubCapabilityFilter {
+                cap_type: cap_type.map(String::from),
+                item: item.to_string(),
+            }),
+        }
+    }
+
+    /// Create a name search with sub-capability filter
+    /// E.g., ollama[llama2]
+    pub fn by_name_with_sub_capability(name: &str, item: &str) -> Self {
+        Self {
+            name: Some(name.to_string()),
+            category: None,
+            tag: None,
+            sub_capability: Some(SubCapabilityFilter {
+                cap_type: None,
+                item: item.to_string(),
+            }),
         }
     }
 
@@ -60,8 +103,18 @@ impl ServiceSearchCriteria {
     /// - `mongodb` - name search (or implicit category if known)
     /// - `c:database`, `cat:database`, `category:database` - category search
     /// - `t:nosql`, `tag:nosql`, `tags:nosql` - tag search
+    /// - `model:llama2` - sub-capability search (type:item)
+    /// - `ollama[llama2]` - name with sub-capability filter
     pub fn parse(query: &str) -> Self {
         let query = query.trim();
+
+        // Check for sub-capability syntax: name[item]
+        // E.g., "ollama[llama2]" or "ollama[mistral]"
+        if let Some((name_part, rest)) = query.split_once('[') {
+            if let Some(item) = rest.strip_suffix(']') {
+                return Self::by_name_with_sub_capability(name_part.trim(), item.trim());
+            }
+        }
 
         // Check for category prefix
         if let Some(cat) = query
@@ -81,6 +134,19 @@ impl ServiceSearchCriteria {
             return Self::by_tag(tag);
         }
 
+        // Check for sub-capability prefix: model:item, cap:item
+        // E.g., "model:llama2" or "collection:embeddings"
+        if let Some(item) = query.strip_prefix("model:") {
+            return Self::by_sub_capability(Some("model"), item);
+        }
+        if let Some(item) = query.strip_prefix("collection:") {
+            return Self::by_sub_capability(Some("collection"), item);
+        }
+        if let Some(item) = query.strip_prefix("cap:") {
+            // Generic capability search (any type)
+            return Self::by_sub_capability(None, item);
+        }
+
         // Check if it's a known category (implicit category search)
         // Uses data-driven category registry instead of hardcoded list
         let lower = query.to_lowercase();
@@ -96,11 +162,21 @@ impl ServiceSearchCriteria {
     pub fn is_name_search(&self) -> bool {
         self.name.is_some()
     }
+
+    /// Check if this search includes sub-capability filter
+    pub fn has_sub_capability_filter(&self) -> bool {
+        self.sub_capability.is_some()
+    }
 }
 
 /// Found service with connection information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FoundService {
+    /// Unique identifier for this offering instance (GUIDv7)
+    /// Survives renames, migrations, used for backup keying.
+    #[serde(default)]
+    pub offering_id: String,
+
     /// Service name
     pub name: String,
 
@@ -121,6 +197,10 @@ pub struct FoundService {
 
     /// Resolved connection information
     pub connection: ResolvedConnection,
+
+    /// Sub-capabilities (e.g., models, collections)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub sub_capabilities: Vec<garden_common::SubCapability>,
 }
 
 /// Reference to a stone
@@ -177,7 +257,7 @@ pub async fn find_local_services(
             .unwrap_or_else(|| (service.offering.clone(), vec![], None));
 
         // Check if matches criteria
-        if !matches_criteria(criteria, &service.name, &service.offering, &category, &tags) {
+        if !matches_criteria(criteria, &service.name, &service.offering, &category, &tags, &service.sub_capabilities) {
             continue;
         }
 
@@ -194,6 +274,7 @@ pub async fn find_local_services(
         );
 
         results.push(FoundService {
+            offering_id: service.offering_id.clone(),
             name: service.name.clone(),
             offering: service.offering.clone(),
             category,
@@ -205,6 +286,7 @@ pub async fn find_local_services(
                 endpoint: format!("http://127.0.0.1:{}", state.api_port),
             },
             connection: conn,
+            sub_capabilities: service.sub_capabilities.clone(),
         });
     }
 
@@ -242,6 +324,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
         );
 
         services.push(FoundService {
+            offering_id: service.offering_id.clone(),
             name: service.name.clone(),
             offering: service.offering.clone(),
             category,
@@ -253,6 +336,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
                 endpoint: format!("http://127.0.0.1:{}", state.api_port),
             },
             connection: conn,
+            sub_capabilities: service.sub_capabilities.clone(),
         });
     }
 
@@ -337,7 +421,9 @@ async fn find_services_in_topology_cache(
             }
 
             // Check if matches criteria
-            if !matches_criteria(criteria, &svc.name, &svc.offering, &svc.category, &[]) {
+            // Note: Remote services don't include sub_capabilities in chirps yet
+            // Sub-capability filtering only works for local services
+            if !matches_criteria(criteria, &svc.name, &svc.offering, &svc.category, &[], &[]) {
                 continue;
             }
 
@@ -356,6 +442,7 @@ async fn find_services_in_topology_cache(
             );
 
             results.push(FoundService {
+                offering_id: svc.offering_id.clone(),
                 name: svc.name.clone(),
                 offering: svc.offering.clone(),
                 category: svc.category.clone(),
@@ -367,6 +454,7 @@ async fn find_services_in_topology_cache(
                     endpoint: stone.endpoint.clone(),
                 },
                 connection: conn,
+                sub_capabilities: vec![], // Remote services don't include sub_capabilities in chirps
             });
         }
     }
@@ -502,6 +590,7 @@ async fn fetch_remote_services(
         );
 
         results.push(FoundService {
+            offering_id: service.offering_id,
             name: service.name,
             offering: service.offering,
             category,
@@ -513,6 +602,7 @@ async fn fetch_remote_services(
                 endpoint: stone.endpoint.clone(),
             },
             connection: conn,
+            sub_capabilities: service.sub_capabilities,
         });
     }
 
@@ -526,6 +616,7 @@ fn matches_criteria(
     offering: &str,
     category: &str,
     tags: &[String],
+    sub_capabilities: &[garden_common::SubCapability],
 ) -> bool {
     // Name match (exact or offering match)
     if let Some(ref search_name) = criteria.name {
@@ -550,6 +641,27 @@ fn matches_criteria(
         let lower_search = search_tag.to_lowercase();
         let has_tag = tags.iter().any(|t| t.to_lowercase() == lower_search);
         if !has_tag {
+            return false;
+        }
+    }
+
+    // Sub-capability match
+    if let Some(ref filter) = criteria.sub_capability {
+        let lower_item = filter.item.to_lowercase();
+
+        // Check if any sub-capability matches
+        let has_cap = sub_capabilities.iter().any(|cap| {
+            // If type filter specified, must match type
+            if let Some(ref cap_type) = filter.cap_type {
+                if cap.cap_type.to_lowercase() != cap_type.to_lowercase() {
+                    return false;
+                }
+            }
+            // Check if item exists in capability
+            cap.items.iter().any(|i| i.to_lowercase() == lower_item)
+        });
+
+        if !has_cap {
             return false;
         }
     }
@@ -623,18 +735,18 @@ mod tests {
     fn test_matches_criteria_name() {
         let criteria = ServiceSearchCriteria::by_name("mongodb");
 
-        assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[]));
-        assert!(matches_criteria(&criteria, "zen-offering-mongodb", "mongodb", "database", &[]));
-        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[]));
+        assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[], &[]));
+        assert!(matches_criteria(&criteria, "zen-offering-mongodb", "mongodb", "database", &[], &[]));
+        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &[]));
     }
 
     #[test]
     fn test_matches_criteria_category() {
         let criteria = ServiceSearchCriteria::by_category("database");
 
-        assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[]));
-        assert!(matches_criteria(&criteria, "postgres", "postgres", "database", &[]));
-        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[]));
+        assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[], &[]));
+        assert!(matches_criteria(&criteria, "postgres", "postgres", "database", &[], &[]));
+        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &[]));
     }
 
     #[test]
@@ -646,15 +758,58 @@ mod tests {
             "mongodb",
             "mongodb",
             "database",
-            &["document".to_string(), "nosql".to_string()]
+            &["document".to_string(), "nosql".to_string()],
+            &[]
         ));
         assert!(!matches_criteria(
             &criteria,
             "postgres",
             "postgres",
             "database",
-            &["sql".to_string(), "relational".to_string()]
+            &["sql".to_string(), "relational".to_string()],
+            &[]
         ));
+    }
+
+    #[test]
+    fn test_matches_criteria_sub_capability() {
+        use garden_common::SubCapability;
+
+        let caps = vec![SubCapability::new("model", vec!["llama2".to_string(), "mistral".to_string()])];
+
+        // Search for model:llama2
+        let criteria = ServiceSearchCriteria::by_sub_capability(Some("model"), "llama2");
+        assert!(matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &caps));
+        assert!(!matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &[]));
+
+        // Search for ollama[mistral]
+        let criteria = ServiceSearchCriteria::by_name_with_sub_capability("ollama", "mistral");
+        assert!(matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &caps));
+        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &caps));
+
+        // Generic cap: search (any type)
+        let criteria = ServiceSearchCriteria::by_sub_capability(None, "llama2");
+        assert!(matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &caps));
+    }
+
+    #[test]
+    fn test_parse_sub_capability_syntax() {
+        // Test ollama[llama2] syntax
+        let criteria = ServiceSearchCriteria::parse("ollama[llama2]");
+        assert_eq!(criteria.name, Some("ollama".to_string()));
+        assert!(criteria.sub_capability.is_some());
+        assert_eq!(criteria.sub_capability.as_ref().unwrap().item, "llama2");
+
+        // Test model:llama2 syntax
+        let criteria = ServiceSearchCriteria::parse("model:llama2");
+        assert!(criteria.sub_capability.is_some());
+        assert_eq!(criteria.sub_capability.as_ref().unwrap().cap_type, Some("model".to_string()));
+        assert_eq!(criteria.sub_capability.as_ref().unwrap().item, "llama2");
+
+        // Test collection:embeddings syntax
+        let criteria = ServiceSearchCriteria::parse("collection:embeddings");
+        assert!(criteria.sub_capability.is_some());
+        assert_eq!(criteria.sub_capability.as_ref().unwrap().cap_type, Some("collection".to_string()));
     }
 
     #[test]
@@ -662,5 +817,12 @@ mod tests {
         assert!(ServiceSearchCriteria::by_name("mongodb").is_name_search());
         assert!(!ServiceSearchCriteria::by_category("database").is_name_search());
         assert!(!ServiceSearchCriteria::by_tag("nosql").is_name_search());
+    }
+
+    #[test]
+    fn test_has_sub_capability_filter() {
+        assert!(ServiceSearchCriteria::by_sub_capability(Some("model"), "llama2").has_sub_capability_filter());
+        assert!(ServiceSearchCriteria::by_name_with_sub_capability("ollama", "llama2").has_sub_capability_filter());
+        assert!(!ServiceSearchCriteria::by_name("mongodb").has_sub_capability_filter());
     }
 }

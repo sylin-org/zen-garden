@@ -29,6 +29,7 @@ pub mod hardware_id;
 pub mod harvest;
 pub mod harvest_store;
 pub mod manifests;
+pub mod nurturing_store;
 pub mod persistence;
 pub mod process;
 pub mod secrets;
@@ -58,6 +59,7 @@ pub use garden_common::infra::archive::{Archiver, ArchiveInfo, create_archive, e
 pub use ceremony_journal::CeremonyJournal;
 pub use harvest_store::HarvestStore;
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
+pub use nurturing_store::NurturingStore;
 pub use embedded::{
     EmbeddedManifests, EmbeddedAdapters, 
     read_manifest_overlay, manifest_exists, list_all_manifests,

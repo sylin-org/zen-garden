@@ -157,7 +157,9 @@ if (-not $SkipPackage) {
         created = (Get-Date).ToUniversalTime().ToString("o")
         components = $components
     }
-    $manifest | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $packageDir "package.json") -Encoding UTF8
+    # Write without BOM (UTF8 with BOM breaks JSON parsing on Linux)
+    $jsonContent = $manifest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText((Join-Path $packageDir "package.json"), $jsonContent, [System.Text.UTF8Encoding]::new($false))
     
     # Create tar.gz in staging area
     try {

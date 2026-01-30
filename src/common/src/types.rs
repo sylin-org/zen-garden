@@ -24,6 +24,11 @@ pub enum ServiceStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceInfo {
+    /// Unique identifier for this offering instance (GUIDv7)
+    /// Survives renames, migrations, and is used for backup keying.
+    /// Pure GUIDv7 format (e.g., "018d3c8f-1a2b-7c3d-8e4f-5a6b7c8d9e0f")
+    #[serde(default)]
+    pub offering_id: String,
     pub name: String,
     pub offering: String,
     pub version: String,
@@ -34,6 +39,52 @@ pub struct ServiceInfo {
     /// Job ID for tracking installation progress (only set when status is Installing)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub job_id: Option<String>,
+    /// Sub-capabilities discovered at runtime (e.g., models, plugins)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub sub_capabilities: Vec<SubCapability>,
+}
+
+// ============================================================================
+// Sub-Capability Types (runtime-discovered features)
+// ============================================================================
+
+/// Sub-capability of a service discovered at runtime
+///
+/// Examples:
+/// - ollama: models (llama2, mistral, neural-chat)
+/// - milvus: collections (embeddings, documents)
+/// - plugins: extensions (auth, metrics)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubCapability {
+    /// Capability type (e.g., "model", "collection", "plugin")
+    #[serde(rename = "type")]
+    pub cap_type: String,
+    /// List of capability names/identifiers
+    pub items: Vec<String>,
+    /// When these capabilities were last discovered
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovered_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl SubCapability {
+    /// Create a new sub-capability with current timestamp
+    pub fn new(cap_type: impl Into<String>, items: Vec<String>) -> Self {
+        Self {
+            cap_type: cap_type.into(),
+            items,
+            discovered_at: Some(chrono::Utc::now()),
+        }
+    }
+
+    /// Check if this capability includes a specific item
+    pub fn has(&self, item: &str) -> bool {
+        self.items.iter().any(|i| i == item || i.to_lowercase() == item.to_lowercase())
+    }
+
+    /// Get the count of items
+    pub fn count(&self) -> usize {
+        self.items.len()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -450,6 +501,10 @@ pub struct UdpAnnouncement {
 /// Full ServiceInfo (with health, ports, resources) is used in local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopologyServiceEntry {
+    /// Unique identifier for this offering instance (GUIDv7)
+    /// Survives renames, migrations, used for backup keying.
+    #[serde(default)]
+    pub offering_id: String,
     pub name: String,
     pub offering: String,
     pub category: String,
@@ -461,6 +516,7 @@ impl TopologyServiceEntry {
     /// Used when syncing registry to self_entry for chirp broadcasts
     pub fn from_service_info(service: &ServiceInfo, category: Option<&str>) -> Self {
         Self {
+            offering_id: service.offering_id.clone(),
             name: service.name.clone(),
             offering: service.offering.clone(),
             category: category.unwrap_or(&service.offering).to_string(),
@@ -876,6 +932,7 @@ mod tests {
     #[test]
     fn test_service_info_serde() {
         let info = ServiceInfo {
+            offering_id: "018d3c8f-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into(),
             name: "mongodb".into(),
             offering: "mongodb".into(),
             version: "7.0".into(),
@@ -887,11 +944,30 @@ mod tests {
             },
             resources: None,
             job_id: None,
+            sub_capabilities: Vec::new(),
         };
         let json = serde_json::to_string(&info).unwrap();
         let deserialized: ServiceInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(info.name, deserialized.name);
         assert_eq!(info.status, deserialized.status);
+        assert_eq!(info.offering_id, deserialized.offering_id);
+    }
+
+    #[test]
+    fn test_service_info_offering_id_migration() {
+        // Test that existing services without offering_id deserialize correctly
+        // (serde default should provide empty string)
+        let json = r#"{
+            "name": "mongodb",
+            "offering": "mongodb",
+            "version": "7.0",
+            "status": "Running",
+            "health": "Healthy",
+            "ports": {"native": 27017, "agnostic": 8080}
+        }"#;
+        let deserialized: ServiceInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.offering_id, "");
+        assert_eq!(deserialized.name, "mongodb");
     }
 
     #[test]

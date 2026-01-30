@@ -438,20 +438,24 @@ pub async fn deploy_stone_v1(
     // Read and parse package.json
     let manifest_path = package_dir.join("package.json");
     let manifest: serde_json::Value = match std::fs::read_to_string(&manifest_path) {
-        Ok(content) => match serde_json::from_str(&content) {
-            Ok(json) => json,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to parse package.json");
-                let _ = std::fs::remove_dir_all(&temp_dir);
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "status": "error",
-                        "message": "Invalid package.json format",
-                    })),
-                );
+        Ok(content) => {
+            // Strip UTF-8 BOM if present (Windows PowerShell issue)
+            let content = garden_common::utils::strings::strip_bom(&content);
+            match serde_json::from_str(content) {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::error!(error = ?e, "Failed to parse package.json");
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "status": "error",
+                            "message": "Invalid package.json format",
+                        })),
+                    );
+                }
             }
-        },
+        }
         Err(e) => {
             tracing::error!(error = ?e, "Failed to read package.json");
             let _ = std::fs::remove_dir_all(&temp_dir);

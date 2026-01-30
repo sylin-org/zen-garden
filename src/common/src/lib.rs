@@ -54,6 +54,23 @@ pub use constants::{
     ENDPOINT_HEALTH, ENDPOINT_CAPABILITIES,
 };
 
+// Re-export offering lifecycle event constants
+pub use constants::{
+    EVENT_DEPLOYED, EVENT_STARTED, EVENT_STOPPED, EVENT_REMOVED,
+    EVENT_DESTROYED, EVENT_UPDATED, EVENT_RENAMED, EVENT_HEALTH_CHANGED,
+};
+
+// Re-export announcement type constants
+pub use constants::{
+    ANNOUNCEMENT_STONE_CHIRP, ANNOUNCEMENT_STONE_GOODBYE,
+    ANNOUNCEMENT_STORAGE_DETECTED, ANNOUNCEMENT_STORAGE_REMOVED,
+};
+
+// Re-export SSE event level constants
+pub use constants::{
+    SSE_LEVEL_INFO, SSE_LEVEL_WARN, SSE_LEVEL_ERROR, SSE_LEVEL_DEBUG,
+};
+
 // Compatibility aliases for old code (to be removed during Phase 3 refactoring)
 pub mod ports {
     pub use crate::constants::{DISCOVERY_UDP, MOSS_HTTP, LANTERN_HTTP};

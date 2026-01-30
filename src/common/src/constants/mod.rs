@@ -267,6 +267,66 @@ pub const STATUS_FAILED: &str = "failed";
 pub const STATUS_ERROR: &str = "error";
 
 // ============================================================================
+// Offering Lifecycle Event Types
+// ============================================================================
+
+/// Offering was deployed (container created and started)
+pub const EVENT_DEPLOYED: &str = "deployed";
+
+/// Offering was started (container started)
+pub const EVENT_STARTED: &str = "started";
+
+/// Offering was stopped (container stopped)
+pub const EVENT_STOPPED: &str = "stopped";
+
+/// Offering was removed (container deleted, data preserved)
+pub const EVENT_REMOVED: &str = "removed";
+
+/// Offering was destroyed (container + data deleted)
+pub const EVENT_DESTROYED: &str = "destroyed";
+
+/// Offering was updated to a new image version
+pub const EVENT_UPDATED: &str = "updated";
+
+/// Offering was renamed
+pub const EVENT_RENAMED: &str = "renamed";
+
+/// Offering health status changed
+pub const EVENT_HEALTH_CHANGED: &str = "health_changed";
+
+// ============================================================================
+// UDP Announcement Types
+// ============================================================================
+
+/// Stone chirp - periodic presence/service announcement
+pub const ANNOUNCEMENT_STONE_CHIRP: &str = "STONE_CHIRP";
+
+/// Stone goodbye - graceful shutdown notification
+pub const ANNOUNCEMENT_STONE_GOODBYE: &str = "STONE_GOODBYE";
+
+/// Storage detected - new seed bank or storage device found
+pub const ANNOUNCEMENT_STORAGE_DETECTED: &str = "STORAGE_DETECTED";
+
+/// Storage removed - seed bank or storage device removed
+pub const ANNOUNCEMENT_STORAGE_REMOVED: &str = "STORAGE_REMOVED";
+
+// ============================================================================
+// SSE Event Levels
+// ============================================================================
+
+/// Informational event
+pub const SSE_LEVEL_INFO: &str = "info";
+
+/// Warning event
+pub const SSE_LEVEL_WARN: &str = "warn";
+
+/// Error event
+pub const SSE_LEVEL_ERROR: &str = "error";
+
+/// Debug event
+pub const SSE_LEVEL_DEBUG: &str = "debug";
+
+// ============================================================================
 // Standard Error Codes Documentation
 // ============================================================================
 // Mapped to HTTP status codes:

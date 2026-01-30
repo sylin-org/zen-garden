@@ -47,6 +47,7 @@
 //! - [`runtime`] - Main loop and shutdown coordination
 //! - [`cli`] - Standard CLI argument parsing
 //! - [`handler`] - Command handler trait
+//! - [`state`] - Adapter state management (on/off, persistence)
 
 pub mod cli;
 pub mod dependencies;
@@ -54,6 +55,7 @@ pub mod handler;
 pub mod runtime;
 pub mod server;
 pub mod sse;
+pub mod state;
 
 /// Prelude for convenient imports
 pub mod prelude {
@@ -62,6 +64,7 @@ pub mod prelude {
     pub use crate::handler::CommandHandler;
     pub use crate::runtime::AdapterRuntime;
     pub use crate::sse::{EventHandler, SseClient, SseEvent};
+    pub use crate::state::AdapterState;
     pub use garden_common::command_manifest::CommandResponse;
     pub use anyhow::Result;
     pub use async_trait::async_trait;
@@ -72,6 +75,7 @@ pub use cli::AdapterConfig;
 pub use handler::CommandHandler;
 pub use runtime::AdapterRuntime;
 pub use sse::{EventHandler, SseClient, SseEvent};
+pub use state::AdapterState;
 
 // Re-export async_trait for implementors
 pub use async_trait::async_trait;

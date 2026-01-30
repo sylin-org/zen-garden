@@ -34,6 +34,7 @@ pub mod harvest;
 pub mod nurturing;
 pub mod storage_cache;
 pub mod sub_capability;
+pub mod events;
 
 pub use service_manager::ServiceManager;
 pub use registry::Registry;
@@ -84,4 +85,5 @@ pub use storage_cache::{
 pub use sub_capability::{
     discover_sub_capabilities, refresh_all_sub_capabilities,
 };
+pub use events::OfferingEvent;
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

@@ -109,41 +109,34 @@ pub fn offering_slots_test() -> TestDef {
 }
 
 async fn test_offering_slots(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
-    // Find services via garden topology (services are distributed across stones)
+    // Find a running service by querying each stone's services directly
     let mut found_offering: Option<(String, String)> = None;
 
-    // Query tended stone for garden-wide topology
-    if let Some(tended) = garden.tended() {
-        if let Ok(resp) = tended.get_json("/api/v1/garden").await {
-            if let Some(stones) = resp.get("data").and_then(|d| d.get("stones")).and_then(|s| s.as_array()) {
-                for stone_info in stones {
-                    let stone_name = stone_info.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    if let Some(offerings) = stone_info.get("offerings").and_then(|o| o.as_array()) {
-                        for offering in offerings {
-                            if let Some(name) = offering.get("name").and_then(|n| n.as_str()) {
-                                // Check vitality - we want running services
-                                let vitality = offering.get("vitality").and_then(|v| v.as_str()).unwrap_or("");
-                                if vitality == "thriving" || vitality == "healthy" {
-                                    found_offering = Some((stone_name.to_string(), name.to_string()));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if found_offering.is_some() {
+    // Query each stone for its services
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
+            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                for svc in services {
+                    let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    if status == "Running" && !name.is_empty() {
+                        found_offering = Some((stone.name.clone(), name.to_string()));
                         break;
                     }
                 }
             }
+        }
+        if found_offering.is_some() {
+            break;
         }
     }
 
     if found_offering.is_none() {
         bag.record_step(
             "offering_slots",
-            "No running services found in garden topology",
+            "No running services found across stones",
             0,
-            StepResult::skipped("No services in garden"),
+            StepResult::skipped("No running services"),
         );
         return Ok(bag);
     }
@@ -200,39 +193,33 @@ pub fn create_snapshot_test() -> TestDef {
 }
 
 async fn test_create_snapshot(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
-    // Find a running service via garden topology
+    // Find a running service by querying each stone's services directly
     let mut target: Option<(String, String)> = None;
 
-    if let Some(tended) = garden.tended() {
-        if let Ok(resp) = tended.get_json("/api/v1/garden").await {
-            if let Some(stones) = resp.get("data").and_then(|d| d.get("stones")).and_then(|s| s.as_array()) {
-                for stone_info in stones {
-                    let stone_name = stone_info.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    if let Some(offerings) = stone_info.get("offerings").and_then(|o| o.as_array()) {
-                        for offering in offerings {
-                            if let Some(name) = offering.get("name").and_then(|n| n.as_str()) {
-                                let vitality = offering.get("vitality").and_then(|v| v.as_str()).unwrap_or("");
-                                if vitality == "thriving" || vitality == "healthy" {
-                                    target = Some((stone_name.to_string(), name.to_string()));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if target.is_some() {
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
+            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                for svc in services {
+                    let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    if status == "Running" && !name.is_empty() {
+                        target = Some((stone.name.clone(), name.to_string()));
                         break;
                     }
                 }
             }
+        }
+        if target.is_some() {
+            break;
         }
     }
 
     if target.is_none() {
         bag.record_step(
             "create_snapshot",
-            "No running services found in garden topology",
+            "No running services found across stones",
             0,
-            StepResult::skipped("No running services in garden"),
+            StepResult::skipped("No running services"),
         );
         return Ok(bag);
     }

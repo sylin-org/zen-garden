@@ -101,6 +101,13 @@ pub mod paths {
     pub use crate::constants::paths::{
         config_dir, stone_home, first_run_flag, stone_user,
         data_dir, harvest_dir, stored_dir, ceremony_journal_dir,
+        // Linux-specific paths (for SSH validation)
+        LINUX_CONFIG_DIR, LINUX_DATA_DIR,
+        linux_harvest_dir, linux_nurturing_index_dir, linux_nurturing_index_path,
+        // Nurturing paths
+        nurturing_index_dir, nurturing_index_path,
+        seed_bank_nurturing_dir, seed_bank_offering_dir, seed_bank_harvest_path,
+        NURTURING_SUBDIR, NURTURING_INDEX_FILE, SEED_BANK_APPS_DIR,
     };
 }
 

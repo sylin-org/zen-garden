@@ -489,6 +489,61 @@ pub async fn start_lantern_registration(
     }
 }
 
+/// Start seed bank hot-plug detection task
+///
+/// Periodically scans for new seed banks that may have been plugged in after startup.
+/// This provides a resilient, self-healing experience - users can plug in a seed bank
+/// at any time and it will be automatically mounted and announced.
+///
+/// Also handles retry of previously failed mounts (device may have been busy or not ready).
+///
+/// Runs every 10 seconds for responsive hot-plug detection.
+pub fn start_seedbank_hotplug_detection(
+    state: AppState,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        interval.tick().await; // Skip first immediate tick
+
+        loop {
+            interval.tick().await;
+
+            // Scan triggers auto-mount for any new zen-seed devices
+            match crate::infra::storage::SeedBankRegistry::scan().await {
+                Ok(registry) => {
+                    let count = registry.list().len();
+                    if count > 0 {
+                        tracing::trace!(
+                            seed_banks = count,
+                            "Hot-plug scan: seed banks detected"
+                        );
+                    }
+
+                    // Update storage cache and broadcast if we have storage
+                    let endpoint = state.self_entry.read().await.endpoint.clone();
+                    if let Err(e) = crate::infra::storage::update_and_broadcast(
+                        &state.storage_cache,
+                        &state.stone_id,
+                        &state.stone_name,
+                        &endpoint,
+                    ).await {
+                        tracing::trace!(
+                            error = %e,
+                            "Failed to update storage cache during hot-plug scan"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::trace!(
+                        error = %e,
+                        "Hot-plug scan failed"
+                    );
+                }
+            }
+        }
+    });
+}
+
 /// Start all background tasks
 ///
 /// Convenience function to start all standard background tasks.
@@ -507,6 +562,9 @@ pub async fn start_all_background_tasks(
 
     // Start storage cache maintenance (STORAGE-0003: prune stale entries)
     start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
+
+    // Start seed bank hot-plug detection (resilient auto-mount for plugged devices)
+    start_seedbank_hotplug_detection(state.clone());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(

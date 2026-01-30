@@ -78,3 +78,75 @@ pub fn adapters_dir() -> String {
         }
     })
 }
+
+// ============================================================================
+// Linux-Specific Paths (for SSH validation from Windows to Linux stones)
+// ============================================================================
+
+/// Linux config directory (always /etc/zen-garden, regardless of compile target)
+pub const LINUX_CONFIG_DIR: &str = "/etc/zen-garden";
+
+/// Linux data directory (always /var/lib/zen-garden, regardless of compile target)
+pub const LINUX_DATA_DIR: &str = "/var/lib/zen-garden";
+
+/// Linux harvest directory
+pub fn linux_harvest_dir() -> String {
+    format!("{}/harvests", LINUX_DATA_DIR)
+}
+
+/// Linux nurturing index directory
+pub fn linux_nurturing_index_dir() -> String {
+    format!("{}/nurturing", LINUX_CONFIG_DIR)
+}
+
+/// Linux nurturing index file path
+pub fn linux_nurturing_index_path() -> String {
+    format!("{}/index.json", linux_nurturing_index_dir())
+}
+
+// ============================================================================
+// Nurturing Paths
+// ============================================================================
+
+/// Nurturing sub-directory name within config/data directories
+pub const NURTURING_SUBDIR: &str = "nurturing";
+
+/// Nurturing index filename
+pub const NURTURING_INDEX_FILE: &str = "index.json";
+
+/// Get nurturing index directory (local A/B slot metadata)
+/// Layout: {config_dir}/nurturing/
+pub fn nurturing_index_dir() -> String {
+    format!("{}/{}", config_dir(), NURTURING_SUBDIR)
+}
+
+/// Get nurturing index file path
+/// Layout: {config_dir}/nurturing/index.json
+pub fn nurturing_index_path() -> String {
+    format!("{}/{}", nurturing_index_dir(), NURTURING_INDEX_FILE)
+}
+
+// ============================================================================
+// Seed Bank Nurturing Paths
+// ============================================================================
+
+/// Seed bank apps directory name
+pub const SEED_BANK_APPS_DIR: &str = "apps/garden";
+
+/// Get nurturing directory on a seed bank
+/// Layout: {mount_path}/apps/garden/nurturing/
+pub fn seed_bank_nurturing_dir(mount_path: &str) -> String {
+    format!("{}/{}/{}", mount_path, SEED_BANK_APPS_DIR, NURTURING_SUBDIR)
+}
+
+/// Get offering directory on a seed bank
+/// Layout: {mount_path}/apps/garden/nurturing/{offering_id}/
+pub fn seed_bank_offering_dir(mount_path: &str, offering_id: &str) -> String {
+    format!("{}/{}", seed_bank_nurturing_dir(mount_path), offering_id)
+}
+
+/// Get harvest tarball path on a seed bank
+/// Layout: {mount_path}/apps/garden/nurturing/{offering_id}/{harvest_id}.tar.gz
+pub fn seed_bank_harvest_path(mount_path: &str, offering_id: &str, harvest_id: &str) -> String {
+    format!("{}/{}.tar.gz", seed_bank_offering_dir(mount_path, offering_id), harvest_id)
+}

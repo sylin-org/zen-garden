@@ -68,23 +68,53 @@ impl SeedBankRegistry {
             match Self::read_manifest(&manifest_path).await {
                 Ok(manifest) => {
                     let mount_path = path.to_string_lossy().to_string();
-                    
-                    // Get device from mount info
-                    let device = Self::get_device_for_mount(&mount_path).await
-                        .unwrap_or_else(|| "unknown".to_string());
-                    
-                    // Get disk usage
+
+                    // Get device from mount info - this tells us if actually mounted
+                    let device_opt = Self::get_device_for_mount(&mount_path).await;
+                    let is_mounted = device_opt.is_some();
+                    let device = device_opt.unwrap_or_else(|| "not-mounted".to_string());
+
+                    // Skip seed banks that aren't actually mounted
+                    // The manifest may exist from a previous mount, but device isn't there now
+                    if !is_mounted {
+                        debug!(
+                            name = %manifest.name,
+                            mount_path = %mount_path,
+                            "Skipping seed bank - not mounted (manifest exists but no device)"
+                        );
+                        continue;
+                    }
+
+                    // Get disk usage - also serves as liveness check
+                    // If device was yanked, this will fail or return 0
                     let (used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(&mount_path)
                         .map(|(used, avail)| (used, used + avail))
                         .unwrap_or((0, 0));
-                    
+
+                    // Liveness check: if capacity is 0, mount is likely stale/dead
+                    // This catches the case where device was physically removed
+                    if capacity_bytes == 0 {
+                        warn!(
+                            name = %manifest.name,
+                            device = %device,
+                            mount_path = %mount_path,
+                            "Skipping seed bank - mount appears stale (0 capacity, device may have been removed)"
+                        );
+
+                        // Clean up the stale mount so it doesn't cause issues
+                        #[cfg(target_os = "linux")]
+                        Self::cleanup_stale_mount(&mount_path).await;
+
+                        continue;
+                    }
+
                     // Check if roaming (from different stone)
                     // Use hostname as stone name (same as app_state initialization)
                     let stone_name = hostname::get()
                         .map(|h| h.to_string_lossy().to_string())
                         .unwrap_or_else(|_| "unknown".to_string());
                     let roaming = manifest.origin_stone != stone_name;
-                    
+
                     let info = SeedBankInfo {
                         id: manifest.id,
                         name: manifest.name.clone(),
@@ -99,14 +129,30 @@ impl SeedBankRegistry {
                         created_at: manifest.created_at,
                         last_sync: None,
                         roaming,
-                        online: true, // If we can read it, it's online
+                        online: true, // Verified: device is mounted and manifest is readable
                     };
-                    
+
                     debug!(name = %info.name, device = %info.device, "Discovered seed bank");
                     registry.banks.insert(manifest.name, info);
                 }
                 Err(e) => {
-                    warn!(path = %manifest_path.display(), error = %e, "Failed to read seed bank manifest");
+                    let mount_path = path.to_string_lossy().to_string();
+                    let error_str = e.to_string().to_lowercase();
+
+                    // Check if this is an I/O error (device likely yanked)
+                    if error_str.contains("i/o error") || error_str.contains("input/output error") {
+                        warn!(
+                            mount_path = %mount_path,
+                            error = %e,
+                            "Seed bank I/O error - device may have been removed"
+                        );
+
+                        // Clean up the stale mount
+                        #[cfg(target_os = "linux")]
+                        Self::cleanup_stale_mount(&mount_path).await;
+                    } else {
+                        warn!(path = %manifest_path.display(), error = %e, "Failed to read seed bank manifest");
+                    }
                 }
             }
         }
@@ -139,11 +185,52 @@ impl SeedBankRegistry {
             }
             None
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             let _ = mount_path;
             None
+        }
+    }
+
+    /// Clean up a stale mount (device was physically removed)
+    ///
+    /// Uses lazy unmount (-l) which detaches immediately without waiting for I/O.
+    /// This is safe for yanked devices that would otherwise hang on regular umount.
+    #[cfg(target_os = "linux")]
+    async fn cleanup_stale_mount(mount_path: &str) {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        info!(mount_path = %mount_path, "Cleaning up stale mount (device removed)");
+
+        // Use lazy unmount to avoid hanging on dead device
+        let result = Command::new("sudo")
+            .args(["umount", "-l", mount_path])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+
+        match result {
+            Ok(output) if output.status.success() => {
+                info!(mount_path = %mount_path, "Successfully cleaned up stale mount");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    mount_path = %mount_path,
+                    error = %stderr.trim(),
+                    "Could not unmount stale mount (may already be cleaned up)"
+                );
+            }
+            Err(e) => {
+                debug!(
+                    mount_path = %mount_path,
+                    error = %e,
+                    "Failed to run umount command"
+                );
+            }
         }
     }
     
@@ -219,11 +306,17 @@ impl SeedBankRegistry {
             }
             
             let device_path = format!("/dev/{}", device_name);
-            
-            // Check if device is removable (skip internal drives)
-            if !DeviceAnalyzer::is_removable(&device_path).unwrap_or(false) {
-                debug!(device = %device_path, "Skipping non-removable zen-seed device");
-                continue;
+
+            // Check if device is removable (USB detection)
+            // For zen-seed labeled devices, we proceed even if detection fails
+            // because the label indicates explicit user intent to use as seed bank
+            let is_removable = DeviceAnalyzer::is_removable(&device_path).unwrap_or(false);
+            if !is_removable {
+                // Log diagnostic info for troubleshooting
+                info!(
+                    device = %device_path,
+                    "zen-seed device detected but is_removable=false - proceeding anyway (label trusted)"
+                );
             }
             
             // Determine mount point name

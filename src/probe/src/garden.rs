@@ -509,6 +509,34 @@ impl Stone {
         self.get_json("/health").await.is_ok()
     }
 
+    /// Get stone platform info (os, architecture)
+    /// Returns (os, architecture) - e.g., ("linux", "x86_64") or ("windows", "x86_64")
+    pub async fn get_platform(&self) -> Result<(String, String)> {
+        let health: serde_json::Value = self.get_json("/health").await?;
+
+        let os = health
+            .get("os")
+            .and_then(|v| v.as_str())
+            .unwrap_or("linux")  // Default to Linux for older versions
+            .to_string();
+
+        let arch = health
+            .get("architecture")
+            .and_then(|v| v.as_str())
+            .unwrap_or("x86_64")
+            .to_string();
+
+        Ok((os, arch))
+    }
+
+    /// Check if this stone is running Linux
+    pub async fn is_linux(&self) -> bool {
+        match self.get_platform().await {
+            Ok((os, _)) => os.to_lowercase().contains("linux"),
+            Err(_) => true, // Default to Linux if health check fails
+        }
+    }
+
     /// Wait until a condition is true, with timeout
     pub async fn wait_until<F, Fut>(
         &self,

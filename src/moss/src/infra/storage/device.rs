@@ -17,9 +17,11 @@ impl DeviceAnalyzer {
     /// 1. sysfs removable flag (quick but not always set for USB)
     /// 2. USB bus detection via sysfs device symlink (canonical path)
     /// 3. DRIVER check in uevent
+    /// 4. Transport type check (usb, sata, etc.)
+    /// 5. Check parent device if partition detection fails
     pub fn is_removable(device_path: &str) -> Result<bool> {
         let base_name = Self::get_base_device_name(device_path);
-        
+
         // Method 1: Check sysfs removable flag
         let removable_path = format!("/sys/block/{}/removable", base_name);
         if let Ok(content) = std::fs::read_to_string(&removable_path) {
@@ -28,7 +30,7 @@ impl DeviceAnalyzer {
                 return Ok(true);
             }
         }
-        
+
         // Method 2: Check if device is on USB bus via canonical path
         // The canonical path will be like /sys/devices/pci.../usb1/1-3/.../host/target/...
         let device_sysfs_path = format!("/sys/block/{}/device", base_name);
@@ -39,17 +41,61 @@ impl DeviceAnalyzer {
                 return Ok(true);
             }
         }
-        
+
         // Method 3: Check subsystem via uevent
         let uevent_path = format!("/sys/block/{}/device/uevent", base_name);
         if let Ok(content) = std::fs::read_to_string(&uevent_path) {
             if content.contains("DRIVER=usb-storage") || content.contains("DRIVER=uas") {
-                debug!(device = %device_path, method = "uevent", "Device uses USB storage driver");
+                debug!(device = %device_path, method = "uevent_driver", "Device uses USB storage driver");
+                return Ok(true);
+            }
+            // Also check DEVTYPE
+            if content.contains("DEVTYPE=usb_device") || content.contains("DEVTYPE=usb_interface") {
+                debug!(device = %device_path, method = "uevent_devtype", "Device is USB type");
                 return Ok(true);
             }
         }
-        
-        debug!(device = %device_path, "Device is not removable");
+
+        // Method 4: Check transport type via sysfs (some USB drives report this)
+        let transport_path = format!("/sys/block/{}/device/transport", base_name);
+        if let Ok(content) = std::fs::read_to_string(&transport_path) {
+            let transport = content.trim().to_lowercase();
+            if transport == "usb" || transport == "sas" {
+                debug!(device = %device_path, method = "transport", transport = %transport, "Device transport is USB/SAS");
+                return Ok(true);
+            }
+        }
+
+        // Method 5: Walk up the sysfs tree to find USB ancestor
+        // Some USB devices are behind multiple layers of virtualization
+        let device_path_sysfs = format!("/sys/block/{}", base_name);
+        if let Ok(device_link) = std::fs::read_link(&device_path_sysfs) {
+            let link_str = device_link.to_string_lossy();
+            if link_str.contains("/usb") || link_str.contains("usb-storage") {
+                debug!(device = %device_path, method = "sysfs_link", link = %link_str, "Device sysfs link contains USB");
+                return Ok(true);
+            }
+        }
+
+        // Method 6: Check via lsblk TRAN field (most reliable but requires external command)
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(output) = std::process::Command::new("lsblk")
+                .args(["-dno", "TRAN", device_path])
+                .output()
+            {
+                if output.status.success() {
+                    let tran = String::from_utf8_lossy(&output.stdout);
+                    let tran = tran.trim().to_lowercase();
+                    if tran == "usb" || tran == "mmc" || tran == "sas" {
+                        debug!(device = %device_path, method = "lsblk_tran", transport = %tran, "lsblk reports USB/MMC transport");
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        debug!(device = %device_path, "Device is not removable (all detection methods failed)");
         Ok(false)
     }
     

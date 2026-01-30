@@ -7,14 +7,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use garden_adapter_sdk::{
-    check_dump_commands, AdapterRuntime, CommandArg, CommandDef, CommandManifest,
+    check_dump_commands, AdapterRuntime, AdapterState, CommandArg, CommandDef, CommandManifest,
+    SseClient,
+    sse::SseClientConfig,
 };
 
+mod animation;
+mod events;
 mod handler;
 mod serial;
 
+use animation::{start_animation, AnimationContext};
+use events::FireflyEventHandler;
 use handler::FireflyHandler;
 use serial::{find_firefly_port, FireflyConnection, FireflySerial};
+use tokio::sync::RwLock;
 
 /// Build Firefly's command manifest
 fn build_manifest() -> CommandManifest {
@@ -109,6 +116,10 @@ struct Cli {
     /// Command server port (assigned by Moss)
     #[arg(long, env = "FIREFLY_HTTP_PORT")]
     port: Option<u16>,
+
+    /// State directory for persisting settings
+    #[arg(long, env = "FIREFLY_STATE_DIR")]
+    state_dir: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -165,6 +176,13 @@ async fn main() -> Result<()> {
         .port
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss)"))?;
 
+    // Create adapter state (handles on/off persistence)
+    let state_dir = cli.state_dir.map(std::path::PathBuf::from);
+    let adapter_state = Arc::new(AdapterState::new(state_dir.clone()));
+
+    // Create animation context (handles brightness persistence)
+    let animation_context = Arc::new(RwLock::new(AnimationContext::new(state_dir)));
+
     // Create connection manager (doesn't require device to be present)
     let connection = Arc::new(FireflyConnection::new(cli.serial_port));
 
@@ -172,6 +190,8 @@ async fn main() -> Result<()> {
     match connection.try_connect() {
         Ok(()) => {
             tracing::info!("Firefly device connected on startup");
+            // Clear display on startup for clean slate
+            let _ = connection.with_device(|serial| serial.clear());
         }
         Err(e) => {
             tracing::info!(error = %e, "No Firefly device found on startup, will retry every 10s");
@@ -196,6 +216,8 @@ async fn main() -> Result<()> {
                 match conn_for_retry.try_connect() {
                     Ok(()) => {
                         tracing::info!("Firefly device connected");
+                        // Clear display on reconnect for clean slate
+                        let _ = conn_for_retry.with_device(|serial| serial.clear());
                     }
                     Err(_) => {
                         // Silent retry - don't spam logs
@@ -205,8 +227,29 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Start the animation engine (runs the baseline firefly animation)
+    let _animation_handle = start_animation(
+        Arc::clone(&connection),
+        Arc::clone(&animation_context),
+    );
+    tracing::info!("Animation engine started");
+
+    // Start SSE client to receive presence events from Moss
+    let sse_config = SseClientConfig::new(&stone)
+        .with_path("/api/v1/stone/presence/stream");
+    let event_handler = Arc::new(FireflyEventHandler::new(
+        Arc::clone(&animation_context),
+        Arc::clone(&adapter_state),
+    ));
+    let _sse_handle = SseClient::start(sse_config, event_handler);
+    tracing::info!(endpoint = %stone, "SSE client started for presence events");
+
     // Create command handler
-    let handler = FireflyHandler::new(connection);
+    let handler = FireflyHandler::new(
+        Arc::clone(&connection),
+        Arc::clone(&adapter_state),
+        Arc::clone(&animation_context),
+    );
 
     // Build and run adapter
     let config = garden_adapter_sdk::AdapterConfig {

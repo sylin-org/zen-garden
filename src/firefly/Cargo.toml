@@ -27,3 +27,6 @@ serde_json.workspace = true
 
 # Serial port communication
 serialport = "4.3"
+
+# Random for firefly animation
+rand = "0.8"

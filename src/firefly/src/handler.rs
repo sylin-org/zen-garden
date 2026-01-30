@@ -2,20 +2,28 @@
 //!
 //! Implements the SDK's CommandHandler trait for Firefly-specific commands.
 
-use garden_adapter_sdk::{async_trait, CommandHandler, CommandResponse};
+use garden_adapter_sdk::{async_trait, AdapterState, CommandHandler, CommandResponse};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
+use crate::animation::AnimationContext;
 use crate::serial::{parse_color, FireflyConnection};
 
 /// Firefly command handler
 pub struct FireflyHandler {
     connection: Arc<FireflyConnection>,
+    state: Arc<AdapterState>,
+    animation: Arc<RwLock<AnimationContext>>,
 }
 
 impl FireflyHandler {
     /// Create a new Firefly command handler
-    pub fn new(connection: Arc<FireflyConnection>) -> Self {
-        Self { connection }
+    pub fn new(
+        connection: Arc<FireflyConnection>,
+        state: Arc<AdapterState>,
+        animation: Arc<RwLock<AnimationContext>>,
+    ) -> Self {
+        Self { connection, state, animation }
     }
 }
 
@@ -45,7 +53,9 @@ impl CommandHandler for FireflyHandler {
             // LED control
             "pixel" | "px" => self.handle_pixel(cmd_args).await,
             "fill" => self.handle_fill(cmd_args).await,
-            "clear" | "off" => self.handle_clear().await,
+            "on" => self.handle_on().await,
+            "off" => self.handle_off().await,
+            "clear" => self.handle_clear().await,
             "brightness" | "bright" | "dim" => self.handle_brightness(cmd_args).await,
 
             // Animations
@@ -199,11 +209,41 @@ impl FireflyHandler {
         }
     }
 
+    /// Handle on command - enable SSE event handling and animation
+    async fn handle_on(&self) -> CommandResponse {
+        self.state.enable();
+
+        // Update animation context
+        {
+            let mut ctx = self.animation.write().await;
+            ctx.enabled = true;
+        }
+
+        CommandResponse::success("Firefly enabled - animation running")
+    }
+
+    /// Handle off command - disable SSE event handling and clear display
+    async fn handle_off(&self) -> CommandResponse {
+        self.state.disable();
+
+        // Update animation context (will clear display)
+        {
+            let mut ctx = self.animation.write().await;
+            ctx.enabled = false;
+        }
+
+        // Also explicitly clear
+        let _ = self.connection.with_device(|serial| serial.clear());
+
+        CommandResponse::success("Firefly disabled - display cleared")
+    }
+
     /// Handle brightness command
     async fn handle_brightness(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
-            return CommandResponse::error("Usage: brightness <0-100>")
-                .with_suggestions(["brightness 50", "brightness 100", "brightness 25"]);
+            // Show current brightness
+            let ctx = self.animation.read().await;
+            return CommandResponse::success(format!("Current brightness: {}%", ctx.brightness));
         }
 
         let percent: u8 = match args[0].parse() {
@@ -211,19 +251,13 @@ impl FireflyHandler {
             _ => return CommandResponse::error("Brightness must be 0-100"),
         };
 
-        match self
-            .connection
-            .with_device(|serial| serial.brightness(percent))
+        // Update animation context (persists to disk)
         {
-            Ok(response) => {
-                if response.starts_with("OK") {
-                    CommandResponse::success(format!("Brightness set to {}%", percent))
-                } else {
-                    CommandResponse::error(format!("Device error: {}", response))
-                }
-            }
-            Err(e) => CommandResponse::error(format!("Not connected: {}", e)),
+            let mut ctx = self.animation.write().await;
+            ctx.set_brightness(percent);
         }
+
+        CommandResponse::success(format!("Brightness set to {}% (saved)", percent))
     }
 
     /// Handle animate command
@@ -276,11 +310,16 @@ impl FireflyHandler {
     /// Handle info command
     async fn handle_info(&self) -> CommandResponse {
         let status = self.connection.status_info();
+        let sse_status = if self.state.is_enabled() { "on" } else { "off" };
+        let brightness = self.animation.read().await.brightness;
 
         if !self.connection.is_connected() {
             return CommandResponse::success_with_details(
                 "Firefly adapter running (no device)",
-                format!("Status: {}\n\nConnect a Waveshare RP2040-Matrix to enable LED control.", status),
+                format!(
+                    "Status: {}\nSSE events: {}\nBrightness: {}%\n\nConnect a Waveshare RP2040-Matrix to enable LED control.",
+                    status, sse_status, brightness
+                ),
             );
         }
 
@@ -291,6 +330,8 @@ impl FireflyHandler {
                     let parts: Vec<&str> = response.split(',').skip(1).collect();
 
                     let mut details = format!("Status: {}\n", status);
+                    details.push_str(&format!("SSE events: {}\n", sse_status));
+                    details.push_str(&format!("Brightness: {}%\n", brightness));
                     if parts.len() >= 3 {
                         details.push_str(&format!("Firmware: {}\n", parts[0]));
                         details.push_str(&format!("Hardware: {}\n", parts[1]));

@@ -19,10 +19,35 @@
 
 ### Version 0.1.0 (V1 API) - January 2026
 
-**Status:** ✅ Production Ready  
+**Status:** ✅ Production Ready
 **Build:** Clean (0 errors, 0 warnings)
 
 **What's New:**
+
+#### Adapter SDK and Physical Presence
+
+**AdapterState Persistence:**
+- Adapters can now persist on/off state across restarts
+- New `AdapterState` module in adapter-sdk handles file-based persistence
+- Moss passes `--state-dir` to adapters on spawn
+
+**Firefly LED Adapter (NEW):**
+- Ambient "firefly" animation on Waveshare RP2040-Matrix 5x5 RGB LED
+- Zen garden-inspired visual language:
+  - Warm white pixels fade in/out like fireflies
+  - Load-based tempo (idle = slow/sparse, busy = fast/dense)
+  - Green firefly for seed-bank (storage) presence
+  - Blue firefly for running services
+  - Activity bonus from installed offerings (+0.05 per offering)
+- Override layer for notifications (tended, health changes, service events)
+- Brightness persistence across restarts
+- Display cleared on SIGTERM/shutdown for clean exit
+- SSE subscription to Moss presence events
+
+**Cricket Audio Adapter Updates:**
+- SSE event handling for automatic sound playback
+- On/off state persistence across restarts
+- Event-to-sound mapping for health changes, service events
 
 #### Dual-Layer API Architecture
 

@@ -2,9 +2,22 @@
 
 **Physical status indicator for Zen Garden Stones**
 
-**Status:** Draft  
-**Version:** 0.1.0  
+**Status:** Implemented (Partial)
+**Version:** 0.1.0
 **Date:** January 2026
+
+---
+
+> **Implementation Note:** The initial implementation focuses on the **Firefly mode baseline animation** with a simplified approach. Rather than the elaborate Firefly/Pond/Normative modes described below, the current implementation provides:
+>
+> - **Ambient firefly animation**: Warm white pixels fade in/out like fireflies
+> - **Load-based tempo**: Activity level controls animation speed and density
+> - **Colored fireflies**: Green for seed-bank, blue for services
+> - **Override layer**: Notifications (tended, health, service events) temporarily override baseline
+> - **Brightness persistence**: User setting saved across restarts
+> - **Graceful shutdown**: Display cleared on SIGTERM
+>
+> The full Pond mode (water metaphor) and Normative mode are reserved for future implementation. See [adapters.md](../guides/adapters.md) for current commands and usage.
 
 ---
 

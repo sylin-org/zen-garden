@@ -21,8 +21,8 @@ Adapters subscribe to Stone presence events (service starts, container failures,
 
 ### Cricket (Audio Adapter)
 
-**Port:** 7187  
-**Purpose:** Sonify infrastructure with 4-channel audio mixer  
+**Port:** 7187
+**Purpose:** Sonify infrastructure with 4-channel audio mixer
 **Status:** ✅ Active
 
 Cricket provides audio feedback for Stone operations using a tune system that maps events to sounds:
@@ -32,12 +32,22 @@ Cricket provides audio feedback for Stone operations using a tune system that ma
 - **Ambient:** Background atmosphere (continuous loops, chimes)
 - **Background:** Persistent ambient soundscapes
 
+**SSE Event Handling:**
+Cricket subscribes to Moss presence events and automatically plays sounds for:
+- Stone health changes (thriving → withering → wilting)
+- Service started/stopped
+- Stone tended events
+
 **Commands:**
 ```bash
+# Enable/disable
+garden-rake hey tell cricket on
+garden-rake hey tell cricket off
+
 # Select active tune
 garden-rake hey tell cricket select zen-tech
 
-# Adjust volume (0-100)
+# Adjust volume (0-100, persisted)
 garden-rake hey tell cricket volume 75
 
 # List available tunes
@@ -58,22 +68,74 @@ garden-rake hey tell cricket stop
 - `mr-robot`: Cyberpunk aesthetic (planned)
 - `lo-fi-ops`: Chill ambient operations (planned)
 
+**Features:**
+- On/off state persistence across restarts
+- SSE subscription to Moss presence events
+- Automatic event-to-sound mapping
+
 **Reference:** [CRICKET-0001-audio-adapter-spec.md](../decisions/CRICKET-0001-audio-adapter-spec.md)
 
 ---
 
-### Firefly (LED Adapter) - Planned
+### Firefly (LED Adapter)
 
-**Port:** 7188 (when implemented)  
-**Purpose:** Visual presence indicators via programmable LEDs  
-**Status:** 🔜 Planned
+**Port:** 7188
+**Purpose:** Visual presence indicator via Waveshare RP2040-Matrix 5x5 RGB LED
+**Status:** ✅ Active
 
-Firefly will control RGB LEDs to show Stone status:
-- Green: Healthy
-- Yellow: Degraded
-- Red: Critical
-- Blue pulse: Update available
-- White flash: Service event
+Firefly creates an ambient "firefly" animation on a 5x5 LED matrix, providing glanceable awareness of Stone health and activity:
+
+**Baseline Animation (Zen Garden Visual Language):**
+- **Warm white pixels** fade in/out like fireflies in a garden
+- **Load-based tempo**: idle (slow, sparse) to busy (fast, dense)
+- **Green firefly**: appears when seed-bank (storage) is connected
+- **Blue firefly**: appears when services are running
+- Activity bonus from installed offerings (+0.05 per offering)
+
+**Override Layer (Notifications):**
+- **Stone tended**: sparkle animation
+- **Health warning**: amber pulse (withering)
+- **Health error**: red pulse (wilting)
+- **Service started**: green bloom
+- **Service stopped**: brief dim
+
+**Commands:**
+```bash
+# Enable/disable
+garden-rake hey tell firefly on
+garden-rake hey tell firefly off
+
+# Set brightness (0-100, persisted)
+garden-rake hey tell firefly brightness 30
+
+# Manual status colors
+garden-rake hey tell firefly status healthy
+garden-rake hey tell firefly status warning
+garden-rake hey tell firefly status error
+
+# Direct pixel/fill control
+garden-rake hey tell firefly pixel 2 2 ff0000
+garden-rake hey tell firefly fill 00ff00
+garden-rake hey tell firefly clear
+
+# Built-in animations
+garden-rake hey tell firefly animate rainbow
+garden-rake hey tell firefly animate sparkle
+garden-rake hey tell firefly stop
+
+# Device info
+garden-rake hey tell firefly info
+```
+
+**Hardware:** Waveshare RP2040-Matrix (USB-C, appears as CDC-ACM serial)
+
+**Features:**
+- Auto-detection of RP2040 device (VID 0x2e8a)
+- Brightness persistence across restarts
+- Display cleared on service stop/SIGTERM
+- SSE subscription to Moss presence events
+
+**Reference:** [firefly.md](../proposals/firefly.md)
 
 ---
 
@@ -103,7 +165,7 @@ garden-rake hey list
 ```
 Available Adapters:
   cricket    Audio Adapter v0.1.0    ✅ Running (PID 12345)
-  firefly    LED Control v0.1.0      ⏸ Stopped
+  firefly    LED Adapter v0.1.0      ✅ Running (PID 12346)
 ```
 
 ---
@@ -155,9 +217,10 @@ garden-rake hey tell <adapter> <command> [args...]
 garden-rake hey tell cricket play stone-online
 garden-rake hey tell cricket volume 50
 
-# Firefly LED control (when available)
-garden-rake hey tell firefly set presence green
-garden-rake hey tell firefly blink alert
+# Firefly LED control
+garden-rake hey tell firefly brightness 30
+garden-rake hey tell firefly status healthy
+garden-rake hey tell firefly animate sparkle
 
 # OLED display control (when available)
 garden-rake hey tell oled show metrics

@@ -93,7 +93,7 @@ impl TestRegistry {
         self.register(crate::tests::storage::beacon_visibility_test());
         self.register(crate::tests::storage::object_roundtrip_test());
 
-        // Nurturing tests (A/B backup slots, sub-capabilities)
+        // Nurturing tests (A/B backup slots, sub-capabilities, seed bank integration)
         self.register(crate::tests::nurturing::index_test());
         self.register(crate::tests::nurturing::offering_slots_test());
         self.register(crate::tests::nurturing::create_snapshot_test());
@@ -101,6 +101,7 @@ impl TestRegistry {
         self.register(crate::tests::nurturing::find_with_subcap_test());
         self.register(crate::tests::nurturing::offering_id_stability_test());
         self.register(crate::tests::nurturing::remote_list_test());
+        self.register(crate::tests::nurturing::orchestration_test());
 
         // Resolution tests (protocol and offering resolution)
         self.register(crate::tests::resolution::offering_lookup_test());

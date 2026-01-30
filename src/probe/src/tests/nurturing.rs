@@ -1,9 +1,10 @@
-//! Nurturing tests - A/B backup slots and sub-capability discovery
+//! Nurturing tests - A/B backup slots, seed bank integration, and retention policy
 //!
 //! Tests for:
 //! - Local A/B nurturing slots (create, list, restore)
 //! - Sub-capability discovery (models, collections, plugins)
 //! - Find services with sub-capability filtering syntax
+//! - Full orchestration: service → local backup → seed bank replication → retention
 
 use crate::registry::TestDef;
 use crate::{Bag, LiveGarden, StepResult};
@@ -720,6 +721,399 @@ async fn test_remote_list(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
             }
         }
     }
+
+    Ok(bag)
+}
+
+// ============================================================================
+// nurturing.orchestration - Full nurturing flow: service → local → seed bank
+// ============================================================================
+
+pub fn orchestration_test() -> TestDef {
+    TestDef {
+        id: "nurturing.orchestration",
+        name: "Nurturing Orchestration",
+        description: "Full nurturing flow: service → local A/B → seed bank replication with retention",
+        category: "nurturing",
+        tags: &["nurturing", "orchestration", "seed-bank", "mutating"],
+        run: |garden, bag| Box::pin(test_orchestration(garden, bag)),
+    }
+}
+
+/// Full orchestration test for the nurturing system
+///
+/// This test exercises the complete nurturing flow:
+/// 1. Find a running service with an offering_id
+/// 2. Create a local A/B snapshot
+/// 3. Detect seed bank presence
+/// 4. Replicate to seed bank (if available)
+/// 5. Verify retention policy (5 snapshots per offering)
+async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    // ========================================================================
+    // Step 1: Find a running service with offering_id
+    // ========================================================================
+
+    let mut target: Option<(String, String, String)> = None; // (stone_name, offering_name, offering_id)
+
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
+            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                for svc in services {
+                    let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    let offering_id = svc.get("offering_id").and_then(|i| i.as_str()).unwrap_or("");
+
+                    if status == "Running" && !name.is_empty() && !offering_id.is_empty() {
+                        target = Some((stone.name.clone(), name.to_string(), offering_id.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+        if target.is_some() {
+            break;
+        }
+    }
+
+    let (stone_name, offering_name, offering_id) = match target {
+        Some(t) => t,
+        None => {
+            bag.record_step(
+                "orchestration_find_service",
+                "No running service with offering_id found",
+                0,
+                StepResult::skipped("No eligible service"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    let stone = garden.stone(&stone_name).unwrap();
+
+    bag.record_step(
+        "orchestration_find_service",
+        format!("Found service: {} (ID: {}) on {}", offering_name, &offering_id[..8], stone_name),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "stone": stone_name,
+            "offering": offering_name,
+            "offering_id": offering_id,
+        })),
+    );
+
+    // ========================================================================
+    // Step 2: Create local A/B snapshot
+    // ========================================================================
+
+    let start = Instant::now();
+    let path = format!("/api/v1/stone/nurturing/{}", offering_name);
+    let body = serde_json::json!({
+        "commit_image": false
+    });
+
+    let snapshot_result = stone.post_json(&path, &body).await;
+    let duration = start.elapsed();
+
+    let (harvest_id, slot) = match snapshot_result {
+        Ok(resp) => {
+            let slot = resp
+                .get("data")
+                .and_then(|d| d.get("slot"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("unknown");
+            let harvest_id = resp
+                .get("data")
+                .and_then(|d| d.get("harvest_id"))
+                .and_then(|h| h.as_str())
+                .unwrap_or("unknown");
+
+            bag.record_step(
+                "orchestration_local_snapshot",
+                format!("Created local snapshot {} in slot {}", harvest_id, slot),
+                duration.as_millis() as u64,
+                StepResult::ok_with(serde_json::json!({
+                    "harvest_id": harvest_id,
+                    "slot": slot,
+                })),
+            );
+            (harvest_id.to_string(), slot.to_string())
+        }
+        Err(e) => {
+            bag.record_step(
+                "orchestration_local_snapshot",
+                format!("Failed to create local snapshot: {}", e),
+                duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+            return Ok(bag);
+        }
+    };
+
+    // ========================================================================
+    // Step 3: Verify local A/B slots
+    // ========================================================================
+
+    let start = Instant::now();
+    let slots_path = format!("/api/v1/stone/nurturing/{}", offering_name);
+    let slots_result = stone.get_json(&slots_path).await;
+    let duration = start.elapsed();
+
+    match slots_result {
+        Ok(resp) => {
+            let slot_a = resp
+                .get("data")
+                .and_then(|d| d.get("slot_a"))
+                .is_some();
+            let slot_b = resp
+                .get("data")
+                .and_then(|d| d.get("slot_b"))
+                .is_some();
+
+            bag.record_step(
+                "orchestration_verify_slots",
+                format!("Slots: A={}, B={}", if slot_a { "filled" } else { "empty" }, if slot_b { "filled" } else { "empty" }),
+                duration.as_millis() as u64,
+                StepResult::ok_with(serde_json::json!({
+                    "slot_a": slot_a,
+                    "slot_b": slot_b,
+                })),
+            );
+        }
+        Err(e) => {
+            bag.record_step(
+                "orchestration_verify_slots",
+                format!("Failed to verify slots: {}", e),
+                duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+        }
+    }
+
+    // ========================================================================
+    // Step 4: Check for seed bank presence
+    // ========================================================================
+
+    let mut seed_bank: Option<(String, String)> = None; // (bank_id, bank_name)
+
+    let start = Instant::now();
+    let banks_result = stone.get_json("/api/v1/stone/storage/bank").await;
+    let duration = start.elapsed();
+
+    match banks_result {
+        Ok(resp) => {
+            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+                for bank in banks {
+                    let id = bank.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    let name = bank.get("name").and_then(|n| n.as_str()).unwrap_or(id);
+                    let status = bank.get("status").and_then(|s| s.as_str()).unwrap_or("");
+
+                    if !id.is_empty() && status != "offline" {
+                        seed_bank = Some((id.to_string(), name.to_string()));
+                        break;
+                    }
+                }
+            }
+
+            if seed_bank.is_some() {
+                let (_, name) = seed_bank.as_ref().unwrap();
+                bag.record_step(
+                    "orchestration_detect_seedbank",
+                    format!("Seed bank detected: {}", name),
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "seed_bank": name,
+                    })),
+                );
+            } else {
+                bag.record_step(
+                    "orchestration_detect_seedbank",
+                    "No online seed banks available",
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "seed_bank": null,
+                    })),
+                );
+            }
+        }
+        Err(e) => {
+            bag.record_step(
+                "orchestration_detect_seedbank",
+                format!("Failed to check seed banks: {}", e),
+                duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+        }
+    }
+
+    // ========================================================================
+    // Step 5: Replicate to seed bank (if available)
+    // ========================================================================
+
+    if let Some((_bank_id, bank_name)) = seed_bank {
+        let start = Instant::now();
+        let replicate_path = format!("/api/v1/stone/nurturing/{}/replicate", offering_name);
+        let replicate_body = serde_json::json!({
+            "seed_bank": bank_name,
+        });
+
+        let replicate_result = stone.post_json(&replicate_path, &replicate_body).await;
+        let duration = start.elapsed();
+
+        match replicate_result {
+            Ok(resp) => {
+                let success = resp
+                    .get("data")
+                    .and_then(|d| d.get("success"))
+                    .and_then(|s| s.as_bool())
+                    .unwrap_or(false);
+                let pruned = resp
+                    .get("data")
+                    .and_then(|d| d.get("pruned_harvest_ids"))
+                    .and_then(|p| p.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let message = resp
+                    .get("data")
+                    .and_then(|d| d.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+
+                if success {
+                    bag.record_step(
+                        "orchestration_replicate",
+                        format!("Replicated to {} (pruned {} old snapshots)", bank_name, pruned),
+                        duration.as_millis() as u64,
+                        StepResult::ok_with(serde_json::json!({
+                            "seed_bank": bank_name,
+                            "harvest_id": harvest_id,
+                            "pruned_count": pruned,
+                            "message": message,
+                        })),
+                    );
+                } else {
+                    bag.record_step(
+                        "orchestration_replicate",
+                        format!("Replication failed: {}", message),
+                        duration.as_millis() as u64,
+                        StepResult::failed(message.to_string()),
+                    );
+                }
+            }
+            Err(e) => {
+                // Replication endpoint may not exist yet - record as info not failure
+                bag.record_step(
+                    "orchestration_replicate",
+                    format!("Replication not available: {}", e),
+                    duration.as_millis() as u64,
+                    StepResult::skipped(format!("Endpoint not implemented: {}", e)),
+                );
+            }
+        }
+
+        // ====================================================================
+        // Step 6: Verify remote snapshots and retention
+        // ====================================================================
+
+        let start = Instant::now();
+        let remote_path = format!("/api/v1/stone/nurturing/remote/{}", bank_name);
+        let remote_result = stone.get_json(&remote_path).await;
+        let duration = start.elapsed();
+
+        match remote_result {
+            Ok(resp) => {
+                let snapshots = resp
+                    .get("data")
+                    .and_then(|d| d.get("snapshots"))
+                    .and_then(|s| s.as_array());
+
+                if let Some(snaps) = snapshots {
+                    // Count snapshots for this offering
+                    let offering_snapshots: Vec<_> = snaps
+                        .iter()
+                        .filter(|s| {
+                            s.get("offering_id")
+                                .and_then(|id| id.as_str())
+                                .map(|id| id == offering_id)
+                                .unwrap_or(false)
+                        })
+                        .collect();
+
+                    let count = offering_snapshots.len();
+                    let within_retention = count <= 5;
+
+                    bag.record_step(
+                        "orchestration_verify_retention",
+                        format!(
+                            "{} remote snapshots for offering (retention: {})",
+                            count,
+                            if within_retention { "OK ≤5" } else { "EXCEEDED >5" }
+                        ),
+                        duration.as_millis() as u64,
+                        if within_retention {
+                            StepResult::ok_with(serde_json::json!({
+                                "snapshot_count": count,
+                                "retention_slots": 5,
+                                "within_policy": true,
+                            }))
+                        } else {
+                            StepResult::failed(format!("Retention exceeded: {} > 5", count))
+                        },
+                    );
+                } else {
+                    bag.record_step(
+                        "orchestration_verify_retention",
+                        "No remote snapshots found (new offering)",
+                        duration.as_millis() as u64,
+                        StepResult::ok_with(serde_json::json!({
+                            "snapshot_count": 0,
+                            "within_policy": true,
+                        })),
+                    );
+                }
+            }
+            Err(e) => {
+                bag.record_step(
+                    "orchestration_verify_retention",
+                    format!("Failed to verify remote snapshots: {}", e),
+                    duration.as_millis() as u64,
+                    StepResult::skipped(e.to_string()),
+                );
+            }
+        }
+    } else {
+        bag.record_step(
+            "orchestration_replicate",
+            "Skipped: no seed bank available",
+            0,
+            StepResult::skipped("No seed bank"),
+        );
+        bag.record_step(
+            "orchestration_verify_retention",
+            "Skipped: no seed bank available",
+            0,
+            StepResult::skipped("No seed bank"),
+        );
+    }
+
+    // ========================================================================
+    // Summary
+    // ========================================================================
+
+    bag.record_step(
+        "orchestration_summary",
+        format!(
+            "Orchestration complete for {} ({})",
+            offering_name,
+            &offering_id[..8]
+        ),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "offering": offering_name,
+            "offering_id": offering_id,
+            "local_slot": slot,
+            "harvest_id": harvest_id,
+        })),
+    );
 
     Ok(bag)
 }

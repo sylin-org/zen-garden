@@ -350,9 +350,14 @@ pub struct ReplicationResult {
     pub seed_bank_name: String,
     /// Size in bytes transferred
     pub size_bytes: u64,
+    /// Harvest IDs pruned due to retention policy
+    pub pruned_harvest_ids: Vec<String>,
     /// Human-readable message
     pub message: String,
 }
+
+/// Default retention policy: 5 slots per offering
+pub const DEFAULT_RETENTION_SLOTS: usize = 5;
 
 /// Remote snapshots index for a seed bank
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -363,6 +368,13 @@ pub struct RemoteNurturingIndex {
     pub seed_bank_id: String,
     /// All remote snapshots on this seed bank
     pub snapshots: Vec<RemoteSnapshot>,
+    /// Retention slots per offering (default 5)
+    #[serde(default = "default_retention_slots")]
+    pub retention_slots: usize,
+}
+
+fn default_retention_slots() -> usize {
+    DEFAULT_RETENTION_SLOTS
 }
 
 impl RemoteNurturingIndex {
@@ -372,18 +384,97 @@ impl RemoteNurturingIndex {
             version: 1,
             seed_bank_id: seed_bank_id.to_string(),
             snapshots: Vec::new(),
+            retention_slots: DEFAULT_RETENTION_SLOTS,
         }
     }
 
-    /// Get snapshots for a specific offering
+    /// Create with custom retention slots
+    pub fn with_retention(seed_bank_id: &str, retention_slots: usize) -> Self {
+        Self {
+            version: 1,
+            seed_bank_id: seed_bank_id.to_string(),
+            snapshots: Vec::new(),
+            retention_slots: retention_slots.max(1), // At least 1 slot
+        }
+    }
+
+    /// Get snapshots for a specific offering, sorted newest first
     pub fn get_for_offering(&self, offering_id: &str) -> Vec<&RemoteSnapshot> {
-        self.snapshots.iter().filter(|s| s.offering_id == offering_id).collect()
+        let mut snapshots: Vec<_> = self.snapshots.iter()
+            .filter(|s| s.offering_id == offering_id)
+            .collect();
+        snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        snapshots
     }
 
     /// Add a snapshot (maintains order by created_at, newest first)
     pub fn add(&mut self, snapshot: RemoteSnapshot) {
         self.snapshots.push(snapshot);
         self.snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    }
+
+    /// Add a snapshot and enforce retention policy for that offering
+    ///
+    /// Returns the snapshots that were pruned (if any) for cleanup.
+    pub fn add_with_retention(&mut self, snapshot: RemoteSnapshot) -> Vec<RemoteSnapshot> {
+        let offering_id = snapshot.offering_id.clone();
+        self.add(snapshot);
+        self.prune_offering(&offering_id)
+    }
+
+    /// Prune excess snapshots for an offering based on retention policy
+    ///
+    /// Returns the pruned snapshots (for deletion from storage).
+    pub fn prune_offering(&mut self, offering_id: &str) -> Vec<RemoteSnapshot> {
+        // Get indices of snapshots for this offering, sorted by created_at (newest first)
+        let mut offering_indices: Vec<(usize, &RemoteSnapshot)> = self.snapshots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.offering_id == offering_id)
+            .collect();
+        offering_indices.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+
+        // If within retention limit, nothing to prune
+        if offering_indices.len() <= self.retention_slots {
+            return Vec::new();
+        }
+
+        // Collect indices to remove (the older ones beyond retention limit)
+        let indices_to_remove: Vec<usize> = offering_indices
+            .iter()
+            .skip(self.retention_slots)
+            .map(|(idx, _)| *idx)
+            .collect();
+
+        // Remove in reverse order to preserve indices
+        let mut pruned = Vec::new();
+        let mut sorted_indices = indices_to_remove.clone();
+        sorted_indices.sort_by(|a, b| b.cmp(a)); // Descending order
+
+        for idx in sorted_indices {
+            pruned.push(self.snapshots.remove(idx));
+        }
+
+        pruned
+    }
+
+    /// Get all unique offering IDs in this index
+    pub fn offering_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.snapshots.iter()
+            .map(|s| s.offering_id.clone())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Get count of snapshots per offering
+    pub fn snapshot_counts(&self) -> std::collections::HashMap<String, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for s in &self.snapshots {
+            *counts.entry(s.offering_id.clone()).or_insert(0) += 1;
+        }
+        counts
     }
 
     /// Remove a snapshot by harvest_id
@@ -492,5 +583,110 @@ mod tests {
         let removed = index.remove("offering-123");
         assert!(removed.is_some());
         assert!(index.get("offering-123").is_none());
+    }
+
+    #[test]
+    fn test_remote_retention_policy() {
+        use chrono::Duration;
+
+        let mut index = RemoteNurturingIndex::with_retention("seed-bank-1", 3);
+        assert_eq!(index.retention_slots, 3);
+
+        let base_time = Utc::now();
+
+        // Add 5 snapshots for the same offering
+        for i in 0..5 {
+            let snapshot = RemoteSnapshot {
+                offering_id: "mongodb-id".into(),
+                offering_name: "mongodb".into(),
+                harvest_id: format!("harvest-{}", i),
+                seed_bank_id: "seed-bank-1".into(),
+                seed_bank_name: "portable-backup".into(),
+                source_stone: "stone-01".into(),
+                created_at: base_time + Duration::hours(i as i64),
+                size_bytes: 1000,
+                object_key: format!("mongodb-id/harvest-{}.tar.gz", i),
+            };
+            let pruned = index.add_with_retention(snapshot);
+
+            // First 3 additions should not prune anything
+            if i < 3 {
+                assert!(pruned.is_empty(), "Unexpected pruning at snapshot {}", i);
+            } else {
+                // 4th and 5th should prune the oldest
+                assert_eq!(pruned.len(), 1, "Expected 1 pruned at snapshot {}", i);
+            }
+        }
+
+        // Should have exactly 3 snapshots (retention limit)
+        assert_eq!(index.snapshots.len(), 3);
+
+        // Should be the 3 newest (harvest-4, harvest-3, harvest-2)
+        let offering_snapshots = index.get_for_offering("mongodb-id");
+        assert_eq!(offering_snapshots.len(), 3);
+        assert_eq!(offering_snapshots[0].harvest_id, "harvest-4");
+        assert_eq!(offering_snapshots[1].harvest_id, "harvest-3");
+        assert_eq!(offering_snapshots[2].harvest_id, "harvest-2");
+    }
+
+    #[test]
+    fn test_remote_retention_multiple_offerings() {
+        use chrono::Duration;
+
+        let mut index = RemoteNurturingIndex::with_retention("seed-bank-1", 2);
+        let base_time = Utc::now();
+
+        // Add 3 snapshots for offering A
+        for i in 0..3 {
+            let snapshot = RemoteSnapshot {
+                offering_id: "offering-a".into(),
+                offering_name: "mongodb".into(),
+                harvest_id: format!("a-harvest-{}", i),
+                seed_bank_id: "seed-bank-1".into(),
+                seed_bank_name: "portable-backup".into(),
+                source_stone: "stone-01".into(),
+                created_at: base_time + Duration::hours(i as i64),
+                size_bytes: 1000,
+                object_key: format!("offering-a/a-harvest-{}.tar.gz", i),
+            };
+            index.add_with_retention(snapshot);
+        }
+
+        // Add 3 snapshots for offering B
+        for i in 0..3 {
+            let snapshot = RemoteSnapshot {
+                offering_id: "offering-b".into(),
+                offering_name: "redis".into(),
+                harvest_id: format!("b-harvest-{}", i),
+                seed_bank_id: "seed-bank-1".into(),
+                seed_bank_name: "portable-backup".into(),
+                source_stone: "stone-01".into(),
+                created_at: base_time + Duration::hours(i as i64),
+                size_bytes: 500,
+                object_key: format!("offering-b/b-harvest-{}.tar.gz", i),
+            };
+            index.add_with_retention(snapshot);
+        }
+
+        // Each offering should have exactly 2 snapshots
+        assert_eq!(index.get_for_offering("offering-a").len(), 2);
+        assert_eq!(index.get_for_offering("offering-b").len(), 2);
+        assert_eq!(index.snapshots.len(), 4); // 2 + 2
+
+        // Verify the newest snapshots are kept
+        let a_snapshots = index.get_for_offering("offering-a");
+        assert_eq!(a_snapshots[0].harvest_id, "a-harvest-2");
+        assert_eq!(a_snapshots[1].harvest_id, "a-harvest-1");
+
+        let b_snapshots = index.get_for_offering("offering-b");
+        assert_eq!(b_snapshots[0].harvest_id, "b-harvest-2");
+        assert_eq!(b_snapshots[1].harvest_id, "b-harvest-1");
+    }
+
+    #[test]
+    fn test_default_retention_is_five() {
+        let index = RemoteNurturingIndex::new("seed-bank-1");
+        assert_eq!(index.retention_slots, DEFAULT_RETENTION_SLOTS);
+        assert_eq!(index.retention_slots, 5);
     }
 }

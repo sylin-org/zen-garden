@@ -345,9 +345,9 @@ impl NurturingStore {
             .await
             .context("Failed to store snapshot on seed bank")?;
 
-        // Update remote index
+        // Update remote index with retention enforcement
         let mut remote_index = self.load_remote_index(seed_bank_mount, seed_bank_id).await?;
-        remote_index.add(RemoteSnapshot {
+        let pruned = remote_index.add_with_retention(RemoteSnapshot {
             offering_id: offering_id.to_string(),
             offering_name: offering_name.to_string(),
             harvest_id: harvest_id.to_string(),
@@ -360,13 +360,45 @@ impl NurturingStore {
         });
         self.save_remote_index(seed_bank_mount, &remote_index).await?;
 
+        // Delete pruned snapshots (retention policy enforcement)
+        for old_snapshot in &pruned {
+            if let Err(e) = object_store.delete_object("garden", "nurturing", &old_snapshot.object_key).await {
+                tracing::warn!(
+                    harvest_id = %old_snapshot.harvest_id,
+                    error = ?e,
+                    "Failed to delete pruned remote snapshot (non-fatal)"
+                );
+            } else {
+                tracing::info!(
+                    harvest_id = %old_snapshot.harvest_id,
+                    offering_id,
+                    "Pruned old snapshot (retention policy)"
+                );
+            }
+        }
+
+        let pruned_count = pruned.len();
+        let pruned_harvest_ids: Vec<String> = pruned.iter().map(|s| s.harvest_id.clone()).collect();
+
         tracing::info!(
             offering_id,
             harvest_id,
             seed_bank = seed_bank_name,
             size = garden_common::utils::format_bytes(size_bytes),
+            pruned_count,
             "Snapshot replicated to seed bank"
         );
+
+        let message = if pruned_count > 0 {
+            format!(
+                "Replicated to {} ({}), pruned {} old snapshot(s)",
+                seed_bank_name,
+                garden_common::utils::format_bytes(size_bytes),
+                pruned_count
+            )
+        } else {
+            format!("Replicated to {} ({})", seed_bank_name, garden_common::utils::format_bytes(size_bytes))
+        };
 
         Ok(ReplicationResult {
             success: true,
@@ -375,7 +407,8 @@ impl NurturingStore {
             seed_bank_id: seed_bank_id.to_string(),
             seed_bank_name: seed_bank_name.to_string(),
             size_bytes,
-            message: format!("Replicated to {} ({})", seed_bank_name, garden_common::utils::format_bytes(size_bytes)),
+            pruned_harvest_ids,
+            message,
         })
     }
 

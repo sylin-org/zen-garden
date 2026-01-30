@@ -1368,6 +1368,55 @@ function Assert-UsbFiles {
     }
 }
 
+function Set-UsbReadOnly {
+    <#
+    .SYNOPSIS
+        Sets the USB disk to read-only mode to prevent Debian installer from targeting it.
+    .DESCRIPTION
+        When booting from USB, Debian's installer will see the USB as a potential installation
+        target. Setting the disk to read-only prevents this - the installer will skip read-only
+        disks when looking for installation targets.
+    #>
+    param(
+        [string]$DriveLetter,
+        [int]$DiskNumber
+    )
+
+    Write-Step "Setting USB to read-only mode..." "..."
+
+    # Get disk number from drive letter if not provided
+    if (-not $DiskNumber -and $DriveLetter) {
+        $letter = $DriveLetter -replace ':', ''
+        $partition = Get-Partition -DriveLetter $letter -ErrorAction Stop
+        $DiskNumber = $partition.DiskNumber
+    }
+
+    if (-not $DiskNumber -and $DiskNumber -ne 0) {
+        throw "Cannot determine disk number for read-only operation"
+    }
+
+    try {
+        # Set disk to read-only using Windows disk management
+        Set-Disk -Number $DiskNumber -IsReadOnly $true -ErrorAction Stop
+
+        # Verify the change took effect
+        $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+        if ($disk.IsReadOnly) {
+            Write-Step "USB disk $DiskNumber set to read-only" "OK"
+            Write-Host "       Debian installer will skip this disk during installation" -ForegroundColor Gray
+        }
+        else {
+            Write-Step "Read-only flag set but disk reports writable" "WARN"
+        }
+    }
+    catch {
+        $errMsg = $_.Exception.Message
+        Write-Step "Failed to set read-only: $errMsg" "WARN"
+        Write-Host "       The USB may still appear as an installation target" -ForegroundColor Yellow
+        Write-Host "       You can manually set it read-only with: diskpart → select disk $DiskNumber → attributes disk set readonly" -ForegroundColor Gray
+    }
+}
+
 function Show-Completion {
     param([hashtable]$Config)
     Write-Host ""
@@ -1679,6 +1728,9 @@ function Main {
         throw "GRUB config not found after update"
     }
     Assert-UsbFiles -UsbDrive $wizardState.UsbDrive -GrubPath $grubCfgPath
+
+    # Set USB to read-only so Debian installer won't target it
+    Set-UsbReadOnly -DriveLetter $wizardState.UsbDrive -DiskNumber $wizardState.UsbDiskNumber
 
     # Done!
     Show-Completion -Config $stoneConfig

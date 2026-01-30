@@ -55,8 +55,26 @@ d-i partman-md/device_remove_md boolean true
 d-i partman-lvm/confirm boolean true
 d-i partman-lvm/confirm_nooverwrite boolean true
 
-# Use first disk automatically
-d-i partman-auto/disk string /dev/sda /dev/vda /dev/nvme0n1
+# Dynamically select first non-USB, non-removable disk
+# This prevents accidentally partitioning the installer USB drive
+# Works on: eMMC (mmcblk*), NVMe (nvme*), SATA/SCSI (sd*), virtio (vd*)
+d-i partman/early_command string \
+    DISK=""; \
+    for b in /sys/block/*; do \
+        d="$(basename "$b")"; \
+        case "$d" in loop*|ram*|sr*|fd*) continue ;; esac; \
+        [ -r "$b/removable" ] && [ "$(cat "$b/removable")" = "1" ] && continue; \
+        readlink -f "$b" | grep -q '/usb' && continue; \
+        DISK="/dev/$d"; break; \
+    done; \
+    if [ -z "$DISK" ]; then \
+        echo "WARNING: No suitable disk found, falling back to first disk" >> /var/log/syslog; \
+        DISK="$(list-devices disk | head -n1)"; \
+    fi; \
+    echo "Stone installer: selected disk $DISK" >> /var/log/syslog; \
+    debconf-set partman-auto/disk "$DISK"; \
+    debconf-set grub-installer/bootdev "$DISK"
+
 d-i partman-auto/choose_recipe select atomic
 
 # Confirm partitioning without asking
@@ -76,6 +94,7 @@ popularity-contest popularity-contest/participate boolean false
 #### Boot loader installation
 d-i grub-installer/only_debian boolean true
 d-i grub-installer/with_other_os boolean true
+# bootdev is set dynamically by partman/early_command to match partman-auto/disk
 d-i grub-installer/bootdev string default
 
 #### Finish installation

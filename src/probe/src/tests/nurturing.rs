@@ -890,24 +890,27 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     }
 
     // ========================================================================
-    // Step 4: Check for seed bank presence
+    // Step 4: Check for seed bank presence (garden-wide view)
     // ========================================================================
 
     let mut seed_bank: Option<(String, String)> = None; // (bank_id, bank_name)
 
     let start = Instant::now();
-    let banks_result = stone.get_json("/api/v1/stone/storage/bank").await;
+    // Use garden-wide storage overview to find seed banks across all stones
+    let banks_result = stone.get_json("/api/v1/stone/storage").await;
     let duration = start.elapsed();
 
     match banks_result {
         Ok(resp) => {
-            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+            // Check garden_banks for seed banks across all stones
+            if let Some(banks) = resp.get("data").and_then(|d| d.get("garden_banks")).and_then(|g| g.as_array()) {
                 for bank in banks {
                     let id = bank.get("id").and_then(|i| i.as_str()).unwrap_or("");
                     let name = bank.get("name").and_then(|n| n.as_str()).unwrap_or(id);
-                    let status = bank.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    let health = bank.get("health").and_then(|h| h.as_str()).unwrap_or("");
 
-                    if !id.is_empty() && status != "offline" {
+                    // Accept healthy banks
+                    if !id.is_empty() && health == "healthy" {
                         seed_bank = Some((id.to_string(), name.to_string()));
                         break;
                     }

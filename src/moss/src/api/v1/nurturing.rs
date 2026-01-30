@@ -5,6 +5,7 @@
 //! - List available snapshots per offering
 //! - Restore from specific slot (current or previous)
 //! - Replicate snapshots to seed banks (remote backup)
+//! - Trigger full nurturing workflow (for timers)
 //!
 //! ## Local Endpoints
 //! - GET  /api/v1/stone/nurturing           - List all offerings with nurturing slots
@@ -12,6 +13,10 @@
 //! - POST /api/v1/stone/nurturing/:offering - Create new snapshot (A/B rotation)
 //! - POST /api/v1/stone/nurturing/:offering/restore - Restore from snapshot
 //! - DELETE /api/v1/stone/nurturing/:offering - Delete all snapshots for offering
+//!
+//! ## Trigger Endpoints (Timer Integration)
+//! - POST /api/v1/nurturing/:offering/trigger - Trigger full workflow (local + replicate)
+//! - POST /api/v1/nurturing/trigger-all - Trigger workflow for all offerings
 //!
 //! ## Remote Endpoints (Seed Bank Integration)
 //! - POST /api/v1/stone/nurturing/:offering/replicate - Replicate to seed bank
@@ -30,6 +35,9 @@ use crate::domain::nurturing::{
     RemoteNurturingIndex, ReplicationResult,
 };
 use crate::infra::storage::SeedBankRegistry;
+use crate::tasks::{
+    NurturingWorkflowResult, trigger_nurturing, trigger_all_nurturing,
+};
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
 
@@ -470,6 +478,60 @@ pub async fn restore_from_seed_bank(
 
     Ok(Json(ApiResponse {
         data: manifest,
+        suggestions: None,
+    }))
+}
+
+// ============================================================================
+// Timer Trigger Endpoints
+// ============================================================================
+
+// POST /api/v1/nurturing/:offering/trigger - Trigger full nurturing workflow
+//
+// This endpoint is called by system timers (systemd/Task Scheduler) to initiate
+// the complete nurturing workflow: local snapshot + seed bank replication.
+
+/// Trigger the full nurturing workflow for an offering
+///
+/// Called by system timers to perform automated backups.
+/// Workflow: local A/B snapshot → find seed banks → replicate with failover
+pub async fn trigger_offering_nurturing(
+    State(state): State<AppState>,
+    Path(offering): Path<String>,
+) -> Result<Json<ApiResponse<NurturingWorkflowResult>>, (StatusCode, Json<ApiErrorResponse>)> {
+    tracing::info!(
+        offering = %offering,
+        "Nurturing trigger received"
+    );
+
+    let result = trigger_nurturing(&state, &offering).await
+        .map_err(|e| crate::infra::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "NURTURING_WORKFLOW_FAILED",
+            format!("Nurturing workflow failed: {}", e),
+            None,
+        ))?;
+
+    Ok(Json(ApiResponse {
+        data: result,
+        suggestions: None,
+    }))
+}
+
+// POST /api/v1/nurturing/trigger-all - Trigger workflow for all running offerings
+
+/// Trigger nurturing for all running offerings
+///
+/// Useful for manual batch operations or testing.
+pub async fn trigger_all_offerings_nurturing(
+    State(state): State<AppState>,
+) -> Result<Json<ApiResponse<Vec<NurturingWorkflowResult>>>, (StatusCode, Json<ApiErrorResponse>)> {
+    tracing::info!("Nurturing trigger-all received");
+
+    let results = trigger_all_nurturing(&state).await;
+
+    Ok(Json(ApiResponse {
+        data: results,
         suggestions: None,
     }))
 }

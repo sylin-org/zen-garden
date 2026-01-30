@@ -102,6 +102,9 @@ impl TestRegistry {
         self.register(crate::tests::nurturing::offering_id_stability_test());
         self.register(crate::tests::nurturing::remote_list_test());
         self.register(crate::tests::nurturing::orchestration_test());
+        self.register(crate::tests::nurturing::trigger_workflow_test());
+        self.register(crate::tests::nurturing::trigger_all_workflow_test());
+        self.register(crate::tests::nurturing::seed_bank_routing_test());
 
         // Resolution tests (protocol and offering resolution)
         self.register(crate::tests::resolution::offering_lookup_test());

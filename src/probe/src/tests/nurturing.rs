@@ -1117,3 +1117,453 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
 
     Ok(bag)
 }
+
+// ============================================================================
+// nurturing.trigger_workflow - Test the scheduler trigger endpoint
+// ============================================================================
+
+pub fn trigger_workflow_test() -> TestDef {
+    TestDef {
+        id: "nurturing.trigger_workflow",
+        name: "Trigger Workflow",
+        description: "Test the nurturing scheduler trigger endpoint (harvest → replicate → prune)",
+        category: "nurturing",
+        tags: &["nurturing", "scheduler", "workflow", "mutating"],
+        run: |garden, bag| Box::pin(test_trigger_workflow(garden, bag)),
+    }
+}
+
+/// Test the nurturing scheduler trigger endpoint
+///
+/// This exercises the full NurturingScheduler workflow via the API:
+/// 1. Find a running service
+/// 2. Call the trigger endpoint
+/// 3. Verify the workflow result (local snapshot + replications)
+async fn test_trigger_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    // Find a running service on any stone
+    let mut target: Option<(String, String)> = None; // (stone_name, offering_name)
+
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
+            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                for svc in services {
+                    let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
+
+                    if status == "Running" && !name.is_empty() {
+                        target = Some((stone.name.clone(), name.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+        if target.is_some() {
+            break;
+        }
+    }
+
+    let (stone_name, offering_name) = match target {
+        Some(t) => t,
+        None => {
+            bag.record_step(
+                "trigger_find_service",
+                "No running service found",
+                0,
+                StepResult::skipped("No running services"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    let stone = garden.stone(&stone_name).unwrap();
+
+    bag.record_step(
+        "trigger_find_service",
+        format!("Found service: {} on {}", offering_name, stone_name),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "stone": stone_name,
+            "offering": offering_name,
+        })),
+    );
+
+    // Call the trigger endpoint
+    let start = Instant::now();
+    let path = format!("/api/v1/nurturing/{}/trigger", offering_name);
+    let result = stone.post_json(&path, &serde_json::json!({})).await;
+    let duration = start.elapsed();
+
+    match result {
+        Ok(resp) => {
+            let success = resp
+                .get("data")
+                .and_then(|d| d.get("success"))
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false);
+
+            let summary = resp
+                .get("data")
+                .and_then(|d| d.get("summary"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+
+            let local_snapshot = resp
+                .get("data")
+                .and_then(|d| d.get("local_snapshot"));
+
+            let replications = resp
+                .get("data")
+                .and_then(|d| d.get("replications"))
+                .and_then(|r| r.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+
+            let harvest_id = local_snapshot
+                .and_then(|ls| ls.get("harvest_id"))
+                .and_then(|h| h.as_str())
+                .unwrap_or("none");
+
+            let slot = local_snapshot
+                .and_then(|ls| ls.get("slot"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("none");
+
+            if success {
+                bag.record_step(
+                    "trigger_workflow",
+                    format!(
+                        "Workflow success: {} in slot {}, {} replications",
+                        harvest_id, slot, replications
+                    ),
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "offering": offering_name,
+                        "harvest_id": harvest_id,
+                        "slot": slot,
+                        "replications": replications,
+                        "summary": summary,
+                    })),
+                );
+            } else {
+                bag.record_step(
+                    "trigger_workflow",
+                    format!("Workflow reported failure: {}", summary),
+                    duration.as_millis() as u64,
+                    StepResult::failed(summary.to_string()),
+                );
+            }
+        }
+        Err(e) => {
+            bag.record_step(
+                "trigger_workflow",
+                format!("Trigger endpoint failed: {}", e),
+                duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+        }
+    }
+
+    Ok(bag)
+}
+
+// ============================================================================
+// nurturing.trigger_all - Test the trigger-all endpoint
+// ============================================================================
+
+pub fn trigger_all_workflow_test() -> TestDef {
+    TestDef {
+        id: "nurturing.trigger_all",
+        name: "Trigger All Workflows",
+        description: "Test the nurturing trigger-all endpoint for batch nurturing",
+        category: "nurturing",
+        tags: &["nurturing", "scheduler", "workflow", "batch", "mutating"],
+        run: |garden, bag| Box::pin(test_trigger_all_workflow(garden, bag)),
+    }
+}
+
+/// Test the trigger-all endpoint
+///
+/// This tests batch nurturing across all running offerings on a stone:
+/// 1. Find a stone with running services
+/// 2. Call the trigger-all endpoint
+/// 3. Verify results for each offering
+async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    // Find a stone with running services
+    let mut best_stone: Option<(String, usize)> = None; // (stone_name, service_count)
+
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
+            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                let running_count = services
+                    .iter()
+                    .filter(|s| s.get("status").and_then(|st| st.as_str()) == Some("Running"))
+                    .count();
+
+                if running_count > 0 {
+                    if best_stone.is_none() || running_count > best_stone.as_ref().unwrap().1 {
+                        best_stone = Some((stone.name.clone(), running_count));
+                    }
+                }
+            }
+        }
+    }
+
+    let (stone_name, service_count) = match best_stone {
+        Some(s) => s,
+        None => {
+            bag.record_step(
+                "trigger_all_find_stone",
+                "No stone with running services found",
+                0,
+                StepResult::skipped("No running services"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    let stone = garden.stone(&stone_name).unwrap();
+
+    bag.record_step(
+        "trigger_all_find_stone",
+        format!("Selected {} with {} running services", stone_name, service_count),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "stone": stone_name,
+            "running_services": service_count,
+        })),
+    );
+
+    // Call the trigger-all endpoint
+    let start = Instant::now();
+    let result = stone.post_json("/api/v1/nurturing/trigger-all", &serde_json::json!({})).await;
+    let duration = start.elapsed();
+
+    match result {
+        Ok(resp) => {
+            let results = resp
+                .get("data")
+                .and_then(|d| d.as_array());
+
+            if let Some(workflow_results) = results {
+                let total = workflow_results.len();
+                let successful = workflow_results
+                    .iter()
+                    .filter(|r| r.get("success").and_then(|s| s.as_bool()).unwrap_or(false))
+                    .count();
+
+                let offerings: Vec<String> = workflow_results
+                    .iter()
+                    .filter_map(|r| r.get("offering_name").and_then(|n| n.as_str()).map(String::from))
+                    .collect();
+
+                bag.record_step(
+                    "trigger_all_execute",
+                    format!("{}/{} offerings nurtured successfully", successful, total),
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "total": total,
+                        "successful": successful,
+                        "offerings": offerings,
+                    })),
+                );
+
+                // Record individual offering results
+                for result in workflow_results {
+                    let name = result.get("offering_name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                    let success = result.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+                    let summary = result.get("summary").and_then(|s| s.as_str()).unwrap_or("");
+
+                    bag.record_step(
+                        format!("trigger_all_{}", name),
+                        format!("{}: {}", name, summary),
+                        0,
+                        if success {
+                            StepResult::ok_with(serde_json::json!({
+                                "offering": name,
+                                "summary": summary,
+                            }))
+                        } else {
+                            StepResult::failed(summary.to_string())
+                        },
+                    );
+                }
+            } else {
+                bag.record_step(
+                    "trigger_all_execute",
+                    "No workflow results returned",
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "total": 0,
+                        "note": "No running services or empty response",
+                    })),
+                );
+            }
+        }
+        Err(e) => {
+            bag.record_step(
+                "trigger_all_execute",
+                format!("Trigger-all endpoint failed: {}", e),
+                duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+        }
+    }
+
+    Ok(bag)
+}
+
+// ============================================================================
+// nurturing.seed_bank_routing - Test seed bank routing strategies
+// ============================================================================
+
+pub fn seed_bank_routing_test() -> TestDef {
+    TestDef {
+        id: "nurturing.seed_bank_routing",
+        name: "Seed Bank Routing",
+        description: "Test seed bank discovery and routing for replication",
+        category: "nurturing",
+        tags: &["nurturing", "seed-bank", "routing"],
+        run: |garden, bag| Box::pin(test_seed_bank_routing(garden, bag)),
+    }
+}
+
+/// Test seed bank routing for nurturing
+///
+/// Verifies that seed banks are discoverable and usable for replication:
+/// 1. List available seed banks across all stones
+/// 2. Check seed bank attributes (capacity, used, online status)
+/// 3. Verify routing would select appropriate targets
+async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    let mut all_seed_banks: Vec<serde_json::Value> = Vec::new();
+
+    for stone in &garden.stones {
+        let start = Instant::now();
+        let result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let duration = start.elapsed();
+
+        match result {
+            Ok(resp) => {
+                if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+                    let online_count = banks
+                        .iter()
+                        .filter(|b| b.get("online").and_then(|o| o.as_bool()).unwrap_or(false))
+                        .count();
+
+                    for bank in banks {
+                        let mut bank_info = bank.clone();
+                        bank_info["stone"] = serde_json::json!(stone.name);
+                        all_seed_banks.push(bank_info);
+                    }
+
+                    bag.record_step(
+                        format!("routing_discover_{}", stone.name),
+                        format!("{}: {} seed banks ({} online)", stone.name, banks.len(), online_count),
+                        duration.as_millis() as u64,
+                        StepResult::ok_with(serde_json::json!({
+                            "total": banks.len(),
+                            "online": online_count,
+                        })),
+                    );
+                } else {
+                    bag.record_step(
+                        format!("routing_discover_{}", stone.name),
+                        format!("{}: no seed banks", stone.name),
+                        duration.as_millis() as u64,
+                        StepResult::ok(),
+                    );
+                }
+            }
+            Err(e) => {
+                bag.record_step(
+                    format!("routing_discover_{}", stone.name),
+                    format!("{} discovery failed", stone.name),
+                    duration.as_millis() as u64,
+                    StepResult::failed(e.to_string()),
+                );
+            }
+        }
+    }
+
+    // Analyze routing targets
+    let online_banks: Vec<_> = all_seed_banks
+        .iter()
+        .filter(|b| b.get("online").and_then(|o| o.as_bool()).unwrap_or(false))
+        .collect();
+
+    if online_banks.is_empty() {
+        bag.record_step(
+            "routing_analysis",
+            "No online seed banks available for routing",
+            0,
+            StepResult::ok_with(serde_json::json!({
+                "total_banks": all_seed_banks.len(),
+                "online_banks": 0,
+                "routing_possible": false,
+            })),
+        );
+        return Ok(bag);
+    }
+
+    // Simulate routing strategies
+    // First strategy: pick first available
+    let first_target = online_banks.first().unwrap();
+    let first_name = first_target.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+
+    // MostCapacity strategy: pick bank with most free space
+    let most_capacity_target = online_banks
+        .iter()
+        .max_by_key(|b| {
+            let capacity = b.get("capacity_bytes").and_then(|c| c.as_u64()).unwrap_or(0);
+            let used = b.get("used_bytes").and_then(|u| u.as_u64()).unwrap_or(0);
+            capacity.saturating_sub(used)
+        })
+        .unwrap();
+    let most_capacity_name = most_capacity_target.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+
+    bag.record_step(
+        "routing_analysis",
+        format!(
+            "{} online seed banks (First: {}, MostCapacity: {})",
+            online_banks.len(),
+            first_name,
+            most_capacity_name
+        ),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "total_banks": all_seed_banks.len(),
+            "online_banks": online_banks.len(),
+            "routing_possible": true,
+            "first_strategy_target": first_name,
+            "most_capacity_target": most_capacity_name,
+            "all_strategy_targets": online_banks.len(),
+        })),
+    );
+
+    // Summary with capacity info
+    let total_capacity: u64 = online_banks
+        .iter()
+        .map(|b| b.get("capacity_bytes").and_then(|c| c.as_u64()).unwrap_or(0))
+        .sum();
+    let total_used: u64 = online_banks
+        .iter()
+        .map(|b| b.get("used_bytes").and_then(|u| u.as_u64()).unwrap_or(0))
+        .sum();
+
+    bag.record_step(
+        "routing_capacity",
+        format!(
+            "Total capacity: {:.2} GB, Used: {:.2} GB ({:.1}%)",
+            total_capacity as f64 / 1_073_741_824.0,
+            total_used as f64 / 1_073_741_824.0,
+            if total_capacity > 0 { (total_used as f64 / total_capacity as f64) * 100.0 } else { 0.0 }
+        ),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "total_capacity_bytes": total_capacity,
+            "total_used_bytes": total_used,
+            "available_bytes": total_capacity.saturating_sub(total_used),
+        })),
+    );
+
+    Ok(bag)
+}

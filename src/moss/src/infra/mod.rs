@@ -22,12 +22,14 @@ pub mod config;
 pub mod container;
 pub mod detection;
 pub mod embedded;
+pub mod event_bus;
 pub mod filesystem;
 pub mod firmware;
 pub mod hardware;
 pub mod hardware_id;
 pub mod harvest;
 pub mod harvest_store;
+pub mod listeners;
 pub mod manifests;
 pub mod nurturing_store;
 pub mod persistence;
@@ -61,8 +63,10 @@ pub use harvest_store::HarvestStore;
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use nurturing_store::NurturingStore;
 pub use embedded::{
-    EmbeddedManifests, EmbeddedAdapters, 
+    EmbeddedManifests, EmbeddedAdapters,
     read_manifest_overlay, manifest_exists, list_all_manifests,
     load_sw_manifests_with_overlay,
     AssetSource, ManifestSource,
 };
+pub use event_bus::{EventBus, EventListener, spawn_listener};
+pub use listeners::{ChirpListener, SseEvent, SseListener, TimerListener};

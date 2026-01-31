@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Connection String',
+  description: 'zen-garden:mongodb to actual endpoint',
+  category: 'How Things Work',
+  color: 'blue',
+  order: 3
+};
+
+
 export default function ConnectionStringResolution() {
   const [stage, setStage] = useState(0);
 

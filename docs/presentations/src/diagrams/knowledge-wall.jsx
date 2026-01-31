@@ -1,5 +1,15 @@
 import React, { useState } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Knowledge Wall',
+  description: 'Learning AWS buttons vs learning systems',
+  category: 'Problem → Insight',
+  color: 'green',
+  order: 5
+};
+
+
 export default function KnowledgeWall() {
   const [view, setView] = useState('cloud');
 

@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Seed-Bank Migration',
+  description: 'File journey: save, move storage, retrieve',
+  category: 'Core Concepts',
+  color: 'amber',
+  order: 5
+};
+
+
 export default function SeedBankMigration() {
   const [stage, setStage] = useState(0);
   

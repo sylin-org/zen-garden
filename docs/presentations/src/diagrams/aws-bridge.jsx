@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'AWS Bridge',
+  description: 'Same code runs on garden or AWS',
+  category: 'Architecture',
+  color: 'purple',
+  order: 3
+};
+
+
 export default function AwsBridge() {
   const [environment, setEnvironment] = useState('garden');
   const [stage, setStage] = useState(0);

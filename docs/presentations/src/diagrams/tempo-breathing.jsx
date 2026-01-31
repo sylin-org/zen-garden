@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Tempo Breathing',
+  description: 'Firefly LED behavior: idle vs busy',
+  category: 'Core Concepts',
+  color: 'amber',
+  order: 3
+};
+
+
 export default function TempoBreathing() {
   // Each firefly: { id, x, y, phase, progress, color }
   const [idleFireflies, setIdleFireflies] = useState([]);

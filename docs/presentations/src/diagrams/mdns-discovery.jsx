@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'mDNS Discovery',
+  description: 'Stones finding each other via broadcast',
+  category: 'Core Concepts',
+  color: 'amber',
+  order: 1
+};
+
+
 export default function MDNSDiscovery() {
   const [stage, setStage] = useState(0);
   

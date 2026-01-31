@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Cost Comparison',
+  description: '5-year TCO: Zen Garden vs Cloud',
+  category: 'How Things Work',
+  color: 'blue',
+  order: 5
+};
+
+
 export default function CostComparison() {
   const [year, setYear] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);

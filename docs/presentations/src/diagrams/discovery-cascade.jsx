@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Discovery Cascade',
+  description: 'How Rake finds stones: --at, env, cache, UDP',
+  category: 'How Things Work',
+  color: 'blue',
+  order: 1
+};
+
+
 export default function DiscoveryCascade() {
   const [stage, setStage] = useState(0);
   const [scenario, setScenario] = useState('full'); // 'full', 'env', 'cache', 'udp'

@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Price Breakdown',
+  description: 'The $192.50 hardware reveal',
+  category: 'Core Concepts',
+  color: 'amber',
+  order: 4
+};
+
+
 export default function PriceBreakdown() {
   const [visibleItems, setVisibleItems] = useState(0);
   

@@ -1,5 +1,15 @@
 import React from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Node vs Stone',
+  description: 'The vocabulary philosophy',
+  category: 'Core Concepts',
+  color: 'amber',
+  order: 2
+};
+
+
 export default function NodeVsStone() {
   return (
     <div className="w-full h-screen bg-zinc-900 flex items-center justify-center p-8">

@@ -1,5 +1,15 @@
 import React, { useState } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Tending',
+  description: 'Context-based targeting like cd',
+  category: 'Architecture',
+  color: 'purple',
+  order: 4
+};
+
+
 export default function Tending() {
   const [tendedStone, setTendedStone] = useState(null);
   const [commandHistory, setCommandHistory] = useState([]);

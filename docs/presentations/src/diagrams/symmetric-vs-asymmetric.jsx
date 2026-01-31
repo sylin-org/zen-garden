@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Symmetric vs Asymmetric',
+  description: 'Cloud uniformity vs garden diversity',
+  category: 'Architecture',
+  color: 'purple',
+  order: 1
+};
+
+
 export default function SymmetricVsAsymmetric() {
   const [stage, setStage] = useState(0);
 

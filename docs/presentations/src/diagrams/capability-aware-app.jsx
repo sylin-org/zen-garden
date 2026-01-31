@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Capability-Aware App',
+  description: 'Features light up as hardware arrives',
+  category: 'How Things Work',
+  color: 'blue',
+  order: 6
+};
+
+
 export default function CapabilityAwareApp() {
   const [stage, setStage] = useState(0);
 

@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Graceful Degradation',
+  description: 'Stone dies, services migrate, garden heals',
+  category: 'Architecture',
+  color: 'purple',
+  order: 5
+};
+
+
 export default function GracefulDegradation() {
   const [stage, setStage] = useState(0);
 

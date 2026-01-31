@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Configuration Explosion',
+  description: '246 lines of YAML vs one command',
+  category: 'Problem → Insight',
+  color: 'green',
+  order: 1
+};
+
+
 export default function ConfigurationExplosion() {
   const [view, setView] = useState('problem'); // 'problem' or 'solution'
   const [yamlScroll, setYamlScroll] = useState(0);

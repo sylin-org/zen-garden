@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Ceremony Workflow',
+  description: 'Safe updates with harvest and rollback',
+  category: 'How Things Work',
+  color: 'blue',
+  order: 2
+};
+
+
 export default function CeremonyWorkflow() {
   const [stage, setStage] = useState(0);
   const [scenario, setScenario] = useState('success'); // 'success' or 'rollback'

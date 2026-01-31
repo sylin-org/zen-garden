@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Stone Health',
+  description: 'Thriving, Withering, Wilting states',
+  category: 'How Things Work',
+  color: 'blue',
+  order: 4
+};
+
+
 export default function StoneHealthStates() {
   const [activeState, setActiveState] = useState('thriving');
   const [pulseFrame, setPulseFrame] = useState(0);

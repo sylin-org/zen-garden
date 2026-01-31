@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Scale Theater',
+  description: 'Billion-user architecture for 12 users',
+  category: 'Problem → Insight',
+  color: 'green',
+  order: 4
+};
+
+
 export default function ScaleTheater() {
   const [userCount, setUserCount] = useState(12);
   const [view, setView] = useState('theater');

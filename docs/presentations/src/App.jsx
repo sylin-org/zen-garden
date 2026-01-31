@@ -1,85 +1,10 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react'
+import React, { useState, useEffect, Suspense } from 'react'
 
-// Lazy load all diagrams
-const diagrams = {
-  // Core Concepts
-  'mdns-discovery': lazy(() => import('./diagrams/mdns-discovery.jsx')),
-  'node-vs-stone': lazy(() => import('./diagrams/node-vs-stone.jsx')),
-  'tempo-breathing': lazy(() => import('./diagrams/tempo-breathing.jsx')),
-  'price-breakdown': lazy(() => import('./diagrams/price-breakdown.jsx')),
-  'seed-bank-migration': lazy(() => import('./diagrams/seed-bank-migration.jsx')),
-  
-  // How Things Work
-  'discovery-cascade': lazy(() => import('./diagrams/discovery-cascade.jsx')),
-  'ceremony-workflow': lazy(() => import('./diagrams/ceremony-workflow.jsx')),
-  'connection-string': lazy(() => import('./diagrams/connection-string.jsx')),
-  'stone-health': lazy(() => import('./diagrams/stone-health.jsx')),
-  'cost-comparison': lazy(() => import('./diagrams/cost-comparison.jsx')),
-  'capability-aware-app': lazy(() => import('./diagrams/capability-aware-app.jsx')),
-  
-  // Architecture
-  'symmetric-vs-asymmetric': lazy(() => import('./diagrams/symmetric-vs-asymmetric.jsx')),
-  'service-origins': lazy(() => import('./diagrams/service-origins.jsx')),
-  'aws-bridge': lazy(() => import('./diagrams/aws-bridge.jsx')),
-  'tending': lazy(() => import('./diagrams/tending.jsx')),
-  'graceful-degradation': lazy(() => import('./diagrams/graceful-degradation.jsx')),
-  
-  // Problem → Insight
-  'configuration-explosion': lazy(() => import('./diagrams/configuration-explosion.jsx')),
-  'abstraction-tax': lazy(() => import('./diagrams/abstraction-tax.jsx')),
-  'feedback-through-glass': lazy(() => import('./diagrams/feedback-through-glass.jsx')),
-  'scale-theater': lazy(() => import('./diagrams/scale-theater.jsx')),
-  'knowledge-wall': lazy(() => import('./diagrams/knowledge-wall.jsx')),
-}
+// Dynamically import ALL .jsx files from diagrams folder
+// Vite's import.meta.glob gives us automatic discovery!
+const diagramModules = import.meta.glob('./diagrams/*.jsx')
 
-const categories = [
-  {
-    name: 'Core Concepts',
-    color: 'amber',
-    items: [
-      { id: 'mdns-discovery', name: 'mDNS Discovery', desc: 'Stones finding each other' },
-      { id: 'node-vs-stone', name: 'Node vs Stone', desc: 'The vocabulary philosophy' },
-      { id: 'tempo-breathing', name: 'Tempo Breathing', desc: 'Firefly idle vs busy' },
-      { id: 'price-breakdown', name: 'Price Breakdown', desc: 'The $192.50 reveal' },
-      { id: 'seed-bank-migration', name: 'Seed-Bank Migration', desc: 'File journey with app' },
-    ]
-  },
-  {
-    name: 'How Things Work',
-    color: 'blue',
-    items: [
-      { id: 'discovery-cascade', name: 'Discovery Cascade', desc: '--at → env → cache → UDP' },
-      { id: 'ceremony-workflow', name: 'Ceremony Workflow', desc: 'Harvest, update, rollback' },
-      { id: 'connection-string', name: 'Connection String', desc: 'Abstract → concrete' },
-      { id: 'stone-health', name: 'Stone Health', desc: 'Thriving / withering / wilting' },
-      { id: 'cost-comparison', name: 'Cost Comparison', desc: '5-year cloud vs garden' },
-      { id: 'capability-aware-app', name: 'Capability-Aware App', desc: 'Features light up' },
-    ]
-  },
-  {
-    name: 'Architecture',
-    color: 'purple',
-    items: [
-      { id: 'symmetric-vs-asymmetric', name: 'Symmetric vs Asymmetric', desc: 'Cloud uniformity vs diversity' },
-      { id: 'service-origins', name: 'Service Origins', desc: 'Planted / Adopted / Borrowed' },
-      { id: 'aws-bridge', name: 'AWS Bridge', desc: 'Same code, anywhere' },
-      { id: 'tending', name: 'Tending', desc: 'Context like cd' },
-      { id: 'graceful-degradation', name: 'Graceful Degradation', desc: 'Stone dies, garden heals' },
-    ]
-  },
-  {
-    name: 'Problem → Insight',
-    color: 'green',
-    items: [
-      { id: 'configuration-explosion', name: 'Configuration Explosion', desc: '246 lines → 1 command' },
-      { id: 'abstraction-tax', name: 'Abstraction Tax', desc: '8 layers → 2 layers' },
-      { id: 'feedback-through-glass', name: 'Feedback Through Glass', desc: 'Dashboards vs ambient' },
-      { id: 'scale-theater', name: 'Scale Theater', desc: 'Billion-user arch, 12 users' },
-      { id: 'knowledge-wall', name: 'Knowledge Wall', desc: 'Buttons vs systems' },
-    ]
-  },
-]
-
+// Color palette for categories
 const colorClasses = {
   amber: {
     border: 'border-amber-500/30',
@@ -109,17 +34,46 @@ const colorClasses = {
     hover: 'hover:border-green-500/50 hover:bg-green-500/10',
     active: 'border-green-500 bg-green-500/20',
   },
+  red: {
+    border: 'border-red-500/30',
+    bg: 'bg-red-500/5',
+    text: 'text-red-400',
+    hover: 'hover:border-red-500/50 hover:bg-red-500/10',
+    active: 'border-red-500 bg-red-500/20',
+  },
+  rose: {
+    border: 'border-rose-500/30',
+    bg: 'bg-rose-500/5',
+    text: 'text-rose-400',
+    hover: 'hover:border-rose-500/50 hover:bg-rose-500/10',
+    active: 'border-rose-500 bg-rose-500/20',
+  },
+  zinc: {
+    border: 'border-zinc-600/30',
+    bg: 'bg-zinc-600/5',
+    text: 'text-zinc-400',
+    hover: 'hover:border-zinc-500/50 hover:bg-zinc-600/10',
+    active: 'border-zinc-500 bg-zinc-600/20',
+  },
+}
+
+// Helper: convert filename to readable name
+function filenameToTitle(filename) {
+  return filename
+    .split('-')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
 }
 
 function Loading() {
   return (
     <div className="w-full h-full flex items-center justify-center bg-zinc-900">
-      <div className="text-zinc-500">Loading diagram...</div>
+      <div className="text-zinc-500 animate-pulse">Loading diagram...</div>
     </div>
   )
 }
 
-function Menu({ selected, onSelect, onClose, isVisible }) {
+function Menu({ diagrams, categories, categoryOrder, selected, onSelect, onClose, isVisible }) {
   return (
     <div className={`
       fixed inset-y-0 left-0 w-80 bg-zinc-900 border-r border-zinc-800 
@@ -140,34 +94,44 @@ function Menu({ selected, onSelect, onClose, isVisible }) {
           </button>
         </div>
 
-        {categories.map((category) => {
-          const colors = colorClasses[category.color]
+        {categoryOrder.map((categoryName) => {
+          const items = categories[categoryName]
+          if (!items || items.length === 0) return null
+          
+          const categoryColor = items[0]?.color || 'zinc'
+          const colors = colorClasses[categoryColor] || colorClasses.zinc
+          
           return (
-            <div key={category.name} className="mb-6">
+            <div key={categoryName} className="mb-6">
               <h2 className={`text-xs tracking-wider mb-2 ${colors.text}`}>
-                {category.name.toUpperCase()}
+                {categoryName.toUpperCase()}
               </h2>
               <div className="space-y-1">
-                {category.items.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      onSelect(item.id)
-                      onClose()
-                    }}
-                    className={`
-                      w-full text-left px-3 py-2 rounded border transition-all
-                      ${selected === item.id 
-                        ? colors.active 
-                        : `${colors.border} ${colors.bg} ${colors.hover}`}
-                    `}
-                  >
-                    <div className={`text-sm ${selected === item.id ? colors.text : 'text-zinc-300'}`}>
-                      {item.name}
-                    </div>
-                    <div className="text-xs text-zinc-500">{item.desc}</div>
-                  </button>
-                ))}
+                {items.map((item) => {
+                  const itemColors = colorClasses[item.color] || colorClasses.zinc
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        onSelect(item.id)
+                        onClose()
+                      }}
+                      className={`
+                        w-full text-left px-3 py-2 rounded border transition-all
+                        ${selected === item.id 
+                          ? itemColors.active 
+                          : `${itemColors.border} ${itemColors.bg} ${itemColors.hover}`}
+                      `}
+                    >
+                      <div className={`text-sm ${selected === item.id ? itemColors.text : 'text-zinc-300'}`}>
+                        {item.name}
+                      </div>
+                      {item.description && (
+                        <div className="text-xs text-zinc-500">{item.description}</div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )
@@ -180,20 +144,128 @@ function Menu({ selected, onSelect, onClose, isVisible }) {
             <p>Press <kbd className="px-1 py-0.5 bg-zinc-800 rounded">←</kbd> <kbd className="px-1 py-0.5 bg-zinc-800 rounded">→</kbd> to navigate</p>
           </div>
         </div>
+
+        <div className="mt-4 pt-4 border-t border-zinc-800">
+          <div className="text-zinc-700 text-xs">
+            {Object.keys(diagrams).length} diagrams loaded
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
 function App() {
-  const [selected, setSelected] = useState('mdns-discovery')
+  const [diagrams, setDiagrams] = useState({})
+  const [categories, setCategories] = useState({})
+  const [categoryOrder, setCategoryOrder] = useState([])
+  const [allItems, setAllItems] = useState([])
+  const [selected, setSelected] = useState(null)
   const [menuVisible, setMenuVisible] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [CurrentDiagram, setCurrentDiagram] = useState(null)
+
+  // Load all diagram modules on mount
+  useEffect(() => {
+    async function loadDiagrams() {
+      const loaded = {}
+      const cats = {}
+      const catOrders = {} // Track lowest categoryOrder for each category
+      const items = []
+
+      for (const path in diagramModules) {
+        try {
+          const module = await diagramModules[path]()
+          
+          // Extract filename without path and extension
+          const filename = path.replace('./diagrams/', '').replace('.jsx', '')
+          
+          // Get metadata from module export, or create defaults from filename
+          const meta = module.metadata || {}
+
+          const item = {
+            id: filename,
+            name: meta.name || filenameToTitle(filename),
+            description: meta.description || '',
+            category: meta.category || 'Other',
+            color: meta.color || 'zinc',
+            order: meta.order ?? 999,
+            component: module.default
+          }
+
+          loaded[filename] = item
+          items.push(item)
+
+          // Group by category
+          if (!cats[item.category]) {
+            cats[item.category] = []
+          }
+          cats[item.category].push(item)
+
+          // Track category order (lowest categoryOrder wins for each category)
+          const catOrder = meta.categoryOrder ?? 999
+          if (catOrders[item.category] === undefined || catOrder < catOrders[item.category]) {
+            catOrders[item.category] = catOrder
+          }
+        } catch (err) {
+          console.error(`Failed to load ${path}:`, err)
+        }
+      }
+
+      // Sort items within each category by order, then name
+      for (const cat in cats) {
+        cats[cat].sort((a, b) => {
+          if (a.order !== b.order) return a.order - b.order
+          return a.name.localeCompare(b.name)
+        })
+      }
+
+      // Build category order dynamically (Other always last)
+      const dynamicCategoryOrder = Object.keys(cats)
+        .filter(c => c !== 'Other')
+        .sort((a, b) => (catOrders[a] ?? 999) - (catOrders[b] ?? 999))
+      
+      if (cats['Other']) {
+        dynamicCategoryOrder.push('Other')
+      }
+
+      // Build sorted items list for keyboard navigation
+      const sortedItems = []
+      for (const catName of dynamicCategoryOrder) {
+        if (cats[catName]) {
+          sortedItems.push(...cats[catName])
+        }
+      }
+
+      setDiagrams(loaded)
+      setCategories(cats)
+      setCategoryOrder(dynamicCategoryOrder)
+      setAllItems(sortedItems)
+      setLoading(false)
+
+      // Select first diagram
+      if (sortedItems.length > 0) {
+        setSelected(sortedItems[0].id)
+        setCurrentDiagram(() => sortedItems[0].component)
+      }
+    }
+
+    loadDiagrams()
+  }, [])
+
+  // Update current diagram when selection changes
+  useEffect(() => {
+    if (selected && diagrams[selected]) {
+      setCurrentDiagram(() => diagrams[selected].component)
+    }
+  }, [selected, diagrams])
 
   // Keyboard navigation
   useEffect(() => {
-    const allItems = categories.flatMap(c => c.items)
-    
     const handleKeyDown = (e) => {
+      // Ignore if user is typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
       if (e.key === 'm' || e.key === 'M') {
         setMenuVisible(v => !v)
       }
@@ -201,11 +273,13 @@ function App() {
         setMenuVisible(false)
       }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault()
         const currentIndex = allItems.findIndex(i => i.id === selected)
         const nextIndex = (currentIndex + 1) % allItems.length
         setSelected(allItems[nextIndex].id)
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault()
         const currentIndex = allItems.findIndex(i => i.id === selected)
         const prevIndex = (currentIndex - 1 + allItems.length) % allItems.length
         setSelected(allItems[prevIndex].id)
@@ -214,13 +288,22 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selected])
+  }, [selected, allItems])
 
-  const DiagramComponent = diagrams[selected]
+  if (loading) {
+    return (
+      <div className="h-screen bg-zinc-900 flex items-center justify-center">
+        <div className="text-zinc-500">Discovering diagrams...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-screen bg-zinc-900 overflow-hidden">
       <Menu 
+        diagrams={diagrams}
+        categories={categories}
+        categoryOrder={categoryOrder}
         selected={selected} 
         onSelect={setSelected} 
         onClose={() => setMenuVisible(false)}
@@ -238,16 +321,16 @@ function App() {
       )}
 
       {/* Current diagram name */}
-      {!menuVisible && (
+      {!menuVisible && selected && diagrams[selected] && (
         <div className="fixed top-4 right-4 z-40 px-3 py-2 bg-zinc-800/80 border border-zinc-700 rounded-lg">
-          <span className="text-zinc-400 text-sm">{selected}</span>
+          <span className="text-zinc-400 text-sm">{diagrams[selected].name}</span>
         </div>
       )}
 
       {/* Diagram container */}
       <div className={`h-full transition-all duration-300 ${menuVisible ? 'ml-80' : 'ml-0'}`}>
         <Suspense fallback={<Loading />}>
-          {DiagramComponent && <DiagramComponent />}
+          {CurrentDiagram && <CurrentDiagram />}
         </Suspense>
       </div>
     </div>

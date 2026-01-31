@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Service Origins',
+  description: 'Planted / Adopted / Borrowed services',
+  category: 'Architecture',
+  color: 'purple',
+  order: 2
+};
+
+
 export default function ServiceOrigins() {
   const [activeOrigin, setActiveOrigin] = useState('planted');
 

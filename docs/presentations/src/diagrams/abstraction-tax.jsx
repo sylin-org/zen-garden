@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Abstraction Tax',
+  description: '8 cloud layers vs 2 garden layers',
+  category: 'Problem → Insight',
+  color: 'green',
+  order: 2
+};
+
+
 export default function AbstractionTax() {
   const [view, setView] = useState('cloud');
   const [highlightLayer, setHighlightLayer] = useState(null);

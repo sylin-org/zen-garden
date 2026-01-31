@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+// Metadata for dynamic loading
+export const metadata = {
+  name: 'Feedback Through Glass',
+  description: 'Dashboards vs ambient awareness',
+  category: 'Problem → Insight',
+  color: 'green',
+  order: 3
+};
+
+
 export default function FeedbackThroughGlass() {
   const [view, setView] = useState('dashboard');
   const [alerting, setAlerting] = useState(false);

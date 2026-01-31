@@ -10,3 +10,4 @@
 .zen-garden/offerings_cache.json
 .zen-garden/adapter-ports.json
 rake-errors.txt
+/docs/presentations/node_modules

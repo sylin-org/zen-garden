@@ -362,16 +362,18 @@ for easy AI consumption. All .md files from docs/ are automatically included.
 
 ## Quick Start
 
-1. Start here: zen-garden-readme.md - Main project overview
+1. Start here: zen-garden-introduction.md - Gentle overview for newcomers
 2. Learn terms: zen-garden-glossary.md - Essential terminology
 3. Read philosophy: zen-garden-philosophy-all.md - Design principles
-4. Deep dive: zen-garden-specs-all.md - Technical specifications
+4. Explore journeys: zen-garden-journeys-all.md - Narrative documentation
+5. Deep dive: zen-garden-specs-all.md - Technical specifications
 
 ## File Naming Convention
 
 All files follow the pattern: zen-garden-[category].md
 
 Categories:
+- introduction - Gentle overview for non-technical enthusiasts
 - readme - Main project overview
 - glossary - Terminology reference
 - guides-all - All operational guides

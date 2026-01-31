@@ -94,7 +94,7 @@ fn is_zen_verb(verb: &str) -> bool {
         // Service lifecycle (zen)
         "offer" | "rest" | "wake" | "nourish" | "remove" | "uproot" |
         // Adoption (zen)
-        "adopt" | "release" | "find" | "adopted" | "borrowed" |
+        "adopt" | "release" | "find" | "config" | "adopted" | "borrowed" |
         // External services (zen)
         "borrow" | "return" |
         // Observation (zen)

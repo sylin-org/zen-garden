@@ -44,8 +44,9 @@ pub mod cmd {
     pub const BORROW: &str = "borrow";
     pub const RETURN: &str = "return";
 
-    // Discovery (service find)
+    // Discovery (service find/config)
     pub const FIND: &str = "find";
+    pub const CONFIG: &str = "config";
 
     // Management
     pub const TEND: &str = "tend";
@@ -826,7 +827,73 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 normative_syntax: Some("garden-rake services find --name mongodb --wishful"),
             },
         ],
-        see_also: vec!["observe", "list", "offer"],
+        see_also: vec!["observe", "list", "offer", "config"],
+    });
+
+    manifest.add(CommandDef {
+        name: "config",
+        zen_name: "config",
+        normative_name: Some("services config"),
+        category: CommandCategory::Discovery,
+        description: "Get service configuration for automation",
+        long_description: "Query detailed configuration for a service by name.\n\n\
+            Designed for automation and scripting scenarios.\n\
+            Returns connection URIs, ports, hostname, and protocol information.\n\n\
+            Use --field to extract specific values for scripts.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "service",
+                zen_syntax: "<service>",
+                normative_syntax: None,
+                description: "Service name to query",
+                required: true,
+            },
+            CommandParam {
+                name: "output",
+                zen_syntax: "--output <format>",
+                normative_syntax: None,
+                description: "Output format: human (default) or json",
+                required: false,
+            },
+            CommandParam {
+                name: "field",
+                zen_syntax: "--field <path>",
+                normative_syntax: None,
+                description: "Extract specific field (dot notation: connection.uri)",
+                required: false,
+            },
+            CommandParam {
+                name: "at",
+                zen_syntax: "at <stone>",
+                normative_syntax: Some("--at <stone>"),
+                description: "Target stone (omit to use tended stone)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Get full config (human-readable)",
+                zen_syntax: Some("garden-rake config mongodb"),
+                normative_syntax: Some("garden-rake services config mongodb"),
+            },
+            CommandExample {
+                description: "Get config as JSON",
+                zen_syntax: Some("garden-rake config mongodb --output json"),
+                normative_syntax: Some("garden-rake services config mongodb --output json"),
+            },
+            CommandExample {
+                description: "Extract connection URI",
+                zen_syntax: Some("garden-rake config mongodb --field connection.uri"),
+                normative_syntax: Some("garden-rake services config mongodb --field connection.uri"),
+            },
+            CommandExample {
+                description: "Extract port number",
+                zen_syntax: Some("garden-rake config mongodb --field connection.port"),
+                normative_syntax: Some("garden-rake services config mongodb --field connection.port"),
+            },
+        ],
+        see_also: vec!["find", "list", "status"],
     });
 
     manifest.add(CommandDef {

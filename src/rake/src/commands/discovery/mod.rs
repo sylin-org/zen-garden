@@ -8,9 +8,11 @@
 //! - adopted - List adopted services
 //! - borrowed - List borrowed services
 //! - find - Service discovery with connection strings
+//! - config - Service configuration for automation
 
 pub mod adopted;
 pub mod borrowed;
+pub mod config;
 pub mod find;
 pub mod list;
 pub mod observe;
@@ -19,6 +21,7 @@ pub mod watch;
 
 pub use adopted::AdoptedCommand;
 pub use borrowed::BorrowedCommand;
+pub use config::ConfigCommand;
 pub use find::{FindCommand, FindOutputFormat};
 pub use list::ListCommand;
 pub use observe::ObserveCommand;

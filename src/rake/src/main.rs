@@ -242,6 +242,25 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// Get service configuration for automation
+    #[command(
+        long_about = "Query detailed configuration for a service by name.\n\n\
+        Designed for automation and scripting scenarios.\n\
+        Returns connection URIs, ports, hostname, and protocol information.\n\n\
+        Examples:\n  \
+        garden-rake config mongodb                           # Full config\n  \
+        garden-rake config mongodb --output json             # JSON output\n  \
+        garden-rake config mongodb --field connection.uri    # Just the URI"
+    )]
+    Config {
+        /// Service name to query
+        service: String,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long, visible_alias = "on")]
+        at: Option<String>,
+    },
+
     /// List adopted services
     #[command(
         long_about = "List services that were adopted from existing containers.\n\n\
@@ -1186,6 +1205,11 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
                 args.push("--wishful".to_string());
             }
         }
+        "config" => {
+            // Config is for getting service configuration
+            args.push("config".to_string());
+            args.extend(parsed.args.clone());
+        }
         "locate" => {
             // Locate is for strays (adoption domain)
             args.push("locate".to_string());
@@ -1672,6 +1696,17 @@ async fn async_main() -> anyhow::Result<()> {
                 quiet_mode,
                 fresh_mode,
                 wishfully,
+                field.clone(),
+            );
+            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::Config { service, at } => {
+            let json_output = output_format.is_json() || field.is_some();
+            let cmd = commands::discovery::ConfigCommand::new(
+                service,
+                quiet_mode,
+                json_output,
                 field.clone(),
             );
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;

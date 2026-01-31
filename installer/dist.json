@@ -50,14 +50,14 @@
     },
     "cricket": {
       "source": "garden-cricket",
-      "destination": "bin/adapters/cricket/",
+      "destination": "bin/companions/cricket/",
       "required": false,
       "tier": "full",
       "platforms": ["linux", "windows"]
     },
     "firefly": {
       "source": "garden-firefly",
-      "destination": "bin/adapters/firefly/",
+      "destination": "bin/companions/firefly/",
       "required": false,
       "tier": "full",
       "platforms": ["linux", "windows"]

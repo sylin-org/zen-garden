@@ -22,10 +22,23 @@ const FRAME_DURATION: Duration = Duration::from_millis(1000 / FRAME_RATE);
 
 /// Warm white color (slightly amber, like real fireflies)
 const WARM_WHITE: (u8, u8, u8) = (255, 180, 100);
-/// Storage activity indicator
+/// Storage activity indicator (seed bank green)
 const STORAGE_GREEN: (u8, u8, u8) = (80, 255, 80);
 /// Service activity indicator
 const SERVICE_BLUE: (u8, u8, u8) = (80, 140, 255);
+/// Storage departure color (warm amber)
+const STORAGE_AMBER: (u8, u8, u8) = (255, 160, 40);
+
+/// Center pixel coordinate
+const CENTER: (u8, u8) = (2, 2);
+
+/// Edge pixels for swarm spawn points (all pixels on the border)
+const EDGE_PIXELS: [(u8, u8); 16] = [
+    (0, 0), (1, 0), (2, 0), (3, 0), (4, 0),  // top edge
+    (4, 1), (4, 2), (4, 3),                   // right edge (excluding corners)
+    (4, 4), (3, 4), (2, 4), (1, 4), (0, 4),  // bottom edge
+    (0, 3), (0, 2), (0, 1),                   // left edge (excluding corners)
+];
 
 /// Firefly lifecycle phase
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,6 +118,10 @@ pub enum Override {
     ServiceStarted,
     /// Service stopped - brief dim
     ServiceStopped,
+    /// Storage detected - firefly swarm converging inward
+    StorageDetected,
+    /// Storage removed - firefly swarm dispersing outward
+    StorageRemoved,
 }
 
 impl Override {
@@ -116,6 +133,8 @@ impl Override {
             Override::HealthError => Duration::from_secs(60),
             Override::ServiceStarted => Duration::from_millis(1500),
             Override::ServiceStopped => Duration::from_millis(1000),
+            Override::StorageDetected => Duration::from_millis(2000),
+            Override::StorageRemoved => Duration::from_millis(1500),
         }
     }
 }
@@ -268,6 +287,8 @@ pub struct AnimationEngine {
     prev_lit: [bool; TOTAL_PIXELS],
     /// Track if we were in override last frame (for clean transition)
     was_in_override: bool,
+    /// Current frame for swarm animations (reset when override starts)
+    swarm_frame: usize,
     rng: StdRng,
 }
 
@@ -284,6 +305,7 @@ impl AnimationEngine {
             occupied: [false; TOTAL_PIXELS],
             prev_lit: [false; TOTAL_PIXELS],
             was_in_override: false,
+            swarm_frame: 0,
             rng: StdRng::from_entropy(),
         }
     }
@@ -314,10 +336,19 @@ impl AnimationEngine {
             drop(ctx);
 
             if has_override {
-                // Handle override animation
-                if let Some(ref ov) = override_type {
-                    self.render_override(ov).await;
+                // Reset swarm frame when first entering override
+                if !self.was_in_override {
+                    self.swarm_frame = 0;
                 }
+
+                // Handle override animation (one frame at a time)
+                if let Some(ref ov) = override_type {
+                    self.render_override_frame(ov);
+                }
+
+                // Advance swarm frame
+                self.swarm_frame += 1;
+
                 // Update/expire override
                 self.context.write().await.update_override();
                 self.was_in_override = true;
@@ -327,6 +358,7 @@ impl AnimationEngine {
                     self.clear_all();
                     self.reset_fireflies();
                     self.was_in_override = false;
+                    self.swarm_frame = 0;
                     tracing::debug!("Override ended, cleared display for baseline");
                 }
                 // Baseline firefly animation
@@ -503,30 +535,191 @@ impl AnimationEngine {
         self.prev_lit = currently_lit;
     }
 
-    /// Render override animation
-    async fn render_override(&self, override_type: &Override) {
+    /// Render a single frame of override animation
+    fn render_override_frame(&mut self, override_type: &Override) {
         match override_type {
             Override::Tended => {
-                // Use firmware sparkle animation
-                let _ = self.connection.with_device(|serial| serial.animate("sparkle"));
+                // Use firmware sparkle animation (only send once at start)
+                if self.swarm_frame == 0 {
+                    let _ = self.connection.with_device(|serial| serial.animate("sparkle"));
+                }
             }
             Override::HealthWarning => {
-                // Amber pulse - use firmware or manual
-                let _ = self.connection.with_device(|serial| serial.status("warning"));
+                if self.swarm_frame == 0 {
+                    let _ = self.connection.with_device(|serial| serial.status("warning"));
+                }
             }
             Override::HealthError => {
-                // Red pulse
-                let _ = self.connection.with_device(|serial| serial.status("error"));
+                if self.swarm_frame == 0 {
+                    let _ = self.connection.with_device(|serial| serial.status("error"));
+                }
             }
             Override::ServiceStarted => {
-                // Green bloom - quick fill then fade
-                let _ = self.connection.with_device(|serial| serial.fill(0, 180, 0));
+                if self.swarm_frame == 0 {
+                    let _ = self.connection.with_device(|serial| serial.fill(0, 180, 0));
+                }
             }
             Override::ServiceStopped => {
-                // Brief dim
-                let _ = self.connection.with_device(|serial| serial.brightness(20));
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                let _ = self.connection.with_device(|serial| serial.brightness(50));
+                // Brief dim then restore
+                if self.swarm_frame == 0 {
+                    let _ = self.connection.with_device(|serial| serial.brightness(20));
+                } else if self.swarm_frame == 15 { // ~500ms at 30fps
+                    let _ = self.connection.with_device(|serial| serial.brightness(50));
+                }
+            }
+            Override::StorageDetected => {
+                self.render_swarm_converge_frame();
+            }
+            Override::StorageRemoved => {
+                self.render_swarm_disperse_frame();
+            }
+        }
+    }
+
+    /// Render one frame of converging swarm animation (storage connected)
+    fn render_swarm_converge_frame(&mut self) {
+        let frame = self.swarm_frame;
+        let total_frames = 60;
+        let settle_start = 45;
+
+        if frame >= total_frames {
+            return; // Animation complete, hold final state
+        }
+
+        // Clear previous frame
+        let _ = self.connection.with_device(|serial| serial.clear());
+
+        if frame < settle_start {
+            // Phase 1: Swarm converging inward
+            let converge_progress = frame as f32 / settle_start as f32;
+            let num_fireflies = 8 + (converge_progress * 8.0) as usize;
+
+            for i in 0..num_fireflies {
+                let edge_idx = i % EDGE_PIXELS.len();
+                let (start_x, start_y) = EDGE_PIXELS[edge_idx];
+
+                let jitter = ((i * 7 + frame) % 3) as f32 * 0.15;
+                let move_progress = (converge_progress + jitter).min(1.0);
+
+                let x = start_x as f32 + (CENTER.0 as f32 - start_x as f32) * ease_in_out(move_progress);
+                let y = start_y as f32 + (CENTER.1 as f32 - start_y as f32) * ease_in_out(move_progress);
+
+                let flicker = ((frame + i * 13) % 4) != 0;
+                if flicker {
+                    let brightness = 0.5 + 0.5 * ((frame as f32 * 0.3 + i as f32).sin() * 0.5 + 0.5);
+                    let (r, g, b) = STORAGE_GREEN;
+                    let _ = self.connection.with_device(|serial| {
+                        serial.pixel(
+                            x.round() as u8,
+                            y.round() as u8,
+                            (r as f32 * brightness) as u8,
+                            (g as f32 * brightness) as u8,
+                            (b as f32 * brightness) as u8,
+                        )
+                    });
+                }
+            }
+        } else {
+            // Phase 2: Settled glow at center
+            let settle_progress = (frame - settle_start) as f32 / (total_frames - settle_start) as f32;
+            let pulse = 0.7 + 0.3 * (settle_progress * std::f32::consts::PI * 2.0).sin();
+
+            for dy in -1i8..=1 {
+                for dx in -1i8..=1 {
+                    let px = (CENTER.0 as i8 + dx).clamp(0, 4) as u8;
+                    let py = (CENTER.1 as i8 + dy).clamp(0, 4) as u8;
+                    let dist = (dx.abs() + dy.abs()) as f32;
+                    let intensity = pulse * (1.0 - dist * 0.3);
+
+                    let (r, g, b) = STORAGE_GREEN;
+                    let _ = self.connection.with_device(|serial| {
+                        serial.pixel(
+                            px, py,
+                            (r as f32 * intensity) as u8,
+                            (g as f32 * intensity) as u8,
+                            (b as f32 * intensity) as u8,
+                        )
+                    });
+                }
+            }
+        }
+    }
+
+    /// Render one frame of dispersing swarm animation (storage removed)
+    fn render_swarm_disperse_frame(&mut self) {
+        let frame = self.swarm_frame;
+        let total_frames = 45;
+        let liftoff_frames = 15;
+
+        if frame >= total_frames {
+            // Final clear after animation
+            let _ = self.connection.with_device(|serial| serial.clear());
+            return;
+        }
+
+        // Clear previous frame
+        let _ = self.connection.with_device(|serial| serial.clear());
+
+        if frame < liftoff_frames {
+            // Phase 1: Fireflies lifting off
+            let liftoff_progress = frame as f32 / liftoff_frames as f32;
+
+            let center_brightness = 1.0 - liftoff_progress * 0.5;
+            let (r, g, b) = STORAGE_AMBER;
+            let _ = self.connection.with_device(|serial| {
+                serial.pixel(
+                    CENTER.0, CENTER.1,
+                    (r as f32 * center_brightness) as u8,
+                    (g as f32 * center_brightness) as u8,
+                    (b as f32 * center_brightness) as u8,
+                )
+            });
+
+            let num_fireflies = (liftoff_progress * 8.0) as usize;
+            for i in 0..num_fireflies {
+                let angle = (i as f32 / 8.0) * std::f32::consts::PI * 2.0;
+                let dist = liftoff_progress * 1.5;
+                let x = CENTER.0 as f32 + angle.cos() * dist;
+                let y = CENTER.1 as f32 + angle.sin() * dist;
+
+                if x >= 0.0 && x <= 4.0 && y >= 0.0 && y <= 4.0 {
+                    let flicker = ((frame + i * 7) % 3) != 0;
+                    if flicker {
+                        let _ = self.connection.with_device(|serial| {
+                            serial.pixel(x.round() as u8, y.round() as u8, r, g, b)
+                        });
+                    }
+                }
+            }
+        } else {
+            // Phase 2: Fireflies dispersing outward
+            let disperse_progress = (frame - liftoff_frames) as f32 / (total_frames - liftoff_frames) as f32;
+
+            let num_fireflies = 12;
+            for i in 0..num_fireflies {
+                let angle = (i as f32 / num_fireflies as f32) * std::f32::consts::PI * 2.0
+                    + (i as f32 * 0.3);
+                let base_dist = 1.5 + disperse_progress * 3.0;
+                let dist = base_dist + ((i % 3) as f32 * 0.5);
+
+                let x = CENTER.0 as f32 + angle.cos() * dist;
+                let y = CENTER.1 as f32 + angle.sin() * dist;
+
+                let fade = (1.0 - disperse_progress).max(0.0);
+                let flicker = ((frame + i * 11) % 4) != 0;
+
+                if x >= 0.0 && x <= 4.0 && y >= 0.0 && y <= 4.0 && flicker && fade > 0.1 {
+                    let (r, g, b) = STORAGE_AMBER;
+                    let _ = self.connection.with_device(|serial| {
+                        serial.pixel(
+                            x.round() as u8,
+                            y.round() as u8,
+                            (r as f32 * fade) as u8,
+                            (g as f32 * fade) as u8,
+                            (b as f32 * fade) as u8,
+                        )
+                    });
+                }
             }
         }
     }

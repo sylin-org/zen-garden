@@ -235,8 +235,8 @@ async fn main() -> Result<()> {
     tracing::info!("Animation engine started");
 
     // Start SSE client to receive presence events from Moss
-    let sse_config = SseClientConfig::new(&stone)
-        .with_path("/api/v1/stone/presence/stream");
+    // Path defaults to PRESENCE_STREAM_PATH from garden_common
+    let sse_config = SseClientConfig::new(&stone);
     let event_handler = Arc::new(FireflyEventHandler::new(
         Arc::clone(&animation_context),
         Arc::clone(&companion_state),

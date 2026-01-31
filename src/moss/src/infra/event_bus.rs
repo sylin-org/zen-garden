@@ -1,26 +1,30 @@
-//! Event Bus - Unified event dispatch for offering lifecycle
+//! Event Bus - Unified event dispatch for domain events
 //!
-//! Dispatches OfferingEvent to registered listeners:
+//! Dispatches DomainEvent to registered listeners:
 //! - ChirpListener: Broadcasts topology changes via UDP
-//! - SseListener: Streams events to connected clients
+//! - SseListener: Streams events to connected clients (Firefly, Cricket)
 //! - TimerListener: Manages nurturing schedule timers
 //!
 //! Uses tokio broadcast channel for fan-out delivery.
 
-use crate::domain::events::OfferingEvent;
+use crate::domain::events::DomainEvent;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// Channel capacity for event broadcast
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
-/// Event bus for offering lifecycle events
+/// Event bus for domain events
 ///
-/// Provides a unified dispatch mechanism for all offering lifecycle changes.
+/// Provides a unified dispatch mechanism for all domain changes:
+/// - Offering lifecycle (deploy, start, stop, etc.)
+/// - Storage events (seed bank detection, removal)
+/// - Stone events (tended, health changes)
+///
 /// Listeners subscribe via the receiver and handle events asynchronously.
 #[derive(Clone)]
 pub struct EventBus {
-    sender: broadcast::Sender<OfferingEvent>,
+    sender: broadcast::Sender<DomainEvent>,
 }
 
 impl EventBus {
@@ -30,19 +34,18 @@ impl EventBus {
         Self { sender }
     }
 
-    /// Emit an event to all listeners
+    /// Emit a domain event to all listeners
     ///
     /// Returns the number of receivers that received the event.
     /// A return of 0 means no listeners are currently subscribed.
-    pub fn emit(&self, event: OfferingEvent) {
-        let event_type = event.event_type();
-        let name = event.name().to_string();
+    pub fn emit(&self, event: impl Into<DomainEvent>) {
+        let event = event.into();
+        let event_type = event.event_type().to_string();
 
         match self.sender.send(event) {
             Ok(count) => {
                 tracing::debug!(
                     event_type,
-                    offering = %name,
                     receivers = count,
                     "Event emitted"
                 );
@@ -51,7 +54,6 @@ impl EventBus {
                 // No receivers - this is fine, just means no listeners are active
                 tracing::trace!(
                     event_type,
-                    offering = %name,
                     "Event emitted (no receivers)"
                 );
             }
@@ -62,7 +64,7 @@ impl EventBus {
     ///
     /// Returns a receiver that will receive all future events.
     /// Past events are not replayed.
-    pub fn subscribe(&self) -> broadcast::Receiver<OfferingEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<DomainEvent> {
         self.sender.subscribe()
     }
 
@@ -87,7 +89,7 @@ pub trait EventListener: Send + Sync + 'static {
     /// Handle an incoming event
     ///
     /// Called for each event received. Should not block for long periods.
-    async fn on_event(&self, event: &OfferingEvent);
+    async fn on_event(&self, event: &DomainEvent);
 
     /// Listener name for logging
     fn name(&self) -> &'static str;
@@ -137,6 +139,7 @@ pub fn spawn_listener<L: EventListener>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::events::{OfferingEvent, StorageEvent, StoneEvent};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::{sleep, Duration};
 
@@ -146,7 +149,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl EventListener for CountingListener {
-        async fn on_event(&self, _event: &OfferingEvent) {
+        async fn on_event(&self, _event: &DomainEvent) {
             self.count.fetch_add(1, Ordering::SeqCst);
         }
 
@@ -201,6 +204,42 @@ mod tests {
         // Both listeners should receive the event
         assert_eq!(listener1.count.load(Ordering::SeqCst), 1);
         assert_eq!(listener2.count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_storage_events() {
+        let bus = EventBus::new();
+        let listener = Arc::new(CountingListener {
+            count: AtomicUsize::new(0),
+        });
+
+        let _handle = spawn_listener(&bus, listener.clone());
+        sleep(Duration::from_millis(10)).await;
+
+        bus.emit(StorageEvent::seed_bank_detected("backup", "/dev/sdb1", "/mnt/backup", 500));
+        bus.emit(StorageEvent::seed_bank_removed("backup", "/dev/sdb1"));
+
+        sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(listener.count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_stone_events() {
+        let bus = EventBus::new();
+        let listener = Arc::new(CountingListener {
+            count: AtomicUsize::new(0),
+        });
+
+        let _handle = spawn_listener(&bus, listener.clone());
+        sleep(Duration::from_millis(10)).await;
+
+        bus.emit(StoneEvent::tended("rake", "leo-laptop", None));
+        bus.emit(StoneEvent::health_changed("thriving", 25.0, 40.0));
+
+        sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(listener.count.load(Ordering::SeqCst), 2);
     }
 
     #[test]

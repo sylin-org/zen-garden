@@ -4,7 +4,7 @@
 //! Extracted from main.rs for cleaner separation of concerns.
 
 use crate::{
-    AppState, MossEvent, Job, JobStatus,
+    AppState, Job, JobStatus,
     // Task coordination
     start_lantern_registration,
     start_discovery_listener, start_hardware_detection,
@@ -176,12 +176,13 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let docker = connect_docker(&console_printer, DockerConfig::default()).await?;
 
     // Phase 8: Create channels
-    let (event_tx, _) = tokio::sync::broadcast::channel::<MossEvent>(100);
     let shutdown_tx = Arc::new(tokio::sync::Notify::new());
 
-    // Phase 8.5: Create offering lifecycle event bus
+    // Phase 8.5: Create domain event bus and SSE channels
     let event_bus = infra::EventBus::new();
-    tracing::debug!("Offering lifecycle event bus initialized");
+    let (sse_tx, _) = tokio::sync::broadcast::channel::<infra::SseEvent>(256);
+    let (job_progress_tx, _) = tokio::sync::broadcast::channel::<crate::app_state::JobProgressEvent>(100);
+    tracing::debug!("Domain event bus and SSE channels initialized");
 
     // Phase 9: Capabilities loading
     let capabilities_arc = init_capabilities(&stone_id, &stone_name, &console_printer).await;
@@ -269,7 +270,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         manifest_registry: manifest_registry.clone(),
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),
-        event_tx,
+        sse_tx: sse_tx.clone(),
+        job_progress_tx: job_progress_tx.clone(),
         event_bus: event_bus.clone(),
         shutdown_tx: shutdown_tx.clone(),
         start_time: std::time::Instant::now(),
@@ -342,9 +344,9 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         })));
         let _chirp_handle = infra::spawn_listener(&event_bus, chirp_listener);
 
-        // SseListener: Streams offering events to connected clients
-        // (creates its own broadcast channel - API endpoints can subscribe via event_bus)
-        let (sse_listener, _sse_rx) = infra::SseListener::with_channel(256);
+        // SseListener: Streams domain events to connected clients (Firefly, Cricket, etc.)
+        // Uses shared sse_tx from AppState so presence.rs can subscribe directly
+        let sse_listener = infra::SseListener::new(sse_tx.clone());
         let _sse_handle = infra::spawn_listener(&event_bus, Arc::new(sse_listener));
 
         // TimerListener: Manages nurturing schedule timers (stub - no callback yet)
@@ -565,19 +567,21 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Phase 14: Start periodic announcer (30s background task)
     crate::tasks::start_periodic_announcer(state.clone());
 
-    // Phase 15: Subscribe to service change events for immediate announcements
+    // Phase 15: Subscribe to domain events for immediate announcements
+    // Note: ChirpListener already handles topology announcements via EventBus
+    // This additional subscription ensures immediate sync for service changes
     let state_for_events = state.clone();
-    let mut event_rx = state.event_tx.subscribe();
+    let mut event_rx = state.event_bus.subscribe();
     tokio::spawn(async move {
         loop {
             match event_rx.recv().await {
-                Ok(event) if event.message.contains("service") || event.message.contains("offering") => {
-                    tracing::debug!(message = %event.message, "Service-related event detected, announcing");
-                    
-                    // Sync services and chirp
-                    state_for_events.sync_self_services(true).await;
+                Ok(event) => {
+                    // Check if this is a service-related event that needs immediate sync
+                    if matches!(&event, crate::domain::DomainEvent::Offering(_)) {
+                        tracing::debug!(event_type = event.event_type(), "Service event detected, syncing");
+                        state_for_events.sync_self_services(true).await;
+                    }
                 }
-                Ok(_) => {},
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(missed = n, "Event subscription lagged");
                 }
@@ -599,7 +603,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
         tracing::info!("Starting storage monitor");
-        let storage_monitor = crate::infra::storage::StorageMonitor::new(state.event_tx.clone());
+        let storage_monitor = crate::infra::storage::StorageMonitor::new(state.event_bus.clone());
         if let Err(e) = storage_monitor.start() {
             tracing::error!("Failed to start storage monitor: {}", e);
         } else {

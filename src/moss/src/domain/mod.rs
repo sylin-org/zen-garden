@@ -85,5 +85,5 @@ pub use storage_cache::{
 pub use sub_capability::{
     discover_sub_capabilities, refresh_all_sub_capabilities,
 };
-pub use events::OfferingEvent;
+pub use events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

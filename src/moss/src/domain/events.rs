@@ -1,18 +1,256 @@
-//! Offering Lifecycle Events
+//! Domain Events
 //!
-//! Unified event types for offering lifecycle changes. These events are emitted
+//! Unified event types for all domain changes. These events are emitted
 //! by lifecycle operations and consumed by listeners for:
 //! - Chirp announcements (UDP broadcast to garden)
 //! - SSE events (real-time UI updates)
 //! - Timer management (nurturing schedules)
+//! - Companion notifications (Firefly, Cricket)
 //! - Future: webhooks, audit logging, metrics
 
 use chrono::{DateTime, Utc};
 use garden_common::{
     EVENT_DEPLOYED, EVENT_STARTED, EVENT_STOPPED, EVENT_REMOVED,
     EVENT_DESTROYED, EVENT_UPDATED, EVENT_RENAMED, EVENT_HEALTH_CHANGED,
+    presence::event_types,
 };
 use serde::{Deserialize, Serialize};
+
+// ============================================================================
+// Domain Event (unified wrapper)
+// ============================================================================
+
+/// Unified domain event dispatched through the EventBus
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "domain", rename_all = "snake_case")]
+pub enum DomainEvent {
+    /// Offering lifecycle events (deploy, start, stop, etc.)
+    Offering(OfferingEvent),
+    /// Storage events (seed bank detected, removed, etc.)
+    Storage(StorageEvent),
+    /// Stone-level events (tended, health, load)
+    Stone(StoneEvent),
+}
+
+impl DomainEvent {
+    /// Get the event type string for SSE
+    pub fn event_type(&self) -> &str {
+        match self {
+            Self::Offering(e) => e.event_type(),
+            Self::Storage(e) => e.event_type(),
+            Self::Stone(e) => e.event_type(),
+        }
+    }
+
+    /// Create a human-readable message
+    pub fn to_message(&self) -> String {
+        match self {
+            Self::Offering(e) => e.to_message(),
+            Self::Storage(e) => e.to_message(),
+            Self::Stone(e) => e.to_message(),
+        }
+    }
+
+    /// Check if this event should trigger a chirp announcement
+    pub fn should_chirp(&self) -> bool {
+        match self {
+            Self::Offering(e) => e.should_chirp(),
+            Self::Storage(_) => false, // Storage is local-only
+            Self::Stone(_) => false,   // Stone events are local-only
+        }
+    }
+}
+
+// Convenience conversions
+impl From<OfferingEvent> for DomainEvent {
+    fn from(e: OfferingEvent) -> Self {
+        Self::Offering(e)
+    }
+}
+
+impl From<StorageEvent> for DomainEvent {
+    fn from(e: StorageEvent) -> Self {
+        Self::Storage(e)
+    }
+}
+
+impl From<StoneEvent> for DomainEvent {
+    fn from(e: StoneEvent) -> Self {
+        Self::Stone(e)
+    }
+}
+
+// ============================================================================
+// Storage Events
+// ============================================================================
+
+/// Storage-related events (seed banks, devices)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StorageEvent {
+    /// Seed bank detected and mounted
+    SeedBankDetected {
+        name: String,
+        device: String,
+        mount_path: String,
+        capacity_gb: u64,
+        timestamp: DateTime<Utc>,
+    },
+    /// Seed bank removed/unmounted
+    SeedBankRemoved {
+        name: String,
+        device: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Seed bank sync started
+    SyncStarted {
+        name: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Seed bank sync completed
+    SyncCompleted {
+        name: String,
+        success: bool,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl StorageEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::SeedBankDetected { .. } => event_types::STORAGE_DETECTED,
+            Self::SeedBankRemoved { .. } => event_types::STORAGE_REMOVED,
+            Self::SyncStarted { .. } => event_types::STORAGE_SYNC_STARTED,
+            Self::SyncCompleted { .. } => event_types::STORAGE_SYNC_COMPLETED,
+        }
+    }
+
+    pub fn to_message(&self) -> String {
+        match self {
+            Self::SeedBankDetected { name, device, .. } => {
+                format!("Seed bank '{}' detected on {}", name, device)
+            }
+            Self::SeedBankRemoved { name, .. } => {
+                format!("Seed bank '{}' removed", name)
+            }
+            Self::SyncStarted { name, .. } => {
+                format!("Seed bank '{}' sync started", name)
+            }
+            Self::SyncCompleted { name, success, .. } => {
+                if *success {
+                    format!("Seed bank '{}' sync completed", name)
+                } else {
+                    format!("Seed bank '{}' sync failed", name)
+                }
+            }
+        }
+    }
+
+    // Builder helpers
+    pub fn seed_bank_detected(
+        name: impl Into<String>,
+        device: impl Into<String>,
+        mount_path: impl Into<String>,
+        capacity_gb: u64,
+    ) -> Self {
+        Self::SeedBankDetected {
+            name: name.into(),
+            device: device.into(),
+            mount_path: mount_path.into(),
+            capacity_gb,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn seed_bank_removed(name: impl Into<String>, device: impl Into<String>) -> Self {
+        Self::SeedBankRemoved {
+            name: name.into(),
+            device: device.into(),
+            timestamp: Utc::now(),
+        }
+    }
+}
+
+// ============================================================================
+// Stone Events
+// ============================================================================
+
+/// Stone-level events (tended, health, load)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StoneEvent {
+    /// Stone was tended (user interaction)
+    Tended {
+        by: String,
+        from: String,
+        message: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    /// Stone health changed
+    HealthChanged {
+        health: String,
+        cpu_percent: f64,
+        memory_percent: f64,
+        timestamp: DateTime<Utc>,
+    },
+    /// Stone load updated
+    LoadUpdated {
+        cpu_percent: f64,
+        memory_percent: f64,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl StoneEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::Tended { .. } => event_types::STONE_TENDED,
+            Self::HealthChanged { .. } => event_types::STONE_HEALTH_CHANGED,
+            Self::LoadUpdated { .. } => event_types::STONE_LOAD_UPDATED,
+        }
+    }
+
+    pub fn to_message(&self) -> String {
+        match self {
+            Self::Tended { by, .. } => format!("Stone tended by {}", by),
+            Self::HealthChanged { health, .. } => format!("Stone health: {}", health),
+            Self::LoadUpdated { cpu_percent, memory_percent, .. } => {
+                format!("Stone load: CPU {:.0}%, Memory {:.0}%", cpu_percent, memory_percent)
+            }
+        }
+    }
+
+    // Builder helpers
+    pub fn tended(by: impl Into<String>, from: impl Into<String>, message: Option<String>) -> Self {
+        Self::Tended {
+            by: by.into(),
+            from: from.into(),
+            message,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn health_changed(health: impl Into<String>, cpu_percent: f64, memory_percent: f64) -> Self {
+        Self::HealthChanged {
+            health: health.into(),
+            cpu_percent,
+            memory_percent,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn load_updated(cpu_percent: f64, memory_percent: f64) -> Self {
+        Self::LoadUpdated {
+            cpu_percent,
+            memory_percent,
+            timestamp: Utc::now(),
+        }
+    }
+}
+
+// ============================================================================
+// Offering Events (existing)
+// ============================================================================
 
 /// Offering lifecycle event types
 #[derive(Debug, Clone, Serialize, Deserialize)]

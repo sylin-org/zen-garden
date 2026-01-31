@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
+use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
 
 /// Parsed SSE event
 #[derive(Debug, Clone)]
@@ -44,7 +45,7 @@ impl SseClientConfig {
         Self {
             stone_endpoint: stone_endpoint.into(),
             reconnect_delay: Duration::from_secs(5),
-            path: "/api/v1/stone/presence/stream".into(),
+            path: PRESENCE_STREAM_PATH.into(),
         }
     }
 

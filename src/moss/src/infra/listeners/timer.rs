@@ -12,7 +12,7 @@
 //! - Linux: systemd timers (zen-nurturing-{name}.timer)
 //! - Windows: Task Scheduler tasks (ZenGarden-Nurturing-{name})
 
-use crate::domain::events::OfferingEvent;
+use crate::domain::events::{DomainEvent, OfferingEvent};
 use crate::infra::event_bus::EventListener;
 use garden_common::infra::{PlatformTimer, StringPairDebouncer, TimerConfig};
 use std::sync::Arc;
@@ -234,13 +234,20 @@ impl Default for TimerListener {
 
 #[async_trait::async_trait]
 impl EventListener for TimerListener {
-    async fn on_event(&self, event: &OfferingEvent) {
+    async fn on_event(&self, event: &DomainEvent) {
+        // Only process offering events for timer management
+        let offering_event = match event {
+            DomainEvent::Offering(e) => e,
+            // Storage and Stone events don't affect timers
+            _ => return,
+        };
+
         // Only process timer-relevant events
-        if !event.should_manage_timers() {
+        if !offering_event.should_manage_timers() {
             return;
         }
 
-        let action = match event {
+        let action = match offering_event {
             OfferingEvent::Deployed { offering_id, name, .. } => {
                 TimerAction::Create {
                     offering_id: offering_id.clone(),
@@ -376,7 +383,7 @@ mod tests {
     async fn test_timer_create_on_deploy() {
         let listener = TimerListener::test_only();
 
-        let event = OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7");
+        let event = DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
         listener.on_event(&event).await;
 
         let actions = listener.pending_actions().await;
@@ -395,7 +402,7 @@ mod tests {
     async fn test_timer_remove_on_destroy() {
         let listener = TimerListener::test_only();
 
-        let event = OfferingEvent::destroyed("id-1", "mongodb", "stone-01");
+        let event = DomainEvent::Offering(OfferingEvent::destroyed("id-1", "mongodb", "stone-01"));
         listener.on_event(&event).await;
 
         let actions = listener.pending_actions().await;
@@ -414,7 +421,7 @@ mod tests {
     async fn test_timer_rename() {
         let listener = TimerListener::test_only();
 
-        let event = OfferingEvent::renamed("id-1", "mongodb", "my-mongo", "stone-01");
+        let event = DomainEvent::Offering(OfferingEvent::renamed("id-1", "mongodb", "my-mongo", "stone-01"));
         listener.on_event(&event).await;
 
         let actions = listener.pending_actions().await;
@@ -434,8 +441,8 @@ mod tests {
     async fn test_no_timer_on_start_stop() {
         let listener = TimerListener::test_only();
 
-        listener.on_event(&OfferingEvent::started("id-1", "mongodb", "stone-01")).await;
-        listener.on_event(&OfferingEvent::stopped("id-1", "mongodb", "stone-01")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::started("id-1", "mongodb", "stone-01"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::stopped("id-1", "mongodb", "stone-01"))).await;
 
         let actions = listener.pending_actions().await;
         assert!(actions.is_empty());
@@ -447,8 +454,8 @@ mod tests {
         let listener = TimerListener::with_debounce(Duration::from_millis(100), false);
 
         // Rapid create actions should debounce
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8"))).await;
 
         // Only first action should execute
         let actions = listener.pending_actions().await;
@@ -461,8 +468,8 @@ mod tests {
         let listener = TimerListener::with_debounce(Duration::from_millis(100), false);
 
         // Deploy then remove = different action types, both pass
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
-        listener.on_event(&OfferingEvent::destroyed("id-1", "mongodb", "stone-01")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::destroyed("id-1", "mongodb", "stone-01"))).await;
 
         // Both actions should execute (different action types)
         let actions = listener.pending_actions().await;
@@ -475,7 +482,7 @@ mod tests {
         let listener = TimerListener::with_debounce(Duration::from_millis(50), false);
 
         // First deploy
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
         let actions = listener.pending_actions().await;
         assert_eq!(actions.len(), 1);
 
@@ -483,7 +490,7 @@ mod tests {
         sleep(Duration::from_millis(100));
 
         // Now another deploy should execute
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8"))).await;
         let actions = listener.pending_actions().await;
         assert_eq!(actions.len(), 2);
     }
@@ -534,8 +541,8 @@ mod tests {
 
         let listener = TimerListener::with_test_callback(callback);
 
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
-        listener.on_event(&OfferingEvent::destroyed("id-1", "mongodb", "stone-01")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::destroyed("id-1", "mongodb", "stone-01"))).await;
 
         assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }

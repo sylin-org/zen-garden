@@ -565,7 +565,11 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
 
             // Scan triggers auto-mount for any new zen-seed devices
             // Use the tracker so new mounts are monitored for persistence
-            match SeedBankRegistry::auto_mount_seed_banks_with_tracker(Some(&tracker_hotplug)).await {
+            // Pass event_bus to emit storage.detected events for Companions
+            match SeedBankRegistry::auto_mount_seed_banks_with_tracker(
+                Some(&tracker_hotplug),
+                Some(&state_hotplug.event_bus),
+            ).await {
                 Ok(()) => {}
                 Err(e) => {
                     tracing::trace!(

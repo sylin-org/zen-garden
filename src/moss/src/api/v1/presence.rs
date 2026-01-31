@@ -1,7 +1,8 @@
-﻿//! Presence streaming API endpoint
+//! Presence streaming API endpoint
 //!
 //! Stone Presence Protocol (PRESENCE-0001) implementation.
-//! Translates DomainEvents to garden-native presence vocabulary at SSE boundary.
+//! Streams domain events to connected clients (Firefly, Cricket, etc.)
+//! via the unified SseEvent channel.
 
 use axum::{
     extract::{Query, State},
@@ -15,11 +16,13 @@ use tokio_stream::StreamExt;
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::domain::StoneEvent;
+use crate::infra::SseEvent;
 use garden_common::presence::{event_types, EventFilter, PresenceSnapshot, StoneState, ServiceState, ClientNotification};
 
 #[derive(Debug, Deserialize)]
 pub struct PresenceQuery {
-    /// Comma-separated event categories to filter (e.g., "service,stone")
+    /// Comma-separated event categories to filter (e.g., "service,stone,storage")
     categories: Option<String>,
 }
 
@@ -27,29 +30,28 @@ pub struct PresenceQuery {
 ///
 /// **Scope:** Stone-level (local events only)
 /// **Consumer:** Local Companions (Cricket, Firefly, OLED), Rake presence command
-/// 
-/// Returns SSE stream of domain events translated to presence vocabulary.
-/// Only emits events relevant to THIS stone (filters out garden-wide events).
-/// 
+///
+/// Returns SSE stream of domain events in presence vocabulary.
+/// Only emits events relevant to THIS stone.
+///
 /// **URI Semantics (API-0001):**
 /// - `/api/v1/stone/*` - Stone-scoped operations (this stone only)
 /// - `/api/v1/garden/*` - Garden-scoped operations (all stones, via Lantern)
-/// 
+///
 /// **Flow:**
 /// 1. Generate snapshot from AppState
-/// 2. Subscribe to EventBus (MossEvent stream for now)
-/// 3. **Filter** to local stone events only (future: when DomainEvent integration complete)
-/// 4. Translate each event to garden-native vocabulary
-/// 5. Emit as SSE
-/// 
+/// 2. Subscribe to sse_tx (unified SSE event channel)
+/// 3. Filter events by category if requested
+/// 4. Emit as SSE
+///
 /// **Query Parameters:**
-/// - `categories`: Comma-separated event categories (e.g., "service,stone")
+/// - `categories`: Comma-separated event categories (e.g., "service,stone,storage")
 pub async fn stream_stone_presence(
     Query(query): Query<PresenceQuery>,
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    tracing::info!("Local presence Companion connected");
-    
+    tracing::info!("Presence client connected");
+
     // Parse event filter from query params
     let filter = if let Some(cats) = query.categories {
         let categories = cats.split(',').map(|s| s.trim().to_string()).collect();
@@ -57,19 +59,15 @@ pub async fn stream_stone_presence(
     } else {
         EventFilter::allow_all()
     };
-    
-    let stone_name = state.stone_name.clone();
-    
+
     // Generate initial snapshot
     let snapshot = generate_snapshot(&state).await;
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
-    
-    // Subscribe to domain events
-    // TODO: Use EventBus when available
-    // For now, use existing event_tx (MossEvent)
-    let rx = state.event_tx.subscribe();
-    
-    // Create stream: snapshot first, then filtered + translated events
+
+    // Subscribe to SSE events (unified channel from SseListener)
+    let rx = state.sse_tx.subscribe();
+
+    // Create stream: snapshot first, then filtered events
     let stream = futures_util::stream::once(async move {
         Event::default()
             .event(event_types::PRESENCE_SNAPSHOT)
@@ -79,25 +77,24 @@ pub async fn stream_stone_presence(
         tokio_stream::wrappers::BroadcastStream::new(rx)
             .filter_map(move |result| {
                 let filter = filter.clone();
-                let stone_name = stone_name.clone();
                 match result {
-                    Ok(event) => translate_to_presence(&event, &filter, &stone_name),
+                    Ok(sse_event) => translate_to_presence(sse_event, &filter),
                     Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                        tracing::warn!("Presence Companion lagged {} events", n);
+                        tracing::warn!("Presence client lagged {} events", n);
                         None
                     }
                 }
             })
     )
     .map(Ok);
-    
+
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 /// Generate presence snapshot from current state
 async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     let registry = state.registry.read().await;
-    
+
     // Map services
     let services: Vec<ServiceState> = registry
         .iter()
@@ -107,10 +104,10 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             health: "healthy".to_string(), // TODO: Real health check
         })
         .collect();
-    
+
     // Compute stone state
     let uptime = state.start_time.elapsed().as_secs();
-    
+
     // Get real metrics from system monitor (fallback to zeros if not yet collected)
     let (cpu_percent, memory_percent, disk_percent) = {
         let resources = state.system_resources.read().await;
@@ -121,7 +118,7 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
                 .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
                 .map(|s| s.used_percent as f64)
                 .unwrap_or(0.0);
-            
+
             (
                 res.cpu.usage_percent as f64,
                 res.memory.used_percent as f64,
@@ -131,9 +128,9 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             (0.0, 0.0, 0.0)
         }
     };
-    
+
     let health = compute_health(cpu_percent, memory_percent);
-    
+
     PresenceSnapshot {
         stone: StoneState {
             name: state.stone_name.clone(),
@@ -160,89 +157,57 @@ fn compute_health(cpu: f64, memory: f64) -> String {
     }
 }
 
-/// Translate MossEvent to presence SSE event
-/// 
-/// This is temporary. When EventBus integration is complete,
-/// this will translate DomainEvent instead.
-fn translate_to_presence(moss_event: &crate::MossEvent, filter: &EventFilter, _stone_name: &str) -> Option<Event> {
-    // Parse message for event type
-    // This is hacky but temporary until EventBus integration
-    
-    // Check for client-initiated presence notifications first
-    if moss_event.message.starts_with("[PRESENCE]") && filter.allows(event_types::CATEGORY_STONE) {
-        // Extract event type and data from message: "[PRESENCE] stone.tended from rake | {json}"
-        if moss_event.message.contains("stone.tended") {
-            // Try to extract JSON data from message
-            if let Some(data_start) = moss_event.message.find(" | ") {
-                let data_str = &moss_event.message[data_start + 3..];
-                // Use the embedded JSON data if available
-                return Some(Event::default()
-                    .event(event_types::STONE_TENDED)
-                    .data(data_str.to_string()));
-            } else {
-                // Fallback: create minimal notification
-                let data = serde_json::json!({
-                    "by": "rake",
-                    "from": "client",
-                    "timestamp": moss_event.timestamp,
-                });
-                return Some(Event::default()
-                    .event(event_types::STONE_TENDED)
-                    .data(data.to_string()));
+/// Translate SseEvent to presence SSE event
+///
+/// Filters by category and converts to the format expected by Companions.
+fn translate_to_presence(sse_event: SseEvent, filter: &EventFilter) -> Option<Event> {
+    // Determine category from event type
+    let category = if sse_event.event_type.starts_with(event_types::PREFIX_SERVICE) {
+        event_types::CATEGORY_SERVICE
+    } else if sse_event.event_type.starts_with(event_types::PREFIX_STONE) {
+        event_types::CATEGORY_STONE
+    } else if sse_event.event_type.starts_with(event_types::PREFIX_STORAGE) {
+        event_types::CATEGORY_STORAGE
+    } else {
+        return None; // Unknown category
+    };
+
+    // Apply filter
+    if !filter.allows(category) {
+        return None;
+    }
+
+    // Build event data
+    let mut data = serde_json::json!({
+        "timestamp": sse_event.timestamp,
+        "message": sse_event.message,
+    });
+
+    // Add optional fields
+    if let Some(ref offering) = sse_event.offering {
+        data["service"] = serde_json::Value::String(offering.clone());
+    }
+    if let Some(ref extra) = sse_event.data {
+        // Merge extra data
+        if let serde_json::Value::Object(map) = extra {
+            for (k, v) in map {
+                data[k] = v.clone();
             }
         }
     }
-    
-    if moss_event.message.contains("started successfully") && filter.allows(event_types::CATEGORY_SERVICE) {
-        let service = extract_service_name(&moss_event.message)?;
-        let data = serde_json::json!({
-            "service": service,
-            "timestamp": moss_event.timestamp,
-        });
-        Some(Event::default()
-            .event(event_types::SERVICE_STARTED)
-            .data(data.to_string()))
-    } else if moss_event.message.contains("stopped") && filter.allows(event_types::CATEGORY_SERVICE) {
-        let service = extract_service_name(&moss_event.message)?;
-        let data = serde_json::json!({
-            "service": service,
-            "timestamp": moss_event.timestamp,
-        });
-        Some(Event::default()
-            .event(event_types::SERVICE_STOPPED)
-            .data(data.to_string()))
-    } else if moss_event.message.contains("Stone load:") && filter.allows(event_types::CATEGORY_STONE) {
-        // Parse load message
-        Some(Event::default()
-            .event(event_types::STONE_LOAD_UPDATED)
-            .data(serde_json::json!({
-                "timestamp": moss_event.timestamp,
-                "message": moss_event.message,
-            }).to_string()))
-    } else {
-        None // Skip events that don't map to presence or are filtered out
-    }
-}
 
-/// Extract service name from message (temporary hack)
-fn extract_service_name(message: &str) -> Option<String> {
-    // TODO: Remove this when DomainEvent integration is complete
-    // Message format: "Service <name> started successfully"
-    let parts: Vec<&str> = message.split_whitespace().collect();
-    if parts.len() >= 2 && parts[0] == "Service" {
-        Some(parts[1].to_string())
-    } else {
-        None
-    }
+    Some(Event::default()
+        .event(&sse_event.event_type)
+        .data(data.to_string()))
 }
 
 /// POST /api/v1/stone/presence/notify - Client-initiated presence notification
 ///
-/// Allows clients (Rake, Lantern) to send notifications that get broadcast to all presence Companions.
+/// Allows clients (Rake, Lantern) to send notifications that get broadcast to all presence clients.
 /// Used for visual feedback like "I'm tending to you" that creates a temporary glow/pulse.
 ///
-/// **Use case**: When Rake runs `tend stone-01`, it POSTs to Moss, which broadcasts
-/// `stone.tended` event to all SSE subscribers (Firefly shows pulse, Cricket chirps).
+/// **Use case**: When Rake runs `tend stone-01`, it POSTs to Moss, which emits
+/// `stone.tended` event via EventBus → SseListener → all SSE subscribers.
 ///
 /// **Payload**:
 /// ```json
@@ -262,52 +227,29 @@ pub async fn notify_presence(
         client = %notification.client,
         "Received client presence notification"
     );
-    
-    // Translate to stone.tended event and broadcast to SSE subscribers
-    let event_type = match notification.event_type.as_str() {
-        "tended" => event_types::STONE_TENDED,
-        other => {
-            tracing::warn!("Unknown notification event type: {}", other);
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Unknown event type: {}", other),
-            ));
-        }
-    };
-    
-    // Create SSE event data
-    let data = serde_json::json!({
-        "by": notification.client,
-        "from": notification.from_host.unwrap_or_else(|| "unknown".to_string()),
-        "message": notification.message,
-        "timestamp": chrono::Utc::now(),
-    });
-    let data_str = serde_json::to_string(&data).unwrap_or_default();
-    
-    // Broadcast via MossEvent (will be picked up by SSE subscribers)
-    // Include data in message so translator can extract it
-    let moss_event = crate::MossEvent {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        message: format!(
-            "[PRESENCE] {} from {} | {}",
-            event_type,
-            notification.client,
-            data_str
-        ),
-        job_id: None,
-    };
-    
-    // Send to event bus - SSE subscribers will translate it
-    let _ = state.event_tx.send(moss_event);
-    
-    // Also emit directly to ensure presence Companions get it
-    // (in case they're not subscribed to regular MossEvents)
-    tracing::info!(
-        event_type = %event_type,
-        "Broadcasted presence notification to {} subscribers",
-        state.event_tx.receiver_count()
+
+    // Only support "tended" for now
+    if notification.event_type != "tended" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unknown event type: {}", notification.event_type),
+        ));
+    }
+
+    // Emit StoneEvent via EventBus (will flow through SseListener → presence stream)
+    let stone_event = StoneEvent::tended(
+        &notification.client,
+        notification.from_host.as_deref().unwrap_or("unknown"),
+        notification.message.clone(),
     );
-    
+
+    state.event_bus.emit(stone_event);
+
+    tracing::info!(
+        event_type = event_types::STONE_TENDED,
+        "Broadcasted presence notification to {} SSE subscribers",
+        state.sse_tx.receiver_count()
+    );
+
     Ok(StatusCode::ACCEPTED)
 }

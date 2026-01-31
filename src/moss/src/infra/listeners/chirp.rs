@@ -8,7 +8,7 @@
 //! - Different event type + same offering = passes
 //! - Different offering = passes
 
-use crate::domain::events::OfferingEvent;
+use crate::domain::events::DomainEvent;
 use crate::infra::event_bus::EventListener;
 use garden_common::infra::StringPairDebouncer;
 use std::sync::Arc;
@@ -53,29 +53,36 @@ impl ChirpListener {
 
 #[async_trait::async_trait]
 impl EventListener for ChirpListener {
-    async fn on_event(&self, event: &OfferingEvent) {
+    async fn on_event(&self, event: &DomainEvent) {
+        // Only process offering events for chirp (topology changes)
+        let offering_event = match event {
+            DomainEvent::Offering(e) => e,
+            // Storage and Stone events don't affect garden topology
+            _ => return,
+        };
+
         // Only chirp for topology-changing events
-        if !event.should_chirp() {
+        if !offering_event.should_chirp() {
             tracing::trace!(
-                event_type = event.event_type(),
+                event_type = offering_event.event_type(),
                 "Skipping chirp for non-topology event"
             );
             return;
         }
 
         // Check debounce per (event_type, offering_id)
-        if !self.debouncer.should_pass_str(event.event_type(), event.offering_id()) {
+        if !self.debouncer.should_pass_str(offering_event.event_type(), offering_event.offering_id()) {
             tracing::trace!(
-                event_type = event.event_type(),
-                offering_id = event.offering_id(),
+                event_type = offering_event.event_type(),
+                offering_id = offering_event.offering_id(),
                 "Debouncing chirp (same event+offering within window)"
             );
             return;
         }
 
         tracing::debug!(
-            event_type = event.event_type(),
-            offering = event.name(),
+            event_type = offering_event.event_type(),
+            offering = offering_event.name(),
             "Triggering chirp announcement"
         );
 
@@ -91,6 +98,7 @@ impl EventListener for ChirpListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::events::OfferingEvent;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread::sleep;
 
@@ -103,7 +111,7 @@ mod tests {
             count_clone.fetch_add(1, Ordering::SeqCst);
         }));
 
-        let event = OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7");
+        let event = DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
         listener.on_event(&event).await;
 
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -119,7 +127,25 @@ mod tests {
         }));
 
         // Start/stop don't trigger chirps (by design - topology doesn't change)
-        let event = OfferingEvent::started("id-1", "mongodb", "stone-01");
+        let event = DomainEvent::Offering(OfferingEvent::started("id-1", "mongodb", "stone-01"));
+        listener.on_event(&event).await;
+
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_no_chirp_on_storage_events() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_clone = count.clone();
+
+        let listener = ChirpListener::new(Arc::new(move || {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        // Storage events don't trigger chirps
+        let event = DomainEvent::Storage(crate::domain::events::StorageEvent::seed_bank_detected(
+            "backup", "/dev/sdb1", "/mnt/backup", 500
+        ));
         listener.on_event(&event).await;
 
         assert_eq!(count.load(Ordering::SeqCst), 0);
@@ -138,9 +164,9 @@ mod tests {
         );
 
         // Same event type + same offering = debounced
-        listener.on_event(&OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy")).await;
-        listener.on_event(&OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "degraded")).await;
-        listener.on_event(&OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "degraded"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy"))).await;
 
         // Only first event should have triggered chirp
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -159,9 +185,9 @@ mod tests {
         );
 
         // Different event types for same offering = all pass
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
-        listener.on_event(&OfferingEvent::updated("id-1", "mongodb", "stone-01", "mongo:6", "mongo:7")).await;
-        listener.on_event(&OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::updated("id-1", "mongodb", "stone-01", "mongo:6", "mongo:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy"))).await;
 
         // All three should trigger (different event types)
         assert_eq!(count.load(Ordering::SeqCst), 3);
@@ -180,9 +206,9 @@ mod tests {
         );
 
         // Same event type but different offerings = all pass
-        listener.on_event(&OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7")).await;
-        listener.on_event(&OfferingEvent::deployed("id-2", "redis", "stone-01", "redis:7")).await;
-        listener.on_event(&OfferingEvent::deployed("id-3", "postgres", "stone-01", "pg:16")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-2", "redis", "stone-01", "redis:7"))).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-3", "postgres", "stone-01", "pg:16"))).await;
 
         // All three should trigger (different offerings)
         assert_eq!(count.load(Ordering::SeqCst), 3);
@@ -201,14 +227,14 @@ mod tests {
         );
 
         // First event
-        listener.on_event(&OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy"))).await;
         assert_eq!(count.load(Ordering::SeqCst), 1);
 
         // Wait for debounce window to expire
         sleep(Duration::from_millis(100));
 
         // Same event should now trigger again
-        listener.on_event(&OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy")).await;
+        listener.on_event(&DomainEvent::Offering(OfferingEvent::health_changed("id-1", "mongodb", "stone-01", "healthy"))).await;
         assert_eq!(count.load(Ordering::SeqCst), 2);
     }
 }

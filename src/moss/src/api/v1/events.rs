@@ -16,14 +16,18 @@ use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::{AppState, MossEvent};
+use crate::app_state::JobProgressEvent;
+use crate::AppState;
 
-/// GET /api/v1/events - Server-Sent Events stream
+/// GET /api/v1/events - Server-Sent Events stream for job progress
 ///
-/// Returns a long-lived SSE connection that broadcasts real-time events:
+/// Returns a long-lived SSE connection that broadcasts real-time job progress:
 /// - Job status changes (pending → running → completed/failed)
 /// - System notifications (warnings, errors)
 /// - Background task progress
+///
+/// **Note:** For presence events (service lifecycle, storage detection, etc.),
+/// use `/api/v1/stone/presence/stream` instead.
 ///
 /// # Event Format
 /// ```json
@@ -41,13 +45,13 @@ use crate::{AppState, MossEvent};
 pub async fn stream_events(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    // Subscribe to broadcast channel
-    let rx = state.event_tx.subscribe();
+    // Subscribe to job progress channel
+    let rx = state.job_progress_tx.subscribe();
 
     // Transform broadcast stream to SSE events
     let stream = BroadcastStream::new(rx)
         .filter_map(|result| match result {
-            Ok(event) => Some(Ok::<MossEvent, tokio_stream::wrappers::errors::BroadcastStreamRecvError>(event)),
+            Ok(event) => Some(Ok::<JobProgressEvent, tokio_stream::wrappers::errors::BroadcastStreamRecvError>(event)),
             Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
                 tracing::warn!("SSE client lagged {} messages", n);
                 None
@@ -57,7 +61,7 @@ pub async fn stream_events(
             let event = event_result.unwrap();
             let data = serde_json::to_string(&event).unwrap_or_default();
             Event::default()
-                .event("moss-event")
+                .event("job-progress")
                 .data(data)
         })
         .map(Ok);
@@ -65,9 +69,9 @@ pub async fn stream_events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Emit an event to all SSE subscribers and log it
+/// Emit a job progress event to all SSE subscribers and log it
 ///
-/// This is a composable helper for broadcasting events from anywhere in the application.
+/// This is a composable helper for broadcasting job progress from anywhere in the application.
 /// Events are sent to:
 /// 1. All connected SSE clients (via broadcast channel)
 /// 2. Tracing/logging system (for persistence and debugging)
@@ -84,7 +88,7 @@ pub async fn stream_events(
 /// emit_event(&state, "error", "Installation failed".to_string(), Some(job_id));
 /// ```
 pub fn emit_event(state: &AppState, level: &str, message: String, job_id: Option<String>) {
-    let event = MossEvent {
+    let event = JobProgressEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: level.to_string(),
         message: message.clone(),
@@ -92,7 +96,7 @@ pub fn emit_event(state: &AppState, level: &str, message: String, job_id: Option
     };
 
     // Broadcast to SSE subscribers (ignore if no receivers)
-    let _ = state.event_tx.send(event);
+    let _ = state.job_progress_tx.send(event);
 
     // Also log to tracing for persistence
     match level {

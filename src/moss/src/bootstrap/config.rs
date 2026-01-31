@@ -146,6 +146,8 @@ pub fn init_tracing(config: &DaemonConfig) {
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        .with_ansi(false)  // Clean output for journald
+        .with_writer(std::io::stderr)  // Explicit stderr (unbuffered)
         .init();
 
     // Legacy structured log (keep for debugging until full migration)

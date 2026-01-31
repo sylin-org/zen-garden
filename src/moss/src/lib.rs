@@ -25,7 +25,7 @@ pub mod app_state;
 
 // Re-export AppState and related types
 pub use app_state::{
-    AppState, MossEvent, Job, JobStatus,
+    AppState, Job, JobStatus, JobProgressEvent,
     CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
 };
 

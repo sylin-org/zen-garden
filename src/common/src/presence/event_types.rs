@@ -1,10 +1,18 @@
 ﻿//! SSE event type constants for Stone Presence Protocol (PRESENCE-0001)
 //!
-//! Centralized constants to prevent drift between Moss and Rake.
+//! Centralized constants to prevent drift between Moss, Rake, and Companions.
+
+// API path for presence stream (used by Companions and Rake)
+pub const PRESENCE_STREAM_PATH: &str = "/api/v1/stone/presence/stream";
 
 // Event categories (for filtering)
 pub const CATEGORY_SERVICE: &str = "service";
 pub const CATEGORY_STONE: &str = "stone";
+
+// Category prefixes (for event type matching)
+pub const PREFIX_SERVICE: &str = "service.";
+pub const PREFIX_STONE: &str = "stone.";
+pub const PREFIX_STORAGE: &str = "storage.";
 
 // Snapshot event
 pub const PRESENCE_SNAPSHOT: &str = "presence.snapshot";
@@ -14,6 +22,9 @@ pub const SERVICE_STARTED: &str = "service.started";
 pub const SERVICE_STOPPED: &str = "service.stopped";
 pub const SERVICE_SPROUTED: &str = "service.sprouted";
 pub const SERVICE_UPROOTED: &str = "service.uprooted";
+pub const SERVICE_UPDATED: &str = "service.updated";
+pub const SERVICE_RENAMED: &str = "service.renamed";
+pub const SERVICE_HEALTH_CHANGED: &str = "service.health.changed";
 
 // Offering status events (for visual feedback)
 pub const OFFERING_STATUS_UP: &str = "offering.status.up";
@@ -37,5 +48,7 @@ pub const STORAGE_POOL_CONFLICT: &str = "storage.pool_conflict";
 pub const STORAGE_READONLY: &str = "storage.readonly_detected";
 pub const STORAGE_PREPARE_PROGRESS: &str = "storage.prepare.progress";
 pub const STORAGE_REDISCOVERED: &str = "storage.rediscovered";
+pub const STORAGE_SYNC_STARTED: &str = "storage.sync_started";
+pub const STORAGE_SYNC_COMPLETED: &str = "storage.sync_completed";
 /// Storage beacon received from another stone (STORAGE-0003)
 pub const STORAGE_BEACON_RECEIVED: &str = "storage.beacon.received";

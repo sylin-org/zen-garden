@@ -206,6 +206,36 @@ impl EventHandler for FireflyEventHandler {
                 }
             }
 
+            // Storage detected - green pulse and enable seed-bank fireflies
+            event_types::STORAGE_DETECTED => {
+                #[derive(Deserialize)]
+                struct StorageEvent {
+                    name: String,
+                }
+                if let Ok(evt) = serde_json::from_str::<StorageEvent>(&event.data) {
+                    tracing::info!(name = %evt.name, "Seed bank detected");
+
+                    let mut ctx = self.context.write().await;
+                    ctx.has_seed_bank = true;
+                    ctx.trigger_override(Override::StorageDetected);
+                }
+            }
+
+            // Storage removed - brief amber dim and disable seed-bank fireflies
+            event_types::STORAGE_REMOVED => {
+                #[derive(Deserialize)]
+                struct StorageEvent {
+                    name: String,
+                }
+                if let Ok(evt) = serde_json::from_str::<StorageEvent>(&event.data) {
+                    tracing::info!(name = %evt.name, "Seed bank removed");
+
+                    let mut ctx = self.context.write().await;
+                    ctx.has_seed_bank = false;
+                    ctx.trigger_override(Override::StorageRemoved);
+                }
+            }
+
             // Ignore other events
             _ => {
                 tracing::trace!(event_type = %event.event_type, "Ignoring unhandled event");

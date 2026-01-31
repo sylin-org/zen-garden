@@ -62,9 +62,22 @@ impl CeremonyJournal {
         }
 
         let json = serde_json::to_string_pretty(ceremony).context("Failed to serialize ceremony")?;
-        tokio::fs::write(&path, json)
+
+        // Write and sync to disk to ensure durability (auto-flush)
+        let file = tokio::fs::File::create(&path)
+            .await
+            .context("Failed to create journal file")?;
+        let mut writer = tokio::io::BufWriter::new(file);
+        tokio::io::AsyncWriteExt::write_all(&mut writer, json.as_bytes())
             .await
             .context("Failed to write ceremony journal")?;
+        tokio::io::AsyncWriteExt::flush(&mut writer)
+            .await
+            .context("Failed to flush ceremony journal")?;
+        // Sync to disk for durability
+        writer.get_ref().sync_all()
+            .await
+            .context("Failed to sync ceremony journal to disk")?;
 
         // If terminal, remove from active directory
         if ceremony.state.is_terminal() {

@@ -23,6 +23,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 use tracing::{debug, warn};
 
+#[cfg(target_os = "linux")]
+use crate::domain::StorageEvent;
 use super::device::DeviceAnalyzer;
 
 /// Tracks a persistent mount that should be maintained
@@ -60,7 +62,7 @@ pub struct SeedBankRegistry {
 
 impl SeedBankRegistry {
     /// Scan all mounted seed banks and build registry.
-    /// 
+    ///
     /// This first auto-mounts any unmounted devices with the `zen-seed` label,
     /// then scans the mounts directory for valid manifests.
     pub async fn scan() -> Result<Self> {
@@ -68,7 +70,7 @@ impl SeedBankRegistry {
         if let Err(e) = Self::auto_mount_seed_banks().await {
             warn!(error = %e, "Failed to auto-mount seed banks");
         }
-        
+
         let data_dir = garden_common::constants::paths::data_dir();
         let mounts_dir = PathBuf::from(&data_dir).join("mounts");
         
@@ -465,7 +467,7 @@ impl SeedBankRegistry {
     /// - Replicated seed banks: mount to `/mounts/{group}/replica-{id}`
     #[cfg(target_os = "linux")]
     async fn auto_mount_seed_banks() -> Result<()> {
-        Self::auto_mount_seed_banks_with_tracker(None).await
+        Self::auto_mount_seed_banks_with_tracker(None, None).await
     }
 
     /// Auto-mount with optional mount tracker for persistence monitoring.
@@ -473,12 +475,18 @@ impl SeedBankRegistry {
     /// If tracker is provided, successful mounts will be tracked for the
     /// resilient mount persistence system.
     ///
+    /// If event_bus is provided, emits StorageEvent::seed_bank_detected for
+    /// successfully mounted seed banks (flows to Firefly/Cricket via SSE).
+    ///
     /// This uses manifest-first discovery (STORAGE-0005):
     /// - Scans ALL unmounted removable devices
     /// - Temp-mounts to check for manifest
     /// - Derives mount path from manifest configuration
     #[cfg(target_os = "linux")]
-    pub async fn auto_mount_seed_banks_with_tracker(tracker: Option<&MountTracker>) -> Result<()> {
+    pub async fn auto_mount_seed_banks_with_tracker(
+        tracker: Option<&MountTracker>,
+        event_bus: Option<&crate::infra::EventBus>,
+    ) -> Result<()> {
         use std::process::Stdio;
         use tokio::process::Command;
         use super::device::list_unmounted_removable_devices;
@@ -563,6 +571,22 @@ impl SeedBankRegistry {
                             // Track this mount for persistence monitoring
                             if let Some(t) = tracker {
                                 Self::track_mount(t, &device.device, &mount_path, &manifest.name).await;
+                            }
+
+                            // Emit storage event for Companions (Firefly, Cricket)
+                            if let Some(bus) = event_bus {
+                                // Get capacity from disk after mount
+                                let capacity_gb = DeviceAnalyzer::get_disk_usage(&mount_path)
+                                    .map(|(used, avail)| (used + avail) / (1024 * 1024 * 1024))
+                                    .unwrap_or(0);
+                                let storage_event = StorageEvent::seed_bank_detected(
+                                    &manifest.name,
+                                    &device.device,
+                                    &mount_path,
+                                    capacity_gb,
+                                );
+                                bus.emit(storage_event);
+                                info!(name = %manifest.name, "Emitted storage.detected event");
                             }
                         }
                         Ok(output) => {

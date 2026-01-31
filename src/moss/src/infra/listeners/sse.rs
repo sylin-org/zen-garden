@@ -1,12 +1,17 @@
 //! SSE Listener - Real-time client event streaming
 //!
-//! Listens for offering lifecycle events and broadcasts them to connected
-//! SSE clients via tokio broadcast channel.
+//! Listens for domain events and broadcasts them to connected
+//! SSE clients (Firefly, Cricket, etc.) via tokio broadcast channel.
 
-use crate::domain::events::OfferingEvent;
+use crate::domain::events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
 use crate::infra::event_bus::EventListener;
 use chrono::Utc;
-use garden_common::SSE_LEVEL_INFO;
+use garden_common::{
+    SSE_LEVEL_INFO,
+    EVENT_DEPLOYED, EVENT_STARTED, EVENT_STOPPED, EVENT_REMOVED,
+    EVENT_DESTROYED, EVENT_UPDATED, EVENT_RENAMED, EVENT_HEALTH_CHANGED,
+    presence::event_types,
+};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
@@ -17,31 +22,132 @@ pub struct SseEvent {
     pub timestamp: String,
     /// Event level (info, warn, error)
     pub level: String,
-    /// Event type (deployed, started, etc.)
+    /// Event type (service.started, storage.detected, stone.tended, etc.)
     pub event_type: String,
     /// Human-readable message
     pub message: String,
     /// Optional job ID for tracking
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
-    /// Offering name
+    /// Offering name (for offering events)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offering: Option<String>,
-    /// Offering ID
+    /// Offering ID (for offering events)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offering_id: Option<String>,
+    /// Additional event data as JSON
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
-impl From<&OfferingEvent> for SseEvent {
-    fn from(event: &OfferingEvent) -> Self {
+impl From<&DomainEvent> for SseEvent {
+    fn from(event: &DomainEvent) -> Self {
+        match event {
+            DomainEvent::Offering(e) => Self::from_offering(e),
+            DomainEvent::Storage(e) => Self::from_storage(e),
+            DomainEvent::Stone(e) => Self::from_stone(e),
+        }
+    }
+}
+
+impl SseEvent {
+    fn from_offering(event: &OfferingEvent) -> Self {
+        Self {
+            timestamp: Utc::now().to_rfc3339(),
+            level: SSE_LEVEL_INFO.to_string(),
+            event_type: Self::translate_offering_type(event.event_type()).to_string(),
+            message: event.to_message(),
+            job_id: None,
+            offering: Some(event.name().to_string()),
+            offering_id: Some(event.offering_id().to_string()),
+            data: None,
+        }
+    }
+
+    fn from_storage(event: &StorageEvent) -> Self {
+        let data = match event {
+            StorageEvent::SeedBankDetected { name, device, mount_path, capacity_gb, .. } => {
+                Some(serde_json::json!({
+                    "name": name,
+                    "device": device,
+                    "mount_path": mount_path,
+                    "capacity_gb": capacity_gb,
+                }))
+            }
+            StorageEvent::SeedBankRemoved { name, device, .. } => {
+                Some(serde_json::json!({
+                    "name": name,
+                    "device": device,
+                }))
+            }
+            StorageEvent::SyncStarted { name, .. } => {
+                Some(serde_json::json!({ "name": name }))
+            }
+            StorageEvent::SyncCompleted { name, success, .. } => {
+                Some(serde_json::json!({ "name": name, "success": success }))
+            }
+        };
+
         Self {
             timestamp: Utc::now().to_rfc3339(),
             level: SSE_LEVEL_INFO.to_string(),
             event_type: event.event_type().to_string(),
             message: event.to_message(),
             job_id: None,
-            offering: Some(event.name().to_string()),
-            offering_id: Some(event.offering_id().to_string()),
+            offering: None,
+            offering_id: None,
+            data,
+        }
+    }
+
+    fn from_stone(event: &StoneEvent) -> Self {
+        let data = match event {
+            StoneEvent::Tended { by, from, message, .. } => {
+                Some(serde_json::json!({
+                    "by": by,
+                    "from": from,
+                    "message": message,
+                }))
+            }
+            StoneEvent::HealthChanged { health, cpu_percent, memory_percent, .. } => {
+                Some(serde_json::json!({
+                    "health": health,
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory_percent,
+                }))
+            }
+            StoneEvent::LoadUpdated { cpu_percent, memory_percent, .. } => {
+                Some(serde_json::json!({
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory_percent,
+                }))
+            }
+        };
+
+        Self {
+            timestamp: Utc::now().to_rfc3339(),
+            level: SSE_LEVEL_INFO.to_string(),
+            event_type: event.event_type().to_string(),
+            message: event.to_message(),
+            job_id: None,
+            offering: None,
+            offering_id: None,
+            data,
+        }
+    }
+
+    /// Translate internal event types to presence protocol vocabulary
+    fn translate_offering_type(event_type: &str) -> &'static str {
+        match event_type {
+            EVENT_DEPLOYED => event_types::SERVICE_STARTED,
+            EVENT_STARTED => event_types::SERVICE_STARTED,
+            EVENT_STOPPED => event_types::SERVICE_STOPPED,
+            EVENT_REMOVED => event_types::SERVICE_STOPPED,
+            EVENT_DESTROYED => event_types::SERVICE_STOPPED,
+            EVENT_UPDATED => event_types::SERVICE_UPDATED,
+            EVENT_RENAMED => event_types::SERVICE_RENAMED,
+            EVENT_HEALTH_CHANGED => event_types::SERVICE_HEALTH_CHANGED,
+            _ => event_types::SERVICE_STARTED, // Fallback for unknown types
         }
     }
 }
@@ -72,11 +178,16 @@ impl SseListener {
     pub fn subscribe(&self) -> broadcast::Receiver<SseEvent> {
         self.tx.subscribe()
     }
+
+    /// Get the sender for sharing with other components
+    pub fn sender(&self) -> broadcast::Sender<SseEvent> {
+        self.tx.clone()
+    }
 }
 
 #[async_trait::async_trait]
 impl EventListener for SseListener {
-    async fn on_event(&self, event: &OfferingEvent) {
+    async fn on_event(&self, event: &DomainEvent) {
         let sse_event = SseEvent::from(event);
 
         match self.tx.send(sse_event) {
@@ -107,25 +218,45 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_sse_event_conversion() {
-        let event = OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7");
+    async fn test_sse_event_conversion_offering() {
+        let event = DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
         let sse_event = SseEvent::from(&event);
 
-        assert_eq!(sse_event.event_type, "deployed");
+        assert_eq!(sse_event.event_type, event_types::SERVICE_STARTED); // Translated!
         assert_eq!(sse_event.message, "Service mongodb deployed");
         assert_eq!(sse_event.offering, Some("mongodb".to_string()));
         assert_eq!(sse_event.offering_id, Some("id-1".to_string()));
     }
 
     #[tokio::test]
+    async fn test_sse_event_conversion_storage() {
+        let event = DomainEvent::Storage(StorageEvent::seed_bank_detected("backup", "/dev/sdb1", "/mnt/backup", 500));
+        let sse_event = SseEvent::from(&event);
+
+        assert_eq!(sse_event.event_type, event_types::STORAGE_DETECTED);
+        assert!(sse_event.message.contains("backup"));
+        assert!(sse_event.data.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sse_event_conversion_stone() {
+        let event = DomainEvent::Stone(StoneEvent::tended("rake", "leo-laptop", Some("Hello".to_string())));
+        let sse_event = SseEvent::from(&event);
+
+        assert_eq!(sse_event.event_type, event_types::STONE_TENDED);
+        assert!(sse_event.message.contains("rake"));
+        assert!(sse_event.data.is_some());
+    }
+
+    #[tokio::test]
     async fn test_sse_listener_broadcast() {
         let (listener, mut rx) = SseListener::with_channel(16);
 
-        let event = OfferingEvent::started("id-1", "mongodb", "stone-01");
+        let event = DomainEvent::Offering(OfferingEvent::started("id-1", "mongodb", "stone-01"));
         listener.on_event(&event).await;
 
         let received = rx.recv().await.unwrap();
-        assert_eq!(received.event_type, "started");
+        assert_eq!(received.event_type, event_types::SERVICE_STARTED);
         assert_eq!(received.message, "Service mongodb started");
     }
 }

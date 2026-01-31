@@ -5,6 +5,7 @@
 
 use anyhow::{Result, Context};
 use garden_common::presence::{event_types, PresenceSnapshot, StoneState, ServiceState};
+use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
 
 /// Stream presence events from a stone
 pub async fn presence_command(
@@ -42,7 +43,7 @@ pub async fn presence_command(
         }
     };
 
-    let url = format!("{}/api/v1/stone/presence/stream", endpoint.trim_end_matches('/'));
+    let url = format!("{}{}", endpoint.trim_end_matches('/'), PRESENCE_STREAM_PATH);
 
     println!("Connecting to presence stream: {}", url);
     println!("Press Ctrl+C to disconnect\n");

@@ -14,7 +14,7 @@
 
 use crate::docker::DockerManager;
 use crate::domain::CeremonyRegistry;
-use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore};
+use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
 use crate::tasks::NetworkMonitor;
@@ -24,9 +24,12 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-/// SSE event for client notifications
+/// Job progress event for background task streaming
+///
+/// Used for streaming job progress to CLI clients during long-running operations
+/// like seed bank preparation, offering installation, etc.
 #[derive(Clone, Debug, serde::Serialize)]
-pub struct MossEvent {
+pub struct JobProgressEvent {
     pub timestamp: String,
     pub level: String,
     pub message: String,
@@ -96,10 +99,13 @@ pub struct AppState {
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,
 
-    /// Event broadcast channel for SSE streaming
-    pub event_tx: tokio::sync::broadcast::Sender<MossEvent>,
+    /// SSE event broadcast channel for presence streaming (Firefly, Cricket, etc.)
+    pub sse_tx: tokio::sync::broadcast::Sender<SseEvent>,
 
-    /// Offering lifecycle event bus (unified event dispatch)
+    /// Job progress event channel for CLI streaming during long-running operations
+    pub job_progress_tx: tokio::sync::broadcast::Sender<JobProgressEvent>,
+
+    /// Domain event bus (unified event dispatch for offerings, storage, stone events)
     pub event_bus: EventBus,
 
     /// Shutdown coordination channel

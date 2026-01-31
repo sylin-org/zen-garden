@@ -58,6 +58,14 @@ struct Cli {
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     verbose: u8,
 
+    /// Output format for automation (human, json)
+    #[arg(short, long, global = true, default_value = "human")]
+    output: String,
+
+    /// Extract a specific field from the output (dot notation: "services[0].connection.uris[0]")
+    #[arg(long, global = true)]
+    field: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1488,6 +1496,15 @@ async fn async_main() -> anyhow::Result<()> {
     let fresh_mode = cli.fresh
         || parsed_keywords.as_ref().map(|k| k.fresh).unwrap_or(false);
 
+    // Determine output format (--output flag or GARDEN_OUTPUT env var)
+    // If --field is specified, force JSON mode internally
+    let output_format = if cli.field.is_some() {
+        garden_rake::context::OutputFormat::Json
+    } else {
+        garden_rake::context::OutputFormat::from_str(&cli.output)
+    };
+    let field = cli.field.clone();
+
     // Note: fresh_mode is passed to Moss API to request fresh topology scan.
     // It does NOT clear tending state - Rake stays connected to the same stone.
 
@@ -1641,14 +1658,21 @@ async fn async_main() -> anyhow::Result<()> {
         }
 
         Commands::Find { query, format, wishful, at } => {
-            let output_format = commands::discovery::FindOutputFormat::from_str(&format);
+            // Global --output/--field can override command-specific --format
+            let find_format = if field.is_some() || output_format.is_json() {
+                // Field extraction or global JSON mode -> use JSON internally
+                commands::discovery::FindOutputFormat::Json
+            } else {
+                commands::discovery::FindOutputFormat::from_str(&format)
+            };
             let wishfully = wishful || parsed_keywords.as_ref().map(|k| k.wishfully).unwrap_or(false);
-            let cmd = commands::discovery::FindCommand::new(
+            let cmd = commands::discovery::FindCommand::with_field(
                 query,
-                output_format,
+                find_format,
                 quiet_mode,
                 fresh_mode,
                 wishfully,
+                field.clone(),
             );
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
         }

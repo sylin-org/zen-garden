@@ -7,7 +7,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::{CommandContext, extract_json_field};
 use crate::suggestions;
 use garden_common::ui::rendering as ui;
 use anyhow::Context;
@@ -57,6 +57,8 @@ pub struct FindCommand {
     pub fresh: bool,
     /// Wishfully mode (auto-provision if not found)
     pub wishfully: bool,
+    /// Optional field extraction path (e.g., "services[0].connection.uris[0]")
+    pub field: Option<String>,
 }
 
 impl FindCommand {
@@ -73,6 +75,26 @@ impl FindCommand {
             quiet_mode,
             fresh,
             wishfully,
+            field: None,
+        }
+    }
+
+    /// Create command with field extraction support
+    pub fn with_field(
+        query: String,
+        format: FindOutputFormat,
+        quiet_mode: bool,
+        fresh: bool,
+        wishfully: bool,
+        field: Option<String>,
+    ) -> Self {
+        Self {
+            query,
+            format,
+            quiet_mode,
+            fresh,
+            wishfully,
+            field,
         }
     }
 }
@@ -181,6 +203,11 @@ impl Command for FindCommand {
         // Handle not found case
         if !discovery.found {
             return self.handle_not_found(ctx).await;
+        }
+
+        // Field extraction mode: extract specific field and output just that value
+        if let Some(ref field_path) = self.field {
+            return self.render_field(&discovery, field_path);
         }
 
         // Render output based on format
@@ -667,6 +694,30 @@ impl FindCommand {
 
             if let Some(u) = uri {
                 println!("{}", u);
+            }
+        }
+    }
+
+    /// Render a specific field from the response (for automation)
+    ///
+    /// Supports dot notation with array indexing:
+    /// - "services[0].connection.uris[0]" -> first service's first URI
+    /// - "services[0].name" -> first service's name
+    /// - "found" -> boolean found status
+    fn render_field(&self, discovery: &ServiceDiscoveryResponse, field_path: &str) -> CommandResult {
+        // Convert to JSON value for field extraction
+        let json_value = serde_json::to_value(discovery)
+            .context("Failed to convert response to JSON")?;
+
+        match extract_json_field(&json_value, field_path) {
+            Some(value) => {
+                println!("{}", value);
+                Ok(())
+            }
+            None => {
+                // Field not found - exit with error code
+                eprintln!("Field '{}' not found in response", field_path);
+                std::process::exit(1);
             }
         }
     }

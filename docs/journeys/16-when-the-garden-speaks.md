@@ -10,23 +10,26 @@ You've noticed how Cricket plays sounds when services start or stop. How Firefly
 
 Where does this information come from?
 
-You open a terminal and connect to the event stream:
+You open a terminal and connect to the presence stream:
 
 ```bash
-curl -N http://stone-amber-ridge.local:7185/api/v1/events
+curl -N http://stone-amber-ridge.local:7185/api/v1/stone/presence/stream
 ```
 
 Events start flowing:
 
 ```
-event: moss-event
-data: {"timestamp":"2026-01-30T14:32:15Z","level":"info","message":"Health check passed for mongodb"}
+event: presence.snapshot
+data: {"stone":{"name":"stone-amber-ridge","health":"thriving"},"services":[...],"timestamp":"2026-01-30T14:32:00Z"}
 
-event: moss-event
-data: {"timestamp":"2026-01-30T14:32:45Z","level":"info","message":"Health check passed for redis"}
+event: service.health.changed
+data: {"timestamp":"2026-01-30T14:32:15Z","service":"mongodb","health":"healthy"}
 
-event: moss-event
-data: {"timestamp":"2026-01-30T14:33:01Z","level":"info","message":"Chirp sent to garden"}
+event: stone.load.updated
+data: {"timestamp":"2026-01-30T14:32:45Z","cpu_percent":12.5,"memory_percent":45.2}
+
+event: presence.heartbeat
+data: {"timestamp":"2026-01-30T14:33:01Z","stone_health":"thriving","service_count":3}
 ```
 
 The garden is talking. A steady stream of events describing everything that happens. Health checks. Chirps. Service state changes. Resource updates.
@@ -115,7 +118,7 @@ import requests
 import json
 
 def watch_garden():
-    url = "http://stone-amber-ridge.local:7185/api/v1/events"
+    url = "http://stone-amber-ridge.local:7185/api/v1/stone/presence/stream"
 
     with requests.get(url, stream=True) as response:
         for line in response.iter_lines():
@@ -131,7 +134,7 @@ def handle_event(event):
 
     if 'failed' in message.lower():
         send_notification(f"⚠️ Garden alert: {message}")
-    elif 'Deployment completed' in message:
+    elif 'completed' in message.lower():
         send_notification(f"✅ {message}")
 
 def send_notification(text):
@@ -236,22 +239,18 @@ data: {"level":"warn","message":"Subscriber lagged, skipped 47 events"}
 
 The subscriber gets a lag notification and continues with new events. This prevents slow subscribers from affecting the garden's operation.
 
-### Presence Stream vs Events Stream
+### Unified Presence Stream
 
-Two different endpoints serve different purposes:
+All events flow through a single endpoint:
 
-**`/api/v1/events`** — Raw operational events
-- Everything happening on this Stone
-- Debug-level detail available
-- Used for monitoring, logging, alerting
+**`/api/v1/stone/presence/stream`** — Unified event stream
+- Starts with full state snapshot (`presence.snapshot`)
+- All domain events: services, storage, stone health, jobs
+- Regular heartbeats for connection health
+- Designed for all consumers: Companions, dashboards, scripts
+- Filter by category if needed (`?categories=service,job`)
 
-**`/api/v1/presence/stream`** — Curated presence feed
-- Starts with full state snapshot
-- Then delta updates only
-- Designed for Companions (Cricket, Firefly)
-- Filtered to relevant state changes
-
-Companions use the presence stream because they need to know the current state on connect, then track changes. The events stream is more for operators watching what happens.
+This unified architecture means Cricket, Firefly, the portrait page, and your monitoring scripts all connect to the same stream. Everyone sees the same events, enabling richer integrations.
 
 ### How Companions Use This
 
@@ -343,20 +342,20 @@ The garden is always speaking. You just need to listen.
 ## Commands From This Journey
 
 ```bash
-# Stream all events from a Stone
-curl -N http://stone-amber-ridge.local:7185/api/v1/events
+# Stream all events from a Stone (unified presence stream)
+curl -N http://stone-amber-ridge.local:7185/api/v1/stone/presence/stream
 
-# Stream presence events (for Companions)
-curl -N 'http://stone-amber-ridge.local:7185/api/v1/presence/stream?Companion=my-listener'
+# Identify yourself as a Companion
+curl -N 'http://stone-amber-ridge.local:7185/api/v1/stone/presence/stream?companion=my-listener'
 
 # Watch events with garden-rake
-garden-rake watch stone-amber-ridge
+garden-rake presence watch
 
 # Stream events in JSON Lines format (for parsing)
-curl -N http://stone-amber-ridge.local:7185/api/v1/events | grep '^data: ' | cut -c7-
+curl -N http://stone-amber-ridge.local:7185/api/v1/stone/presence/stream | grep '^data: ' | cut -c7-
 
 # List connected presence subscribers
-curl http://stone-amber-ridge.local:7185/api/v1/presence/subscribers
+curl http://stone-amber-ridge.local:7185/api/v1/stone/presence/subscribers
 ```
 
 ---

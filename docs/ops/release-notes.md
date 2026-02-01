@@ -81,9 +81,12 @@
 - `GET /metrics` - Prometheus metrics
 
 **Events & Jobs:**
-- `GET /api/v1/events` - SSE event stream
+- `GET /api/v1/stone/presence/stream` - Unified SSE event stream (services, storage, stone, jobs)
 - `GET /api/v1/jobs` - List jobs
 - `GET /api/v1/jobs/:id` - Job status
+
+**Note:** The former `/api/v1/events` endpoint has been consolidated into `/api/v1/stone/presence/stream`.
+All event types (services, storage, stone health, and job progress) now flow through the unified presence stream.
 
 #### CLI Updates (garden-rake)
 

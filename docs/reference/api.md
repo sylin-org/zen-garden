@@ -113,7 +113,7 @@ All endpoints respect the `X-Quiet: true` header, which suppresses suggestion ge
 - `POST /api/v1/stone:shutdown` - Shutdown Moss daemon
 
 ### Events & Jobs
-- `GET /api/v1/events` - Stream all moss operation events (SSE)
+- `GET /api/v1/stone/presence/stream` - Stream all domain events (SSE) - unified presence stream
 - `GET /api/v1/jobs` - List background jobs
 - `GET /api/v1/jobs/:job_id` - Get job status and result
 
@@ -1317,37 +1317,55 @@ garden-rake watch offering mongodb logs --timestamps
 
 ---
 
-### GET /api/events
+### GET /api/v1/stone/presence/stream
 
-**Stream moss system events in real-time.**
+**Stream all domain events in real-time (unified presence stream).**
 
-Server-Sent Events stream of moss operations and service state changes.
+Server-Sent Events stream of all stone activity: service lifecycle, storage events, stone health, and job progress. This is the single source of truth for real-time stone state, used by Companions (Cricket, Firefly) and the portrait page.
+
+**Query Parameters:**
+- `companion=<name>` - Optional Companion identification (e.g., `cricket`, `firefly`)
+- `version=<ver>` - Optional Companion version
+- `categories=<list>` - Optional filter (e.g., `service,storage,job`)
 
 **Response (200 OK - text/event-stream):**
 ```
-event: service.created
-data: {"service": "mongodb", "timestamp": "2026-01-17T10:30:00Z"}
+event: presence.snapshot
+data: {"stone": {"name": "stone-01", "health": "thriving"}, "services": [...], "timestamp": "..."}
 
 event: service.started
-data: {"service": "mongodb", "timestamp": "2026-01-17T10:30:05Z"}
+data: {"service": "mongodb", "offering_id": "...", "timestamp": "2026-01-17T10:30:05Z"}
 
-event: service.stopped
-data: {"service": "redis", "timestamp": "2026-01-17T10:31:00Z"}
+event: job.started
+data: {"job_id": "abc123", "offering": "mongodb", "operation": "install", "timestamp": "..."}
+
+event: job.progress
+data: {"job_id": "abc123", "offering": "mongodb", "message": "Pulling image...", "level": "info"}
+
+event: storage.detected
+data: {"name": "seed-usb-01", "device": "/dev/sdb1", "capacity_gb": 500}
+
+event: presence.heartbeat
+data: {"stone_health": "thriving", "service_count": 3, "timestamp": "..."}
 ```
 
-**Event Types:**
-- `service.created` - Service installed
-- `service.started` - Service started
-- `service.stopped` - Service stopped
-- `service.removed` - Service deleted
-- `service.upgraded` - Service image updated
-- `system.reconcile` - Reconciliation completed
+**Event Categories:**
+
+| Category | Events |
+|----------|--------|
+| **service** | `service.started`, `service.stopped`, `service.updated`, `service.health.changed`, `service.renamed` |
+| **storage** | `storage.detected`, `storage.removed`, `storage.sync.started`, `storage.sync.completed` |
+| **stone** | `stone.tended`, `stone.health.changed`, `stone.load.updated` |
+| **job** | `job.started`, `job.progress`, `job.completed`, `job.failed` |
 
 **CLI Examples:**
 ```bash
-garden-rake watch
-garden-rake watch until 'completed'
+curl -N http://localhost:7185/api/v1/stone/presence/stream
+garden-rake presence watch
 ```
+
+**Note:** The former `/api/v1/events` endpoint has been consolidated into this unified stream.
+All job progress events now flow through the presence stream alongside other domain events.
 
 ---
 

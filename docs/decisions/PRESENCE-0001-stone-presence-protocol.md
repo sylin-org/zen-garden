@@ -190,9 +190,10 @@ Accept: text/event-stream
 ```
 
 Why `/presence/`?
-- Distinct from `/events/` (internal job events)
+- Single unified event stream for all domain events (services, storage, stone, jobs)
 - Clearly scoped to external consumer use
-- Firefly, Cricket, OLED, web dashboards all connect here
+- Firefly, Cricket, OLED, web dashboards, and portrait page all connect here
+- Job progress events (`job.started`, `job.progress`, `job.completed`, `job.failed`) included
 
 ---
 
@@ -694,9 +695,12 @@ The protocol defines these event types:
 |----------|--------|
 | Lifecycle | `presence.snapshot`, `presence.heartbeat` |
 | Stone | `stone.health.changed`, `stone.load.updated`, `stone.tended`, `stone.milestone` |
-| Service | `service.sprouted`, `service.started`, `service.stopped`, `service.uprooted`, `service.health.changed`, `service.activity` |
+| Service | `service.sprouted`, `service.started`, `service.stopped`, `service.uprooted`, `service.health.changed`, `service.activity`, `service.updated`, `service.renamed` |
+| Storage | `storage.detected`, `storage.removed`, `storage.sync.started`, `storage.sync.completed`, `storage.prepare.progress` |
+| Jobs | `job.started`, `job.progress`, `job.completed`, `job.failed` |
 | Security | `pond.joined`, `pond.left` |
-| Tasks | `task.started`, `task.completed` |
+
+**Note:** Job events were consolidated into the presence stream (January 2026). Previously served via a separate `/api/v1/events` endpoint, all events now flow through `/api/v1/stone/presence/stream` giving Companions and the portrait page full visibility into installation progress, storage operations, and other background tasks.
 
 Future extensions may add:
 - `stone.resting` (maintenance mode)

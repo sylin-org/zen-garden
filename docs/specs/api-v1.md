@@ -416,10 +416,15 @@ Response:
 ### Events & Jobs (Universal)
 
 ```http
-GET /api/v1/events                         # Stream events (SSE)
+GET /api/v1/stone/presence/stream          # Stream all domain events (SSE) - unified endpoint
 GET /api/v1/jobs                           # List recent jobs
 GET /api/v1/jobs/{id}                      # Job status/result
 ```
+
+**Note:** All events (offerings, storage, stone, jobs) flow through the unified presence stream.
+Job progress events (`job.started`, `job.progress`, `job.completed`, `job.failed`) are included
+alongside service and storage events, giving Companions like Cricket and Firefly full visibility
+into stone activity.
 
 ---
 

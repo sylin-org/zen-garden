@@ -1323,10 +1323,10 @@ Response 200:
 
 ### Subscription Events (SSE)
 
-Applications can subscribe to ceremony events:
+Applications can subscribe to ceremony events via the unified presence stream:
 
 ```http
-GET /api/v1/events?topics=ceremonies
+GET /api/v1/stone/presence/stream?categories=ceremony
 
 event: ceremony.started
 data: {"ceremony_id": "vacate-stone01-...", "type": "vacate"}

@@ -464,8 +464,8 @@ garden-rake logs mongodb --at stone-03 --until 'ready'  # Combined
 
 #### API
 ```http
-GET /api/v1/events                           # All events (SSE stream)
-GET /api/v1/events?service=mongodb           # Service-specific
+GET /api/v1/stone/presence/stream            # All events (unified SSE stream)
+GET /api/v1/stone/presence/stream?categories=service  # Category filter
 GET /api/v1/services/mongodb/logs            # Service logs only
 ```
 
@@ -1104,10 +1104,10 @@ GET    /api/v1/services/mongodb/logs?follow=true&tail=100
 
 #### Events (Observability)
 ```http
-GET /api/v1/events                           # SSE stream (all events)
-GET /api/v1/events?service=mongodb           # Filter by service
-GET /api/v1/events?type=logs                 # Filter by event type
-GET /api/v1/events?type=lifecycle            # Lifecycle events only
+GET /api/v1/stone/presence/stream            # Unified SSE stream (all events)
+GET /api/v1/stone/presence/stream?categories=service  # Category filter
+GET /api/v1/stone/presence/stream?categories=job      # Job progress only
+GET /api/v1/stone/presence/stream?categories=storage  # Storage events only
 ```
 
 **SSE Event Types:**
@@ -1817,7 +1817,7 @@ garden-rake pond untrust stone-03  # remove later
 | Join pond | `place stone [code]` | `pond join [code]` | `POST /api/v1/pond/join` |
 | Remove from pond | `lift stone stone-03` | `pond untrust stone-03` | `DELETE /api/v1/pond/stones/stone-03` |
 | Pond status | `observe` (shows pond) | `status` (shows pond) | `GET /api/v1/pond/status` |
-| Stream events | `watch at stone-02` | `logs --at stone-02` | `GET /api/v1/events` (SSE) |
+| Stream events | `watch at stone-02` | `logs --at stone-02` | `GET /api/v1/stone/presence/stream` (SSE) |
 | Stream service | `watch mongo at stone-02` | `logs mongo --at stone-02` | `GET /api/v1/services/mongo/logs` (SSE) |
 | View topology | `garden` | `topology` | `GET /api/v1/garden` (Lantern) |
 | Garden events | `garden watch` | `topology watch` | `GET /api/v1/garden/events` (SSE) |

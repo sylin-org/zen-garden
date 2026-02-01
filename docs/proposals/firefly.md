@@ -76,7 +76,7 @@ None. The RP2040-Matrix is self-contained. Connect USB-C to Stone, apply power a
 ```
 
 garden-firefly:
-1. Connects to Moss SSE endpoint (`http://localhost:7185/api/v1/events`)
+1. Connects to Moss presence stream (`http://localhost:7185/api/v1/stone/presence/stream`)
 2. Maintains internal state model (health, activity, load, security)
 3. Renders appropriate visual mode to LED matrix
 4. Sends frame updates over USB serial
@@ -837,7 +837,7 @@ Symptoms: Display stuck, not responding to activity
 
 Check:
 1. Moss is running: curl http://localhost:7185/api/v1/health
-2. SSE endpoint works: curl http://localhost:7185/api/v1/events
+2. Presence stream works: curl -N http://localhost:7185/api/v1/stone/presence/stream
 3. Firefly logs: journalctl -u garden-firefly -f
 ```
 

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use sysinfo::System;
+use sysinfo::{Networks, System};
 #[cfg(not(target_os = "windows"))]
 use std::fs;
 use std::process::Command;
-use crate::{format_bytes, format_uptime, AiRuntime, CpuMetrics, DiskMetrics, DiskType, GpuInfo, MemoryMetrics, StoneResources, StorageMetrics};
+use crate::{format_bytes, format_uptime, AiRuntime, CpuMetrics, DiskMetrics, DiskType, GpuInfo, InterfaceMetrics, MemoryMetrics, NetworkMetrics, StoneResources, StorageMetrics};
 
 /// Collect CPU model and features from /proc/cpuinfo (Linux) or WMI (Windows)
 pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
@@ -192,6 +192,83 @@ pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
     
     Ok(storage)
 }
+
+/// Collect network metrics for all interfaces
+///
+/// Returns aggregate and per-interface statistics. For rate calculation,
+/// call this function twice with a delay and compute the delta.
+pub fn get_network_metrics() -> NetworkMetrics {
+    let networks = Networks::new_with_refreshed_list();
+
+    let mut interfaces = Vec::new();
+    let mut total_rx: u64 = 0;
+    let mut total_tx: u64 = 0;
+
+    for (name, data) in networks.iter() {
+        let rx_bytes = data.total_received();
+        let tx_bytes = data.total_transmitted();
+
+        // Skip loopback and virtual interfaces with no traffic
+        if name.starts_with("lo") && rx_bytes == 0 && tx_bytes == 0 {
+            continue;
+        }
+
+        total_rx = total_rx.saturating_add(rx_bytes);
+        total_tx = total_tx.saturating_add(tx_bytes);
+
+        interfaces.push(InterfaceMetrics {
+            name: name.clone(),
+            rx_bytes,
+            tx_bytes,
+            rx_friendly: format_bytes(rx_bytes),
+            tx_friendly: format_bytes(tx_bytes),
+        });
+    }
+
+    // Sort by name for consistent ordering
+    interfaces.sort_by(|a, b| a.name.cmp(&b.name));
+
+    NetworkMetrics {
+        interfaces,
+        total_rx_bytes: total_rx,
+        total_tx_bytes: total_tx,
+        rx_bytes_per_sec: None, // Requires delta calculation
+        tx_bytes_per_sec: None,
+        total_rx_friendly: format_bytes(total_rx),
+        total_tx_friendly: format_bytes(total_tx),
+    }
+}
+
+/// Calculate network rate by comparing two snapshots
+///
+/// Takes the previous metrics, elapsed time in seconds, and returns updated metrics
+/// with bytes_per_sec filled in.
+pub fn calculate_network_rate(
+    current: &NetworkMetrics,
+    previous: &NetworkMetrics,
+    elapsed_secs: f64,
+) -> NetworkMetrics {
+    if elapsed_secs <= 0.0 {
+        return current.clone();
+    }
+
+    let rx_delta = current.total_rx_bytes.saturating_sub(previous.total_rx_bytes);
+    let tx_delta = current.total_tx_bytes.saturating_sub(previous.total_tx_bytes);
+
+    let rx_per_sec = (rx_delta as f64 / elapsed_secs) as u64;
+    let tx_per_sec = (tx_delta as f64 / elapsed_secs) as u64;
+
+    NetworkMetrics {
+        interfaces: current.interfaces.clone(),
+        total_rx_bytes: current.total_rx_bytes,
+        total_tx_bytes: current.total_tx_bytes,
+        rx_bytes_per_sec: Some(rx_per_sec),
+        tx_bytes_per_sec: Some(tx_per_sec),
+        total_rx_friendly: current.total_rx_friendly.clone(),
+        total_tx_friendly: current.total_tx_friendly.clone(),
+    }
+}
+
 /// Collect all host-level resource metrics (combined fast + slow)
 /// 
 /// Use this for one-shot collection. For continuous monitoring, prefer

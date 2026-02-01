@@ -78,6 +78,15 @@ fn default_modes() -> Vec<OfferingMode> {
     vec![OfferingMode::Managed]
 }
 
+impl OfferingManifest {
+    /// Get the default (first) host port, for backwards compatibility
+    ///
+    /// Note: For named ports, use the snippet manifest format with HashMap<String, (u16, u16)>
+    pub fn default_host_port(&self) -> u16 {
+        self.ports.first().map(|(host, _)| *host).unwrap_or(0)
+    }
+}
+
 /// OS-specific detection rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsDetectionRules {

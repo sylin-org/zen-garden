@@ -7,7 +7,7 @@
 //! - `{name}.frontmatter.json` - Metadata (description, category, tags)
 
 use anyhow::{Context, Result};
-use crate::CompatibilityRules;
+use crate::{CompatibilityRules, TaskDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -58,10 +58,48 @@ pub fn runtime_manifests_dir() -> String {
 #[derive(Debug, Clone)]
 pub struct ServiceTemplate {
     pub image: String,
-    pub ports: Vec<(u16, u16)>,              // (host_port, container_port)
+    /// Named ports: name -> (host_port, container_port)
+    /// Convention: "default" is the primary service port
+    pub ports: HashMap<String, (u16, u16)>,
     pub environment: Vec<String>,
     pub volumes: Vec<(String, String)>,       // (host_path, container_path)
     pub compatibility: Option<CompatibilityRules>,
+    /// Scheduled tasks: name -> definition
+    pub tasks: HashMap<String, TaskDefinition>,
+}
+
+impl ServiceTemplate {
+    /// Get the default (primary) port mapping, if any
+    pub fn default_port(&self) -> Option<&(u16, u16)> {
+        self.ports.get("default")
+    }
+
+    /// Get the default host port (for registry/guidance)
+    pub fn default_host_port(&self) -> u16 {
+        self.default_port().map(|(host, _)| *host).unwrap_or(30000)
+    }
+
+    /// Get ports as a flat Vec for Docker (port order: default first, then sorted by name)
+    pub fn ports_vec(&self) -> Vec<(u16, u16)> {
+        let mut ports = Vec::with_capacity(self.ports.len());
+
+        // Default port first (if present)
+        if let Some(p) = self.ports.get("default") {
+            ports.push(*p);
+        }
+
+        // Then other ports sorted by name
+        let mut other_ports: Vec<_> = self.ports.iter()
+            .filter(|(k, _)| *k != "default")
+            .collect();
+        other_ports.sort_by_key(|(k, _)| *k);
+
+        for (_, port) in other_ports {
+            ports.push(*port);
+        }
+
+        ports
+    }
 }
 
 /// Template listing info (for API responses)
@@ -83,12 +121,16 @@ struct ComposeFile {
 #[derive(Debug, Deserialize, Clone)]
 struct ServiceConfig {
     image: String,
+    /// Named ports: name -> [host_port, container_port]
     #[serde(default)]
-    ports: Vec<(u16, u16)>,
+    ports: HashMap<String, (u16, u16)>,
     #[serde(default)]
     environment: Option<serde_yaml::Value>,
     #[serde(default)]
     volumes: Vec<String>,
+    /// Scheduled tasks: name -> definition
+    #[serde(default)]
+    tasks: HashMap<String, TaskDefinition>,
 }
 
 // ============================================================================
@@ -117,6 +159,8 @@ pub struct SwEntry {
     pub compatibility: Option<CompatibilityRules>,
     /// Parsed frontmatter metadata (if present)
     pub frontmatter: Option<SwFrontmatter>,
+    /// Raw guidance markdown content (if present)
+    pub guidance: Option<String>,
 }
 
 /// Frontmatter metadata for a software offering
@@ -303,6 +347,28 @@ impl SwManifests {
             None
         };
 
+        // Load guidance markdown (optional)
+        let guidance_path = category_dir.join(format!("{}.guidance.md", offering_name));
+        let guidance = if guidance_path.exists() {
+            match std::fs::read_to_string(&guidance_path) {
+                Ok(md) => {
+                    // Strip YAML frontmatter if present (---\n...\n---)
+                    let content = strip_markdown_frontmatter(&md);
+                    Some(content)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        offering = offering_name,
+                        error = %e,
+                        "Failed to read guidance file"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Determine effective category (frontmatter can override directory)
         let effective_category = frontmatter
             .as_ref()
@@ -315,6 +381,7 @@ impl SwManifests {
             snippet_yaml,
             compatibility,
             frontmatter,
+            guidance,
         })
     }
 
@@ -371,29 +438,31 @@ impl SwManifests {
     }
     
     /// Load entry from raw content (for embedded assets)
-    /// 
+    ///
     /// This allows loading without filesystem access - the caller provides:
     /// - relative_path: e.g., "sw/data/mongodb.snippet.yaml"
     /// - snippet_content: the raw YAML content
     /// - compatibility_content: optional compatibility YAML
     /// - frontmatter_content: optional frontmatter JSON
+    /// - guidance_content: optional guidance markdown
     pub fn load_entry_from_content(
         relative_path: &str,
         snippet_content: &str,
         compatibility_content: Option<&str>,
         frontmatter_content: Option<&str>,
+        guidance_content: Option<&str>,
     ) -> Result<SwEntry> {
         // Parse path: "sw/{category}/{name}.snippet.yaml"
         let parts: Vec<&str> = relative_path.split('/').collect();
         if parts.len() < 3 {
             anyhow::bail!("Invalid manifest path format: {}", relative_path);
         }
-        
+
         // Extract category and name from path
         let category = parts[1].to_string();
         let filename = parts.last().unwrap();
         let name = filename.trim_end_matches(".snippet.yaml").to_string();
-        
+
         // Parse compatibility (optional)
         let compatibility = compatibility_content.and_then(|yaml| {
             match serde_yaml::from_str::<CompatibilityRules>(yaml) {
@@ -408,7 +477,7 @@ impl SwManifests {
                 }
             }
         });
-        
+
         // Parse frontmatter (optional)
         let frontmatter = frontmatter_content.and_then(|json| {
             let json = crate::utils::strings::strip_bom(json);
@@ -424,14 +493,48 @@ impl SwManifests {
                 }
             }
         });
-        
+
+        // Process guidance markdown (optional) - strip frontmatter
+        let guidance = guidance_content.map(|md| strip_markdown_frontmatter(md));
+
         Ok(SwEntry {
             name,
             category,
             snippet_yaml: snippet_content.to_string(),
             compatibility,
             frontmatter,
+            guidance,
         })
+    }
+}
+
+/// Strip YAML frontmatter from markdown content
+///
+/// Frontmatter is enclosed in `---` delimiters at the start of the file:
+/// ```markdown
+/// ---
+/// version: "1"
+/// trigger: post_install
+/// ---
+/// # Actual content starts here
+/// ```
+fn strip_markdown_frontmatter(content: &str) -> String {
+    let trimmed = content.trim_start();
+
+    // Check if content starts with frontmatter delimiter
+    if !trimmed.starts_with("---") {
+        return content.to_string();
+    }
+
+    // Find the closing delimiter
+    let after_first = &trimmed[3..];
+    if let Some(end_pos) = after_first.find("\n---") {
+        // Skip past the closing delimiter and any trailing newline
+        let after_frontmatter = &after_first[end_pos + 4..];
+        after_frontmatter.trim_start_matches('\n').to_string()
+    } else {
+        // No closing delimiter found, return original
+        content.to_string()
     }
 }
 
@@ -564,6 +667,7 @@ impl SwEntry {
             environment,
             volumes,
             compatibility,
+            tasks: config.tasks,
         }
     }
 }
@@ -581,7 +685,7 @@ mod tests {
         // Create snippet
         fs::write(
             cat_dir.join(format!("{}.snippet.yaml", name)),
-            format!("image: {}:latest\nports:\n  - [8080, 8080]", name),
+            format!("image: {}:latest\nports:\n  default: [8080, 8080]", name),
         ).unwrap();
 
         // Create frontmatter
@@ -656,6 +760,7 @@ mod tests {
                 documentation: None,
                 port: None,
             }),
+            guidance: None,
         };
 
         assert_eq!(entry.description(), "My test service");
@@ -666,8 +771,32 @@ mod tests {
             snippet_yaml: "image: test".to_string(),
             compatibility: None,
             frontmatter: None,
+            guidance: None,
         };
 
         assert_eq!(entry_no_fm.description(), "test service");
+    }
+
+    #[test]
+    fn test_strip_markdown_frontmatter() {
+        // With frontmatter
+        let with_fm = "---\nversion: \"1\"\ntrigger: post_install\n---\n# Title\n\nContent here.";
+        let stripped = super::strip_markdown_frontmatter(with_fm);
+        assert_eq!(stripped, "# Title\n\nContent here.");
+
+        // Without frontmatter
+        let without_fm = "# Title\n\nContent here.";
+        let stripped = super::strip_markdown_frontmatter(without_fm);
+        assert_eq!(stripped, without_fm);
+
+        // Frontmatter with leading whitespace
+        let with_leading_ws = "  ---\nversion: \"1\"\n---\n# Title";
+        let stripped = super::strip_markdown_frontmatter(with_leading_ws);
+        assert_eq!(stripped, "# Title");
+
+        // Unclosed frontmatter (missing closing delimiter)
+        let unclosed = "---\nversion: \"1\"\n# Title";
+        let stripped = super::strip_markdown_frontmatter(unclosed);
+        assert_eq!(stripped, unclosed);
     }
 }

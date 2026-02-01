@@ -42,6 +42,9 @@ pub struct ServiceInfo {
     /// Sub-capabilities discovered at runtime (e.g., models, plugins)
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub sub_capabilities: Vec<SubCapability>,
+    /// Cached post-installation guidance (templated at install time)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub guidance: Option<OfferingGuidance>,
 }
 
 // ============================================================================
@@ -415,10 +418,39 @@ pub struct MetricsSnapshot {
     pub uptime_seconds: u64,
 }
 
+/// Network metrics for all interfaces
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMetrics {
-    pub rx_bytes_per_sec: u64,
-    pub tx_bytes_per_sec: u64,
+    /// Per-interface statistics
+    pub interfaces: Vec<InterfaceMetrics>,
+    /// Total bytes received across all interfaces
+    pub total_rx_bytes: u64,
+    /// Total bytes transmitted across all interfaces
+    pub total_tx_bytes: u64,
+    /// Aggregate receive rate (bytes/sec) - requires sampling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rx_bytes_per_sec: Option<u64>,
+    /// Aggregate transmit rate (bytes/sec) - requires sampling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_bytes_per_sec: Option<u64>,
+    /// Friendly display strings
+    pub total_rx_friendly: String,
+    pub total_tx_friendly: String,
+}
+
+/// Per-interface network statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceMetrics {
+    /// Interface name (e.g., "eth0", "wlan0", "Ethernet")
+    pub name: String,
+    /// Total bytes received since boot
+    pub rx_bytes: u64,
+    /// Total bytes transmitted since boot
+    pub tx_bytes: u64,
+    /// Human-readable received bytes
+    pub rx_friendly: String,
+    /// Human-readable transmitted bytes
+    pub tx_friendly: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -754,7 +786,15 @@ pub struct RuleCondition {
     pub cpu_features_missing: Option<Vec<String>>,
     pub architectures: Option<Vec<String>>,
     pub memory_mb_less_than: Option<u64>,
-    
+
+    // OS/Platform requirements
+    /// Match if OS family is in this list (e.g., ["linux", "macos"])
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_family: Option<Vec<String>>,
+    /// Match if OS family is NOT in this list (e.g., ["windows"] to block Windows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_family_not: Option<Vec<String>>,
+
     // AI/GPU requirements
     /// Match if ANY of the listed AI runtimes are present (OR logic: ['cuda', 'rocm'])
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -787,6 +827,81 @@ pub struct HealthcheckPattern {
     pub reason: String,
     pub suggestion: Option<String>,
     pub fallback: Option<FallbackConfig>,
+}
+
+// ============================================================================
+// Well-Known Ports Catalog Types
+// ============================================================================
+
+/// Catalog of well-known ports with conflict detection and remediation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WellKnownPortsCatalog {
+    pub version: String,
+    pub ports: std::collections::HashMap<u16, WellKnownPort>,
+}
+
+/// Definition of a well-known port with platform-specific conflict handling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WellKnownPort {
+    pub name: String,
+    pub description: String,
+    /// Default remediation for all platforms (used if no platform-specific handler)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<PortRemediation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux: Option<PortConflictHandler>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macos: Option<PortConflictHandler>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<PortConflictHandler>,
+}
+
+/// Platform-specific conflict detection and remediation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortConflictHandler {
+    /// Common service that uses this port
+    pub common_culprit: String,
+    /// Command to detect if the culprit is active (exit 0 = active)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detection: Option<String>,
+    /// Remediation strategy
+    pub remediation: PortRemediation,
+}
+
+/// Remediation strategy for port conflicts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum PortRemediation {
+    /// Remap to next available port in range (default for most services)
+    Remap {
+        /// Start of port range to search
+        range_start: u16,
+        /// End of port range to search
+        range_end: u16,
+    },
+    /// Automatically run commands to free the port (for essential ports like DNS)
+    Auto {
+        /// Commands to run to free the port
+        commands: Vec<String>,
+        /// Files to create after remediation
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files: Option<Vec<RemediationFile>>,
+    },
+    /// Show message and fail - user must manually resolve
+    Manual {
+        message: String,
+    },
+    /// Fail with error - no remediation possible
+    Fail {
+        message: String,
+    },
+}
+
+/// File to create as part of remediation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemediationFile {
+    pub path: String,
+    pub content: String,
 }
 
 // ============================================================================
@@ -893,6 +1008,184 @@ pub enum HealthMethod {
 }
 
 // ============================================================================
+// Offering Guidance Types
+// ============================================================================
+
+/// Offering guidance - post-installation notes displayed on the stone portrait
+///
+/// Guidance is markdown content with YAML frontmatter that provides
+/// helpful information to users after an offering is installed.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OfferingGuidance {
+    /// Raw markdown content (without frontmatter)
+    pub content: String,
+
+    /// Variables that have been substituted (for reference)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub variables: std::collections::HashMap<String, String>,
+}
+
+/// Guidance frontmatter metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuidanceFrontmatter {
+    /// Schema version
+    #[serde(default = "default_version")]
+    pub version: String,
+
+    /// When to show the guidance (default: post_install)
+    #[serde(default)]
+    pub trigger: GuidanceTrigger,
+}
+
+fn default_version() -> String {
+    "1".to_string()
+}
+
+impl Default for GuidanceFrontmatter {
+    fn default() -> Self {
+        Self {
+            version: default_version(),
+            trigger: GuidanceTrigger::default(),
+        }
+    }
+}
+
+/// When guidance should be displayed
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GuidanceTrigger {
+    /// Show after installation (default)
+    #[default]
+    PostInstall,
+    /// Always show while offering is running
+    Always,
+}
+
+// ============================================================================
+// Scheduled Task Types (Maintenance, Periodic Operations)
+// ============================================================================
+
+/// Category of scheduled task
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskCategory {
+    /// Maintenance tasks (updates, cleanup, optimization)
+    Maintenance,
+    /// Backup operations
+    Backup,
+    /// Health/monitoring tasks
+    Health,
+    /// Custom/other tasks
+    Custom,
+}
+
+impl Default for TaskCategory {
+    fn default() -> Self {
+        Self::Maintenance
+    }
+}
+
+impl std::fmt::Display for TaskCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Maintenance => write!(f, "maintenance"),
+            Self::Backup => write!(f, "backup"),
+            Self::Health => write!(f, "health"),
+            Self::Custom => write!(f, "custom"),
+        }
+    }
+}
+
+/// Task definition in a manifest
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskDefinition {
+    /// Human-readable description
+    pub description: String,
+
+    /// Cron schedule expression (e.g., "0 3 * * *" for daily at 3 AM)
+    pub schedule: String,
+
+    /// Command to execute inside the container
+    pub command: Vec<String>,
+
+    /// Task category (default: maintenance)
+    #[serde(default)]
+    pub category: TaskCategory,
+
+    /// Whether task is enabled (default: true)
+    #[serde(default = "default_task_enabled")]
+    pub enabled: bool,
+
+    /// Timeout in seconds (default: 300 = 5 minutes)
+    #[serde(default = "default_task_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_task_enabled() -> bool {
+    true
+}
+
+fn default_task_timeout() -> u64 {
+    300
+}
+
+/// Scheduled task instance for a specific offering
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledTask {
+    /// Unique task ID (offering_id + task_name)
+    pub task_id: String,
+
+    /// Offering ID this task belongs to
+    pub offering_id: String,
+
+    /// Offering name (for display)
+    pub offering_name: String,
+
+    /// Task name (key from manifest)
+    pub task_name: String,
+
+    /// Task definition
+    pub definition: TaskDefinition,
+
+    /// When this task was registered
+    pub registered_at: String,
+
+    /// Last execution time (if any)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_run: Option<String>,
+
+    /// Last execution result
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_result: Option<TaskResult>,
+
+    /// Next scheduled run time
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub next_run: Option<String>,
+}
+
+/// Result of a task execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResult {
+    /// Whether the task succeeded
+    pub success: bool,
+
+    /// Exit code (if available)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub exit_code: Option<i32>,
+
+    /// Duration in milliseconds
+    pub duration_ms: u64,
+
+    /// Output (truncated if too long)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub output: Option<String>,
+
+    /// Error message (if failed)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error: Option<String>,
+}
+
+// ============================================================================
 // API Error Types
 // ============================================================================
 
@@ -945,6 +1238,7 @@ mod tests {
             resources: None,
             job_id: None,
             sub_capabilities: Vec::new(),
+            guidance: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         let deserialized: ServiceInfo = serde_json::from_str(&json).unwrap();

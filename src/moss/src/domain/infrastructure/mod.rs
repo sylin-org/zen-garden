@@ -13,10 +13,10 @@
 //!
 //! ## Example: Docker Registry Handler
 //!
-//! When a container registry (registry, zot) is planted anywhere in the garden,
-//! all Stones should configure their local Docker daemon to trust that registry as an
-//! insecure source. The handler:
-//! 1. Matches offerings by name or category+tag
+//! When a container registry is planted anywhere in the garden, all Stones should
+//! configure their local Docker daemon to trust that registry as an insecure source.
+//! The handler:
+//! 1. Matches offerings by the "container-registry" tag (from frontmatter.json)
 //! 2. Collects all matching registries across the garden
 //! 3. Updates local daemon.json with insecure-registries
 //! 4. Restarts Docker daemon if the list changed
@@ -57,6 +57,8 @@ pub struct OfferingInstance {
     pub category: String,
     /// Offering tags from frontmatter
     pub tags: Vec<String>,
+    /// Primary port from frontmatter (e.g., 5000 for registry)
+    pub port: Option<u16>,
 }
 
 impl OfferingInstance {
@@ -152,12 +154,12 @@ impl InfrastructureHandlerRegistry {
 
             for stone in &stones {
                 for service in &stone.services {
-                    // Get tags from manifest registry
-                    let tags = manifest_registry
-                        .sw
-                        .get(&service.offering)
+                    // Get metadata from manifest registry
+                    let manifest_entry = manifest_registry.sw.get(&service.offering);
+                    let tags = manifest_entry
                         .map(|entry| entry.tags())
                         .unwrap_or_default();
+                    let port = manifest_entry.and_then(|entry| entry.port());
 
                     if handler.matches(&service.offering, &service.category, &tags) {
                         instances.push(OfferingInstance {
@@ -166,6 +168,7 @@ impl InfrastructureHandlerRegistry {
                             offering: service.offering.clone(),
                             category: service.category.clone(),
                             tags,
+                            port,
                         });
                     }
                 }
@@ -257,6 +260,7 @@ mod tests {
             offering: "registry".to_string(),
             category: "devops".to_string(),
             tags: vec![],
+            port: Some(5000),
         };
 
         assert_eq!(instance.host(), Some("192.168.1.100"));

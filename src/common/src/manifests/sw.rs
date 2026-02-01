@@ -134,6 +134,9 @@ pub struct SwFrontmatter {
     pub homepage: Option<String>,
     #[serde(default)]
     pub documentation: Option<String>,
+    /// Primary port exposed by the offering
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 impl SwManifests {
@@ -453,6 +456,11 @@ impl SwEntry {
             .collect()
     }
 
+    /// Get the primary port from frontmatter
+    pub fn port(&self) -> Option<u16> {
+        self.frontmatter.as_ref().and_then(|f| f.port)
+    }
+
     /// Convert to TemplateInfo for API responses
     pub fn to_template_info(&self) -> TemplateInfo {
         TemplateInfo {
@@ -646,6 +654,7 @@ mod tests {
                 icon: None,
                 homepage: None,
                 documentation: None,
+                port: None,
             }),
         };
 

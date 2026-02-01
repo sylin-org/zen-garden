@@ -5,9 +5,8 @@
 //!
 //! ## Matching Logic
 //!
-//! Matches offerings that are container registries:
-//! - By name: "registry", "zot"
-//! - By tag: category "devops" with tag "container-registry"
+//! Matches offerings with the "container-registry" tag in the "devops" category.
+//! This is read from frontmatter.json - no hardcoded offering names.
 //!
 //! ## Actions
 //!
@@ -27,56 +26,32 @@ use async_trait::async_trait;
 use super::{InfrastructureHandler, OfferingInstance};
 use crate::infra::docker_config;
 
-/// Known container registry offering names
-const REGISTRY_OFFERINGS: &[&str] = &["registry", "zot"];
-
-/// Tag that identifies container registries in devops category
+/// Tag that identifies container registries (from frontmatter.json)
 const CONTAINER_REGISTRY_TAG: &str = "container-registry";
 
-/// Default ports for known registries (used when building endpoint)
-fn default_port(offering: &str) -> u16 {
-    match offering {
-        "registry" => 5000,
-        "zot" => 5000,
-        _ => 5000,
-    }
-}
+/// Default port when frontmatter doesn't specify one
+const DEFAULT_REGISTRY_PORT: u16 = 5000;
 
 /// Docker Registry Handler
 ///
 /// Configures local Docker daemon to trust garden container registries.
-pub struct DockerRegistryHandler {
-    /// Prefix added to garden registry entries in daemon.json
-    /// Used to distinguish garden-managed entries from user-managed ones
-    garden_prefix: String,
-}
+/// Matching is based purely on manifest tags - no hardcoded offering names.
+pub struct DockerRegistryHandler;
 
 impl DockerRegistryHandler {
     /// Create a new Docker registry handler
     pub fn new() -> Self {
-        Self {
-            garden_prefix: "zen-garden:".to_string(),
-        }
+        Self
     }
 
     /// Build registry endpoint from offering instance
     ///
     /// Format: "host:port" (e.g., "192.168.1.100:5000")
+    /// Port comes from frontmatter.json, falls back to 5000.
     fn build_endpoint(&self, instance: &OfferingInstance) -> Option<String> {
         let host = instance.host()?;
-        let port = default_port(&instance.offering);
+        let port = instance.port.unwrap_or(DEFAULT_REGISTRY_PORT);
         Some(format!("{}:{}", host, port))
-    }
-
-    /// Check if a registry entry is managed by zen-garden
-    ///
-    /// Garden-managed entries are prefixed with a comment marker in the list.
-    /// Since daemon.json doesn't support comments, we use a naming convention
-    /// where garden registries are tracked separately.
-    fn is_garden_managed(&self, _entry: &str) -> bool {
-        // For now, we track garden registries by comparing against known garden endpoints
-        // A more robust solution would be to persist the garden registry list separately
-        true
     }
 }
 
@@ -92,18 +67,10 @@ impl InfrastructureHandler for DockerRegistryHandler {
         "docker-registry"
     }
 
-    fn matches(&self, offering: &str, category: &str, tags: &[String]) -> bool {
-        // Match by known offering names
-        if REGISTRY_OFFERINGS.contains(&offering) {
-            return true;
-        }
-
-        // Match by category + tag
-        if category == "devops" && tags.iter().any(|t| t == CONTAINER_REGISTRY_TAG) {
-            return true;
-        }
-
-        false
+    fn matches(&self, _offering: &str, category: &str, tags: &[String]) -> bool {
+        // Match by category + tag from frontmatter.json
+        // No hardcoded offering names - manifest is the source of truth
+        category == "devops" && tags.iter().any(|t| t == CONTAINER_REGISTRY_TAG)
     }
 
     async fn sync(&self, instances: &[OfferingInstance]) -> Result<()> {
@@ -177,33 +144,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_matches_by_name() {
-        let handler = DockerRegistryHandler::new();
-
-        assert!(handler.matches("registry", "devops", &[]));
-        assert!(handler.matches("zot", "devops", &[]));
-        assert!(!handler.matches("mongodb", "data", &[]));
-    }
-
-    #[test]
     fn test_matches_by_tag() {
         let handler = DockerRegistryHandler::new();
 
-        // Unknown offering but has container-registry tag in devops category
+        // Matches: devops category with container-registry tag
         assert!(handler.matches(
-            "custom-registry",
+            "registry",
+            "devops",
+            &["container-registry".to_string()]
+        ));
+        assert!(handler.matches(
+            "zot",
+            "devops",
+            &["container-registry".to_string()]
+        ));
+        assert!(handler.matches(
+            "any-future-registry",
             "devops",
             &["container-registry".to_string()]
         ));
 
-        // Wrong category
+        // Does NOT match: missing tag
+        assert!(!handler.matches("registry", "devops", &[]));
+        assert!(!handler.matches("zot", "devops", &[]));
+
+        // Does NOT match: wrong category
         assert!(!handler.matches(
             "custom-registry",
             "storage",
             &["container-registry".to_string()]
         ));
 
-        // Right category, wrong tag
+        // Does NOT match: wrong tag
         assert!(!handler.matches(
             "custom-registry",
             "devops",
@@ -212,27 +184,42 @@ mod tests {
     }
 
     #[test]
-    fn test_build_endpoint() {
+    fn test_build_endpoint_with_port_from_manifest() {
         let handler = DockerRegistryHandler::new();
 
+        // Port comes from frontmatter
         let instance = OfferingInstance {
             stone_name: "stone-01".to_string(),
             stone_endpoint: "http://192.168.1.100:7185".to_string(),
             offering: "registry".to_string(),
             category: "devops".to_string(),
-            tags: vec![],
+            tags: vec!["container-registry".to_string()],
+            port: Some(5000),
         };
 
         assert_eq!(
             handler.build_endpoint(&instance),
             Some("192.168.1.100:5000".to_string())
         );
-    }
 
-    #[test]
-    fn test_default_ports() {
-        assert_eq!(default_port("registry"), 5000);
-        assert_eq!(default_port("zot"), 5000);
-        assert_eq!(default_port("unknown"), 5000);
+        // Custom port from frontmatter
+        let custom_port_instance = OfferingInstance {
+            port: Some(8080),
+            ..instance.clone()
+        };
+        assert_eq!(
+            handler.build_endpoint(&custom_port_instance),
+            Some("192.168.1.100:8080".to_string())
+        );
+
+        // Falls back to default when port not in frontmatter
+        let no_port_instance = OfferingInstance {
+            port: None,
+            ..instance
+        };
+        assert_eq!(
+            handler.build_endpoint(&no_port_instance),
+            Some("192.168.1.100:5000".to_string())
+        );
     }
 }

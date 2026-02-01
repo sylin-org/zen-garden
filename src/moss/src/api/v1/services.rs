@@ -6,6 +6,7 @@ use axum::{
 use crate::api::responses::{CreateServiceRequest, ServiceActionResponse, ApiResponse};
 use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::domain::events::OfferingEvent;
+use crate::infra::TaskStore;
 use crate::{error_response, AppState};
 use garden_common::{
     api_utils::{ApiErrorResponse, sanitize_query, sanitize_name, sanitize_tag, is_suspicious},
@@ -216,7 +217,7 @@ pub async fn create_service_v1(
         };
 
         if !in_registry {
-            if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering).await {
+            if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
                 let mut reg = state.registry.write().await;
                 reg.push(info);
                 drop(reg);
@@ -305,7 +306,7 @@ pub async fn create_service_v1(
     // Add service to registry immediately with Installing status
     // This ensures `rake list` shows the service as planting
     {
-        let native_port = compiled.ports.first().map(|(host, _)| *host).unwrap_or(30000);
+        let native_port = compiled.default_host_port();
         let installing_info = ServiceInfo {
             offering_id: generate_guidv7(),
             name: offering.clone(),
@@ -320,6 +321,7 @@ pub async fn create_service_v1(
             resources: None,
             job_id: Some(job_id.clone()),
             sub_capabilities: Vec::new(),
+            guidance: None, // Guidance is added when installation completes
         };
 
         let mut registry = state.registry.write().await;
@@ -554,7 +556,7 @@ pub async fn nourish_service_v1(
         .upgrade_service(
             &service_name,
             &template.image,
-            template.ports,
+            template.ports_vec(),
             template.environment,
             template.volumes,
             Some(&state.console),
@@ -660,6 +662,16 @@ pub async fn delete_service_v1(
         state.stone_name(),
     ));
 
+    // Unregister scheduled tasks for this offering
+    let task_store = TaskStore::new();
+    if let Err(e) = task_store.unregister_tasks(&offering_id).await {
+        tracing::warn!(
+            offering_id = %offering_id,
+            error = ?e,
+            "Failed to unregister scheduled tasks (non-fatal)"
+        );
+    }
+
     // Update topology and broadcast change
     state.sync_self_services(true).await;
 
@@ -725,6 +737,16 @@ pub async fn destroy_service_v1(
         &service,
         state.stone_name(),
     ));
+
+    // Unregister scheduled tasks for this offering
+    let task_store = TaskStore::new();
+    if let Err(e) = task_store.unregister_tasks(&offering_id).await {
+        tracing::warn!(
+            offering_id = %offering_id,
+            error = ?e,
+            "Failed to unregister scheduled tasks (non-fatal)"
+        );
+    }
 
     // Update topology and broadcast change
     state.sync_self_services(true).await;

@@ -24,8 +24,14 @@ pub async fn get_garden_v1(
     let mut healthy_stones: u32 = 0;
     let mut degraded_stones: u32 = 0;
 
-    // Add self first
-    let self_info = topology_entry_to_stone_info(&self_entry);
+    // Get live metrics for local stone
+    let (cpu_usage, memory_usage) = match metrics::get_fast_metrics() {
+        Ok((cpu, mem, _, _)) => (cpu.usage_percent, mem.used_percent),
+        Err(_) => (0.0, 0.0),
+    };
+
+    // Add self first with live metrics
+    let self_info = topology_entry_to_stone_info_with_metrics(&self_entry, cpu_usage, memory_usage);
     total_services += self_info.services_count;
     if self_info.health == "healthy" || self_info.health == "thriving" {
         healthy_stones += 1;
@@ -66,15 +72,24 @@ pub async fn get_garden_v1(
     }))
 }
 
-/// Convert TopologyEntry to StoneInfo for garden overview
+/// Convert TopologyEntry to StoneInfo for garden overview (peers - no live metrics)
 fn topology_entry_to_stone_info(entry: &TopologyEntry) -> StoneInfo {
+    topology_entry_to_stone_info_with_metrics(entry, 0.0, 0.0)
+}
+
+/// Convert TopologyEntry to StoneInfo with live metrics (for local stone)
+fn topology_entry_to_stone_info_with_metrics(
+    entry: &TopologyEntry,
+    cpu_usage: f32,
+    memory_usage: f32,
+) -> StoneInfo {
     StoneInfo {
         name: entry.stone_name.clone(),
         endpoint: entry.endpoint.clone(),
         health: entry.health.clone(),
         services_count: entry.services.len() as u32,
-        cpu_usage: 0.0,  // TODO: Get from entry.capabilities if available
-        memory_usage: 0.0, // TODO: Get from entry.capabilities if available
+        cpu_usage,
+        memory_usage,
     }
 }
 

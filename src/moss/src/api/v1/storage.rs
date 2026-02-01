@@ -37,6 +37,8 @@ use tracing::{debug, info, warn};
 
 use crate::{error_response, AppState};
 use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry};
+use crate::infra::SseEvent;
+use garden_common::presence::event_types;
 
 // ============================================================================
 // Response Types
@@ -301,14 +303,18 @@ pub async fn delete_bank_v1(
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &e.to_string()))?;
     }
     
-    let event = crate::app_state::JobProgressEvent {
+    let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
-        message: format!("[STORAGE] Removed bank: {}", id),
+        event_type: event_types::STORAGE_REMOVED.to_string(),
+        message: format!("Seed bank '{}' removed", id),
         job_id: None,
+        offering: None,
+        offering_id: None,
+        data: Some(serde_json::json!({ "name": id })),
     };
-    let _ = state.job_progress_tx.send(event);
-    
+    let _ = state.sse_tx.send(event);
+
     info!(id = %id, "Bank mount directory removed");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -332,14 +338,18 @@ pub async fn release_bank_v1(
     unmount_device(&_bank.mount_path).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "UNMOUNT_FAILED", &e.to_string()))?;
     
-    let event = crate::app_state::JobProgressEvent {
+    let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
-        message: format!("[STORAGE] Released bank: {}", id),
+        event_type: event_types::STORAGE_RELEASED.to_string(),
+        message: format!("Seed bank '{}' released", id),
         job_id: None,
+        offering: None,
+        offering_id: None,
+        data: Some(serde_json::json!({ "name": id })),
     };
-    let _ = state.job_progress_tx.send(event);
-    
+    let _ = state.sse_tx.send(event);
+
     if let Err(e) = garden_common::console::print_storage_released_ribbon(&id) {
         warn!("Failed to print released ribbon: {}", e);
     }
@@ -736,7 +746,7 @@ pub async fn prepare_seed_bank_v1(
     
     let job_id = garden_common::utils::ids::generate_guidv7();
     info!(device = %request.device, name = %name, job_id = %job_id, "Accepted seed bank preparation request");
-    
+
     // Spawn async job for preparation
     let job_id_clone = job_id.clone();
     let name_clone = name.clone();
@@ -747,10 +757,10 @@ pub async fn prepare_seed_bank_v1(
     let stone_name = state.stone_name.clone();
     let stone_id = state.stone_id.clone();
     let api_port = state.api_port;
-    let job_progress_tx = state.job_progress_tx.clone();
+    let sse_tx = state.sse_tx.clone();
 
     tokio::spawn(async move {
-        match run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, group.as_deref(), replica_id, &stone_name, job_progress_tx.clone()).await {
+        match run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, group.as_deref(), replica_id, &stone_name, sse_tx.clone()).await {
             Ok(()) => {
                 // STORAGE-0003: Broadcast storage beacon on successful preparation
                 let endpoint = format!("http://{}:{}", stone_name, api_port);
@@ -767,13 +777,17 @@ pub async fn prepare_seed_bank_v1(
                     error_chain = ?e,
                     "Seed bank preparation FAILED"
                 );
-                let failure_event = crate::app_state::JobProgressEvent {
+                let failure_event = SseEvent {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     level: "error".to_string(),
-                    message: format!("[STORAGE] FAILED: {} - {}", name_clone, e),
+                    event_type: event_types::STORAGE_PREPARE_PROGRESS.to_string(),
+                    message: format!("Preparation failed: {} - {}", name_clone, e),
                     job_id: Some(job_id_clone.clone()),
+                    offering: None,
+                    offering_id: None,
+                    data: Some(serde_json::json!({ "name": name_clone, "error": e.to_string() })),
                 };
-                let _ = job_progress_tx.send(failure_event);
+                let _ = sse_tx.send(failure_event);
             }
         }
     });
@@ -794,14 +808,14 @@ async fn run_prepare_job(
     group: Option<&str>,
     replica_id: Option<u32>,
     stone_name: &str,
-    job_progress_tx: tokio::sync::broadcast::Sender<crate::app_state::JobProgressEvent>,
+    sse_tx: tokio::sync::broadcast::Sender<SseEvent>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
     use chrono::Utc;
     use garden_common::storage::{SeedBankManifest, SeedBankVisibility};
 
     info!(job_id, device, name, group = ?group, replica_id = ?replica_id, "Starting seed bank preparation");
-    emit_progress(&job_progress_tx, job_id, "analyzing", "Analyzing device...");
+    emit_progress(&sse_tx, job_id, name, "analyzing", "Analyzing device...");
 
     // Determine actual filesystem
     let actual_fs = if filesystem == "btrfs" && check_btrfs_support().await {
@@ -824,7 +838,7 @@ async fn run_prepare_job(
     // Derive mount path from manifest (supports groups and replicas)
     let data_dir = garden_common::constants::paths::data_dir();
     let mount_dir = PathBuf::from(manifest.derive_mount_path(&data_dir));
-    
+
     #[cfg(target_os = "linux")]
     {
         let output = tokio::process::Command::new("sudo")
@@ -836,17 +850,17 @@ async fn run_prepare_job(
     }
     #[cfg(not(target_os = "linux"))]
     tokio::fs::create_dir_all(&mount_dir).await.context("Failed to create mount directory")?;
-    
-    emit_progress(&job_progress_tx, job_id, "formatting", &format!("Formatting as {}...", actual_fs));
-    
+
+    emit_progress(&sse_tx, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
+
     #[cfg(target_os = "linux")]
     format_device(device, actual_fs).await.context("Failed to format device")?;
-    
-    emit_progress(&job_progress_tx, job_id, "mounting", "Mounting filesystem...");
-    
+
+    emit_progress(&sse_tx, job_id, name, "mounting", "Mounting filesystem...");
+
     #[cfg(target_os = "linux")]
     mount_device(device, &mount_dir).await.context("Failed to mount device")?;
-    
+
     #[cfg(target_os = "linux")]
     {
         let output = tokio::process::Command::new("sudo")
@@ -856,8 +870,8 @@ async fn run_prepare_job(
             warn!("Failed to chown mount directory: {}", String::from_utf8_lossy(&output.stderr));
         }
     }
-    
-    emit_progress(&job_progress_tx, job_id, "creating", "Creating seed bank structure...");
+
+    emit_progress(&sse_tx, job_id, name, "creating", "Creating seed bank structure...");
 
     // Create .zen-garden structure on the device
     let zen_dir = mount_dir.join(".zen-garden");
@@ -865,43 +879,38 @@ async fn run_prepare_job(
 
     // Serialize manifest (already created above with group/replica support)
     let manifest_json = serde_json::to_string_pretty(&manifest)?;
-    
+
     // Atomic manifest write: temp file → fsync → rename
     let tmp_manifest = zen_dir.join(".manifest.json.tmp");
     let final_manifest = zen_dir.join("manifest.json");
     tokio::fs::write(&tmp_manifest, &manifest_json).await.context("Failed to write temp manifest")?;
-    
+
     {
         let file = std::fs::File::open(&tmp_manifest).context("Failed to open temp manifest for sync")?;
         file.sync_all().context("Failed to sync temp manifest")?;
     }
-    
+
     tokio::fs::rename(&tmp_manifest, &final_manifest).await.context("Failed to rename manifest")?;
-    
+
     tokio::fs::create_dir_all(zen_dir.join("journal")).await.context("Failed to create journal directory")?;
     tokio::fs::create_dir_all(zen_dir.join("blobs")).await.context("Failed to create blobs directory")?;
-    
+
     // Sync filesystem to ensure all data is on device
     #[cfg(target_os = "linux")]
     let _ = tokio::process::Command::new("sync").output().await;
-    
+
     // Emit completion
-    let event = crate::app_state::JobProgressEvent {
+    let event = SseEvent {
         timestamp: Utc::now().to_rfc3339(),
         level: "info".to_string(),
-        message: format!("[STORAGE] Prepared: {} at {}", name, mount_dir.display()),
+        event_type: event_types::STORAGE_PREPARED.to_string(),
+        message: format!("Seed bank '{}' prepared at {}", name, mount_dir.display()),
         job_id: Some(job_id.to_string()),
+        offering: None,
+        offering_id: None,
+        data: Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
     };
-    let _ = job_progress_tx.send(event);
-    
-    // Emit safe-to-remove event
-    let safe_event = crate::app_state::JobProgressEvent {
-        timestamp: Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        message: format!("[STORAGE] Safe to remove: {} - all data synced to device", name),
-        job_id: Some(job_id.to_string()),
-    };
-    let _ = job_progress_tx.send(safe_event);
+    let _ = sse_tx.send(event);
     
     if let Err(e) = garden_common::console::print_storage_prepared_ribbon(name, &mount_dir.to_string_lossy()) {
         warn!("Failed to print prepared ribbon: {}", e);
@@ -911,12 +920,16 @@ async fn run_prepare_job(
     Ok(())
 }
 
-fn emit_progress(tx: &tokio::sync::broadcast::Sender<crate::app_state::JobProgressEvent>, job_id: &str, phase: &str, message: &str) {
-    let event = crate::app_state::JobProgressEvent {
+fn emit_progress(tx: &tokio::sync::broadcast::Sender<SseEvent>, job_id: &str, name: &str, phase: &str, message: &str) {
+    let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
-        message: format!("[STORAGE] {}: {}", phase, message),
+        event_type: event_types::STORAGE_PREPARE_PROGRESS.to_string(),
+        message: format!("{}: {}", phase, message),
         job_id: Some(job_id.to_string()),
+        offering: None,
+        offering_id: None,
+        data: Some(serde_json::json!({ "name": name, "phase": phase })),
     };
     let _ = tx.send(event);
 }
@@ -1089,14 +1102,18 @@ pub async fn release_all_seed_banks_v1(
         });
     }
     
-    let event = crate::app_state::JobProgressEvent {
+    let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
-        message: format!("[STORAGE] Released {} seed banks", results.len()),
+        event_type: event_types::STORAGE_RELEASED.to_string(),
+        message: format!("Released {} seed banks", results.len()),
         job_id: None,
+        offering: None,
+        offering_id: None,
+        data: Some(serde_json::json!({ "count": results.len() })),
     };
-    let _ = state.job_progress_tx.send(event);
-    
+    let _ = state.sse_tx.send(event);
+
     info!(count = results.len(), "All seed banks released");
     Ok((StatusCode::OK, Json(results)))
 }

@@ -614,7 +614,7 @@ async fn execute_offering_update(
     state.docker.install_service(
         name,
         &target_image,
-        compiled.ports,
+        compiled.ports_vec(),
         compiled.environment,
         compiled.volumes,
         None

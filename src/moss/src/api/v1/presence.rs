@@ -168,6 +168,8 @@ fn translate_to_presence(sse_event: SseEvent, filter: &EventFilter) -> Option<Ev
         event_types::CATEGORY_STONE
     } else if sse_event.event_type.starts_with(event_types::PREFIX_STORAGE) {
         event_types::CATEGORY_STORAGE
+    } else if sse_event.event_type.starts_with(event_types::PREFIX_JOB) {
+        event_types::CATEGORY_JOB
     } else {
         return None; // Unknown category
     };

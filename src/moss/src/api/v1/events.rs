@@ -1,102 +1,58 @@
-//! Event streaming API endpoints
+//! Job event emission helpers
 //!
-//! Provides Server-Sent Events (SSE) for real-time notifications:
-//! - Job progress updates
-//! - System events
-//! - Error notifications
+//! Provides helpers for emitting job progress events through the unified EventBus.
+//! All events flow through a single SSE endpoint: `/api/v1/stone/presence/stream`
 //!
-//! Events are broadcast through a tokio channel with automatic backpressure handling.
+//! # Event Flow
+//!
+//! ```text
+//! emit_job_progress() ──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
+//! emit_job_started()  ──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
+//! emit_job_completed()──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
+//! emit_job_failed()   ──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
+//! ```
+//!
+//! # Event Types
+//!
+//! - `job.started` - Job began (install, remove, update)
+//! - `job.progress` - Progress update (pulling image, creating container, etc.)
+//! - `job.completed` - Job finished successfully
+//! - `job.failed` - Job failed with error
+//!
+//! # Consumers
+//!
+//! - Portrait page activity feed
+//! - Firefly LED companion
+//! - Cricket audio companion
+//! - CLI progress monitoring
 
-use axum::{
-    extract::State,
-    response::sse::{Event, KeepAlive, Sse},
-};
-use futures_util::stream::Stream;
-use std::convert::Infallible;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
-
-use crate::app_state::JobProgressEvent;
+use crate::domain::events::JobEvent;
 use crate::AppState;
 
-/// GET /api/v1/events - Server-Sent Events stream for job progress
+/// Emit a job progress event via the unified EventBus
 ///
-/// Returns a long-lived SSE connection that broadcasts real-time job progress:
-/// - Job status changes (pending → running → completed/failed)
-/// - System notifications (warnings, errors)
-/// - Background task progress
-///
-/// **Note:** For presence events (service lifecycle, storage detection, etc.),
-/// use `/api/v1/stone/presence/stream` instead.
-///
-/// # Event Format
-/// ```json
-/// {
-///   "timestamp": "2026-01-21T12:34:56Z",
-///   "level": "info" | "warn" | "error" | "debug",
-///   "message": "Event description",
-///   "job_id": "optional-job-uuid"
-/// }
-/// ```
-///
-/// # Backpressure Handling
-/// If a client falls behind, lagged messages are dropped with a warning.
-/// The client receives a lag notification but continues receiving new events.
-pub async fn stream_events(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    // Subscribe to job progress channel
-    let rx = state.job_progress_tx.subscribe();
-
-    // Transform broadcast stream to SSE events
-    let stream = BroadcastStream::new(rx)
-        .filter_map(|result| match result {
-            Ok(event) => Some(Ok::<JobProgressEvent, tokio_stream::wrappers::errors::BroadcastStreamRecvError>(event)),
-            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                tracing::warn!("SSE client lagged {} messages", n);
-                None
-            }
-        })
-        .map(|event_result| {
-            let event = event_result.unwrap();
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Event::default()
-                .event("job-progress")
-                .data(data)
-        })
-        .map(Ok);
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-/// Emit a job progress event to all SSE subscribers and log it
-///
-/// This is a composable helper for broadcasting job progress from anywhere in the application.
-/// Events are sent to:
-/// 1. All connected SSE clients (via broadcast channel)
-/// 2. Tracing/logging system (for persistence and debugging)
+/// Routes job progress through the EventBus → SseListener → presence stream.
 ///
 /// # Arguments
-/// * `state` - Application state containing event broadcast channel
+/// * `state` - Application state containing EventBus
 /// * `level` - Event severity: "info", "warn", "error", "debug"
 /// * `message` - Human-readable event description
-/// * `job_id` - Optional job UUID for job-related events
+/// * `job_id` - Job UUID for tracking
+/// * `offering` - The offering name this job is operating on
 ///
 /// # Example
 /// ```rust,ignore
-/// emit_event(&state, "info", "Service started successfully".to_string(), None);
-/// emit_event(&state, "error", "Installation failed".to_string(), Some(job_id));
+/// emit_job_progress(&state, "info", "Pulling image...".to_string(), &job_id, "mongodb");
 /// ```
-pub fn emit_event(state: &AppState, level: &str, message: String, job_id: Option<String>) {
-    let event = JobProgressEvent {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        level: level.to_string(),
-        message: message.clone(),
-        job_id,
-    };
-
-    // Broadcast to SSE subscribers (ignore if no receivers)
-    let _ = state.job_progress_tx.send(event);
+pub fn emit_job_progress(
+    state: &AppState,
+    level: &str,
+    message: String,
+    job_id: &str,
+    offering: &str,
+) {
+    let event = JobEvent::progress(job_id, offering, &message, level);
+    state.event_bus.emit(event);
 
     // Also log to tracing for persistence
     match level {
@@ -107,34 +63,23 @@ pub fn emit_event(state: &AppState, level: &str, message: String, job_id: Option
     }
 }
 
-/// Emit service started event
-///
-/// Convenience wrapper for service lifecycle events.
-pub fn emit_service_started(state: &AppState, service_name: &str) {
-    emit_event(
-        state,
-        "info",
-        format!("Service {} started successfully", service_name),
-        None,
-    );
+/// Emit job started event
+pub fn emit_job_started(state: &AppState, job_id: &str, offering: &str, operation: &str) {
+    let event = JobEvent::started(job_id, offering, operation);
+    state.event_bus.emit(event);
+    tracing::info!("Job started: {} {}", operation, offering);
 }
 
-/// Emit service stopped event
-pub fn emit_service_stopped(state: &AppState, service_name: &str) {
-    emit_event(
-        state,
-        "info",
-        format!("Service {} stopped", service_name),
-        None,
-    );
+/// Emit job completed event
+pub fn emit_job_completed(state: &AppState, job_id: &str, offering: &str) {
+    let event = JobEvent::completed(job_id, offering);
+    state.event_bus.emit(event);
+    tracing::info!("Job completed: {}", offering);
 }
 
-/// Emit service removed event
-pub fn emit_service_removed(state: &AppState, service_name: &str) {
-    emit_event(
-        state,
-        "info",
-        format!("Service {} removed", service_name),
-        None,
-    );
+/// Emit job failed event
+pub fn emit_job_failed(state: &AppState, job_id: &str, offering: &str, error: &str) {
+    let event = JobEvent::failed(job_id, offering, error);
+    state.event_bus.emit(event);
+    tracing::error!("Job failed: {} - {}", offering, error);
 }

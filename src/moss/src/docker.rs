@@ -8,10 +8,258 @@ use bollard::models::{ContainerCreateResponse, HealthStatusEnum, HostConfig, Por
 use bollard::Docker;
 use futures_util::stream::{Stream, StreamExt, TryStreamExt};
 use std::collections::HashMap;
+use std::net::TcpListener;
 use std::pin::Pin;
 use std::sync::Arc;
+use garden_common::manifests::get_ports_catalog;
+use garden_common::types::{PortConflictHandler, PortRemediation};
 use garden_common::{ServiceHealthStatus, ServiceStatus};
 use garden_common::console::{self, ConsolePrinter};
+
+// ============================================================================
+// Port Availability and Remediation (Catalog-Driven)
+// ============================================================================
+
+/// Check if a TCP port is available for binding
+fn is_port_available(port: u16) -> bool {
+    TcpListener::bind(("0.0.0.0", port)).is_ok()
+}
+
+/// Get the platform-specific conflict handler for a port from the catalog
+fn get_conflict_handler(port: u16) -> Option<&'static PortConflictHandler> {
+    let catalog = get_ports_catalog()?;
+    let port_entry = catalog.ports.get(&port)?;
+
+    #[cfg(target_os = "linux")]
+    { port_entry.linux.as_ref() }
+
+    #[cfg(target_os = "macos")]
+    { port_entry.macos.as_ref() }
+
+    #[cfg(target_os = "windows")]
+    { port_entry.windows.as_ref() }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    { None }
+}
+
+/// Get the default (cross-platform) remediation for a port from the catalog
+fn get_default_remediation(port: u16) -> Option<&'static PortRemediation> {
+    let catalog = get_ports_catalog()?;
+    let port_entry = catalog.ports.get(&port)?;
+    port_entry.default.as_ref()
+}
+
+/// Find the next available port in a given range
+fn find_available_port_in_range(start: u16, end: u16) -> Option<u16> {
+    for port in start..=end {
+        if is_port_available(port) {
+            return Some(port);
+        }
+    }
+    None
+}
+
+/// Run a shell command and return success status
+async fn run_command(cmd: &str) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        let status = tokio::process::Command::new("sh")
+            .args(["-c", cmd])
+            .status()
+            .await
+            .context(format!("Failed to run command: {}", cmd))?;
+        Ok(status.success())
+    }
+
+    #[cfg(windows)]
+    {
+        let status = tokio::process::Command::new("cmd")
+            .args(["/C", cmd])
+            .status()
+            .await
+            .context(format!("Failed to run command: {}", cmd))?;
+        Ok(status.success())
+    }
+}
+
+/// Execute automatic remediation from catalog
+async fn execute_auto_remediation(
+    port: u16,
+    commands: &[String],
+    files: &Option<Vec<garden_common::types::RemediationFile>>,
+) -> Result<()> {
+    tracing::info!(port = port, "Executing automatic port remediation");
+
+    // Run remediation commands
+    for cmd in commands {
+        tracing::debug!(command = cmd, "Running remediation command");
+        let success = run_command(cmd).await?;
+        if !success {
+            anyhow::bail!("Remediation command failed: {}", cmd);
+        }
+    }
+
+    // Create any post-remediation files
+    if let Some(files_to_create) = files {
+        for file in files_to_create {
+            tracing::debug!(path = file.path, "Creating remediation file");
+
+            // Remove symlink if exists (common for /etc/resolv.conf)
+            let path = std::path::Path::new(&file.path);
+            if path.is_symlink() {
+                std::fs::remove_file(path)
+                    .context(format!("Failed to remove symlink: {}", file.path))?;
+            }
+
+            std::fs::write(path, &file.content)
+                .context(format!("Failed to create file: {}", file.path))?;
+        }
+    }
+
+    // Give the system time to release the port
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Verify port is now available
+    if is_port_available(port) {
+        tracing::info!(port = port, "Port is now available after remediation");
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Port {} is still in use after remediation. Another service may be using it.",
+            port
+        );
+    }
+}
+
+/// Attempt to remediate a port conflict using platform-specific handler
+async fn remediate_port_with_handler(port: u16, handler: &PortConflictHandler) -> Result<()> {
+    // If there's a detection command, verify the expected culprit is running
+    if let Some(detection_cmd) = &handler.detection {
+        let culprit_active = run_command(detection_cmd).await.unwrap_or(false);
+        if !culprit_active {
+            anyhow::bail!(
+                "Port {} is in use by a service other than {}. \
+                 Check what's using it with: sudo lsof -i :{}",
+                port, handler.common_culprit, port
+            );
+        }
+    }
+
+    // Execute remediation based on type
+    match &handler.remediation {
+        PortRemediation::Auto { commands, files } => {
+            tracing::info!(
+                port = port,
+                culprit = handler.common_culprit,
+                "Auto-remediating port conflict"
+            );
+            execute_auto_remediation(port, commands, files).await
+        }
+        PortRemediation::Remap { range_start, range_end } => {
+            // Platform handler specified remap - this is unusual but supported
+            anyhow::bail!(
+                "Port {} has platform-specific remap rule (range {}-{}), but remap should be handled at resolution level",
+                port, range_start, range_end
+            );
+        }
+        PortRemediation::Manual { message } => {
+            anyhow::bail!("Port {} conflict: {}", port, message);
+        }
+        PortRemediation::Fail { message } => {
+            anyhow::bail!("Port {} conflict: {}", port, message);
+        }
+    }
+}
+
+/// Resolve a port conflict - either remediate or remap
+///
+/// Returns the actual host port to use (may be different if remapped)
+async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
+    // First, check for platform-specific handler
+    if let Some(handler) = get_conflict_handler(requested_port) {
+        // Platform-specific handling (Auto, Manual, Fail)
+        remediate_port_with_handler(requested_port, handler).await?;
+        return Ok(requested_port);
+    }
+
+    // No platform handler - check for default remediation (typically Remap)
+    if let Some(default_remediation) = get_default_remediation(requested_port) {
+        match default_remediation {
+            PortRemediation::Remap { range_start, range_end } => {
+                tracing::info!(
+                    port = requested_port,
+                    range_start = range_start,
+                    range_end = range_end,
+                    "Port in use, finding available port in remap range"
+                );
+
+                match find_available_port_in_range(*range_start, *range_end) {
+                    Some(new_port) => {
+                        tracing::info!(
+                            original_port = requested_port,
+                            remapped_port = new_port,
+                            "Port remapped successfully"
+                        );
+                        return Ok(new_port);
+                    }
+                    None => {
+                        anyhow::bail!(
+                            "Port {} is in use and no available port found in remap range {}-{}",
+                            requested_port, range_start, range_end
+                        );
+                    }
+                }
+            }
+            PortRemediation::Auto { commands, files } => {
+                tracing::info!(port = requested_port, "Auto-remediating port conflict (default handler)");
+                execute_auto_remediation(requested_port, commands, files).await?;
+                return Ok(requested_port);
+            }
+            PortRemediation::Manual { message } => {
+                anyhow::bail!("Port {} conflict: {}", requested_port, message);
+            }
+            PortRemediation::Fail { message } => {
+                anyhow::bail!("Port {} conflict: {}", requested_port, message);
+            }
+        }
+    }
+
+    // No catalog entry at all - generic error
+    anyhow::bail!(
+        "Port {} is already in use. Check what's using it with:\n\
+         Linux/macOS: sudo lsof -i :{}\n\
+         Windows: netstat -ano | findstr :{}",
+        requested_port, requested_port, requested_port
+    );
+}
+
+/// Pre-flight check for port availability with automatic remediation/remapping
+///
+/// Uses the well-known ports catalog to determine how to handle conflicts:
+/// - For ports with auto-remediation (e.g., DNS port 53), runs commands to free the port
+/// - For ports with remap configuration, finds the next available port in range
+/// - For manual or fail types, returns an actionable error message
+///
+/// Returns the resolved port mappings - (actual_host_port, container_port).
+/// The actual_host_port may differ from the requested port if it was remapped.
+pub async fn check_and_remediate_ports(ports: &[(u16, u16)]) -> Result<Vec<(u16, u16)>> {
+    let mut resolved_ports = Vec::with_capacity(ports.len());
+
+    for (host_port, container_port) in ports {
+        if is_port_available(*host_port) {
+            // Port is available, use as-is
+            resolved_ports.push((*host_port, *container_port));
+        } else {
+            // Port conflict - attempt resolution
+            tracing::info!(port = host_port, "Port is in use, attempting resolution");
+            let actual_host_port = resolve_port_conflict(*host_port).await?;
+            resolved_ports.push((actual_host_port, *container_port));
+        }
+    }
+
+    Ok(resolved_ports)
+}
 
 pub struct DockerManager {
     docker: Docker,
@@ -135,12 +383,27 @@ impl DockerManager {
             anyhow::bail!("Container '{}' already exists", container_name);
         }
 
+        // Pre-flight port availability check with automatic remediation/remapping
+        let resolved_ports = check_and_remediate_ports(&ports).await?;
+
+        // Log any port remappings
+        for ((original, _), (actual, _)) in ports.iter().zip(resolved_ports.iter()) {
+            if original != actual {
+                tracing::info!(
+                    service = %name,
+                    original_port = original,
+                    actual_port = actual,
+                    "Port was remapped due to conflict"
+                );
+            }
+        }
+
         // Pull image if not present
         self.pull_image(image, console).await?;
 
-        // Configure port bindings
+        // Configure port bindings (using resolved ports)
         let mut port_bindings = HashMap::new();
-        for (host_port, container_port) in &ports {
+        for (host_port, container_port) in &resolved_ports {
             port_bindings.insert(
                 format!("{}/tcp", container_port),
                 Some(vec![PortBinding {

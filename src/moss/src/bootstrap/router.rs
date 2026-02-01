@@ -34,6 +34,7 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone", get(api::v1::garden::get_local_stone_v1))
         .route("/api/v1/stone/info", get(api::v1::stone::get_stone_info_v1))
         .route("/api/v1/stone/portrait", get(api::v1::portrait::get_portrait_data))
+        .route("/api/v1/stone/portrait/guidance", get(api::v1::portrait::get_portrait_guidance))
         .route("/api/v1/stone/capabilities", get(api::v1::capabilities::get_capabilities))
         .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
         .route("/api/v1/stone/upgrade", post(api::v1::stone::upgrade_stone_v1))
@@ -148,9 +149,9 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/garden/nourishment/execute", post(api::v1::nourishment::execute_garden))
 
         // ══════════════════════════════════════════════════════════════════
-        // /api/v1/events, /api/v1/jobs - Event streaming & job tracking
+        // /api/v1/jobs - Job tracking
+        // Note: Event streaming consolidated to /api/v1/stone/presence/stream
         // ══════════════════════════════════════════════════════════════════
-        .route("/api/v1/events", get(api::v1::events::stream_events))
         .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
         .route("/api/v1/jobs/:job_id", get(api::v1::jobs::get_job_status))
 

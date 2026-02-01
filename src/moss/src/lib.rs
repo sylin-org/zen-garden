@@ -25,15 +25,15 @@ pub mod app_state;
 
 // Re-export AppState and related types
 pub use app_state::{
-    AppState, Job, JobStatus, JobProgressEvent,
+    AppState, Job, JobStatus,
     CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
 };
 
 // Re-export API helpers from infra
 pub use infra::{error_response, error_codes};
 
-// Re-export commonly used API utilities
-pub use api::v1::events::emit_event;
+// Re-export commonly used job event utilities
+pub use api::v1::events::{emit_job_progress, emit_job_started, emit_job_completed, emit_job_failed};
 
 // Re-export common types for convenience
 pub use garden_common::ServiceInfo;

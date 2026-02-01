@@ -71,8 +71,9 @@
         .identity { display: flex; flex-direction: column; gap: 0.5rem; border-left: 3px solid var(--stone-color); padding-left: 1.5rem; }
         .role { font-family: ui-monospace, monospace; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; color: var(--stone-600); }
         .name { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
-        .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-top: 0.25rem; }
+        .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; margin-top: 0.25rem; }
         .endpoint { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--accent-sage); text-decoration: none; }
+        .hardware-model { font-size: 0.8rem; color: var(--stone-400); font-style: italic; margin-top: 0.25rem; }
 
         /* At a Glance */
         .glance { display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem; margin-top: 1.25rem; }
@@ -111,6 +112,19 @@
         .gauge-fill { position: absolute; height: 100%; background: var(--stone-900); width: 0%; transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1); }
         @media (prefers-color-scheme: dark) { .gauge-fill { background: var(--accent-sage); } }
 
+        /* Network card */
+        .net-values { display: flex; align-items: baseline; gap: 1rem; }
+        .net-metric { display: flex; flex-direction: column; align-items: flex-end; }
+        .net-metric .stat-value { font-size: 1.5rem; }
+        .net-dir { font-size: 0.7rem; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.05em; }
+        .gauge-stack { display: flex; flex-direction: column; gap: 4px; margin-top: 0.75rem; }
+        .gauge-fill.rx { background: var(--accent-sage); }
+        .gauge-fill.tx { background: var(--accent-clay); opacity: 0.85; }
+        @media (prefers-color-scheme: dark) {
+            .gauge-fill.rx { background: var(--accent-sage); }
+            .gauge-fill.tx { background: var(--accent-clay); }
+        }
+
         /* List Items */
         .list { display: flex; flex-direction: column; gap: 0.75rem; }
         .item { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 1rem; padding: 1rem 1.25rem; }
@@ -133,7 +147,58 @@
         .horizon-stone { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; }
         .horizon-color { width: 3px; height: 1.25rem; border-radius: 1px; }
         .horizon-name { font-size: 0.9rem; text-decoration: none; color: var(--stone-900); }
-        .horizon-health { font-size: 0.75rem; color: var(--stone-600); margin-left: auto; }
+        .horizon-spacer { flex-grow: 1; }
+        .horizon-hints { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); }
+        .horizon-status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; font-family: ui-monospace, monospace; text-transform: uppercase; color: var(--stone-600); }
+        .tend-btn { background: transparent; border: 1px solid var(--vellum-border); border-radius: 2px; padding: 0.15rem 0.4rem; font-size: 0.6rem; cursor: pointer; color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.03em; font-family: ui-monospace, monospace; }
+        .tend-btn:hover { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .tend-btn.copied { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+
+        /* Guidance (post-install notes) */
+        .guidance-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; cursor: pointer; background: transparent; border: none; width: 100%; text-align: left; font: inherit; color: inherit; }
+        .guidance-header:hover { background: rgba(128,128,128,0.03); }
+        .guidance-header:focus { outline: 2px solid var(--accent-sage); outline-offset: -2px; }
+        .guidance-header .chevron { font-size: 0.7rem; transition: transform 0.3s; color: var(--stone-600); }
+        .guidance-header .chevron.open { transform: rotate(90deg); }
+        .guidance-hints { font-size: 0.85rem; color: var(--stone-600); }
+        .guidance-content { display: none; padding: 0 1.25rem 1.25rem; }
+        .guidance-content.open { display: block; }
+        @media (prefers-color-scheme: dark) { .guidance-content { background: rgba(255,255,255,0.03); } }
+        .guidance-content h1, .guidance-content h2, .guidance-content h3 { font-size: 0.9rem; font-weight: 600; margin: 0.75rem 0 0.5rem; color: var(--stone-900); }
+        .guidance-content h1:first-child, .guidance-content h2:first-child, .guidance-content h3:first-child { margin-top: 0; }
+        .guidance-content p { margin: 0.5rem 0; font-size: 0.85rem; line-height: 1.6; color: var(--stone-600); }
+        .guidance-content ul, .guidance-content ol { margin: 0.5rem 0; padding-left: 1.25rem; font-size: 0.85rem; color: var(--stone-600); }
+        .guidance-content li { margin: 0.25rem 0; }
+        .guidance-content code { font-family: ui-monospace, monospace; font-size: 0.8rem; background: rgba(0,0,0,0.05); padding: 0.15rem 0.35rem; border-radius: 2px; }
+        @media (prefers-color-scheme: dark) { .guidance-content code { background: rgba(255,255,255,0.1); } }
+        .guidance-content pre { margin: 0.75rem 0; background: rgba(0,0,0,0.04); border-radius: 3px; overflow-x: auto; position: relative; }
+        @media (prefers-color-scheme: dark) { .guidance-content pre { background: rgba(0,0,0,0.3); } }
+        .guidance-content pre code { display: block; padding: 0.75rem 1rem; background: none; white-space: pre-wrap; word-break: break-all; }
+        .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: var(--vellum-white); border: 1px solid var(--vellum-border); border-radius: 2px; padding: 0.25rem 0.5rem; font-size: 0.65rem; cursor: pointer; color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.05em; }
+        .copy-btn:hover { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .copy-btn.copied { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .guidance-content a { color: var(--accent-sage); text-decoration: none; }
+        .guidance-content a:hover { text-decoration: underline; }
+
+        /* Activity (recent events) */
+        .activity-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; cursor: pointer; background: transparent; border: none; width: 100%; text-align: left; font: inherit; color: inherit; }
+        .activity-header:hover { background: rgba(128,128,128,0.03); }
+        .activity-header:focus { outline: 2px solid var(--accent-sage); outline-offset: -2px; }
+        .activity-label { font-size: 0.85rem; color: var(--stone-600); }
+        .activity-list { display: none; flex-direction: column; gap: 0; max-height: 320px; overflow-y: auto; }
+        .activity-list.open { display: flex; }
+        .activity-item { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.5rem 1.25rem; border-top: 1px solid rgba(128,128,128,0.08); font-size: 0.8rem; }
+        .activity-item:first-child { border-top: none; }
+        .activity-time { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); white-space: nowrap; min-width: 4.5rem; }
+        .activity-icon { font-size: 0.65rem; line-height: 1.4; opacity: 0.8; }
+        .activity-msg { flex: 1; color: var(--stone-600); word-break: break-word; }
+        .activity-msg.error { color: #c45; }
+        .activity-msg.warn { color: var(--accent-clay); }
+        .activity-empty { padding: 1rem 1.25rem; text-align: center; color: var(--stone-400); font-size: 0.8rem; font-style: italic; }
+
+        /* Offering card with guidance */
+        .offering-card { padding: 1rem 1.25rem; }
+        .offering-header { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 1rem; }
 
         .empty { padding: 2rem; text-align: center; color: var(--stone-600); font-style: italic; }
         .footer { text-align: center; padding: 1rem; font-size: 0.75rem; color: var(--stone-400); font-family: ui-monospace, monospace; }
@@ -142,9 +207,62 @@
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .hidden { display: none !important; }
+
+        /* Connection status banner */
+        .connection-banner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            padding: 0.5rem 1rem;
+            text-align: center;
+            font-size: 0.75rem;
+            font-family: ui-monospace, monospace;
+            background: var(--vellum-white);
+            backdrop-filter: var(--glass-blur);
+            border-bottom: 1px solid var(--vellum-border);
+            transform: translateY(-100%);
+            opacity: 0;
+            transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease;
+        }
+        .connection-banner.visible {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        .connection-banner.updating {
+            color: var(--accent-clay);
+        }
+        .connection-banner.offline {
+            color: var(--stone-600);
+        }
+        .connection-banner .status-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+        .connection-banner.updating .status-dot {
+            background: var(--accent-clay);
+            animation: pulse 1.5s infinite;
+        }
+        .connection-banner.offline .status-dot {
+            background: var(--stone-400);
+        }
+        body.has-banner {
+            padding-top: 5rem; /* Extra space for banner */
+        }
     </style>
 </head>
 <body>
+    <!-- Connection status banner (hidden by default) -->
+    <div class="connection-banner" id="connection-banner" role="status" aria-live="polite">
+        <span class="status-dot"></span>
+        <span id="connection-message">Reconnecting...</span>
+    </div>
+
     <svg class="vellum-grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
 
     <main class="container">
@@ -155,7 +273,9 @@
                 <h1 class="name" id="name">Loading...</h1>
                 <div class="meta">
                     <a class="endpoint" id="endpoint" href="#"></a>
+                    <button class="tend-btn" id="header-tend-btn" onclick="copyTendCommand(this, window.currentStoneName)" title="Copy tend command">Tend</button>
                 </div>
+                <div class="hardware-model" id="hardware-model"></div>
             </div>
             <div class="glance" id="glance" aria-live="polite" aria-label="Status at a glance">
                 <div class="glance-row"><span id="stone-uptime">—</span><span class="glance-icon" title="uptime (stone)" aria-hidden="true">🪨</span></div>
@@ -183,6 +303,23 @@
                     <div><span class="stat-value" id="disk-value">—</span><span class="stat-unit" id="disk-unit">GB</span></div>
                     <div class="gauge" role="meter" aria-labelledby="disk-label" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="disk-meter"><div class="gauge-fill" id="disk-gauge"></div></div>
                 </div>
+                <div class="card stat">
+                    <span class="stat-label">Network</span>
+                    <div class="net-values">
+                        <div class="net-metric">
+                            <span class="stat-value" id="net-rx">—</span>
+                            <span class="net-dir">MB↓</span>
+                        </div>
+                        <div class="net-metric">
+                            <span class="stat-value" id="net-tx">—</span>
+                            <span class="net-dir">MB↑</span>
+                        </div>
+                    </div>
+                    <div class="gauge-stack">
+                        <div class="gauge" role="meter" aria-label="Download throughput" id="net-rx-meter"><div class="gauge-fill rx" id="net-rx-gauge"></div></div>
+                        <div class="gauge" role="meter" aria-label="Upload throughput" id="net-tx-meter"><div class="gauge-fill tx" id="net-tx-gauge"></div></div>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -191,6 +328,18 @@
             <h2 class="section-title" id="offerings-title">Offerings</h2>
             <div class="list" id="offerings-list"></div>
             <div class="card empty" id="offerings-empty">No offerings planted.</div>
+        </section>
+
+        <!-- Guidance -->
+        <section id="guidance-section" class="hidden" aria-labelledby="guidance-title">
+            <h2 class="section-title" id="guidance-title">Guidance</h2>
+            <div class="card" style="padding:0">
+                <button class="guidance-header" onclick="toggleGuidancePanel()" aria-expanded="true" aria-controls="guidance-body" id="guidance-toggle">
+                    <span class="chevron open" id="guidance-chevron" aria-hidden="true">▶</span>
+                    <span class="guidance-hints" id="guidance-hints"></span>
+                </button>
+                <div class="guidance-content open" id="guidance-body"></div>
+            </div>
         </section>
 
         <!-- Seed Banks -->
@@ -203,6 +352,18 @@
         <section id="companions-section" class="hidden" aria-labelledby="companions-title">
             <h2 class="section-title" id="companions-title">Companions</h2>
             <div class="list" id="companions-list"></div>
+        </section>
+
+        <!-- Activity -->
+        <section id="activity-section" class="hidden" aria-labelledby="activity-title">
+            <h2 class="section-title" id="activity-title">Activity</h2>
+            <div class="card" style="padding:0">
+                <button class="activity-header" onclick="toggleActivity()" aria-expanded="true" aria-controls="activity-list" id="activity-toggle">
+                    <span class="chevron open" id="activity-chevron" aria-hidden="true">▶</span>
+                    <span class="activity-label" id="activity-label">Listening...</span>
+                </button>
+                <div class="activity-list open" id="activity-list" role="log" aria-live="polite"></div>
+            </div>
         </section>
 
         <!-- Horizon -->
@@ -226,6 +387,221 @@
     <script>
     // State
     let horizonOpen = false;
+    let netMax = 0.1; // Shared max for network gauges (adaptive, with decay)
+    window.currentStoneName = ''; // Current stone name for header tend button
+
+    // Connection state tracking
+    let lastSuccessfulFetch = Date.now();
+    let connectionState = 'connected'; // 'connected' | 'updating' | 'offline'
+    let sseConnected = false;
+    const UPDATING_THRESHOLD_MS = 10000; // 10s before "updating" becomes "offline"
+
+    // Activity state
+    let activityOpen = localStorage.getItem('activityOpen') !== 'false'; // Default open
+    let activityEvents = []; // Ring buffer, max 15 visible
+    const ACTIVITY_MAX = 15;
+    let eventSource = null;
+    let lastEventCount = 0;
+
+    // Connection state management
+    function updateConnectionState(isConnected) {
+        const now = Date.now();
+
+        if (isConnected) {
+            lastSuccessfulFetch = now;
+            if (connectionState !== 'connected') {
+                connectionState = 'connected';
+                updateConnectionBanner();
+            }
+            return;
+        }
+
+        // Disconnected - determine severity
+        const disconnectedFor = now - lastSuccessfulFetch;
+        const newState = disconnectedFor < UPDATING_THRESHOLD_MS ? 'updating' : 'offline';
+
+        if (newState !== connectionState) {
+            connectionState = newState;
+            updateConnectionBanner();
+        }
+    }
+
+    function updateConnectionBanner() {
+        const banner = $('connection-banner');
+        const message = $('connection-message');
+
+        if (connectionState === 'connected') {
+            banner.classList.remove('visible', 'updating', 'offline');
+            document.body.classList.remove('has-banner');
+            return;
+        }
+
+        // Format last data timestamp
+        const lastDataTime = new Date(lastSuccessfulFetch).toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+
+        banner.classList.remove('updating', 'offline');
+        banner.classList.add('visible', connectionState);
+        document.body.classList.add('has-banner');
+
+        if (connectionState === 'updating') {
+            message.textContent = `Stone updating · last data ${lastDataTime}`;
+        } else {
+            message.textContent = `Stone offline · last data ${lastDataTime}`;
+        }
+    }
+
+    // Periodic check to transition from 'updating' to 'offline'
+    function checkConnectionTimeout() {
+        if (connectionState === 'updating') {
+            const disconnectedFor = Date.now() - lastSuccessfulFetch;
+            if (disconnectedFor >= UPDATING_THRESHOLD_MS) {
+                connectionState = 'offline';
+                updateConnectionBanner();
+            }
+        }
+    }
+
+    function toggleActivity() {
+        activityOpen = !activityOpen;
+        localStorage.setItem('activityOpen', activityOpen);
+        $('activity-chevron').classList.toggle('open', activityOpen);
+        $('activity-list').classList.toggle('open', activityOpen);
+        $('activity-toggle').setAttribute('aria-expanded', activityOpen);
+    }
+
+    function renderActivity() {
+        const list = $('activity-list');
+        if (activityEvents.length === 0) {
+            list.innerHTML = '<div class="activity-empty">No recent events</div>';
+            return;
+        }
+        list.innerHTML = activityEvents.map(e => {
+            const time = new Date(e.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const icon = e.level === 'error' ? '⚠' : e.level === 'warn' ? '◐' : e.level === 'debug' ? '·' : '○';
+            const levelClass = e.level === 'error' ? 'error' : e.level === 'warn' ? 'warn' : '';
+            return `<div class="activity-item">
+                <span class="activity-time">${time}</span>
+                <span class="activity-icon">${icon}</span>
+                <span class="activity-msg ${levelClass}">${escapeHtml(e.message)}</span>
+            </div>`;
+        }).join('');
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function addActivityEvent(event) {
+        activityEvents.unshift(event); // Newest at top
+        if (activityEvents.length > ACTIVITY_MAX) {
+            activityEvents.pop();
+        }
+        renderActivity();
+        updateActivityLabel();
+    }
+
+    function updateActivityLabel() {
+        const count = activityEvents.length;
+        if (count === 0) {
+            $('activity-label').textContent = 'Listening...';
+        } else {
+            const latest = activityEvents[0];
+            const ago = formatTimeAgo(new Date(latest.timestamp));
+            $('activity-label').textContent = `${count} event${count !== 1 ? 's' : ''} · last ${ago}`;
+        }
+    }
+
+    function formatTimeAgo(date) {
+        const secs = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (secs < 5) return 'just now';
+        if (secs < 60) return secs + 's ago';
+        const mins = Math.floor(secs / 60);
+        if (mins < 60) return mins + 'm ago';
+        const hrs = Math.floor(mins / 60);
+        return hrs + 'h ago';
+    }
+
+    function startActivityStream() {
+        if (eventSource) {
+            eventSource.close();
+        }
+        // Use presence stream for domain events (storage, service lifecycle, etc.)
+        eventSource = new EventSource('/api/v1/stone/presence/stream');
+        eventSource.onopen = () => {
+            sseConnected = true;
+            updateConnectionState(true); // SSE connected = stone is reachable
+            $('activity-section').classList.remove('hidden');
+            // Apply initial open state
+            $('activity-chevron').classList.toggle('open', activityOpen);
+            $('activity-list').classList.toggle('open', activityOpen);
+            $('activity-toggle').setAttribute('aria-expanded', activityOpen);
+        };
+
+        // Handle presence snapshot (initial state on connect)
+        eventSource.addEventListener('presence.snapshot', (e) => {
+            try {
+                const snapshot = JSON.parse(e.data);
+                // Add synthetic event for snapshot
+                addActivityEvent({
+                    timestamp: snapshot.timestamp || new Date().toISOString(),
+                    level: 'info',
+                    message: `Connected: ${snapshot.stone?.name || 'stone'} (${snapshot.services?.length || 0} services)`
+                });
+                updateConnectionState(true);
+            } catch (err) {
+                console.warn('Snapshot parse error:', err);
+            }
+        });
+
+        // Handle service events
+        eventSource.addEventListener('service.started', (e) => handlePresenceEvent(e, 'info', 'Service started'));
+        eventSource.addEventListener('service.stopped', (e) => handlePresenceEvent(e, 'warn', 'Service stopped'));
+        eventSource.addEventListener('service.updated', (e) => handlePresenceEvent(e, 'info', 'Service updated'));
+        eventSource.addEventListener('service.health.changed', (e) => handlePresenceEvent(e, 'info', 'Health changed'));
+
+        // Handle storage events
+        eventSource.addEventListener('storage.detected', (e) => handlePresenceEvent(e, 'info', 'Storage detected'));
+        eventSource.addEventListener('storage.removed', (e) => handlePresenceEvent(e, 'warn', 'Storage removed'));
+        eventSource.addEventListener('storage.sync.started', (e) => handlePresenceEvent(e, 'info', 'Sync started'));
+        eventSource.addEventListener('storage.sync.completed', (e) => handlePresenceEvent(e, 'info', 'Sync completed'));
+
+        // Handle stone events
+        eventSource.addEventListener('stone.tended', (e) => handlePresenceEvent(e, 'info', 'Tended'));
+        eventSource.addEventListener('stone.health.changed', (e) => handlePresenceEvent(e, 'info', 'Health changed'));
+
+        // Handle job events (installation/removal progress)
+        eventSource.addEventListener('job.started', (e) => handlePresenceEvent(e, 'info', 'Job started'));
+        eventSource.addEventListener('job.progress', (e) => handlePresenceEvent(e, 'info', 'Installing'));
+        eventSource.addEventListener('job.completed', (e) => handlePresenceEvent(e, 'info', 'Job completed'));
+        eventSource.addEventListener('job.failed', (e) => handlePresenceEvent(e, 'error', 'Job failed'));
+
+        eventSource.onerror = () => {
+            // SSE disconnected - early indicator of stone unavailability
+            sseConnected = false;
+            updateConnectionState(false);
+            console.warn('Activity stream disconnected, reconnecting...');
+        };
+    }
+
+    // Parse presence event and add to activity feed
+    function handlePresenceEvent(e, level, fallbackMessage) {
+        try {
+            const data = JSON.parse(e.data);
+            addActivityEvent({
+                timestamp: data.timestamp || new Date().toISOString(),
+                level: level,
+                message: data.message || `${fallbackMessage}${data.service ? ': ' + data.service : ''}`
+            });
+            updateConnectionState(true);
+        } catch (err) {
+            console.warn('Presence event parse error:', err);
+        }
+    }
 
     function toggleHorizon() {
         horizonOpen = !horizonOpen;
@@ -235,6 +611,108 @@
     }
 
     function $(id) { return document.getElementById(id); }
+
+    // Minimal markdown parser for guidance content
+    // Supports: headers (#, ##, ###), bold (**), code (`), code blocks (```), lists (- or *), links [text](url)
+    function parseMarkdown(md) {
+        if (!md) return '';
+
+        // Escape HTML first
+        let html = md.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // Code blocks (``` ... ```) - must be processed first to avoid interfering with other patterns
+        html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+            const escaped = code.trim();
+            return `<pre><code data-lang="${lang}">${escaped}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>`;
+        });
+
+        // Inline code (`...`)
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+        // Headers (must come after code blocks to avoid matching # in code)
+        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+        // Bold (**...**)
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+        // Links [text](url)
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+        // Lists (- or *)
+        html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+        // Paragraphs (double newline creates new paragraph, single newlines are spaces)
+        html = html.split(/\n\n+/).map(block => {
+            // Don't wrap if already wrapped in a block element
+            if (block.match(/^<(h[1-3]|ul|ol|pre|li|hr)/)) return block;
+            // Single newlines become spaces (standard markdown behavior)
+            const text = block.replace(/\n/g, ' ').trim();
+            return text ? `<p>${text}</p>` : '';
+        }).join('\n');
+
+        // Handle horizontal rules (---)
+        html = html.replace(/<p>---<\/p>/g, '<hr>');
+
+        return html;
+    }
+
+    // Copy text to clipboard with fallback for non-HTTPS contexts
+    function copyToClipboard(text) {
+        // Try modern Clipboard API first (requires secure context)
+        if (navigator.clipboard && window.isSecureContext) {
+            return navigator.clipboard.writeText(text);
+        }
+        // Fallback for HTTP: use execCommand
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            return Promise.resolve();
+        } catch (e) {
+            return Promise.reject(e);
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    }
+
+    // Copy code block content to clipboard
+    function copyCode(btn) {
+        const code = btn.previousElementSibling.textContent;
+        copyToClipboard(code).then(() => {
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = 'Copy';
+                btn.classList.remove('copied');
+            }, 2000);
+        }).catch(() => {
+            btn.textContent = 'Failed';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+        });
+    }
+
+    // Copy tend command for a stone
+    function copyTendCommand(btn, stoneName) {
+        const cmd = `garden-rake tend ${stoneName}`;
+        copyToClipboard(cmd).then(() => {
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = 'Tend';
+                btn.classList.remove('copied');
+            }, 2000);
+        }).catch(() => {
+            btn.textContent = 'Failed';
+            setTimeout(() => { btn.textContent = 'Tend'; }, 2000);
+        });
+    }
 
     function render(data) {
         // Identity
@@ -252,6 +730,16 @@
             }
             if (id.name) {
                 document.title = id.name + ' · Zen Garden';
+                window.currentStoneName = id.name;
+            }
+            // Hardware model (manufacturer + product)
+            const hwModel = $('hardware-model');
+            if (id.manufacturer || id.model) {
+                const parts = [id.manufacturer, id.model].filter(Boolean);
+                hwModel.textContent = parts.join(' · ');
+                hwModel.classList.remove('hidden');
+            } else {
+                hwModel.classList.add('hidden');
             }
         }
 
@@ -274,6 +762,26 @@
                 $('disk-unit').textContent = '/ ' + (f.disk.total_gb || '?') + ' GB';
                 $('disk-gauge').style.width = (f.disk.percent || 0) + '%';
                 $('disk-meter').setAttribute('aria-valuenow', Math.round(f.disk.percent || 0));
+            }
+            if (f.network) {
+                // Parse numeric values from friendly strings (e.g., "26.94 MB" -> 26.94)
+                const rxVal = parseFloat(f.network.rx_friendly) || 0;
+                const txVal = parseFloat(f.network.tx_friendly) || 0;
+
+                // Update display values (just the number, unit is in the label)
+                $('net-rx').textContent = rxVal.toFixed(rxVal >= 10 ? 1 : 2);
+                $('net-tx').textContent = txVal.toFixed(txVal >= 10 ? 1 : 2);
+
+                // Adaptive max with decay (slowly forgets old peaks)
+                const peak = Math.max(rxVal, txVal);
+                netMax = Math.max(netMax * 0.995, peak, 0.1);
+
+                // Calculate gauge percentages (shared scale)
+                const rxPercent = Math.min((rxVal / netMax) * 100, 100);
+                const txPercent = Math.min((txVal / netMax) * 100, 100);
+
+                $('net-rx-gauge').style.width = rxPercent + '%';
+                $('net-tx-gauge').style.width = txPercent + '%';
             }
         }
 
@@ -304,8 +812,7 @@
                     <div class="dot ${o.status === 'stopped' ? 'stopped' : ''} ${o.health === 'degraded' ? 'degraded' : ''}"></div>
                     <span>${o.health || o.status}</span>
                 </div>
-            </div>
-        `).join('');
+            </div>`).join('');
         $('offerings-empty').classList.toggle('hidden', offerings.length > 0);
         offeringsList.classList.toggle('hidden', offerings.length === 0);
 
@@ -344,13 +851,40 @@
         $('horizon-label').textContent = horizon.count > 0 
             ? horizon.count + ' stone' + (horizon.count !== 1 ? 's' : '') + ' visible'
             : 'Alone in the garden';
-        $('horizon-list').innerHTML = (horizon.stones || []).map(s => `
+        $('horizon-list').innerHTML = (horizon.stones || []).map(s => {
+            // Build hardware model string (manufacturer + product)
+            const hwParts = [s.manufacturer, s.model].filter(Boolean);
+            const hwStr = hwParts.length > 0 ? hwParts.join(' ') : '';
+
+            // Build resource hints string (CPU and memory only)
+            const specs = [];
+            if (s.cpu_cores) specs.push(s.cpu_cores + 'c');
+            if (s.memory_gb) specs.push(s.memory_gb + 'GB');
+            const specsStr = specs.length > 0 ? specs.join(' · ') : '';
+
+            // Service count as dots (consistent with header glance)
+            const svcDots = s.service_count > 0
+                ? `<span>${s.service_count}</span><span class="glance-dot running" aria-hidden="true">🟢</span>`
+                : '';
+
+            // Health status dot class (default to pulsing, only stop for offline/unknown)
+            const healthDot = s.health === 'degraded' ? 'degraded' : (['offline', 'unknown'].includes(s.health) ? 'stopped' : '');
+
+            return `
             <div class="horizon-stone" role="listitem">
                 <div class="horizon-color" style="background-color:${s.color || 'var(--accent-sage)'}" aria-hidden="true"></div>
                 <a class="horizon-name" href="${s.endpoint}">${s.name}</a>
-                <span class="horizon-health">${s.health}</span>
-            </div>
-        `).join('');
+                <button class="tend-btn" onclick="copyTendCommand(this, '${s.name}')" title="Copy tend command">Tend</button>
+                <div class="horizon-spacer"></div>
+                ${hwStr ? `<span class="horizon-hints" style="font-style:italic">${hwStr}</span>` : ''}
+                ${specsStr ? `<span class="horizon-hints">${specsStr}</span>` : ''}
+                <span class="horizon-hints">${svcDots}</span>
+                <div class="horizon-status">
+                    <div class="dot ${healthDot}"></div>
+                    <span>${s.health}</span>
+                </div>
+            </div>`;
+        }).join('');
     }
 
     async function refresh() {
@@ -359,15 +893,82 @@
             if (res.ok) {
                 const data = await res.json();
                 render(data);
+                updateConnectionState(true); // Fetch succeeded
+            } else {
+                updateConnectionState(false); // HTTP error
             }
         } catch (e) {
+            updateConnectionState(false); // Network error
             console.warn('Portrait refresh failed:', e);
+        }
+    }
+
+    // Guidance state
+    let guidanceEtag = null;
+    let guidancePanelOpen = localStorage.getItem('guidancePanelOpen') !== 'false'; // Default open
+
+    function toggleGuidancePanel() {
+        guidancePanelOpen = !guidancePanelOpen;
+        localStorage.setItem('guidancePanelOpen', guidancePanelOpen);
+        $('guidance-chevron').classList.toggle('open', guidancePanelOpen);
+        $('guidance-body').classList.toggle('open', guidancePanelOpen);
+        $('guidance-toggle').setAttribute('aria-expanded', guidancePanelOpen);
+    }
+
+    // Apply initial guidance panel state
+    function applyGuidancePanelState() {
+        $('guidance-chevron').classList.toggle('open', guidancePanelOpen);
+        $('guidance-body').classList.toggle('open', guidancePanelOpen);
+        $('guidance-toggle').setAttribute('aria-expanded', guidancePanelOpen);
+    }
+
+    async function refreshGuidance() {
+        try {
+            const headers = {};
+            if (guidanceEtag) {
+                headers['If-None-Match'] = guidanceEtag;
+            }
+            const res = await fetch('/api/v1/stone/portrait/guidance', { headers });
+
+            if (res.status === 304) {
+                // Not modified, keep current content
+                return;
+            }
+
+            if (res.status === 204) {
+                // No guidance available
+                $('guidance-section').classList.add('hidden');
+                $('guidance-body').innerHTML = '';
+                $('guidance-hints').textContent = '';
+                guidanceEtag = null;
+                return;
+            }
+
+            if (res.ok) {
+                const markdown = await res.text();
+                guidanceEtag = res.headers.get('ETag');
+
+                // Extract offering names from markdown headers (# OfferingName)
+                const offeringNames = [...markdown.matchAll(/^# (.+)$/gm)].map(m => m[1]);
+                $('guidance-hints').textContent = offeringNames.join(', ');
+
+                $('guidance-body').innerHTML = parseMarkdown(markdown);
+                $('guidance-section').classList.remove('hidden');
+                applyGuidancePanelState();
+            }
+        } catch (e) {
+            console.warn('Guidance refresh failed:', e);
         }
     }
 
     // Start breathing
     refresh();
+    refreshGuidance();
+    startActivityStream();
     setInterval(refresh, 2500);
+    setInterval(refreshGuidance, 30000); // Guidance updates less frequently
+    setInterval(updateActivityLabel, 10000); // Keep "ago" times fresh
+    setInterval(checkConnectionTimeout, 1000); // Check for updating→offline transition
     </script>
 </body>
 </html>

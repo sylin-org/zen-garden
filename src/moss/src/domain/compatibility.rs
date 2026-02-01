@@ -213,11 +213,12 @@ pub fn evaluate_compatibility(
         }
 
         if let Some(os_families_not) = &condition.os_family_not {
-            // Match (trigger rule) if current OS is in the exclusion list
-            let os_is_excluded = os_families_not
+            // Match (trigger rule) if current OS is NOT in the allowed list
+            // e.g., os_family_not: ["linux", "macos"] rejects Windows (anything not in list)
+            let os_is_in_list = os_families_not
                 .iter()
                 .any(|os| os.to_lowercase() == capabilities.os_family.to_lowercase());
-            matches &= os_is_excluded;
+            matches &= !os_is_in_list;
         }
 
         if let Some(max_memory_mb) = condition.memory_mb_less_than {

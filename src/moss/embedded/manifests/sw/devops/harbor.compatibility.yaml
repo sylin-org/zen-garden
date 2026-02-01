@@ -1,13 +1,20 @@
 # Harbor Registry Compatibility Rules
-# Apache 2.0 licensed enterprise container registry
+# Apache 2.0 licensed enterprise container registry (CNCF Graduated)
 # ARM64 support only - NO ARM32 support
 # High resource requirements (multi-container deployment)
 version: "1"
 
+# Harbor only provides amd64 and arm64 images
+image_selection:
+  - architecture: amd64
+    image: goharbor/harbor-core:v2.11.2
+  - architecture: arm64
+    image: goharbor/harbor-core:v2.11.2
+
 compatibility_rules:
   - name: "arm32-unsupported"
     condition:
-      arch_equals: "arm"
+      architectures: ["armv6l", "armv7l", "arm"]
     reason: "Harbor does not support ARM32 architecture"
     suggestion: "Use Zot or Docker Registry for ARM32 devices"
 

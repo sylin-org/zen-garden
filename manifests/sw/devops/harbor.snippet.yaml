@@ -1,16 +1,34 @@
-# Harbor requires docker-compose with multiple containers.
-# This snippet is for infrastructure handler recognition only.
-# For full deployment, use Harbor's official installer.
-# See: https://goharbor.io/docs/2.11.0/install-config/
+# Harbor - Enterprise Container Registry (CNCF Graduated)
+#
+# IMPORTANT: Harbor is a multi-container application requiring:
+# - PostgreSQL database (harbor-database)
+# - Redis cache (harbor-redis)
+# - Harbor Core (API server)
+# - Harbor Portal (Web UI)
+# - Harbor Registry (image storage)
+# - Harbor Job Service (async tasks)
+# - Trivy (vulnerability scanning, optional)
+#
+# This snippet provides basic recognition for infrastructure handlers.
+# For production deployment, use Harbor's official installer:
+# https://goharbor.io/docs/2.11.0/install-config/
+#
+# Quick start:
+#   wget https://github.com/goharbor/harbor/releases/download/v2.11.2/harbor-offline-installer-v2.11.2.tgz
+#   tar xzf harbor-offline-installer-v2.11.2.tgz && cd harbor
+#   cp harbor.yml.tmpl harbor.yml && ./install.sh
+
 container_name: harbor-core
 image: goharbor/harbor-core:v2.11.2
 ports:
-  - [8080, 8080]
-  - [5080, 5000]
+  - [80, 8080]
+  - [443, 8443]
 environment:
-  EXT_ENDPOINT: "http://localhost:8080"
+  EXT_ENDPOINT: "http://localhost"
   LOG_LEVEL: "info"
   CONFIG_PATH: "/etc/core/app.conf"
+  CORE_SECRET: "changeme"
+  JOBSERVICE_SECRET: "changeme"
 volumes:
   - harbor-data:/data
 healthcheck:
@@ -22,10 +40,3 @@ healthcheck:
 restart: unless-stopped
 networks:
   - zen-garden
-# NOTE: This is a PARTIAL offering. Harbor requires:
-# - PostgreSQL database
-# - Redis cache
-# - Harbor Portal
-# - Harbor Registry
-# - Harbor Job Service
-# See harbor.research.md for full deployment instructions.

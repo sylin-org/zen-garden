@@ -1,8 +1,18 @@
 # Docker Registry Compatibility Rules
-# Apache 2.0 licensed OCI Distribution implementation
+# Apache 2.0 licensed OCI Distribution implementation (CNCF Graduated)
 # Excellent multi-arch support: amd64, arm32v6, arm32v7, arm64v8, ppc64le, riscv64, s390x
 # No AVX/SSE requirements (Go binary)
 version: "1"
+
+# Registry uses multi-arch manifest - same tag works on all architectures
+image_selection:
+  - architecture: amd64
+    image: registry:2.8
+  - architecture: arm64
+    image: registry:2.8
+  - architecture: arm32
+    image: registry:2.8
+  # Note: registry:2.8 is a multi-arch image that auto-selects the correct platform
 
 compatibility_rules:
   - name: "insufficient-memory"

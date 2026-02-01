@@ -93,7 +93,7 @@ struct Cli {
     tune: String,
     
     /// Master volume (0-100)
-    #[arg(long, env = "CRICKET_VOLUME", default_value = "70")]
+    #[arg(long, env = "CRICKET_VOLUME", default_value = "50")]
     volume: u8,
     
     /// Command server port (for receiving hey-tell commands)

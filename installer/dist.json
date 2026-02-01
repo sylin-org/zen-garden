@@ -75,12 +75,6 @@
       "lineEndings": "lf",
       "platforms": ["linux"]
     },
-    "manifests": {
-      "source": "manifests",
-      "destination": "lib/zen-garden/manifests/",
-      "recursive": true,
-      "platforms": ["linux", "windows"]
-    },
     "gardenConfig": {
       "source": "installer",
       "destination": "lib/zen-garden/",

@@ -1,0 +1,9 @@
+{
+  "name": "harbor",
+  "description": "Enterprise container registry with scanning and RBAC (Apache 2.0)",
+  "category": "devops",
+  "tags": ["docker", "container", "registry", "oci", "images", "container-registry", "enterprise", "scanning"],
+  "ports": [8080, 5080],
+  "volumes": ["harbor-data"],
+  "notes": "Requires multi-container deployment. See research.md for details."
+}

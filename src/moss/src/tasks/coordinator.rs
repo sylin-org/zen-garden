@@ -89,6 +89,8 @@ pub async fn start_discovery_listener(
     storage_cache: crate::domain::storage_cache::StorageCache,
     _self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
+    infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
+    manifest_registry: Arc<crate::infra::ManifestRegistry>,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
     tokio::spawn(async move {
@@ -140,7 +142,19 @@ pub async fn start_discovery_listener(
                     
                     // Update topology cache with chirp data
                     upsert_from_chirp(&topology_cache, chirp.clone()).await;
-                    
+
+                    // Trigger infrastructure handlers (MOSS-0002: garden-wide effects)
+                    // Handlers react to topology changes and configure local infrastructure
+                    // (e.g., Docker insecure-registries for container registries)
+                    {
+                        let handlers = infrastructure_handlers.clone();
+                        let cache = topology_cache.clone();
+                        let manifests = manifest_registry.clone();
+                        tokio::spawn(async move {
+                            handlers.on_topology_changed(&cache, &manifests).await;
+                        });
+                    }
+
                     // STORAGE-0003: If new stone, broadcast our storage beacon (if we have storage)
                     if is_new_stone && chirp.stone_id != stone_id {
                         let local_stone_id = stone_id.clone();
@@ -699,6 +713,8 @@ pub async fn start_all_background_tasks(
         state.storage_cache.clone(),
         state.self_entry.clone(),
         console.clone(),
+        state.infrastructure_handlers.clone(),
+        state.manifest_registry.clone(),
     )
     .await;
 

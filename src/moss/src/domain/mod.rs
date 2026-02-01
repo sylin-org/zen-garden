@@ -35,6 +35,7 @@ pub mod nurturing;
 pub mod storage_cache;
 pub mod sub_capability;
 pub mod events;
+pub mod infrastructure;
 
 pub use service_manager::ServiceManager;
 pub use registry::Registry;
@@ -86,4 +87,8 @@ pub use sub_capability::{
     discover_sub_capabilities, refresh_all_sub_capabilities,
 };
 pub use events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
+pub use infrastructure::{
+    InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
+    DockerRegistryHandler,
+};
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

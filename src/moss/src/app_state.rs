@@ -13,7 +13,7 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::DockerManager;
-use crate::domain::CeremonyRegistry;
+use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
@@ -167,6 +167,10 @@ pub struct AppState {
 
     /// Companion registry (external Companions like Cricket, Firefly)
     pub companion_registry: Arc<crate::infra::CompanionRegistry>,
+
+    /// Infrastructure handlers for garden-wide effects (registry trust, DNS, etc.)
+    /// Handlers react to topology changes and configure local infrastructure.
+    pub infrastructure_handlers: Arc<InfrastructureHandlerRegistry>,
 }
 
 impl AppState {

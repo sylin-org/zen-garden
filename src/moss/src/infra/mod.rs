@@ -21,6 +21,7 @@ pub mod ceremony_journal;
 pub mod config;
 pub mod container;
 pub mod detection;
+pub mod docker_config;
 pub mod embedded;
 pub mod event_bus;
 pub mod filesystem;

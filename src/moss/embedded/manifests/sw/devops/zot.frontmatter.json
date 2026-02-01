@@ -1,0 +1,8 @@
+{
+  "name": "zot",
+  "description": "Lightweight OCI-native container registry (Apache 2.0)",
+  "category": "devops",
+  "tags": ["docker", "container", "registry", "oci", "images", "container-registry"],
+  "ports": [5050],
+  "volumes": ["zot-data"]
+}

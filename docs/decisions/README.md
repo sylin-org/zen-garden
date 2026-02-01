@@ -50,6 +50,11 @@ canonical: true
   - **Rationale**: Stone-local service registry with persistence
   - **Impact**: Survives reboots, enables offline operation
 
+- **[MOSS-0002](MOSS-0002-infrastructure-handlers.md)**: Infrastructure Handlers
+  - **Status**: Accepted (2026-01-31)
+  - **Rationale**: Self-contained handlers for garden-wide effects (registry trust, DNS, etc.)
+  - **Impact**: Distributed autonomous configuration, Docker daemon auto-trust for registries
+
 ### Offerings (Services)
 - **[OFFER-0001](OFFER-0001-offering-taxonomy-and-recommendations.md)**: Offering Taxonomy
   - **Status**: Accepted
@@ -234,16 +239,18 @@ Once an ADR is **Accepted**:
 
 ## ADR Statistics
 
-- **Total ADRs**: 6
-- **By Status**: 
-  - Accepted: 6
+- **Total ADRs**: 8
+- **By Status**:
+  - Accepted: 8
   - Proposed: 0
   - Superseded: 0
 - **By Domain**:
   - Build: 1
+  - Companions: 1
   - Compatibility: 1
   - Lantern: 1
-  - Moss: 1
+  - Metrics: 1
+  - Moss: 2
   - Offerings: 1
   - Rake: 1
 

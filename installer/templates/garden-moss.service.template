@@ -3,7 +3,7 @@ Description=Garden Moss Daemon - Zen Garden Stone Manager
 Documentation=https://github.com/koan-framework/zen-garden
 After=network-online.target docker.service avahi-daemon.service
 Wants=network-online.target
-Requires=docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
@@ -27,7 +27,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/{{USERNAME}}/bin /usr/local/bin /etc/hostname /etc/hosts
+ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/{{USERNAME}}/bin /usr/local/bin /etc/hostname /etc/hosts /etc/docker
 
 # Resource limits
 LimitNOFILE=65536

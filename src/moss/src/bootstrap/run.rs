@@ -74,8 +74,42 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         config.console_mode,
         config.event_dedup_ttl_secs,
     ));
-    
-    // Start UDP listener - can now respond to announcement requests with current self_entry state
+
+    // Load ManifestRegistry early - needed for infrastructure handlers
+    // Uses overlay pattern: embedded assets first, filesystem overlays on top
+    let manifests_dir = std::path::PathBuf::from(infra::runtime_manifests_dir());
+    let hw_dir = manifests_dir.join("hw");
+    let hw_dir_opt = if hw_dir.exists() { Some(hw_dir.as_path()) } else { None };
+
+    let manifest_registry = match infra::load_sw_manifests_with_overlay(&manifests_dir) {
+        Ok(sw_manifests) => {
+            match infra::ManifestRegistry::from_sw_manifests(sw_manifests, hw_dir_opt) {
+                Ok(registry) => {
+                    tracing::info!(
+                        sw_count = registry.sw.entries.len(),
+                        hw_count = registry.hw.entries.len(),
+                        "ManifestRegistry loaded"
+                    );
+                    Arc::new(registry)
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, "Failed to create manifest registry, using empty");
+                    Arc::new(infra::ManifestRegistry::empty())
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to load manifest registry, using empty");
+            Arc::new(infra::ManifestRegistry::empty())
+        }
+    };
+
+    // Create infrastructure handlers - wired to UDP pipeline from the start
+    let infrastructure_handlers = Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
+        Box::new(crate::domain::DockerRegistryHandler::new()),
+    ]));
+
+    // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
         stone_id.clone(),
         stone_name.clone(),
@@ -84,9 +118,11 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         storage_cache.clone(),
         self_entry.clone(),
         console_printer.clone(),
+        infrastructure_handlers.clone(),
+        manifest_registry.clone(),
     )
     .await;
-    tracing::info!("UDP listener started at Phase 1 (can respond to discovery requests)");
+    tracing::info!("UDP listener started (infrastructure handlers wired)");
 
     // Phase 1.5: First-boot initialization (Linux only)
     // Windows/dev environments don't need hostname/hosts/avahi setup
@@ -206,46 +242,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     }
 
-    // Phase 10: Load ManifestRegistry (single source of truth for all manifests)
-    // Uses overlay pattern: embedded assets first, filesystem overlays on top
-    let manifests_dir = std::path::PathBuf::from(infra::runtime_manifests_dir());
-    let hw_dir = manifests_dir.join("hw");
-    let hw_dir_opt = if hw_dir.exists() { Some(hw_dir.as_path()) } else { None };
-
-    let manifest_registry = match infra::load_sw_manifests_with_overlay(&manifests_dir) {
-        Ok(sw_manifests) => {
-            match infra::ManifestRegistry::from_sw_manifests(sw_manifests, hw_dir_opt) {
-                Ok(registry) => {
-                    console_printer.emit(console::ConsoleEvent::new(
-                        console::EventCategory::Manifests,
-                        console::EventStatus::Loaded,
-                        format!("{} sw, {} hw manifests", registry.sw.entries.len(), registry.hw.entries.len()),
-                    ));
-                    Arc::new(registry)
-                }
-                Err(e) => {
-                    tracing::warn!(error = ?e, "Failed to create manifest registry, using empty");
-                    console_printer.emit(console::ConsoleEvent::new(
-                        console::EventCategory::Manifests,
-                        console::EventStatus::Invalid,
-                        "Using empty registry".to_string(),
-                    ));
-                    Arc::new(infra::ManifestRegistry::empty())
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = ?e, "Failed to load manifest registry, using empty");
-            console_printer.emit(console::ConsoleEvent::new(
-                console::EventCategory::Manifests,
-                console::EventStatus::Invalid,
-                "Using empty registry".to_string(),
-            ));
-            Arc::new(infra::ManifestRegistry::empty())
-        }
-    };
-
     // Phase 11: Build AppState
+    // Note: manifest_registry and infrastructure_handlers already created at Phase 1
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
@@ -292,6 +290,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         election_service: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
+        infrastructure_handlers: infrastructure_handlers.clone(),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists

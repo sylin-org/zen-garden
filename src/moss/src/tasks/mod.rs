@@ -27,6 +27,7 @@ pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod presence_monitor;
 pub mod state_provider;
+pub mod task_scheduler;
 
 pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
@@ -43,10 +44,15 @@ pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{
     install_service_task, install_batch_task,
+    build_guidance, backfill_missing_guidance,
 };
 pub use metrics_collector::run_metrics_collector;
 pub use network_monitor::{NetworkMonitor, NetworkMonitorConfig, NetworkEvent};
 pub use nurturing_scheduler::{
     NurturingScheduler, NurturingWorkflowConfig, NurturingWorkflowResult,
     ReplicationAttempt, RoutingStrategy, trigger_nurturing, trigger_all_nurturing,
+};
+pub use task_scheduler::{
+    TaskSchedulerConfig, start_task_scheduler, backfill_missing_tasks,
+    run_scheduler_iteration,
 };

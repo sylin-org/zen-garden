@@ -88,7 +88,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                     // TODO: Extract actual location from detection result
                     let location = ServiceLocation {
                         host: "localhost".to_string(),
-                        port: manifest.ports.first().map(|(host, _)| *host).unwrap_or(0),
+                        port: manifest.default_host_port(),
                         protocol: manifest.category.clone(),
                     };
 

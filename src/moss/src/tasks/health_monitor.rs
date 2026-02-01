@@ -115,7 +115,7 @@ pub async fn health_monitor_task(state: AppState) {
 
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
-                        match adopt_offering_container(&state.docker, &state.manifest_registry, container_name).await {
+                        match adopt_offering_container(&state.docker, &state.manifest_registry, container_name, &state.stone_name).await {
                             Ok(Some(info)) => {
                                 // Double-check before adding (prevent race condition)
                                 let mut reg = state.registry.write().await;

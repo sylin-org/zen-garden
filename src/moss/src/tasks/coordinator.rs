@@ -25,6 +25,8 @@ use crate::{
     lantern_registration_loop,
     infra,
 };
+use crate::tasks::backfill_missing_guidance;
+use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
 use crate::tasks::network_monitor::{NetworkMonitor, NetworkEvent};
 
 /// Start topology maintenance task
@@ -281,6 +283,18 @@ pub fn start_registry_loader(state: AppState) {
             Err(e) => {
                 tracing::warn!(error = ?e, "Failed to load persisted moss registry; starting empty");
             }
+        }
+
+        // Backfill missing guidance for services that were installed before guidance caching
+        let backfilled = backfill_missing_guidance(&state).await;
+        if backfilled > 0 {
+            tracing::info!(count = backfilled, "Backfilled guidance for existing services");
+        }
+
+        // Backfill missing scheduled tasks for existing services
+        let tasks_backfilled = backfill_missing_tasks(&state).await;
+        if tasks_backfilled > 0 {
+            tracing::info!(count = tasks_backfilled, "Backfilled scheduled tasks for existing services");
         }
 
         // Startup self-heal: adopt any existing zen-offering containers
@@ -737,6 +751,10 @@ pub async fn start_all_background_tasks(
 
     // Start health monitoring
     start_health_monitor(state.clone());
+
+    // Start scheduled task scheduler
+    start_task_scheduler(state.clone());
+    tracing::info!("Started scheduled task scheduler");
 
     // Start auto-adoption if configured
     if let Some(cfg) = config {

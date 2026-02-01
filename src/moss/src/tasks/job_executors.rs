@@ -10,12 +10,240 @@
 //! - Emit events for progress tracking
 //! - Don't block the HTTP response
 
-use crate::{AppState, JobStatus, emit_event};
+use crate::{AppState, JobStatus};
+use crate::api::v1::events::{emit_job_progress, emit_job_started, emit_job_completed, emit_job_failed};
 use crate::domain::events::OfferingEvent;
 use crate::domain::get_compiled_offering;
+use crate::infra::TaskStore;
 use garden_common::console;
 use garden_common::utils::ids::generate_guidv7;
-use garden_common::{Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus};
+use garden_common::{OfferingGuidance, Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus};
+
+/// Substitute template variables in guidance markdown
+///
+/// Replaces placeholders with actual values from the service context:
+/// - `{{port}}` - The default service port (host-side)
+/// - `{{<name>-port}}` - Named port (e.g., `{{admin-port}}`, `{{management-port}}`)
+/// - `{{server-name}}` - The stone's name/hostname
+/// - `{{offering}}` - The offering type (e.g., "mongodb")
+/// - `{{name}}` - The service instance name
+fn substitute_guidance_templates(
+    template: &str,
+    name: &str,
+    offering: &str,
+    ports: &std::collections::HashMap<String, (u16, u16)>,
+    stone_name: &str,
+) -> String {
+    let mut result = template.to_string();
+
+    // Substitute named ports: "default" → {{port}}, others → {{<name>-port}}
+    for (port_name, (host_port, _)) in ports {
+        let placeholder = if port_name == "default" {
+            "{{port}}".to_string()
+        } else {
+            format!("{{{{{}-port}}}}", port_name)
+        };
+        result = result.replace(&placeholder, &host_port.to_string());
+    }
+
+    // Substitute other variables
+    result
+        .replace("{{server-name}}", stone_name)
+        .replace("{{offering}}", offering)
+        .replace("{{name}}", name)
+}
+
+/// Build OfferingGuidance from manifest, with template substitution
+///
+/// This is used during installation and for backfilling guidance on boot.
+pub fn build_guidance(
+    state: &AppState,
+    name: &str,
+    offering: &str,
+    ports: &std::collections::HashMap<String, (u16, u16)>,
+) -> Option<OfferingGuidance> {
+    let default_port = ports.get("default").map(|(h, _)| *h).unwrap_or(30000);
+
+    tracing::debug!(
+        offering = %offering,
+        name = %name,
+        default_port = default_port,
+        port_count = ports.len(),
+        "build_guidance: starting"
+    );
+
+    let manifest = match state.manifest_registry.sw.get(offering) {
+        Some(m) => {
+            tracing::debug!(
+                offering = %offering,
+                has_guidance = m.guidance.is_some(),
+                guidance_len = m.guidance.as_ref().map(|g| g.len()).unwrap_or(0),
+                "build_guidance: found manifest"
+            );
+            m
+        }
+        None => {
+            tracing::debug!(
+                offering = %offering,
+                manifest_count = state.manifest_registry.sw.len(),
+                "build_guidance: no manifest found for offering"
+            );
+            return None;
+        }
+    };
+
+    let template = match manifest.guidance.as_ref() {
+        Some(t) => {
+            tracing::debug!(
+                offering = %offering,
+                template_len = t.len(),
+                "build_guidance: found guidance template"
+            );
+            t
+        }
+        None => {
+            tracing::debug!(
+                offering = %offering,
+                "build_guidance: manifest has no guidance template"
+            );
+            return None;
+        }
+    };
+
+    let content = substitute_guidance_templates(
+        template,
+        name,
+        offering,
+        ports,
+        &state.stone_name,
+    );
+
+    // Build variables map for API consumers
+    let mut variables = std::collections::HashMap::new();
+    // Default port as "port"
+    variables.insert("port".to_string(), default_port.to_string());
+    // Named ports as "<name>-port"
+    for (port_name, (host_port, _)) in ports {
+        if port_name != "default" {
+            variables.insert(format!("{}-port", port_name), host_port.to_string());
+        }
+    }
+    variables.insert("server-name".to_string(), state.stone_name.clone());
+    variables.insert("offering".to_string(), offering.to_string());
+    variables.insert("name".to_string(), name.to_string());
+
+    tracing::info!(
+        offering = %offering,
+        content_len = content.len(),
+        "build_guidance: successfully built guidance"
+    );
+
+    Some(OfferingGuidance { content, variables })
+}
+
+/// Backfill missing guidance for services in the registry
+///
+/// Called at boot time to ensure any service that:
+/// 1. Has no cached guidance
+/// 2. Has a manifest with guidance template
+///
+/// Gets the guidance generated and cached.
+///
+/// Returns the number of services that were updated.
+pub async fn backfill_missing_guidance(state: &AppState) -> usize {
+    tracing::info!("Backfill: starting guidance backfill check");
+    let mut updated = 0;
+
+    // Log all manifests that have guidance templates
+    let manifests_with_guidance: Vec<(String, usize)> = state.manifest_registry.sw
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.guidance.is_some())
+        .map(|(name, entry)| {
+            (name.clone(), entry.guidance.as_ref().map(|g| g.len()).unwrap_or(0))
+        })
+        .collect();
+
+    tracing::info!(
+        total_manifests = state.manifest_registry.sw.len(),
+        with_guidance = manifests_with_guidance.len(),
+        guidance_offerings = ?manifests_with_guidance,
+        "Backfill: manifest registry state"
+    );
+
+    // First pass: collect services that need guidance
+    // For backfilling, we use the manifest's ports since existing services may only have a single port stored
+    let services_needing_guidance: Vec<(String, String, std::collections::HashMap<String, (u16, u16)>)> = {
+        let registry = state.registry.read().await;
+        tracing::info!(
+            service_count = registry.len(),
+            "Backfill: checking services in registry"
+        );
+
+        registry
+            .iter()
+            .filter(|svc| {
+                let has_guidance = svc.guidance.is_some();
+                let manifest_has_guidance = state.manifest_registry.sw.get(&svc.offering)
+                    .map(|m| m.guidance.is_some())
+                    .unwrap_or(false);
+
+                tracing::info!(
+                    service = %svc.name,
+                    offering = %svc.offering,
+                    has_guidance = has_guidance,
+                    manifest_has_guidance = manifest_has_guidance,
+                    "Backfill: checking service"
+                );
+
+                // Only consider services without guidance where manifest has guidance
+                !has_guidance && manifest_has_guidance
+            })
+            .filter_map(|svc| {
+                // Get ports from the manifest template for proper template substitution
+                let ports = state.manifest_registry.sw.get(&svc.offering)
+                    .and_then(|m| m.parse_template().ok())
+                    .map(|t| t.ports)?;
+                Some((svc.name.clone(), svc.offering.clone(), ports))
+            })
+            .collect()
+    };
+
+    if services_needing_guidance.is_empty() {
+        tracing::info!("Backfill: no services need guidance");
+        return 0;
+    }
+
+    tracing::info!(
+        count = services_needing_guidance.len(),
+        "Backfilling missing guidance for services"
+    );
+
+    // Second pass: update services with generated guidance
+    {
+        let mut registry = state.registry.write().await;
+        for (name, offering, ports) in services_needing_guidance {
+            if let Some(guidance) = build_guidance(state, &name, &offering, &ports) {
+                if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
+                    svc.guidance = Some(guidance);
+                    updated += 1;
+                    tracing::debug!(service = %name, "Backfilled guidance");
+                }
+            }
+        }
+    }
+
+    // Persist if we made changes
+    if updated > 0 {
+        if let Err(e) = state.persist_registry().await {
+            tracing::error!(error = ?e, "Failed to persist registry after guidance backfill");
+        } else {
+            tracing::info!(count = updated, "Guidance backfill complete, registry persisted");
+        }
+    }
+
+    updated
+}
 
 /// Execute single service installation in background
 ///
@@ -62,14 +290,15 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
         format!("Install {} (job: {})", offering, &job_id[..8])
     ));
 
-    emit_event(state, "info", format!("Starting installation: {}", offering), Some(job_id.to_string()));
+    emit_job_started(state, job_id, offering, "install");
     tracing::info!(job_id, offering, "Starting service installation");
 
-    emit_event(
+    emit_job_progress(
         state,
         "debug",
         format!("Resolving compiled offering config for {}", offering),
-        Some(job_id.to_string()),
+        job_id,
+        offering,
     );
 
     let compiled = match get_compiled_offering(state, offering).await {
@@ -80,12 +309,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
                 console::EventStatus::Failed,
                 format!("Offering not found: {}", offering)
             ));
-            emit_event(
-                state,
-                "error",
-                format!("Offering not found: {}", offering),
-                Some(job_id.to_string()),
-            );
+            emit_job_failed(state, job_id, offering, "Offering not found");
             // Remove Installing entry from registry
             remove_installing_entry(state, offering).await;
             let mut jobs = state.jobs.write().await;
@@ -98,12 +322,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
             return;
         }
         Err(e) => {
-            emit_event(
-                state,
-                "error",
-                format!("Failed to read offerings index for {}: {}", offering, e),
-                Some(job_id.to_string()),
-            );
+            emit_job_failed(state, job_id, offering, &format!("Failed to read offerings index: {}", e));
             // Remove Installing entry from registry
             remove_installing_entry(state, offering).await;
             let mut jobs = state.jobs.write().await;
@@ -128,12 +347,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
             console::EventStatus::Failed,
             format!("Compatibility: {}", offering)
         ));
-        emit_event(
-            state,
-            "error",
-            format!("Compatibility validation failed: {}", reason),
-            Some(job_id.to_string()),
-        );
+        emit_job_failed(state, job_id, offering, &format!("Compatibility validation failed: {}", reason));
 
         // Remove Installing entry from registry
         remove_installing_entry(state, offering).await;
@@ -149,27 +363,35 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
 
     match compiled.compatibility.decision.as_str() {
         "fallback" => {
-            emit_event(
+            emit_job_progress(
                 state,
-                "warning",
+                "warn",
                 format!(
                     "Compatibility fallback: {}",
                     compiled.compatibility.reason.clone().unwrap_or_default()
                 ),
-                Some(job_id.to_string()),
+                job_id,
+                offering,
             );
         }
         _ => {}
     }
 
+    // Extract values before install_service consumes compiled
+    let native_port = compiled.default_host_port();
+    let guidance = build_guidance(state, offering, offering, &compiled.ports);
+    let image_full = compiled.image.clone();
+    let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
+
     // Install via Docker
-    emit_event(
+    emit_job_progress(
         state,
         "info",
         format!("Pulling image: {}", compiled.image),
-        Some(job_id.to_string()),
+        job_id,
+        offering,
     );
-    let ports_for_docker = compiled.ports.clone();
+    let ports_for_docker = compiled.ports_vec();
     if let Err(e) = state
         .docker
         .install_service(
@@ -187,7 +409,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
             console::EventStatus::Failed,
             format!("Install failed: {}", offering)
         ));
-        emit_event(state, "error", format!("Installation failed for {}: {}", offering, e), Some(job_id.to_string()));
+        emit_job_failed(state, job_id, offering, &format!("Installation failed: {}", e));
         tracing::error!(job_id, offering, error = ?e, "Docker install failed");
         // Remove Installing entry from registry
         remove_installing_entry(state, offering).await;
@@ -200,10 +422,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
         return;
     }
 
-    emit_event(state, "info", format!("Creating container for {}", offering), Some(job_id.to_string()));
-
-    // Extract port info
-    let native_port = compiled.ports.first().map(|(host, _)| *host).unwrap_or(30000);
+    emit_job_progress(state, "info", format!("Creating container for {}", offering), job_id, offering);
 
     // Update existing registry entry (created with Installing status before job started)
     // Change status from Installing to Running and clear job_id
@@ -213,11 +432,12 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
             existing.status = ServiceStatus::Running;
             existing.health = ServiceHealthStatus::Healthy;
             existing.job_id = None;
-            existing.version = compiled.image.split(':').next_back().unwrap_or("latest").into();
+            existing.version = image_version.clone();
             existing.ports = Ports {
                 native: native_port,
                 agnostic: None,
             };
+            existing.guidance = guidance.clone();
             existing.offering_id.clone()
         } else {
             // Fallback: entry was somehow removed, recreate it
@@ -226,7 +446,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
                 offering_id: new_id.clone(),
                 name: offering.to_string(),
                 offering: offering.to_string(),
-                version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
+                version: image_version.clone(),
                 status: ServiceStatus::Running,
                 health: ServiceHealthStatus::Healthy,
                 ports: Ports {
@@ -236,6 +456,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
                 resources: None,
                 job_id: None,
                 sub_capabilities: Vec::new(),
+                guidance,
             };
             registry.push(info);
             new_id
@@ -252,10 +473,32 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
         &offering_id,
         offering,
         state.stone_name(),
-        &compiled.image,
+        &image_full,
     ));
 
-    emit_event(state, "info", format!("✓ Service {} started successfully", offering), Some(job_id.to_string()));
+    // Register scheduled tasks from manifest
+    if !compiled.tasks.is_empty() {
+        let task_store = TaskStore::new();
+        match task_store.register_tasks(&offering_id, offering, &compiled.tasks).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(
+                    offering = %offering,
+                    task_count = count,
+                    "Registered scheduled tasks"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    offering = %offering,
+                    error = ?e,
+                    "Failed to register scheduled tasks (non-fatal)"
+                );
+            }
+        }
+    }
+
+    emit_job_completed(state, job_id, offering);
 
     // Mark job as completed
     {
@@ -356,8 +599,14 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             continue;
         }
 
+        // Extract values before install_service consumes compiled
+        let native_port = compiled.default_host_port();
+        let guidance = build_guidance(state, &offering, &offering, &compiled.ports);
+        let image_full = compiled.image.clone();
+        let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
+
         // Install via Docker
-        let ports_for_docker = compiled.ports.clone();
+        let ports_for_docker = compiled.ports_vec();
         if let Err(e) = state
             .docker
             .install_service(
@@ -378,16 +627,13 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             continue;
         }
 
-        // Extract port info
-        let native_port = compiled.ports.first().map(|(host, _)| *host).unwrap_or(30000);
-
         // Add to registry
         let offering_id = generate_guidv7();
         let info = ServiceInfo {
             offering_id: offering_id.clone(),
             name: offering.clone(),
             offering: offering.clone(),
-            version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
+            version: image_version,
             status: ServiceStatus::Running,
             health: ServiceHealthStatus::Healthy,
             ports: Ports {
@@ -397,6 +643,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             resources: None,
             job_id: None,
             sub_capabilities: Vec::new(),
+            guidance,
         };
 
         {
@@ -418,7 +665,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             &offering_id,
             &offering,
             state.stone_name(),
-            &compiled.image,
+            &image_full,
         ));
 
         // Mark offering as completed

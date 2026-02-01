@@ -464,22 +464,24 @@ async fn find_services_in_topology_cache(
 
 /// Get default port from offering manifest
 ///
-/// Looks up the offering's manifest and returns the first port mapping.
+/// Looks up the offering's manifest and returns the default port mapping.
 /// Checks both OfferingManifest (for multi-mode) and SwEntry (for container templates).
 /// Returns 8080 as fallback if not found or has no ports.
 async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
     // First try OfferingManifest (multi-mode definitions)
     if let Some(manifest) = state.manifest_registry.get_offering_manifest(offering) {
-        if let Some((host_port, _)) = manifest.ports.first() {
-            return *host_port;
+        let port = manifest.default_host_port();
+        if port > 0 {
+            return port;
         }
     }
 
     // Then try SwEntry (container templates) - parse to get ports
     if let Some(entry) = state.manifest_registry.sw.get(offering) {
         if let Ok(template) = entry.parse_template() {
-            if let Some((host_port, _)) = template.ports.first() {
-                return *host_port;
+            let port = template.default_host_port();
+            if port != 30000 { // 30000 is the fallback default
+                return port;
             }
         }
     }

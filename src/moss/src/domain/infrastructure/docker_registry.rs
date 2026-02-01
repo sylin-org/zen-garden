@@ -85,44 +85,75 @@ impl InfrastructureHandler for DockerRegistryHandler {
             "Docker registry handler: syncing insecure-registries"
         );
 
-        // Read current daemon.json
+        // Smart merging algorithm:
+        // 1. Read previous garden registries from state file
+        // 2. User registries = current daemon - previous garden
+        // 3. Desired = user + new garden registries
+        //
+        // This preserves user-added registries while allowing garden to manage its own.
+
+        // Step 1: Read current state
         let current_registries = docker_config::read_insecure_registries().await?;
+        let previous_garden = docker_config::read_garden_registries().await;
 
-        // Compute desired state:
-        // - Keep existing registries that aren't garden-managed
-        // - Add all current garden registries
-        //
-        // For simplicity, we replace all insecure-registries with the garden list
-        // Users who need additional registries can add them and they'll be preserved
-        // on subsequent syncs (we only remove registries that were in the garden but are now gone)
+        // Step 2: Identify user-added registries (anything in daemon.json that wasn't garden-managed)
+        let user_registries: Vec<String> = current_registries
+            .iter()
+            .filter(|r| !previous_garden.contains(r))
+            .cloned()
+            .collect();
 
-        // For now, we simply set the garden registries as the insecure-registries list
-        // This is safe because:
-        // 1. Most users won't have manual insecure-registries configured
-        // 2. Garden registries are the primary use case for insecure registries in homelab
-        //
-        // TODO: Implement smarter merging that preserves user-added registries
+        tracing::debug!(
+            user_registries = ?user_registries,
+            previous_garden = ?previous_garden,
+            "Docker registry handler: identified user registries"
+        );
 
-        // Check if update needed
-        let mut desired_registries = garden_registries.clone();
+        // Step 3: Compute desired state (user + garden, deduplicated)
+        let mut desired_registries = user_registries.clone();
+        for reg in &garden_registries {
+            if !desired_registries.contains(reg) {
+                desired_registries.push(reg.clone());
+            }
+        }
         desired_registries.sort();
 
+        // Check if update needed
         let mut current_sorted = current_registries.clone();
         current_sorted.sort();
 
         if desired_registries == current_sorted {
+            // Even if no daemon.json change needed, update state file if garden registries changed
+            let mut previous_sorted = previous_garden.clone();
+            previous_sorted.sort();
+            let mut garden_sorted = garden_registries.clone();
+            garden_sorted.sort();
+
+            if previous_sorted != garden_sorted {
+                if let Err(e) = docker_config::write_garden_registries(&garden_registries).await {
+                    tracing::warn!(error = %e, "Failed to update garden registries state file");
+                }
+            }
+
             tracing::trace!("Docker registry handler: no changes needed");
             return Ok(());
         }
 
-        // Update daemon.json
-        let changed = docker_config::write_insecure_registries(&garden_registries).await?;
+        // Step 4: Update daemon.json with merged list
+        let changed = docker_config::write_insecure_registries(&desired_registries).await?;
 
         if changed {
             tracing::info!(
-                registries = ?garden_registries,
-                "Updated Docker daemon insecure-registries"
+                desired = ?desired_registries,
+                garden = ?garden_registries,
+                user = ?user_registries,
+                "Updated Docker daemon insecure-registries (preserving user registries)"
             );
+
+            // Update state file with current garden registries
+            if let Err(e) = docker_config::write_garden_registries(&garden_registries).await {
+                tracing::warn!(error = %e, "Failed to update garden registries state file");
+            }
 
             // Restart Docker daemon to apply changes
             if let Err(e) = docker_config::restart_docker_daemon().await {

@@ -10,6 +10,7 @@
 use anyhow::Result;
 use crate::infra::ManifestRegistry;
 use crate::domain::compatibility::{CompiledCompatibility, compile_compatibility};
+use garden_common::TaskDefinition;
 
 /// Compiled offering ready for API consumption
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -20,10 +21,49 @@ pub struct CompiledOffering {
     #[serde(default)]
     pub tags: Vec<String>,
     pub image: String, // effective image after compatibility evaluation
-    pub ports: Vec<(u16, u16)>,
+    /// Named ports: name -> (host_port, container_port)
+    /// Convention: "default" is the primary service port
+    pub ports: std::collections::HashMap<String, (u16, u16)>,
     pub environment: Vec<String>,
     pub volumes: Vec<(String, String)>,
     pub compatibility: CompiledCompatibility,
+    /// Scheduled tasks: name -> definition
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub tasks: std::collections::HashMap<String, TaskDefinition>,
+}
+
+impl CompiledOffering {
+    /// Get the default (primary) port mapping, if any
+    pub fn default_port(&self) -> Option<&(u16, u16)> {
+        self.ports.get("default")
+    }
+
+    /// Get the default host port (for registry/guidance)
+    pub fn default_host_port(&self) -> u16 {
+        self.default_port().map(|(host, _)| *host).unwrap_or(30000)
+    }
+
+    /// Get ports as a flat Vec for Docker (port order: default first, then sorted by name)
+    pub fn ports_vec(&self) -> Vec<(u16, u16)> {
+        let mut ports = Vec::with_capacity(self.ports.len());
+
+        // Default port first (if present)
+        if let Some(p) = self.ports.get("default") {
+            ports.push(*p);
+        }
+
+        // Then other ports sorted by name
+        let mut other_ports: Vec<_> = self.ports.iter()
+            .filter(|(k, _)| *k != "default")
+            .collect();
+        other_ports.sort_by_key(|(k, _)| *k);
+
+        for (_, port) in other_ports {
+            ports.push(*port);
+        }
+
+        ports
+    }
 }
 
 /// Fingerprint for cache invalidation
@@ -230,6 +270,7 @@ pub fn rebuild_offerings_index(registry: &ManifestRegistry) -> Result<OfferingsI
             environment: template.environment,
             volumes: template.volumes,
             compatibility,
+            tasks: template.tasks,
         });
     }
 

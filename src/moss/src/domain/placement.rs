@@ -462,7 +462,7 @@ async fn fetch_remote_offerings(
             description: view.description,
             tags: view.tags,
             image: view.image,
-            ports: vec![], // Not included in OfferingView
+            ports: std::collections::HashMap::new(), // Not included in OfferingView
             environment: vec![], // Not included in OfferingView
             volumes: vec![], // Not included in OfferingView
             compatibility: crate::domain::compatibility::CompiledCompatibility {
@@ -472,6 +472,7 @@ async fn fetch_remote_offerings(
                 fallback_image: None,
                 suggestion: None,
             },
+            tasks: std::collections::HashMap::new(), // Not included in OfferingView
         })
         .collect();
     

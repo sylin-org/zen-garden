@@ -67,7 +67,7 @@ pub async fn reconcile_services(
             continue;
         }
 
-        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering).await {
+        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
             Ok(Some(info)) => {
                 tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
                 let mut reg = state.registry.write().await;

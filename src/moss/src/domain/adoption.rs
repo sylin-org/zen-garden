@@ -14,7 +14,7 @@ use crate::domain::{
 use crate::docker::DockerManager;
 use crate::infra::ManifestRegistry;
 use garden_common::utils::ids::generate_guidv7;
-use garden_common::{Ports, ServiceHealthStatus, ServiceStatus};
+use garden_common::{OfferingGuidance, Ports, ServiceHealthStatus, ServiceStatus};
 
 /// Adopt a container for a specific offering into the registry
 ///
@@ -38,15 +38,21 @@ pub async fn adopt_offering_container(
     docker: &DockerManager,
     manifest_registry: &ManifestRegistry,
     offering: &str,
+    stone_name: &str,
 ) -> anyhow::Result<Option<ServiceInfo>> {
     // Only adopt if the offering maps to a known template (valid manifest/template).
-    let mut template = match manifest_registry.sw.get(offering) {
-        Some(entry) => match entry.parse_template() {
-            Ok(t) => t,
-            Err(_) => return Ok(None),
-        },
+    let entry = match manifest_registry.sw.get(offering) {
+        Some(e) => e,
         None => return Ok(None),
     };
+
+    let mut template = match entry.parse_template() {
+        Ok(t) => t,
+        Err(_) => return Ok(None),
+    };
+
+    // Store guidance template for later (will be processed after we know the port)
+    let guidance_template = entry.guidance.clone();
 
     // Compute expected image based on compatibility rules.
     if let Some(rules) = &template.compatibility {
@@ -83,12 +89,44 @@ pub async fn adopt_offering_container(
         health = ServiceHealthStatus::Degraded;
     }
 
-    let native_port = template.ports.first().map(|(host, _)| *host).unwrap_or(30000);
+    let native_port = template.default_host_port();
     let version = actual_image
         .split(':')
         .next_back()
         .unwrap_or("latest")
         .to_string();
+
+    // Build guidance with template substitution (if guidance template exists)
+    let guidance = guidance_template.map(|tmpl| {
+        // Substitute named ports: "default" → {{port}}, others → {{<name>-port}}
+        let mut content = tmpl.clone();
+        for (port_name, (host_port, _)) in &template.ports {
+            let placeholder = if port_name == "default" {
+                "{{port}}".to_string()
+            } else {
+                format!("{{{{{}-port}}}}", port_name)
+            };
+            content = content.replace(&placeholder, &host_port.to_string());
+        }
+        content = content
+            .replace("{{server-name}}", stone_name)
+            .replace("{{offering}}", offering)
+            .replace("{{name}}", offering);
+
+        // Build variables map for API consumers
+        let mut variables = std::collections::HashMap::new();
+        variables.insert("port".to_string(), native_port.to_string());
+        for (port_name, (host_port, _)) in &template.ports {
+            if port_name != "default" {
+                variables.insert(format!("{}-port", port_name), host_port.to_string());
+            }
+        }
+        variables.insert("server-name".to_string(), stone_name.to_string());
+        variables.insert("offering".to_string(), offering.to_string());
+        variables.insert("name".to_string(), offering.to_string());
+
+        OfferingGuidance { content, variables }
+    });
 
     let adopted = ServiceInfo {
         offering_id: generate_guidv7(),
@@ -108,6 +146,7 @@ pub async fn adopt_offering_container(
         resources: None,
         job_id: None,
         sub_capabilities: Vec::new(),
+        guidance,
     };
 
     Ok(Some(adopted))
@@ -158,7 +197,7 @@ pub async fn adopt_existing_containers(
             continue;
         }
 
-        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering).await {
+        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
             Ok(Some(info)) => {
                 tracing::info!(offering = %offering, "Adopting existing zen-offering container into registry");
                 adopted.push(info);

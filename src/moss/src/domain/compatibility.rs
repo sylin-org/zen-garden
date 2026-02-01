@@ -17,6 +17,10 @@ pub struct CompatCheckCapabilities {
     pub architecture: Option<String>,
     pub total_memory_mb: Option<u64>,
 
+    // OS/Platform capabilities
+    /// OS family: "linux", "windows", "macos"
+    pub os_family: String,
+
     // GPU/AI capabilities
     pub has_cuda: bool,
     pub has_rocm: bool,
@@ -83,6 +87,7 @@ pub fn get_current_compat_capabilities() -> CompatCheckCapabilities {
         cpu_features: Some(cpu_features),
         architecture: Some(architecture),
         total_memory_mb,
+        os_family: std::env::consts::OS.to_string(),
         has_cuda,
         has_rocm,
         has_directml,
@@ -196,6 +201,23 @@ pub fn evaluate_compatibility(
                 .map(|arch| architectures.contains(arch))
                 .unwrap_or(false);
             matches &= ok;
+        }
+
+        // OS/Platform checks
+        if let Some(os_families) = &condition.os_family {
+            // Match if current OS is in the allowed list
+            let ok = os_families
+                .iter()
+                .any(|os| os.to_lowercase() == capabilities.os_family.to_lowercase());
+            matches &= ok;
+        }
+
+        if let Some(os_families_not) = &condition.os_family_not {
+            // Match (trigger rule) if current OS is in the exclusion list
+            let os_is_excluded = os_families_not
+                .iter()
+                .any(|os| os.to_lowercase() == capabilities.os_family.to_lowercase());
+            matches &= os_is_excluded;
         }
 
         if let Some(max_memory_mb) = condition.memory_mb_less_than {
@@ -325,6 +347,7 @@ mod tests {
             cpu_features: Some(vec!["avx2".into()]),
             architecture: Some("x86_64".into()),
             total_memory_mb: Some(16384),
+            os_family: "linux".into(),
             has_cuda: false,
             has_rocm: false,
             has_directml: false,

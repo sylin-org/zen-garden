@@ -186,7 +186,8 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
     let os_version = metrics::detect_os_version();
     let kernel_version = metrics::detect_kernel_version();
     let swap_mb = metrics::detect_swap();
-    
+    let docker_version = state.docker.get_docker_version().await.ok();
+
     HardwareCapabilities {
         stone_id: Some(state.stone_id.clone()),
         stone_name: state.stone_name.clone(),
@@ -209,7 +210,7 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
             system_product: None,
         },
         runtime: Some(RuntimeInfo {
-            docker_version: None, // TODO: Detect Docker version
+            docker_version,
             os: format!("{}/{}", std::env::consts::OS, os_version.unwrap_or_else(|| "Unknown".to_string())),
             kernel: kernel_version,
         }),

@@ -58,7 +58,23 @@ fn detect_system_manufacturer() -> Option<String> {
 
 #[cfg(not(target_os = "linux"))]
 fn detect_system_manufacturer() -> Option<String> {
-    None // TODO: WMI query for Windows
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command",
+                "(Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer"])
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !result.is_empty() {
+                return Some(result);
+            }
+        }
+    }
+    None
 }
 
 /// Detect system product name from DMI/SMBIOS
@@ -75,7 +91,23 @@ fn detect_system_product() -> Option<String> {
 
 #[cfg(not(target_os = "linux"))]
 fn detect_system_product() -> Option<String> {
-    None // TODO: WMI query for Windows
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command",
+                "(Get-CimInstance -ClassName Win32_ComputerSystem).Model"])
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !result.is_empty() {
+                return Some(result);
+            }
+        }
+    }
+    None
 }
 
 /// Load cached hardware capabilities from disk

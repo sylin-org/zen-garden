@@ -47,7 +47,7 @@ impl ListCommand {
 #[async_trait]
 impl Command for ListCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url("services")?;
+        let url = ctx.api_v1_url("stone/services")?;
         let response = ctx.client.get(&url).send().await?;
 
         let api_response: ApiResponse<ServiceDiscoveryResponse> = response

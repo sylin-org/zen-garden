@@ -29,7 +29,7 @@ impl BorrowCommand {
 #[async_trait]
 impl Command for BorrowCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url("adoption/borrow")?;
+        let url = ctx.api_v1_url("stone/offerings/borrow")?;
         let response = ctx
             .client
             .post(&url)

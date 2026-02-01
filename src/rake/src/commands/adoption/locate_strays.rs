@@ -23,7 +23,7 @@ impl LocateStraysCommand {
 #[async_trait]
 impl Command for LocateStraysCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url("offerings/adoptable")?;
+        let url = ctx.api_v1_url("stone/offerings/adoptable")?;
         let response = ctx.client.get(&url).send().await?;
 
         if response.status().is_success() {

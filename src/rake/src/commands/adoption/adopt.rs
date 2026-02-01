@@ -27,7 +27,7 @@ impl AdoptCommand {
 #[async_trait]
 impl Command for AdoptCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url(&format!("offerings/{}/adopt", self.container))?;
+        let url = ctx.api_v1_url(&format!("stone/offerings/{}/adopt", self.container))?;
         let response = ctx
             .client
             .post(&url)

@@ -8,7 +8,7 @@ use crate::command_manifest::cmd::{self, tend_target};
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::discovery;
-use crate::tending::{self, TendingState};
+use crate::tending;
 use async_trait::async_trait;
 use garden_common::{GardenApiResponse, HardwareCapabilities};
 use std::time::Duration;
@@ -45,6 +45,15 @@ impl Command for TendCommand {
                     // Tend to localhost - validate moss is running
                     let local_endpoint =
                         format!("http://127.0.0.1:{}", garden_common::ports::MOSS_HTTP);
+
+                    // Fast-skip: check if already tending to localhost
+                    if let Ok(current) = tending::read_tending() {
+                        if current.endpoint == local_endpoint {
+                            println!("Already tending to: {} (localhost)", current.stone_name);
+                            return Ok(());
+                        }
+                    }
+
                     let health_url = format!("{}/health", local_endpoint);
 
                     match ctx
@@ -67,10 +76,10 @@ impl Command for TendCommand {
                                 .await?;
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), local_endpoint.clone())?;
-                            
+
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &local_endpoint).await;
-                            
+
                             println!("Now tending to: {} (localhost)", caps.stone_name);
                         }
                         _ => {
@@ -262,66 +271,31 @@ impl Command for TendCommand {
                 }
             }
         } else {
-            // Show current tending state - auto-discover if needed
-            let tending_result: anyhow::Result<TendingState> = tending::read_tending();
-            match tending_result {
+            // Show current tending state - just read and display, no connectivity check
+            match tending::read_tending() {
                 Ok(state) => {
-                    // Tending persists until cleared or stone unreachable - verify stone is reachable
-                    let health_url = format!("{}/health", state.endpoint.trim_end_matches('/'));
-                    match ctx
-                        .client
-                        .get(&health_url)
-                        .timeout(Duration::from_millis(500))
-                        .send()
-                        .await
-                    {
-                        Ok(resp) if resp.status().is_success() => {
-                            if self.verbose {
-                                println!(
-                                    "Tending to: {}.local ({})",
-                                    state.stone_name, state.endpoint
-                                );
-                                println!("Last activity: {} seconds ago", state.age_seconds());
-                                println!("Status: Active (persistent, no TTL)");
-                            } else {
-                                println!(
-                                    "{}.local ({})",
-                                    state.stone_name,
-                                    state.endpoint.trim_start_matches("http://")
-                                );
-                            }
-                        }
-                        _ => {
-                            // Stone no longer reachable - try to rediscover
-                            tracing::debug!(
-                                "Tended stone {} no longer reachable, attempting rediscovery",
-                                state.stone_name
-                            );
-                            if let Err(e) = auto_discover_and_tend(&ctx.client).await {
-                                return Err(anyhow::anyhow!(
-                                    "Previously tended stone '{}' is no longer reachable.\n\n{}\n\n\
-                                    Options:\n\
-                                    • Auto-discover stone: garden-rake tend auto\n\
-                                    • Explicit endpoint: garden-rake tend http://<ip>:7185",
-                                    state.stone_name,
-                                    e
-                                ));
-                            }
-                        }
+                    if self.verbose {
+                        println!(
+                            "Tending to: {}.local ({})",
+                            state.stone_name, state.endpoint
+                        );
+                        println!("Last updated: {} seconds ago", state.age_seconds());
+                    } else {
+                        println!(
+                            "{}.local ({})",
+                            state.stone_name,
+                            state.endpoint.trim_start_matches("http://")
+                        );
                     }
                 }
                 Err(_) => {
-                    // No cached state - auto-discover
-                    tracing::debug!("No tending state found, attempting auto-discovery");
-                    if let Err(e) = auto_discover_and_tend(&ctx.client).await {
-                        return Err(anyhow::anyhow!(
-                            "Not tending to any stone.\n\n{}\n\n\
-                            Options:\n\
-                            • Auto-discover stone: garden-rake tend auto\n\
-                            • Explicit endpoint: garden-rake tend http://<ip>:7185",
-                            e
-                        ));
-                    }
+                    return Err(anyhow::anyhow!(
+                        "Not tending to any stone.\n\n\
+                        Options:\n\
+                        • Auto-discover stone: garden-rake tend auto\n\
+                        • Tend by name: garden-rake tend <stone-name>\n\
+                        • Explicit endpoint: garden-rake tend http://<ip>:7185"
+                    ));
                 }
             }
         }
@@ -339,68 +313,6 @@ impl Command for TendCommand {
 
     fn name(&self) -> &'static str {
         cmd::TEND
-    }
-}
-
-/// Helper function to auto-discover and tend to a stone
-async fn auto_discover_and_tend(client: &reqwest::Client) -> anyhow::Result<()> {
-    // Try localhost first
-    let local_endpoint = format!("http://127.0.0.1:{}", garden_common::ports::MOSS_HTTP);
-    let health_url = format!("{}/health", local_endpoint);
-
-    if let Ok(resp) = client
-        .get(&health_url)
-        .timeout(Duration::from_millis(200))
-        .send()
-        .await
-    {
-        if resp.status().is_success() {
-            // Get stone name from capabilities
-            let caps_url = format!("{}/api/v1/stone/capabilities", local_endpoint);
-            if let Ok(response) = client
-                .get(&caps_url)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await
-            {
-                if let Ok(response) = response
-                    .json::<GardenApiResponse<HardwareCapabilities>>()
-                    .await
-                {
-                    let caps = response.data;
-                    tending::write_tending(caps.stone_name.clone(), local_endpoint.clone())?;
-                    println!("{}.local (localhost)", caps.stone_name);
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // Try network discovery
-    match discovery::discover_moss().await {
-        Ok(endpoint) => {
-            // Get capabilities for stone name
-            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
-            let response: GardenApiResponse<HardwareCapabilities> = client
-                .get(&caps_url)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await?
-                .json()
-                .await?;
-            let caps = response.data;
-            tending::write_tending(caps.stone_name.clone(), endpoint.clone())?;
-            println!(
-                "{}.local ({})",
-                caps.stone_name,
-                endpoint.trim_start_matches("http://")
-            );
-            Ok(())
-        }
-        Err(e) => Err(anyhow::anyhow!(
-            "No stones found on network or localhost: {}",
-            e
-        )),
     }
 }
 

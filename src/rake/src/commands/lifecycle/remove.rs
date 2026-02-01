@@ -62,7 +62,7 @@ impl Command for RemoveCommand {
             println!();
         }
 
-        let url = ctx.api_v1_url(&format!("services/{}", self.service))?;
+        let url = ctx.api_v1_url(&format!("stone/services/{}", self.service))?;
         let response = ctx.client.delete(&url).send().await?;
         let status = response.status();
 

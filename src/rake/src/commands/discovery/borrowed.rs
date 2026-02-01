@@ -23,7 +23,7 @@ impl BorrowedCommand {
 #[async_trait]
 impl Command for BorrowedCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url("offerings/borrowed")?;
+        let url = ctx.api_v1_url("stone/offerings/borrowed")?;
         let response = ctx.client.get(&url).send().await?;
 
         if response.status().is_success() {

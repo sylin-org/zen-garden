@@ -24,7 +24,7 @@ impl ReturnCommand {
 #[async_trait]
 impl Command for ReturnCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url(&format!("adoption/borrow/{}", self.name))?;
+        let url = ctx.api_v1_url(&format!("stone/offerings/borrow/{}", self.name))?;
         let response = ctx.client.delete(&url).send().await?;
         let status = response.status();
 

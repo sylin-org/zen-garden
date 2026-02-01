@@ -440,7 +440,7 @@ impl FindCommand {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let sanitized_query = sanitize_query(&self.query).into_value();
-        let mut url = ctx.api_v1_url("services")?;
+        let mut url = ctx.api_v1_url("garden/services")?;
         url = format!("{}?q={}&fresh=true", url, urlencoding::encode(&sanitized_query));
 
         let response = ctx

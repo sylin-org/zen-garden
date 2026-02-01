@@ -23,7 +23,7 @@ impl AdoptedCommand {
 #[async_trait]
 impl Command for AdoptedCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url("offerings/adopted")?;
+        let url = ctx.api_v1_url("stone/offerings/adopted")?;
         let response = ctx.client.get(&url).send().await?;
 
         if response.status().is_success() {

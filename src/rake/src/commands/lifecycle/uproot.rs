@@ -57,7 +57,7 @@ impl Command for UprootCommand {
             println!();
         }
 
-        let url = ctx.api_v1_url(&format!("services/{}/destroy", self.service))?;
+        let url = ctx.api_v1_url(&format!("stone/services/{}/destroy", self.service))?;
         let response = ctx.client.post(&url).send().await?;
         let status = response.status();
 

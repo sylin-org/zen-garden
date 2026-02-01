@@ -299,7 +299,7 @@ impl EventListener for TimerListener {
     }
 
     fn name(&self) -> &'static str {
-        "timer"
+        super::names::TIMER
     }
 }
 

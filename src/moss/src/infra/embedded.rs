@@ -225,6 +225,16 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
     
     // Phase 1: Load all from embedded assets
     tracing::info!("Loading manifests from embedded assets...");
+
+    // Debug: list all embedded files with guidance extension
+    let guidance_files: Vec<_> = EmbeddedManifests::iter()
+        .filter(|p| p.ends_with(".guidance.md"))
+        .collect();
+    tracing::info!(
+        count = guidance_files.len(),
+        files = ?guidance_files,
+        "Embedded guidance files found"
+    );
     
     for path in EmbeddedManifests::iter() {
         let path_str = path.as_ref();
@@ -243,25 +253,48 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
         // Try to load compatibility file
         let compat_path = path_str.replace(".snippet.yaml", ".compatibility.yaml");
         let compat_content = EmbeddedManifests::get_string(&compat_path);
-        
+
         // Try to load frontmatter file
         let frontmatter_path = path_str.replace(".snippet.yaml", ".frontmatter.json");
         let frontmatter_content = EmbeddedManifests::get_string(&frontmatter_path);
-        
+
+        // Try to load guidance file
+        let guidance_path = path_str.replace(".snippet.yaml", ".guidance.md");
+        let guidance_content = EmbeddedManifests::get_string(&guidance_path);
+
+        if guidance_content.is_none() {
+            tracing::debug!(
+                snippet_path = %path_str,
+                guidance_path = %guidance_path,
+                "No guidance file found for manifest"
+            );
+        }
+
         // Parse and add the entry
         match SwManifests::load_entry_from_content(
             path_str,
             &snippet_content,
             compat_content.as_deref(),
             frontmatter_content.as_deref(),
+            guidance_content.as_deref(),
         ) {
             Ok(entry) => {
+                let has_guidance = entry.guidance.is_some();
                 tracing::debug!(
                     offering = %entry.name,
                     category = %entry.category,
+                    has_guidance = has_guidance,
+                    guidance_path = %guidance_path,
                     source = "embedded",
                     "Loaded manifest"
                 );
+                if !has_guidance && guidance_content.is_some() {
+                    tracing::warn!(
+                        offering = %entry.name,
+                        guidance_path = %guidance_path,
+                        "Guidance content found but not loaded into entry"
+                    );
+                }
                 manifests.upsert_entry(entry);
                 embedded_count += 1;
             }
@@ -317,28 +350,52 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
             // Try to load compatibility file
             let compat_path = path.with_file_name(format!("{}.compatibility.yaml", offering_name));
             let compat_content = std::fs::read_to_string(&compat_path).ok();
-            
+
             // Try to load frontmatter file
             let frontmatter_path = path.with_file_name(format!("{}.frontmatter.json", offering_name));
             let frontmatter_content = std::fs::read_to_string(&frontmatter_path).ok();
-            
+
+            // Try to load guidance file
+            let guidance_path = path.with_file_name(format!("{}.guidance.md", offering_name));
+            let guidance_content = std::fs::read_to_string(&guidance_path).ok();
+
             // Build relative path for load_entry_from_content
             let relative_path = format!("sw/{}/{}.snippet.yaml", category, offering_name);
-            
+
             match SwManifests::load_entry_from_content(
                 &relative_path,
                 &snippet_content,
                 compat_content.as_deref(),
                 frontmatter_content.as_deref(),
+                guidance_content.as_deref(),
             ) {
-                Ok(sw_entry) => {
+                Ok(mut sw_entry) => {
+                    // Preserve embedded fields when filesystem doesn't provide them
+                    // This allows filesystem to override specific files while keeping
+                    // embedded defaults for files not present on disk
+                    if let Some(existing) = manifests.get(offering_name) {
+                        if sw_entry.guidance.is_none() && existing.guidance.is_some() {
+                            sw_entry.guidance = existing.guidance.clone();
+                            tracing::debug!(
+                                offering = %offering_name,
+                                "Preserved embedded guidance during filesystem overlay"
+                            );
+                        }
+                        if sw_entry.compatibility.is_none() && existing.compatibility.is_some() {
+                            sw_entry.compatibility = existing.compatibility.clone();
+                        }
+                        if sw_entry.frontmatter.is_none() && existing.frontmatter.is_some() {
+                            sw_entry.frontmatter = existing.frontmatter.clone();
+                        }
+                    }
+
                     let was_override = manifests.upsert_entry(sw_entry);
                     if was_override {
                         tracing::debug!(
                             offering = %offering_name,
                             category = %category,
                             source = "filesystem",
-                            "Overwrote embedded manifest"
+                            "Overlaid embedded manifest (preserved missing fields)"
                         );
                         fs_override_count += 1;
                     } else {

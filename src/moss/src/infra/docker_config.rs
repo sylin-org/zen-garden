@@ -242,6 +242,50 @@ async fn restart_docker_windows() -> Result<()> {
     Ok(())
 }
 
+// ============================================================================
+// Garden Registry State Tracking
+// ============================================================================
+
+/// Get the path to the garden registries state file
+fn garden_registries_path() -> PathBuf {
+    PathBuf::from(garden_common::paths::data_dir()).join("garden-registries.json")
+}
+
+/// Read the list of garden-managed registries from state file
+///
+/// Returns an empty list if the file doesn't exist or is invalid.
+pub async fn read_garden_registries() -> Vec<String> {
+    let path = garden_registries_path();
+
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or_default()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Write the list of garden-managed registries to state file
+pub async fn write_garden_registries(registries: &[String]) -> Result<()> {
+    let path = garden_registries_path();
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+    }
+
+    let content = serde_json::to_string_pretty(registries)
+        .context("Failed to serialize garden registries")?;
+
+    tokio::fs::write(&path, content)
+        .await
+        .with_context(|| format!("Failed to write {}", path.display()))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

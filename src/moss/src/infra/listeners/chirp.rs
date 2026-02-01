@@ -91,7 +91,7 @@ impl EventListener for ChirpListener {
     }
 
     fn name(&self) -> &'static str {
-        "chirp"
+        super::names::CHIRP
     }
 }
 

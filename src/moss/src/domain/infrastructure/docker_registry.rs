@@ -6,7 +6,7 @@
 //! ## Matching Logic
 //!
 //! Matches offerings that are container registries:
-//! - By name: "registry", "zot", "harbor"
+//! - By name: "registry", "zot"
 //! - By tag: category "devops" with tag "container-registry"
 //!
 //! ## Actions
@@ -28,7 +28,7 @@ use super::{InfrastructureHandler, OfferingInstance};
 use crate::infra::docker_config;
 
 /// Known container registry offering names
-const REGISTRY_OFFERINGS: &[&str] = &["registry", "zot", "harbor"];
+const REGISTRY_OFFERINGS: &[&str] = &["registry", "zot"];
 
 /// Tag that identifies container registries in devops category
 const CONTAINER_REGISTRY_TAG: &str = "container-registry";
@@ -38,7 +38,6 @@ fn default_port(offering: &str) -> u16 {
     match offering {
         "registry" => 5000,
         "zot" => 5000,
-        "harbor" => 80, // Harbor uses 80/443 by default
         _ => 5000,
     }
 }
@@ -183,7 +182,6 @@ mod tests {
 
         assert!(handler.matches("registry", "devops", &[]));
         assert!(handler.matches("zot", "devops", &[]));
-        assert!(handler.matches("harbor", "devops", &[]));
         assert!(!handler.matches("mongodb", "data", &[]));
     }
 
@@ -229,22 +227,12 @@ mod tests {
             handler.build_endpoint(&instance),
             Some("192.168.1.100:5000".to_string())
         );
-
-        let harbor_instance = OfferingInstance {
-            offering: "harbor".to_string(),
-            ..instance
-        };
-        assert_eq!(
-            handler.build_endpoint(&harbor_instance),
-            Some("192.168.1.100:80".to_string())
-        );
     }
 
     #[test]
     fn test_default_ports() {
         assert_eq!(default_port("registry"), 5000);
         assert_eq!(default_port("zot"), 5000);
-        assert_eq!(default_port("harbor"), 80);
         assert_eq!(default_port("unknown"), 5000);
     }
 }

@@ -13,7 +13,7 @@
 //!
 //! ## Example: Docker Registry Handler
 //!
-//! When a container registry (registry, zot, harbor) is planted anywhere in the garden,
+//! When a container registry (registry, zot) is planted anywhere in the garden,
 //! all Stones should configure their local Docker daemon to trust that registry as an
 //! insecure source. The handler:
 //! 1. Matches offerings by name or category+tag

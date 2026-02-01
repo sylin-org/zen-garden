@@ -86,6 +86,7 @@ impl TimerConfig {
     }
 
     /// Format interval for Task Scheduler (minutes)
+    #[cfg(target_os = "windows")]
     fn task_scheduler_minutes(&self) -> u64 {
         self.interval.as_secs() / 60
     }

@@ -638,6 +638,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
 }
 
 /// Basic hot-plug detection without mount tracking (used on non-Linux)
+#[cfg(not(target_os = "linux"))]
 fn start_seedbank_hotplug_detection_basic(state: AppState) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));

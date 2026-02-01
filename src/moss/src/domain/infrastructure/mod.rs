@@ -230,10 +230,6 @@ mod tests {
                 sync_count: AtomicUsize::new(0),
             }
         }
-
-        fn sync_count(&self) -> usize {
-            self.sync_count.load(Ordering::SeqCst)
-        }
     }
 
     #[async_trait]

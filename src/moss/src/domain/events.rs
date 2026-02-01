@@ -30,6 +30,8 @@ pub enum DomainEvent {
     Storage(StorageEvent),
     /// Stone-level events (tended, health, load)
     Stone(StoneEvent),
+    /// Job events (installation/removal progress)
+    Job(JobEvent),
 }
 
 impl DomainEvent {
@@ -39,6 +41,7 @@ impl DomainEvent {
             Self::Offering(e) => e.event_type(),
             Self::Storage(e) => e.event_type(),
             Self::Stone(e) => e.event_type(),
+            Self::Job(e) => e.event_type(),
         }
     }
 
@@ -48,6 +51,7 @@ impl DomainEvent {
             Self::Offering(e) => e.to_message(),
             Self::Storage(e) => e.to_message(),
             Self::Stone(e) => e.to_message(),
+            Self::Job(e) => e.to_message(),
         }
     }
 
@@ -57,6 +61,7 @@ impl DomainEvent {
             Self::Offering(e) => e.should_chirp(),
             Self::Storage(_) => false, // Storage is local-only
             Self::Stone(_) => false,   // Stone events are local-only
+            Self::Job(_) => false,     // Job progress is local-only
         }
     }
 }
@@ -77,6 +82,140 @@ impl From<StorageEvent> for DomainEvent {
 impl From<StoneEvent> for DomainEvent {
     fn from(e: StoneEvent) -> Self {
         Self::Stone(e)
+    }
+}
+
+impl From<JobEvent> for DomainEvent {
+    fn from(e: JobEvent) -> Self {
+        Self::Job(e)
+    }
+}
+
+// ============================================================================
+// Job Events
+// ============================================================================
+
+/// Job-related events (installation, removal, updates)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum JobEvent {
+    /// Job started
+    Started {
+        job_id: String,
+        offering: String,
+        operation: String, // "install", "remove", "update"
+        timestamp: DateTime<Utc>,
+    },
+    /// Job progress update
+    Progress {
+        job_id: String,
+        offering: String,
+        message: String,
+        level: String, // "info", "warn", "error", "debug"
+        timestamp: DateTime<Utc>,
+    },
+    /// Job completed successfully
+    Completed {
+        job_id: String,
+        offering: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Job failed
+    Failed {
+        job_id: String,
+        offering: String,
+        error: String,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl JobEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::Started { .. } => event_types::JOB_STARTED,
+            Self::Progress { .. } => event_types::JOB_PROGRESS,
+            Self::Completed { .. } => event_types::JOB_COMPLETED,
+            Self::Failed { .. } => event_types::JOB_FAILED,
+        }
+    }
+
+    pub fn to_message(&self) -> String {
+        match self {
+            Self::Started { offering, operation, .. } => {
+                format!("Job started: {} {}", operation, offering)
+            }
+            Self::Progress { message, .. } => message.clone(),
+            Self::Completed { offering, .. } => {
+                format!("Job completed: {}", offering)
+            }
+            Self::Failed { offering, error, .. } => {
+                format!("Job failed: {} - {}", offering, error)
+            }
+        }
+    }
+
+    pub fn job_id(&self) -> &str {
+        match self {
+            Self::Started { job_id, .. } => job_id,
+            Self::Progress { job_id, .. } => job_id,
+            Self::Completed { job_id, .. } => job_id,
+            Self::Failed { job_id, .. } => job_id,
+        }
+    }
+
+    pub fn offering(&self) -> &str {
+        match self {
+            Self::Started { offering, .. } => offering,
+            Self::Progress { offering, .. } => offering,
+            Self::Completed { offering, .. } => offering,
+            Self::Failed { offering, .. } => offering,
+        }
+    }
+
+    pub fn level(&self) -> &str {
+        match self {
+            Self::Started { .. } => "info",
+            Self::Progress { level, .. } => level,
+            Self::Completed { .. } => "info",
+            Self::Failed { .. } => "error",
+        }
+    }
+
+    // Builder helpers
+    pub fn started(job_id: impl Into<String>, offering: impl Into<String>, operation: impl Into<String>) -> Self {
+        Self::Started {
+            job_id: job_id.into(),
+            offering: offering.into(),
+            operation: operation.into(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn progress(job_id: impl Into<String>, offering: impl Into<String>, message: impl Into<String>, level: impl Into<String>) -> Self {
+        Self::Progress {
+            job_id: job_id.into(),
+            offering: offering.into(),
+            message: message.into(),
+            level: level.into(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn completed(job_id: impl Into<String>, offering: impl Into<String>) -> Self {
+        Self::Completed {
+            job_id: job_id.into(),
+            offering: offering.into(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn failed(job_id: impl Into<String>, offering: impl Into<String>, error: impl Into<String>) -> Self {
+        Self::Failed {
+            job_id: job_id.into(),
+            offering: offering.into(),
+            error: error.into(),
+            timestamp: Utc::now(),
+        }
     }
 }
 
@@ -175,7 +314,7 @@ impl StorageEvent {
 // Stone Events
 // ============================================================================
 
-/// Stone-level events (tended, health, load)
+/// Stone-level events (tended, health, load, network)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StoneEvent {
@@ -199,6 +338,13 @@ pub enum StoneEvent {
         memory_percent: f64,
         timestamp: DateTime<Utc>,
     },
+    /// Network became ready (valid LAN IP detected)
+    /// Triggers immediate chirp announcement and mDNS registration.
+    NetworkReady {
+        ip: String,
+        interface: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl StoneEvent {
@@ -207,6 +353,7 @@ impl StoneEvent {
             Self::Tended { .. } => event_types::STONE_TENDED,
             Self::HealthChanged { .. } => event_types::STONE_HEALTH_CHANGED,
             Self::LoadUpdated { .. } => event_types::STONE_LOAD_UPDATED,
+            Self::NetworkReady { .. } => event_types::STONE_NETWORK_READY,
         }
     }
 
@@ -217,6 +364,7 @@ impl StoneEvent {
             Self::LoadUpdated { cpu_percent, memory_percent, .. } => {
                 format!("Stone load: CPU {:.0}%, Memory {:.0}%", cpu_percent, memory_percent)
             }
+            Self::NetworkReady { ip, .. } => format!("Network ready: {}", ip),
         }
     }
 
@@ -243,6 +391,14 @@ impl StoneEvent {
         Self::LoadUpdated {
             cpu_percent,
             memory_percent,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn network_ready(ip: impl Into<String>, interface: Option<String>) -> Self {
+        Self::NetworkReady {
+            ip: ip.into(),
+            interface,
             timestamp: Utc::now(),
         }
     }

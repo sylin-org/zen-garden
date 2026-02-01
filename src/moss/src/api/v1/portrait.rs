@@ -35,6 +35,12 @@ pub struct PortraitIdentity {
     pub uptime: String,
     /// Moss daemon uptime - how long the daemon has been running
     pub moss_uptime: String,
+    /// Hardware manufacturer (e.g., "Dell Inc.")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    /// Hardware model (e.g., "Wyse 5070")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// CPU metrics for foundation
@@ -60,12 +66,27 @@ pub struct FoundationDisk {
     pub percent: f32,
 }
 
+/// Network metrics for foundation
+#[derive(Debug, Clone, Serialize)]
+pub struct FoundationNetwork {
+    /// Total bytes received across all interfaces
+    pub rx_bytes: u64,
+    /// Total bytes transmitted across all interfaces
+    pub tx_bytes: u64,
+    /// Human-readable received bytes (e.g., "1.5 GB")
+    pub rx_friendly: String,
+    /// Human-readable transmitted bytes (e.g., "500 MB")
+    pub tx_friendly: String,
+}
+
 /// Foundation metrics section
 #[derive(Debug, Clone, Serialize)]
 pub struct PortraitFoundation {
     pub cpu: FoundationCpu,
     pub memory: FoundationMemory,
     pub disk: FoundationDisk,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<FoundationNetwork>,
 }
 
 /// Offering entry
@@ -107,6 +128,20 @@ pub struct HorizonStone {
     pub endpoint: String,
     pub health: String,
     pub color: String,
+    /// Number of CPU cores (if known)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_cores: Option<usize>,
+    /// Total memory in GB (if known)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_gb: Option<u64>,
+    /// Number of running services
+    pub service_count: usize,
+    /// Hardware manufacturer (e.g., "Dell Inc.")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    /// Hardware model (e.g., "Wyse 5070")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Horizon section
@@ -155,6 +190,10 @@ pub async fn get_portrait_page() -> impl IntoResponse {
 ///
 /// Returns JSON data for the portrait SPA.
 /// Aggregates identity, foundation metrics, offerings, adapters, and topology.
+///
+/// PERF: This endpoint MUST only read from cached AppState data - NO I/O operations.
+/// All metrics are collected by background tasks and cached in AppState.
+/// Target latency: <10ms. Any I/O here will cause latency regression.
 pub async fn get_portrait_data(
     State(state): State<AppState>,
 ) -> Result<Json<PortraitResponse>, StatusCode> {
@@ -180,7 +219,20 @@ pub async fn get_portrait_data(
         let secs = state.start_time.elapsed().as_secs();
         garden_common::utils::format_uptime(secs)
     };
-    
+
+    // Get hardware manufacturer/model from capabilities
+    let (manufacturer, model) = {
+        let caps = state.capabilities.read().await;
+        if let Some(ref c) = *caps {
+            (
+                c.hardware.system_manufacturer.clone(),
+                c.hardware.system_product.clone(),
+            )
+        } else {
+            (None, None)
+        }
+    };
+
     let identity = PortraitIdentity {
         id: state.stone_id.clone(),
         name: state.stone_name.clone(),
@@ -190,17 +242,32 @@ pub async fn get_portrait_data(
         endpoint,
         uptime,
         moss_uptime,
+        manufacturer,
+        model,
     };
 
     // === Foundation (system resources) ===
+    // NOTE: All metrics read from cache - no I/O allowed here
     let foundation = {
         let resources = state.system_resources.read().await;
+
+        // Read network metrics from cache (populated by health_monitor task)
+        let network = {
+            let cached = state.network_metrics_cache.read().await;
+            cached.as_ref().map(|m| FoundationNetwork {
+                rx_bytes: m.total_rx_bytes,
+                tx_bytes: m.total_tx_bytes,
+                rx_friendly: m.total_rx_friendly.clone(),
+                tx_friendly: m.total_tx_friendly.clone(),
+            })
+        };
+
         if let Some(ref res) = *resources {
             // Find primary disk (root mount or first available)
             let primary_disk = res.storage.iter()
                 .find(|d| d.mount_point == "/" || d.mount_point == "C:\\")
                 .or_else(|| res.storage.first());
-            
+
             let disk = if let Some(d) = primary_disk {
                 FoundationDisk {
                     total_gb: d.total_gb,
@@ -214,7 +281,7 @@ pub async fn get_portrait_data(
                     percent: 0.0,
                 }
             };
-            
+
             PortraitFoundation {
                 cpu: FoundationCpu {
                     cores: res.cpu.cores,
@@ -226,6 +293,7 @@ pub async fn get_portrait_data(
                     percent: res.memory.used_percent,
                 },
                 disk,
+                network,
             }
         } else {
             // No metrics yet - return placeholder
@@ -233,6 +301,7 @@ pub async fn get_portrait_data(
                 cpu: FoundationCpu { cores: 0, percent: 0.0 },
                 memory: FoundationMemory { total_gb: 0.0, used_gb: 0.0, percent: 0.0 },
                 disk: FoundationDisk { total_gb: 0, used_gb: 0, percent: 0.0 },
+                network,
             }
         }
     };
@@ -256,6 +325,7 @@ pub async fn get_portrait_data(
                     garden_common::ServiceHealthStatus::Degraded => "degraded",
                     garden_common::ServiceHealthStatus::Offline => "offline",
                 };
+
                 PortraitOffering {
                     name: svc.name.clone(),
                     container: Some(svc.offering.clone()),
@@ -268,23 +338,20 @@ pub async fn get_portrait_data(
     };
 
     // === Seed Banks ===
+    // NOTE: Read from cache - populated by storage_monitor on events + periodic refresh
     let seed_banks = {
-        match crate::infra::storage::SeedBankRegistry::scan().await {
-            Ok(registry) => {
-                registry.list().iter().map(|bank| {
-                    PortraitSeedBank {
-                        name: bank.name.clone(),
-                        used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                        capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                        filesystem: if bank.btrfs { "btrfs".into() } else { "ext4".into() },
-                        visibility: bank.visibility.to_string(),
-                        roaming: bank.roaming,
-                        online: bank.online,
-                    }
-                }).collect()
+        let cached = state.seed_bank_cache.read().await;
+        cached.iter().map(|bank| {
+            PortraitSeedBank {
+                name: bank.name.clone(),
+                used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                filesystem: if bank.btrfs { "btrfs".into() } else { "ext4".into() },
+                visibility: bank.visibility.to_string(),
+                roaming: bank.roaming,
+                online: bank.online,
             }
-            Err(_) => Vec::new(),
-        }
+        }).collect()
     };
 
     // === Companions (adapters) ===
@@ -310,14 +377,29 @@ pub async fn get_portrait_data(
         let stones: Vec<HorizonStone> = visible_stones
             .into_iter()
             .filter(|entry| entry.stone_id != state.stone_id) // Exclude self
-            .map(|entry| HorizonStone {
-                name: entry.stone_name.clone(),
-                endpoint: entry.endpoint.clone(),
-                health: entry.health.clone(),
-                color: derive_stone_color(&entry.stone_id),
+            .map(|entry| {
+                // Extract resource hints from capabilities
+                let caps = entry.capabilities.as_ref();
+                let cpu_cores = caps.map(|c| c.hardware.cpu.cores);
+                let memory_gb = caps.map(|c| c.hardware.memory.total_mb / 1024);
+                let manufacturer = caps.and_then(|c| c.hardware.system_manufacturer.clone());
+                let model = caps.and_then(|c| c.hardware.system_product.clone());
+                let service_count = entry.services.len();
+
+                HorizonStone {
+                    name: entry.stone_name.clone(),
+                    endpoint: entry.endpoint.clone(),
+                    health: entry.health.clone(),
+                    color: derive_stone_color(&entry.stone_id),
+                    cpu_cores,
+                    memory_gb,
+                    service_count,
+                    manufacturer,
+                    model,
+                }
             })
             .collect();
-        
+
         PortraitHorizon {
             count: stones.len(),
             stones,
@@ -332,4 +414,69 @@ pub async fn get_portrait_data(
         companions,
         horizon,
     }))
+}
+
+/// GET /api/v1/stone/portrait/guidance
+///
+/// Returns compiled markdown containing all offering guidance.
+/// Each offering's guidance is separated by a header with the offering name.
+/// Supports HTTP caching via ETag header.
+///
+/// Returns 204 No Content if no offerings have guidance.
+pub async fn get_portrait_guidance(
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    use axum::response::Response;
+    use axum::body::Body;
+
+    // Collect all guidance from installed services
+    let guidance_sections: Vec<(String, String)> = {
+        let registry = state.registry.read().await;
+        registry
+            .iter()
+            .filter_map(|svc| {
+                svc.guidance
+                    .as_ref()
+                    .map(|g| (svc.name.clone(), g.content.clone()))
+            })
+            .collect()
+    };
+
+    // Return 204 if no guidance available
+    if guidance_sections.is_empty() {
+        return Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+            .body(Body::empty())
+            .unwrap();
+    }
+
+    // Build combined markdown document
+    let mut markdown = String::new();
+    for (i, (name, content)) in guidance_sections.iter().enumerate() {
+        if i > 0 {
+            markdown.push_str("\n\n---\n\n");
+        }
+        // Use offering name as section header (capitalize first letter)
+        let display_name = name
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default()
+            + &name[1..];
+        markdown.push_str(&format!("# {}\n\n", display_name));
+        markdown.push_str(content);
+    }
+
+    // Generate ETag from content hash
+    let mut hasher = DefaultHasher::new();
+    markdown.hash(&mut hasher);
+    let etag = format!("\"{}\"", hasher.finish());
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(header::ETAG, etag)
+        .body(Body::from(markdown))
+        .unwrap()
 }

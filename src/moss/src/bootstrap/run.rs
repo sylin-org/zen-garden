@@ -104,6 +104,29 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     };
 
+    // Load well-known ports catalog (for port conflict remediation)
+    let ports_catalog_path = manifests_dir.join("well-known-ports.yaml");
+    if ports_catalog_path.exists() {
+        // Prefer filesystem version
+        if let Err(e) = garden_common::manifests::init_ports_catalog(&ports_catalog_path) {
+            tracing::warn!(error = ?e, "Failed to load ports catalog from filesystem");
+        } else {
+            tracing::debug!("Ports catalog loaded from filesystem");
+        }
+    } else {
+        // Fall back to embedded
+        if let Some(content) = infra::EmbeddedManifests::get_file("well-known-ports.yaml") {
+            let content_str = String::from_utf8_lossy(&content);
+            if let Err(e) = garden_common::manifests::init_ports_catalog_from_str(&content_str) {
+                tracing::warn!(error = ?e, "Failed to load embedded ports catalog");
+            } else {
+                tracing::debug!("Ports catalog loaded from embedded assets");
+            }
+        } else {
+            tracing::warn!("No ports catalog found (filesystem or embedded)");
+        }
+    }
+
     // Create infrastructure handlers - wired to UDP pipeline from the start
     let infrastructure_handlers = Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
         Box::new(crate::domain::DockerRegistryHandler::new()),
@@ -131,11 +154,16 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Phase 2: Network monitoring
+    // Create subsystems early so network_ready flag is available for NetworkMonitor
+    let subsystems = crate::app_state::SubSystems::default();
+
     // Runs in background, polls every 5s when disconnected, 30s when connected
+    // NetworkMonitor manages the subsystems.network.ready flag
     let network_monitor = NetworkMonitor::start_with_config(
         NetworkMonitorConfig::default()
             .with_disconnect_retry(5)
-            .with_connected_poll(30)
+            .with_connected_poll(30),
+        subsystems.network.ready.clone(),
     ).await;
 
     // Phase 2.5: Get MAC address for self entry
@@ -217,7 +245,6 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Phase 8.5: Create domain event bus and SSE channels
     let event_bus = infra::EventBus::new();
     let (sse_tx, _) = tokio::sync::broadcast::channel::<infra::SseEvent>(256);
-    let (job_progress_tx, _) = tokio::sync::broadcast::channel::<crate::app_state::JobProgressEvent>(100);
     tracing::debug!("Domain event bus and SSE channels initialized");
 
     // Phase 9: Capabilities loading
@@ -269,7 +296,6 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),
         sse_tx: sse_tx.clone(),
-        job_progress_tx: job_progress_tx.clone(),
         event_bus: event_bus.clone(),
         shutdown_tx: shutdown_tx.clone(),
         start_time: std::time::Instant::now(),
@@ -291,6 +317,11 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         system_resources: Arc::new(RwLock::new(None)),
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
         infrastructure_handlers: infrastructure_handlers.clone(),
+        // Cached metrics - populated by background tasks, read-only for endpoints
+        seed_bank_cache: Arc::new(RwLock::new(Vec::new())),
+        network_metrics_cache: Arc::new(RwLock::new(None)),
+        // Subsystem readiness (network_ready managed by NetworkMonitor)
+        subsystems: subsystems.clone(),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -352,7 +383,14 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         let timer_listener = Arc::new(infra::TimerListener::new());
         let _timer_handle = infra::spawn_listener(&event_bus, timer_listener);
 
-        tracing::info!("Offering lifecycle event listeners started (chirp, sse, timer)");
+        // SeedBankCacheListener: Updates seed bank cache on storage events
+        // This ensures portrait endpoint reads from cache without I/O
+        let seed_bank_cache_listener = Arc::new(infra::SeedBankCacheListener::new(
+            state.seed_bank_cache.clone()
+        ));
+        let _seed_bank_handle = infra::spawn_listener(&event_bus, seed_bank_cache_listener);
+
+        tracing::info!("Domain event listeners started (chirp, sse, timer, seed_bank_cache)");
     }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)

@@ -37,6 +37,15 @@ pub const OFFERING_ADOPTED: &str = "offering.adopted";
 pub const STONE_LOAD_UPDATED: &str = "stone.load.updated";
 pub const STONE_HEALTH_CHANGED: &str = "stone.health.changed";
 pub const STONE_TENDED: &str = "stone.tended";
+pub const STONE_NETWORK_READY: &str = "stone.network.ready";
+
+// Job events (installation/removal progress)
+pub const CATEGORY_JOB: &str = "job";
+pub const PREFIX_JOB: &str = "job.";
+pub const JOB_STARTED: &str = "job.started";
+pub const JOB_PROGRESS: &str = "job.progress";
+pub const JOB_COMPLETED: &str = "job.completed";
+pub const JOB_FAILED: &str = "job.failed";
 
 // Storage events (seed bank lifecycle)
 pub const CATEGORY_STORAGE: &str = "storage";

@@ -3,7 +3,7 @@
 //! Listens for domain events and broadcasts them to connected
 //! SSE clients (Firefly, Cricket, etc.) via tokio broadcast channel.
 
-use crate::domain::events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
+use crate::domain::events::{DomainEvent, JobEvent, OfferingEvent, StorageEvent, StoneEvent};
 use crate::infra::event_bus::EventListener;
 use chrono::Utc;
 use garden_common::{
@@ -46,6 +46,7 @@ impl From<&DomainEvent> for SseEvent {
             DomainEvent::Offering(e) => Self::from_offering(e),
             DomainEvent::Storage(e) => Self::from_storage(e),
             DomainEvent::Stone(e) => Self::from_stone(e),
+            DomainEvent::Job(e) => Self::from_job(e),
         }
     }
 }
@@ -122,6 +123,12 @@ impl SseEvent {
                     "memory_percent": memory_percent,
                 }))
             }
+            StoneEvent::NetworkReady { ip, interface, .. } => {
+                Some(serde_json::json!({
+                    "ip": ip,
+                    "interface": interface,
+                }))
+            }
         };
 
         Self {
@@ -131,6 +138,34 @@ impl SseEvent {
             message: event.to_message(),
             job_id: None,
             offering: None,
+            offering_id: None,
+            data,
+        }
+    }
+
+    fn from_job(event: &JobEvent) -> Self {
+        let data = match event {
+            JobEvent::Started { operation, .. } => {
+                Some(serde_json::json!({
+                    "operation": operation,
+                }))
+            }
+            JobEvent::Progress { .. } => None,
+            JobEvent::Completed { .. } => None,
+            JobEvent::Failed { error, .. } => {
+                Some(serde_json::json!({
+                    "error": error,
+                }))
+            }
+        };
+
+        Self {
+            timestamp: Utc::now().to_rfc3339(),
+            level: event.level().to_string(),
+            event_type: event.event_type().to_string(),
+            message: event.to_message(),
+            job_id: Some(event.job_id().to_string()),
+            offering: Some(event.offering().to_string()),
             offering_id: None,
             data,
         }
@@ -209,7 +244,7 @@ impl EventListener for SseListener {
     }
 
     fn name(&self) -> &'static str {
-        "sse"
+        super::names::SSE
     }
 }
 

@@ -14,6 +14,7 @@
 //! with polling as fallback for non-Linux or when netlink unavailable.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 
@@ -82,27 +83,34 @@ impl NetworkMonitorConfig {
 pub struct NetworkMonitor {
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
+    /// Subsystem readiness flag (set when valid LAN IP detected)
+    network_ready: Arc<AtomicBool>,
 }
 
 impl NetworkMonitor {
     /// Start background network monitoring with default config
-    pub async fn start() -> Self {
-        Self::start_with_config(NetworkMonitorConfig::default()).await
+    pub async fn start(network_ready: Arc<AtomicBool>) -> Self {
+        Self::start_with_config(NetworkMonitorConfig::default(), network_ready).await
     }
 
     /// Start background network monitoring with custom config
-    pub async fn start_with_config(config: NetworkMonitorConfig) -> Self {
+    pub async fn start_with_config(config: NetworkMonitorConfig, network_ready: Arc<AtomicBool>) -> Self {
         let initial_ip = get_current_ip();
         let current_ip = Arc::new(RwLock::new(initial_ip.clone()));
         let (tx, _) = broadcast::channel(100);
 
+        // Set initial network_ready state
+        let initially_connected = !is_disconnected(&initial_ip);
+        network_ready.store(initially_connected, Ordering::Release);
+
         let monitor = Self {
             current_ip: current_ip.clone(),
             tx: tx.clone(),
+            network_ready: network_ready.clone(),
         };
 
         // Log initial state
-        if is_disconnected(&initial_ip) {
+        if !initially_connected {
             tracing::warn!(
                 ip = %initial_ip,
                 retry_secs = config.disconnect_retry_secs,
@@ -112,12 +120,13 @@ impl NetworkMonitor {
             tracing::info!(
                 ip = %initial_ip,
                 poll_secs = config.connected_poll_secs,
+                network_ready = true,
                 "NetworkMonitor started with valid LAN IP"
             );
         }
 
         // Spawn monitor task
-        tokio::spawn(network_monitor_task(current_ip, tx, config));
+        tokio::spawn(network_monitor_task(current_ip, tx, config, network_ready));
 
         monitor
     }
@@ -195,6 +204,7 @@ async fn network_monitor_task(
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
     config: NetworkMonitorConfig,
+    network_ready: Arc<AtomicBool>,
 ) {
     let mut was_disconnected = is_disconnected(&*current_ip.read().await);
 
@@ -218,12 +228,16 @@ async fn network_monitor_task(
 
             let now_disconnected = is_disconnected(&new_ip);
 
+            // Update network_ready flag
+            network_ready.store(!now_disconnected, Ordering::Release);
+
             // Determine event type
             let event = if was_disconnected && !now_disconnected {
                 // Reconnected
                 tracing::info!(
                     old = %old_ip,
                     new = %new_ip,
+                    network_ready = true,
                     "Network reconnected with valid LAN IP"
                 );
                 NetworkEvent::Reconnected { new: new_ip.clone() }
@@ -232,6 +246,7 @@ async fn network_monitor_task(
                 tracing::warn!(
                     old = %old_ip,
                     new = %new_ip,
+                    network_ready = false,
                     retry_secs = config.disconnect_retry_secs,
                     "Network disconnected, will retry"
                 );

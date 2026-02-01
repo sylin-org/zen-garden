@@ -7,7 +7,9 @@
 //! - Simple interval loop (KISS)
 //! - No complex state management (YAGNI)
 //! - Delegates to announcement module (SoC)
+//! - Respects network readiness (no chirps until network is ready)
 
+use std::sync::atomic::Ordering;
 use tokio::time::{interval, Duration, Instant};
 use crate::AppState;
 
@@ -16,6 +18,7 @@ use crate::AppState;
 /// Announces stone presence every 30 seconds via all channels.
 /// Uses change detection to skip announcements when state unchanged.
 /// Forces announcement every 5 minutes as keep-alive.
+/// Skips announcements if network is not ready (no valid LAN IP).
 ///
 /// Runs for process lifetime.
 pub fn start_periodic_announcer(state: AppState) {
@@ -32,12 +35,18 @@ pub fn start_periodic_announcer(state: AppState) {
         loop {
             ticker.tick().await;
 
+            // Check network readiness - skip if not ready
+            if !state.subsystems.network.ready.load(Ordering::Relaxed) {
+                tracing::trace!("Periodic announcement skipped (network not ready)");
+                continue;
+            }
+
             // Read current self topology entry
             let entry = state.self_entry.read().await.clone();
-            
+
             match crate::announcement::announce_if_changed(
-                &entry, 
-                &mut last_hash, 
+                &entry,
+                &mut last_hash,
                 &mut last_announcement,
                 false, // Not forced
             ).await {

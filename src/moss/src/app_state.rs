@@ -17,24 +17,15 @@ use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
+use garden_common::storage::SeedBankInfo;
+use garden_common::NetworkMetrics;
 use crate::tasks::NetworkMonitor;
 use garden_common::{HardwareCapabilities, ServiceInfo, StoneResources};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
-
-/// Job progress event for background task streaming
-///
-/// Used for streaming job progress to CLI clients during long-running operations
-/// like seed bank preparation, offering installation, etc.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct JobProgressEvent {
-    pub timestamp: String,
-    pub level: String,
-    pub message: String,
-    pub job_id: Option<String>,
-}
 
 /// Job execution status
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -102,9 +93,6 @@ pub struct AppState {
     /// SSE event broadcast channel for presence streaming (Firefly, Cricket, etc.)
     pub sse_tx: tokio::sync::broadcast::Sender<SseEvent>,
 
-    /// Job progress event channel for CLI streaming during long-running operations
-    pub job_progress_tx: tokio::sync::broadcast::Sender<JobProgressEvent>,
-
     /// Domain event bus (unified event dispatch for offerings, storage, stone events)
     pub event_bus: EventBus,
 
@@ -171,6 +159,62 @@ pub struct AppState {
     /// Infrastructure handlers for garden-wide effects (registry trust, DNS, etc.)
     /// Handlers react to topology changes and configure local infrastructure.
     pub infrastructure_handlers: Arc<InfrastructureHandlerRegistry>,
+
+    // === Cached Metrics (updated by background tasks, read-only for endpoints) ===
+    // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).
+    // Endpoints MUST NOT perform I/O - they read from these caches only.
+    // Background tasks are responsible for keeping caches fresh.
+
+    /// Cached seed bank information (updated on storage events + periodic refresh)
+    /// Background task: storage_monitor (events) + health_monitor (disk usage refresh)
+    pub seed_bank_cache: Arc<RwLock<Vec<SeedBankInfo>>>,
+
+    /// Cached network metrics (updated every 5s by health_monitor task)
+    pub network_metrics_cache: Arc<RwLock<Option<NetworkMetrics>>>,
+
+    /// Subsystem readiness state
+    pub subsystems: SubSystems,
+}
+
+// ============================================================================
+// Subsystem Readiness
+// ============================================================================
+
+/// Subsystem readiness tracking
+///
+/// Background tasks set these flags when subsystems become operational.
+/// Consumers check flags before attempting operations that require readiness.
+#[derive(Clone)]
+pub struct SubSystems {
+    /// Network subsystem state
+    pub network: NetworkSubSystem,
+}
+
+impl Default for SubSystems {
+    fn default() -> Self {
+        Self {
+            network: NetworkSubSystem::default(),
+        }
+    }
+}
+
+/// Network subsystem state
+///
+/// Tracks whether the network stack is ready for communications.
+#[derive(Clone)]
+pub struct NetworkSubSystem {
+    /// True when a valid LAN IP is detected (not loopback).
+    /// Set by NetworkMonitor, read by Announcer/mDNS.
+    /// Use `ready.load(Ordering::Relaxed)` to check.
+    pub ready: Arc<AtomicBool>,
+}
+
+impl Default for NetworkSubSystem {
+    fn default() -> Self {
+        Self {
+            ready: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 impl AppState {
@@ -193,23 +237,23 @@ impl AppState {
     }
     
     /// Sync self_entry services from registry
-    /// 
+    ///
     /// Converts ServiceInfo → TopologyServiceEntry and updates self_entry.
-    /// Optionally triggers immediate chirp announcement.
+    /// Optionally triggers immediate chirp announcement (if network is ready).
     /// Called after any registry modification.
     pub async fn sync_self_services(&self, auto_chirp: bool) {
         let registry = self.registry.read().await;
         let topology_services = garden_common::TopologyServiceEntry::from_service_infos(&registry);
-        
+
         {
             let mut entry = self.self_entry.write().await;
             entry.services = topology_services;
             entry.last_seen = chrono::Utc::now();
         }
-        
+
         tracing::debug!(count = registry.len(), "Synced self_entry services from registry");
-        
-        if auto_chirp {
+
+        if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
@@ -271,23 +315,23 @@ impl AppState {
     }
     
     /// Update stone health and immediately chirp
-    /// 
+    ///
     /// Use this when stone-level status changes (not just services).
     /// Examples: nourishing starts, nourishing completes, degraded → thriving.
-    /// 
+    ///
     /// # Parameters
     /// - `health`: New health status (use constants: STONE_THRIVING, STONE_NOURISHING, etc.)
-    /// - `auto_chirp`: If true, broadcasts updated state immediately
+    /// - `auto_chirp`: If true, broadcasts updated state immediately (if network is ready)
     pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
         {
             let mut entry = self.self_entry.write().await;
             entry.health = health.clone();
             entry.last_seen = chrono::Utc::now();
         }
-        
+
         tracing::debug!(health = %health, "Updated stone health");
-        
-        if auto_chirp {
+
+        if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");

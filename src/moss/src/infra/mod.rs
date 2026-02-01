@@ -34,6 +34,7 @@ pub mod listeners;
 pub mod manifests;
 pub mod nurturing_store;
 pub mod persistence;
+pub mod task_store;
 pub mod process;
 pub mod secrets;
 pub mod service;
@@ -63,6 +64,7 @@ pub use ceremony_journal::CeremonyJournal;
 pub use harvest_store::HarvestStore;
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use nurturing_store::NurturingStore;
+pub use task_store::{TaskStore, TaskRegistry};
 pub use embedded::{
     EmbeddedManifests, EmbeddedCompanions,
     read_manifest_overlay, manifest_exists, list_all_manifests,
@@ -70,4 +72,4 @@ pub use embedded::{
     AssetSource, ManifestSource,
 };
 pub use event_bus::{EventBus, EventListener, spawn_listener};
-pub use listeners::{ChirpListener, SseEvent, SseListener, TimerListener};
+pub use listeners::{ChirpListener, SeedBankCacheListener, SseEvent, SseListener, TimerListener};

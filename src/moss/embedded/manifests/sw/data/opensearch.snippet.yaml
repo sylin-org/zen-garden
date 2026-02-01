@@ -1,8 +1,8 @@
 container_name: opensearch
 image: opensearchproject/opensearch:2.18.0
 ports:
-  - [9200, 9200]
-  - [9300, 9300]
+  default: [9200, 9200]
+  transport: [9300, 9300]
 environment:
   discovery.type: single-node
   DISABLE_SECURITY_PLUGIN: "true"

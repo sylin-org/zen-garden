@@ -5,6 +5,12 @@
 version: "1"
 
 compatibility_rules:
+  - name: "windows-not-supported"
+    condition:
+      os_family_not: ["linux", "macos"]
+    reason: "Pi-hole requires Linux or macOS for proper DNS port binding"
+    suggestion: "Deploy Pi-hole on a Linux Stone (recommended) or use WSL2 with proper networking"
+
   - name: "arm32v6-not-supported"
     condition:
       architectures: ["armv6l"]

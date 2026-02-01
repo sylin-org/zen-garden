@@ -1,7 +1,7 @@
 container_name: zot
 image: ghcr.io/project-zot/zot-linux-amd64:v2.1.1
 ports:
-  - [5000, 5000]
+  default: [5000, 5000]
 environment:
   ZOT_LOG_LEVEL: "info"
   ZOT_HTTP_ADDRESS: "0.0.0.0"

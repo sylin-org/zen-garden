@@ -1,7 +1,7 @@
 container_name: homepage
 image: ghcr.io/gethomepage/homepage:v0.9.13
 ports:
-  - [3001, 3000]
+  default: [3001, 3000]
 environment:
   PUID: "1000"
   PGID: "1000"

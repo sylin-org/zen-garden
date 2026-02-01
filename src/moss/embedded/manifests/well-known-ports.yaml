@@ -1,0 +1,153 @@
+# Well-Known Ports Catalog
+# System-level knowledge about ports that commonly conflict and how to handle them
+#
+# Remediation types:
+#   remap  - Pick next available port in range (default for most services)
+#   auto   - Run commands to free the port (for essential ports like DNS)
+#   manual - Show message, user must resolve manually
+#   fail   - Cannot remediate on this platform
+#
+# Most ports use "default" remediation which applies to all platforms.
+# Platform-specific handlers (linux/macos/windows) override the default.
+#
+version: "1"
+
+ports:
+  # DNS - MUST be on port 53, cannot be remapped
+  53:
+    name: dns
+    description: "DNS queries - must be on port 53"
+    linux:
+      common_culprit: "systemd-resolved"
+      detection: "systemctl is-active --quiet systemd-resolved"
+      remediation:
+        type: auto
+        commands:
+          - "systemctl disable --now systemd-resolved"
+        files:
+          - path: "/etc/resolv.conf"
+            content: |
+              # Configured by Zen Garden
+              # systemd-resolved was disabled to allow DNS service to bind port 53
+              nameserver 8.8.8.8
+              nameserver 1.1.1.1
+    macos:
+      common_culprit: "mDNSResponder"
+      remediation:
+        type: manual
+        message: "Port 53 is in use by mDNSResponder. Check with: sudo lsof -i :53"
+    windows:
+      common_culprit: "DNS Client service"
+      remediation:
+        type: fail
+        message: "DNS services are not supported on Windows. Deploy on a Linux Stone instead."
+
+  # HTTP/HTTPS - remap to alternate ports
+  80:
+    name: http
+    description: "HTTP web traffic"
+    default:
+      type: remap
+      range_start: 8080
+      range_end: 8099
+
+  443:
+    name: https
+    description: "HTTPS secure web traffic"
+    default:
+      type: remap
+      range_start: 8443
+      range_end: 8499
+
+  # Databases - remap to next available port
+  5432:
+    name: postgresql
+    description: "PostgreSQL database"
+    default:
+      type: remap
+      range_start: 5433
+      range_end: 5499
+
+  3306:
+    name: mysql
+    description: "MySQL/MariaDB database"
+    default:
+      type: remap
+      range_start: 3307
+      range_end: 3399
+
+  27017:
+    name: mongodb
+    description: "MongoDB database"
+    default:
+      type: remap
+      range_start: 27018
+      range_end: 27099
+
+  # Caches and message brokers - remap
+  6379:
+    name: redis
+    description: "Redis in-memory store"
+    default:
+      type: remap
+      range_start: 6380
+      range_end: 6399
+
+  11211:
+    name: memcached
+    description: "Memcached"
+    default:
+      type: remap
+      range_start: 11212
+      range_end: 11299
+
+  5672:
+    name: rabbitmq
+    description: "RabbitMQ AMQP"
+    default:
+      type: remap
+      range_start: 5673
+      range_end: 5699
+
+  4222:
+    name: nats
+    description: "NATS messaging"
+    default:
+      type: remap
+      range_start: 4223
+      range_end: 4299
+
+  # Observability
+  9090:
+    name: prometheus
+    description: "Prometheus metrics"
+    default:
+      type: remap
+      range_start: 9091
+      range_end: 9099
+
+  3000:
+    name: grafana
+    description: "Grafana dashboards"
+    default:
+      type: remap
+      range_start: 3001
+      range_end: 3099
+
+  # Storage
+  9000:
+    name: minio
+    description: "MinIO S3-compatible storage"
+    default:
+      type: remap
+      range_start: 9001
+      range_end: 9099
+
+  # AI
+  11434:
+    name: ollama
+    description: "Ollama LLM API"
+    default:
+      type: remap
+      range_start: 11435
+      range_end: 11499

@@ -1,7 +1,7 @@
 container_name: wireguard
 image: lscr.io/linuxserver/wireguard:1.0.20210914
 ports:
-  - [51820, 51820]
+  default: [51820, 51820]
 environment:
   PUID: "1000"
   PGID: "1000"

@@ -1,9 +1,8 @@
 container_name: pihole
 image: pihole/pihole:2024.07.0
 ports:
-  - [53, 53]
-  # UDP port 53 handled by first entry
-  - [8053, 80]
+  default: [53, 53]
+  admin: [8053, 80]
 environment:
   TZ: "UTC"
   WEBPASSWORD: "pihole"
@@ -23,3 +22,10 @@ healthcheck:
 restart: unless-stopped
 networks:
   - zen-garden
+tasks:
+  update-gravity:
+    description: "Update Pi-hole blocklist database (gravity)"
+    schedule: "0 3 * * 0"
+    command: ["pihole", "-g"]
+    category: maintenance
+    timeout_secs: 900

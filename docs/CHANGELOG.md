@@ -18,6 +18,10 @@ All notable changes to Zen Garden will be documented in this file.
   - `moss/infra/manifests/hw.rs` - duplicate of `common/manifests/hw.rs`, never imported
   - `moss/infra/manifests/sw.rs` - orphaned after unification
 - **Updated all consumers**: DetectionOrchestrator, adoption APIs, embedded manifest loading now use unified model
+- **Fixed adopted offering detection** - Ollama and other adopted offerings now detected correctly
+  - Strip UTF-8 BOM from embedded manifest files before parsing
+  - Removed `#[serde(flatten)]` from `DetectionRule.config` to match nested YAML format
+  - Changed `DetectionMethod` enum from `lowercase` to `snake_case` (`http_probe` not `httpprobe`)
 
 ## 2026-01-29
 - **Package Structure v2.0** - Simplified to mirror target filesystem exactly

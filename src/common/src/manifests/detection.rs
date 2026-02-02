@@ -42,8 +42,7 @@ pub struct DetectionRule {
     /// Detection method
     pub method: DetectionMethod,
 
-    /// Method-specific configuration
-    #[serde(flatten)]
+    /// Method-specific configuration (nested under `config:` key in YAML)
     pub config: DetectionConfig,
 
     /// Stability threshold (consecutive successes required)
@@ -57,7 +56,7 @@ pub struct DetectionRule {
 
 /// Detection method
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum DetectionMethod {
     /// Execute command (e.g., "mongod --version")
     Command,

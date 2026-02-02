@@ -498,6 +498,9 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
             continue;
         };
 
+        // Strip UTF-8 BOM if present (some editors add it)
+        let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
+
         // Extract category and name from path (sw/category/name.adopted.yaml)
         let parts: Vec<&str> = path_str.split('/').collect();
         let (category, name) = if parts.len() >= 3 {
@@ -588,6 +591,14 @@ mod tests {
 
         for offering in &offerings {
             println!("  {} ({:?}): {:?}", offering.name, offering.category, offering.modes());
+            // Verify detection rules are loaded
+            if offering.adopted.is_some() {
+                let rules = offering.get_detection_rules();
+                println!("    Detection rules: {} for current OS", rules.len());
+            }
         }
+
+        // Verify ollama is loaded
+        assert!(offerings.iter().any(|o| o.name == "ollama"), "Ollama should be in adopted offerings");
     }
 }

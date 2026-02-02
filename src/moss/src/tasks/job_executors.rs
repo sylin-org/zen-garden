@@ -14,53 +14,68 @@ use crate::{AppState, JobStatus};
 use crate::api::v1::events::{emit_job_progress, emit_job_started, emit_job_completed, emit_job_failed};
 use crate::domain::events::OfferingEvent;
 use crate::domain::get_compiled_offering;
+use crate::domain::network::NetworkMode;
 use crate::infra::TaskStore;
+use crate::infra::config::MossConfig;
+use crate::infra::network::{load_network_state, apply_static_from_pool};
 use garden_common::console;
+use garden_common::templates::{TemplateContext, render_template};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{OfferingGuidance, Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus};
 
 /// Substitute template variables in guidance markdown
 ///
-/// Replaces placeholders with actual values from the service context:
+/// Supports full template syntax including conditionals:
 /// - `{{port}}` - The default service port (host-side)
 /// - `{{<name>-port}}` - Named port (e.g., `{{admin-port}}`, `{{management-port}}`)
 /// - `{{server-name}}` - The stone's name/hostname
 /// - `{{offering}}` - The offering type (e.g., "mongodb")
 /// - `{{name}}` - The service instance name
+/// - `{{static-ip}}` - Assigned static IP (empty if DHCP)
+/// - `{{#if var}}...{{/if}}` - Conditional blocks
+/// - `{{#if var}}...{{#else}}...{{/if}}` - If-else blocks
 fn substitute_guidance_templates(
     template: &str,
     name: &str,
     offering: &str,
     ports: &std::collections::HashMap<String, (u16, u16)>,
     stone_name: &str,
+    static_ip: Option<&str>,
 ) -> String {
-    let mut result = template.to_string();
+    let mut ctx = TemplateContext::new();
 
-    // Substitute named ports: "default" → {{port}}, others → {{<name>-port}}
+    // Set basic variables
+    ctx.set("server-name", stone_name);
+    ctx.set("offering", offering);
+    ctx.set("name", name);
+
+    // Set port variables: "default" → {{port}}, others → {{<name>-port}}
     for (port_name, (host_port, _)) in ports {
-        let placeholder = if port_name == "default" {
-            "{{port}}".to_string()
+        if port_name == "default" {
+            ctx.set("port", host_port.to_string());
         } else {
-            format!("{{{{{}-port}}}}", port_name)
-        };
-        result = result.replace(&placeholder, &host_port.to_string());
+            ctx.set(format!("{}-port", port_name), host_port.to_string());
+        }
     }
 
-    // Substitute other variables
-    result
-        .replace("{{server-name}}", stone_name)
-        .replace("{{offering}}", offering)
-        .replace("{{name}}", name)
+    // Set static-ip if available (enables conditionals)
+    if let Some(ip) = static_ip {
+        ctx.set("static-ip", ip);
+    }
+
+    render_template(template, &ctx)
 }
 
 /// Build OfferingGuidance from manifest, with template substitution
 ///
 /// This is used during installation and for backfilling guidance on boot.
+/// Pass `static_ip` if the stone has a static IP assigned.
 pub fn build_guidance(
     state: &AppState,
     name: &str,
     offering: &str,
     ports: &std::collections::HashMap<String, (u16, u16)>,
+    static_ip: Option<&str>,
 ) -> Option<OfferingGuidance> {
     let default_port = ports.get("default").map(|(h, _)| *h).unwrap_or(30000);
 
@@ -69,6 +84,7 @@ pub fn build_guidance(
         name = %name,
         default_port = default_port,
         port_count = ports.len(),
+        static_ip = ?static_ip,
         "build_guidance: starting"
     );
 
@@ -116,6 +132,7 @@ pub fn build_guidance(
         offering,
         ports,
         &state.stone_name,
+        static_ip,
     );
 
     // Build variables map for API consumers
@@ -131,6 +148,9 @@ pub fn build_guidance(
     variables.insert("server-name".to_string(), state.stone_name.clone());
     variables.insert("offering".to_string(), offering.to_string());
     variables.insert("name".to_string(), name.to_string());
+    if let Some(ip) = static_ip {
+        variables.insert("static-ip".to_string(), ip.to_string());
+    }
 
     tracing::info!(
         offering = %offering,
@@ -153,6 +173,14 @@ pub fn build_guidance(
 pub async fn backfill_missing_guidance(state: &AppState) -> usize {
     tracing::info!("Backfill: starting guidance backfill check");
     let mut updated = 0;
+
+    // Get static IP if assigned
+    let network_state = load_network_state().await;
+    let static_ip_str = match &network_state.mode {
+        NetworkMode::Static { address, .. } => Some(address.to_string()),
+        _ => None,
+    };
+    let static_ip = static_ip_str.as_deref();
 
     // Log all manifests that have guidance templates
     let manifests_with_guidance: Vec<(String, usize)> = state.manifest_registry.sw
@@ -223,7 +251,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
     {
         let mut registry = state.registry.write().await;
         for (name, offering, ports) in services_needing_guidance {
-            if let Some(guidance) = build_guidance(state, &name, &offering, &ports) {
+            if let Some(guidance) = build_guidance(state, &name, &offering, &ports, static_ip) {
                 if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
                     svc.guidance = Some(guidance);
                     updated += 1;
@@ -293,14 +321,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
     emit_job_started(state, job_id, offering, "install");
     tracing::info!(job_id, offering, "Starting service installation");
 
-    emit_job_progress(
-        state,
-        "debug",
-        format!("Resolving compiled offering config for {}", offering),
-        job_id,
-        offering,
-    );
-
+    tracing::debug!(offering, "Resolving compiled offering config");
     let compiled = match get_compiled_offering(state, offering).await {
         Ok(Some(o)) => o,
         Ok(None) => {
@@ -377,9 +398,123 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
         _ => {}
     }
 
+    // Handle static IP requirements for this offering
+    // SSE events only for actual state changes, verbose info goes to tracing only
+    // Track assigned/existing static IP for guidance template rendering
+    let mut assigned_static_ip: Option<String> = None;
+
+    if compiled.network.wants_static_ip() {
+        tracing::info!(
+            offering = %offering,
+            preference = if compiled.network.requires_static_ip() { "required" } else { "preferred" },
+            reason = ?compiled.network.static_ip_reason,
+            "Offering wants static IP"
+        );
+
+        // Get static IP pool (from config or auto-detected defaults)
+        let config = MossConfig::load();
+        let pool_config = MossConfig::get_static_ip_pool(config.as_ref());
+
+        match pool_config {
+            Some(ref pool) => {
+                // Load current network state
+                let mut network_state = load_network_state().await;
+
+                // Check if we already have static IP (another offering requested it)
+                if network_state.mode.is_static() {
+                    // Capture existing static IP for guidance rendering
+                    if let Some(existing_ip) = network_state.mode.static_address() {
+                        assigned_static_ip = Some(existing_ip.to_string());
+                    }
+
+                    // Just register as additional requester (no SSE - internal bookkeeping)
+                    let is_first = network_state.add_requester(offering);
+                    if !is_first {
+                        let existing_ip = network_state.mode.static_address()
+                            .unwrap_or_else(|| "0.0.0.0".parse().unwrap());
+                        tracing::info!(
+                            offering = %offering,
+                            ip = %existing_ip,
+                            requesters = network_state.requester_count(),
+                            "Registered as additional static IP requester"
+                        );
+                        // Save updated state with new requester
+                        if let Err(e) = crate::infra::network::save_network_state(&network_state).await {
+                            tracing::warn!(error = ?e, "Failed to save network state");
+                        }
+                    }
+                } else {
+                    // Apply static IP from pool - this is an actual state change
+                    match apply_static_from_pool(pool, offering, &mut network_state).await {
+                        Ok(ip) => {
+                            // Capture assigned static IP for guidance rendering
+                            assigned_static_ip = Some(ip.to_string());
+
+                            // SSE: meaningful state change
+                            emit_job_progress(
+                                state,
+                                "info",
+                                format!("Switching to static IP {}", ip),
+                                job_id,
+                                offering,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(offering = %offering, error = ?e, "Static IP assignment failed");
+
+                            if compiled.network.requires_static_ip() {
+                                // Required - fail installation (SSE: error is meaningful)
+                                let error_msg = format!("Static IP required but assignment failed: {}", e);
+                                state.console.emit(console::ConsoleEvent::new(
+                                    console::EventCategory::Jobs,
+                                    console::EventStatus::Failed,
+                                    format!("Static IP required: {}", offering)
+                                ));
+                                emit_job_failed(state, job_id, offering, &error_msg);
+                                remove_installing_entry(state, offering).await;
+                                let mut jobs = state.jobs.write().await;
+                                if let Some(job) = jobs.get_mut(job_id) {
+                                    job.status = JobStatus::Failed;
+                                    job.failed.insert(offering.to_string(), error_msg);
+                                    job.completed_at = Some(std::time::SystemTime::now());
+                                }
+                                return;
+                            }
+                            // Preferred - continue silently (just logged above)
+                        }
+                    }
+                }
+            }
+            None => {
+                // Pool explicitly disabled or auto-detection failed
+                tracing::info!(offering = %offering, "Static IP pool unavailable (disabled or auto-detection failed)");
+
+                if compiled.network.requires_static_ip() {
+                    // Required - fail installation (SSE: error is meaningful)
+                    let error_msg = "Static IP required but unavailable";
+                    state.console.emit(console::ConsoleEvent::new(
+                        console::EventCategory::Jobs,
+                        console::EventStatus::Failed,
+                        format!("Static IP required: {}", offering)
+                    ));
+                    emit_job_failed(state, job_id, offering, error_msg);
+                    remove_installing_entry(state, offering).await;
+                    let mut jobs = state.jobs.write().await;
+                    if let Some(job) = jobs.get_mut(job_id) {
+                        job.status = JobStatus::Failed;
+                        job.failed.insert(offering.to_string(), error_msg.to_string());
+                        job.completed_at = Some(std::time::SystemTime::now());
+                    }
+                    return;
+                }
+                // Preferred - continue silently (just logged above)
+            }
+        }
+    }
+
     // Extract values before install_service consumes compiled
     let native_port = compiled.default_host_port();
-    let guidance = build_guidance(state, offering, offering, &compiled.ports);
+    let guidance = build_guidance(state, offering, offering, &compiled.ports, assigned_static_ip.as_deref());
     let image_full = compiled.image.clone();
     let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
 
@@ -545,6 +680,13 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
 pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<String>) {
     let offerings_count = offerings.len();
 
+    // Load network state to get any existing static IP for guidance rendering
+    let network_state = load_network_state().await;
+    let static_ip = match &network_state.mode {
+        NetworkMode::Static { address, .. } => Some(address.to_string()),
+        _ => None,
+    };
+
     // Update job status to Running
     {
         let mut jobs = state.jobs.write().await;
@@ -601,7 +743,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 
         // Extract values before install_service consumes compiled
         let native_port = compiled.default_host_port();
-        let guidance = build_guidance(state, &offering, &offering, &compiled.ports);
+        let guidance = build_guidance(state, &offering, &offering, &compiled.ports, static_ip.as_deref());
         let image_full = compiled.image.clone();
         let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
 

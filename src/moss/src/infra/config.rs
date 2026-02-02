@@ -3,6 +3,8 @@
 //! Provides centralized configuration loading, validation, and persistence.
 //! Configuration is stored in TOML format at platform-specific locations.
 
+use std::net::Ipv4Addr;
+
 /// Moss daemon configuration
 ///
 /// Configuration file format (TOML):
@@ -67,6 +69,10 @@ pub struct MossConfig {
     /// Adoption settings for adopted offerings
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub adoption: Option<AdoptionConfig>,
+
+    /// Network configuration (static IP pool, etc.)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub network: Option<NetworkConfig>,
 }
 
 /// Adoption configuration for auto-detection and management
@@ -153,6 +159,137 @@ impl AdoptionConfig {
             }
         }
         false
+    }
+}
+
+// ============================================================================
+// Network Configuration
+// ============================================================================
+
+/// Network configuration section
+///
+/// Example TOML:
+/// ```toml
+/// [network.static_ip]
+/// enabled = true
+/// pool_start = "192.168.1.240"
+/// pool_end = "192.168.1.250"
+/// gateway = "192.168.1.1"
+/// dns = ["8.8.8.8", "1.1.1.1"]
+/// ```
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
+pub struct NetworkConfig {
+    /// Static IP pool configuration
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub static_ip: Option<StaticIpPoolConfig>,
+}
+
+/// Static IP pool configuration for automatic IP assignment
+///
+/// When an offering requests a static IP (e.g., Pi-hole for DNS stability),
+/// Moss will select an available IP from this pool, probe for conflicts,
+/// and apply it to the network interface.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct StaticIpPoolConfig {
+    /// Enable static IP assignment from pool
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// First IP address in the pool (inclusive)
+    pub pool_start: Ipv4Addr,
+
+    /// Last IP address in the pool (inclusive)
+    pub pool_end: Ipv4Addr,
+
+    /// Default gateway for static IP configuration
+    pub gateway: Ipv4Addr,
+
+    /// DNS servers for static IP configuration
+    #[serde(default)]
+    pub dns: Vec<Ipv4Addr>,
+
+    /// Network interface to configure (auto-detected if omitted)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub interface: Option<String>,
+
+    /// Subnet prefix length (default: 24 for /24 network)
+    #[serde(default = "default_prefix_length")]
+    pub prefix_length: u8,
+}
+
+fn default_prefix_length() -> u8 {
+    24
+}
+
+impl StaticIpPoolConfig {
+    /// Check if the pool is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Auto-detect network configuration and create default pool
+    ///
+    /// Detects current network settings and creates a pool at the high end
+    /// of the subnet (e.g., .240-.250 for a /24 network).
+    ///
+    /// Returns None if auto-detection fails.
+    pub fn detect_defaults() -> Option<Self> {
+        // Try to detect current network configuration
+        let (current_ip, prefix_len, gateway, interface) = detect_current_network()?;
+
+        // Calculate default pool range at high end of subnet
+        // For /24: use .240-.250 (11 addresses)
+        // For other prefixes: use last 11 addresses before broadcast
+        let (pool_start, pool_end) = calculate_default_pool(current_ip, prefix_len);
+
+        tracing::info!(
+            current_ip = %current_ip,
+            prefix_len = prefix_len,
+            gateway = %gateway,
+            interface = %interface,
+            pool_start = %pool_start,
+            pool_end = %pool_end,
+            "Auto-detected network defaults for static IP pool"
+        );
+
+        Some(Self {
+            enabled: true, // Auto-detected defaults are enabled by default
+            pool_start,
+            pool_end,
+            gateway,
+            dns: vec![
+                "8.8.8.8".parse().unwrap(),
+                "1.1.1.1".parse().unwrap(),
+            ],
+            interface: Some(interface),
+            prefix_length: prefix_len,
+        })
+    }
+
+    /// Get the pool size (number of addresses)
+    pub fn pool_size(&self) -> u32 {
+        let start: u32 = self.pool_start.into();
+        let end: u32 = self.pool_end.into();
+        if end >= start {
+            end - start + 1
+        } else {
+            0
+        }
+    }
+
+    /// Check if an IP is within the pool range
+    pub fn contains(&self, ip: Ipv4Addr) -> bool {
+        let ip_int: u32 = ip.into();
+        let start: u32 = self.pool_start.into();
+        let end: u32 = self.pool_end.into();
+        ip_int >= start && ip_int <= end
+    }
+
+    /// Iterate over all IPs in the pool
+    pub fn iter(&self) -> impl Iterator<Item = Ipv4Addr> {
+        let start: u32 = self.pool_start.into();
+        let end: u32 = self.pool_end.into();
+        (start..=end).map(Ipv4Addr::from)
     }
 }
 
@@ -252,6 +389,19 @@ impl MossConfig {
         })
     }
 
+    /// Get network configuration
+    pub fn network(&self) -> Option<&NetworkConfig> {
+        self.network.as_ref()
+    }
+
+    /// Get static IP pool configuration if enabled
+    pub fn static_ip_pool(&self) -> Option<&StaticIpPoolConfig> {
+        self.network
+            .as_ref()
+            .and_then(|n| n.static_ip.as_ref())
+            .filter(|p| p.enabled)
+    }
+
     /// Save configuration to platform-specific path
     ///
     /// Saves garden-moss.toml to:
@@ -273,4 +423,174 @@ impl MossConfig {
         tracing::info!(path = ?config_path, "Saved configuration to file");
         Ok(())
     }
+
+    /// Get static IP pool configuration, using auto-detected defaults if not configured
+    ///
+    /// Priority:
+    /// 1. Explicit config with enabled=true → use configured values
+    /// 2. Explicit config with enabled=false → None (disabled)
+    /// 3. No config → auto-detect defaults
+    pub fn static_ip_pool_with_defaults(&self) -> Option<StaticIpPoolConfig> {
+        match self.network.as_ref().and_then(|n| n.static_ip.as_ref()) {
+            Some(pool) => {
+                if pool.enabled {
+                    Some(pool.clone())
+                } else {
+                    // Explicitly disabled
+                    None
+                }
+            }
+            None => {
+                // No config - try auto-detection
+                StaticIpPoolConfig::detect_defaults()
+            }
+        }
+    }
+
+    /// Get static IP pool from config or auto-detect (static version for when config is None)
+    ///
+    /// This handles the case where no config file exists at all.
+    /// Falls back to auto-detection.
+    pub fn get_static_ip_pool(config: Option<&Self>) -> Option<StaticIpPoolConfig> {
+        match config {
+            Some(cfg) => cfg.static_ip_pool_with_defaults(),
+            None => StaticIpPoolConfig::detect_defaults(),
+        }
+    }
+}
+
+// ============================================================================
+// Network Auto-Detection Helpers
+// ============================================================================
+
+/// Detect current network configuration
+///
+/// Returns (current_ip, prefix_length, gateway, interface_name) or None if detection fails.
+fn detect_current_network() -> Option<(Ipv4Addr, u8, Ipv4Addr, String)> {
+    #[cfg(target_os = "linux")]
+    {
+        detect_current_network_linux()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        detect_current_network_windows()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn detect_current_network_linux() -> Option<(Ipv4Addr, u8, Ipv4Addr, String)> {
+    use std::process::Command;
+
+    // Get default route interface and gateway using `ip route`
+    let route_output = Command::new("ip")
+        .args(["route", "show", "default"])
+        .output()
+        .ok()?;
+
+    let route_str = String::from_utf8_lossy(&route_output.stdout);
+    // Format: "default via 192.168.1.1 dev eth0 ..."
+    let parts: Vec<&str> = route_str.split_whitespace().collect();
+
+    let gateway_idx = parts.iter().position(|&s| s == "via")?;
+    let gateway: Ipv4Addr = parts.get(gateway_idx + 1)?.parse().ok()?;
+
+    let dev_idx = parts.iter().position(|&s| s == "dev")?;
+    let interface = parts.get(dev_idx + 1)?.to_string();
+
+    // Get IP address for the interface using `ip addr show <interface>`
+    let addr_output = Command::new("ip")
+        .args(["addr", "show", &interface])
+        .output()
+        .ok()?;
+
+    let addr_str = String::from_utf8_lossy(&addr_output.stdout);
+    // Find "inet X.X.X.X/Y" line
+    for line in addr_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("inet ") && !trimmed.contains("inet6") {
+            // Format: "inet 192.168.1.100/24 ..."
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if let Some(cidr) = parts.get(1) {
+                let cidr_parts: Vec<&str> = cidr.split('/').collect();
+                if cidr_parts.len() == 2 {
+                    let ip: Ipv4Addr = cidr_parts[0].parse().ok()?;
+                    let prefix: u8 = cidr_parts[1].parse().ok()?;
+                    return Some((ip, prefix, gateway, interface));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn detect_current_network_windows() -> Option<(Ipv4Addr, u8, Ipv4Addr, String)> {
+    use std::process::Command;
+
+    // Use PowerShell to get network configuration
+    // Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1
+    let ps_script = r#"
+        $config = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1
+        if ($config) {
+            $addr = $config.IPv4Address
+            $gw = $config.IPv4DefaultGateway.NextHop
+            $iface = $config.InterfaceAlias
+            Write-Output "$($addr.IPAddress)|$($addr.PrefixLength)|$gw|$iface"
+        }
+    "#;
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", ps_script])
+        .output()
+        .ok()?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = output_str.trim().split('|').collect();
+
+    if parts.len() == 4 {
+        let ip: Ipv4Addr = parts[0].parse().ok()?;
+        let prefix: u8 = parts[1].parse().ok()?;
+        let gateway: Ipv4Addr = parts[2].parse().ok()?;
+        let interface = parts[3].to_string();
+        return Some((ip, prefix, gateway, interface));
+    }
+
+    None
+}
+
+/// Calculate default pool range at high end of subnet
+///
+/// For a /24 network, returns (.240, .250) giving 11 addresses.
+/// For other prefix lengths, calculates proportionally.
+fn calculate_default_pool(current_ip: Ipv4Addr, prefix_len: u8) -> (Ipv4Addr, Ipv4Addr) {
+    let ip_int: u32 = current_ip.into();
+
+    // Calculate network address and broadcast address
+    let host_bits = 32 - prefix_len;
+    let network_mask: u32 = !((1u32 << host_bits) - 1);
+    let network_addr = ip_int & network_mask;
+    let broadcast_addr = network_addr | !network_mask;
+
+    // Pool size: 11 addresses (or less for small subnets)
+    let max_pool_size = 11u32;
+    let available_hosts = broadcast_addr - network_addr - 1; // Exclude network and broadcast
+
+    let pool_size = max_pool_size.min(available_hosts / 4); // Use at most 25% of subnet for pool
+
+    // Place pool at high end of subnet, leaving 5 addresses before broadcast
+    // This avoids common DHCP ranges which typically start low
+    let pool_end_int = broadcast_addr - 5; // 5 addresses reserved at top
+    let pool_start_int = pool_end_int.saturating_sub(pool_size - 1);
+
+    // Ensure pool_start is at least network_addr + 1
+    let pool_start_int = pool_start_int.max(network_addr + 1);
+
+    (Ipv4Addr::from(pool_start_int), Ipv4Addr::from(pool_end_int))
 }

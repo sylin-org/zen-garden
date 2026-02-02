@@ -3,6 +3,10 @@ image: pihole/pihole:2024.07.0
 ports:
   default: [53, 53]
   admin: [8053, 80]
+# Network requirements - DNS servers need stable IPs
+network:
+  static_ip: preferred
+  static_ip_reason: "DNS servers need stable IP addresses. If this stone's IP changes, all devices using it for DNS will lose internet connectivity."
 environment:
   TZ: "UTC"
   WEBPASSWORD: "pihole"

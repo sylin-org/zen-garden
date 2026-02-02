@@ -14,6 +14,67 @@ use std::path::Path;
 
 use super::discover_subdirectories;
 
+// ============================================================================
+// Network Requirements
+// ============================================================================
+
+/// Network requirements for an offering
+///
+/// Declares whether the offering needs special network configuration
+/// (e.g., static IP for DNS servers like Pi-hole).
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NetworkRequirements {
+    /// Static IP preference for this offering
+    #[serde(default)]
+    pub static_ip: StaticIpPreference,
+
+    /// Human-readable reason shown during installation
+    /// (why this offering benefits from/requires static IP)
+    #[serde(default)]
+    pub static_ip_reason: Option<String>,
+}
+
+impl NetworkRequirements {
+    /// Check if this offering wants a static IP (preferred or required)
+    pub fn wants_static_ip(&self) -> bool {
+        !matches!(self.static_ip, StaticIpPreference::None)
+    }
+
+    /// Check if static IP is required (not just preferred)
+    pub fn requires_static_ip(&self) -> bool {
+        matches!(self.static_ip, StaticIpPreference::Required)
+    }
+}
+
+/// Static IP preference level
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StaticIpPreference {
+    /// Offering works fine with DHCP (default)
+    #[default]
+    None,
+
+    /// Offering works better with static IP (prompt user)
+    Preferred,
+
+    /// Offering requires static IP (block installation without it)
+    Required,
+}
+
+impl StaticIpPreference {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Preferred => "preferred",
+            Self::Required => "required",
+        }
+    }
+}
+
+// ============================================================================
+// Runtime Manifests Directory
+// ============================================================================
+
 /// Get runtime manifests directory (uses platform-aware paths)
 pub fn runtime_manifests_dir() -> String {
     // 1. Check explicit override (deployment/testing)
@@ -66,6 +127,8 @@ pub struct ServiceTemplate {
     pub compatibility: Option<CompatibilityRules>,
     /// Scheduled tasks: name -> definition
     pub tasks: HashMap<String, TaskDefinition>,
+    /// Network requirements (static IP preference)
+    pub network: NetworkRequirements,
 }
 
 impl ServiceTemplate {
@@ -131,6 +194,9 @@ struct ServiceConfig {
     /// Scheduled tasks: name -> definition
     #[serde(default)]
     tasks: HashMap<String, TaskDefinition>,
+    /// Network requirements (static IP preference)
+    #[serde(default)]
+    network: NetworkRequirements,
 }
 
 // ============================================================================
@@ -668,6 +734,7 @@ impl SwEntry {
             volumes,
             compatibility,
             tasks: config.tasks,
+            network: config.network,
         }
     }
 }

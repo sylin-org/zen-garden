@@ -42,5 +42,8 @@ pub use ceremony::{
 // Re-export manifest loaders
 pub use hw::{HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR};
 pub use ports::{get_ports_catalog, init_ports_catalog, init_ports_catalog_from_str, load_ports_catalog};
-pub use sw::{SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, runtime_manifests_dir};
+pub use sw::{
+    SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, runtime_manifests_dir,
+    NetworkRequirements, StaticIpPreference,
+};
 pub use registry::{ManifestRegistry, discover_subdirectories, RUNTIME_MANIFESTS_DIR};

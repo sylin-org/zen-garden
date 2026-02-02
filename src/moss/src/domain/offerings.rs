@@ -11,6 +11,7 @@ use anyhow::Result;
 use crate::infra::ManifestRegistry;
 use crate::domain::compatibility::{CompiledCompatibility, compile_compatibility};
 use garden_common::TaskDefinition;
+use garden_common::manifests::NetworkRequirements;
 
 /// Compiled offering ready for API consumption
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -30,6 +31,9 @@ pub struct CompiledOffering {
     /// Scheduled tasks: name -> definition
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub tasks: std::collections::HashMap<String, TaskDefinition>,
+    /// Network requirements (static IP preference)
+    #[serde(default)]
+    pub network: NetworkRequirements,
 }
 
 impl CompiledOffering {
@@ -271,6 +275,7 @@ pub fn rebuild_offerings_index(registry: &ManifestRegistry) -> Result<OfferingsI
             volumes: template.volumes,
             compatibility,
             tasks: template.tasks,
+            network: template.network,
         });
     }
 

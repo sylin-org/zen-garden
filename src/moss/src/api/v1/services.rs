@@ -7,6 +7,7 @@ use crate::api::responses::{CreateServiceRequest, ServiceActionResponse, ApiResp
 use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::domain::events::OfferingEvent;
 use crate::infra::TaskStore;
+use crate::infra::network::{load_network_state, revert_to_dhcp};
 use crate::{error_response, AppState};
 use garden_common::{
     api_utils::{ApiErrorResponse, sanitize_query, sanitize_name, sanitize_tag, is_suspicious},
@@ -672,6 +673,30 @@ pub async fn delete_service_v1(
         );
     }
 
+    // Release static IP if this offering was a requester
+    // (will revert to DHCP if no other requesters remain)
+    let mut network_state = load_network_state().await;
+    if network_state.requested_by.contains(&service) {
+        if let Err(e) = revert_to_dhcp(&service, &mut network_state).await {
+            tracing::warn!(
+                service = %service,
+                error = ?e,
+                "Failed to release static IP (non-fatal)"
+            );
+        } else {
+            let remaining = network_state.requester_count();
+            if remaining == 0 {
+                tracing::info!(service = %service, "Released static IP, reverted to DHCP");
+            } else {
+                tracing::info!(
+                    service = %service,
+                    remaining_requesters = remaining,
+                    "Released static IP requester, other services still using it"
+                );
+            }
+        }
+    }
+
     // Update topology and broadcast change
     state.sync_self_services(true).await;
 
@@ -746,6 +771,30 @@ pub async fn destroy_service_v1(
             error = ?e,
             "Failed to unregister scheduled tasks (non-fatal)"
         );
+    }
+
+    // Release static IP if this offering was a requester
+    // (will revert to DHCP if no other requesters remain)
+    let mut network_state = load_network_state().await;
+    if network_state.requested_by.contains(&service) {
+        if let Err(e) = revert_to_dhcp(&service, &mut network_state).await {
+            tracing::warn!(
+                service = %service,
+                error = ?e,
+                "Failed to release static IP (non-fatal)"
+            );
+        } else {
+            let remaining = network_state.requester_count();
+            if remaining == 0 {
+                tracing::info!(service = %service, "Released static IP, reverted to DHCP");
+            } else {
+                tracing::info!(
+                    service = %service,
+                    remaining_requesters = remaining,
+                    "Released static IP requester, other services still using it"
+                );
+            }
+        }
     }
 
     // Update topology and broadcast change

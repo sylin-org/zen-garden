@@ -36,6 +36,7 @@ pub mod storage_cache;
 pub mod sub_capability;
 pub mod events;
 pub mod infrastructure;
+pub mod network;
 
 pub use service_manager::ServiceManager;
 pub use registry::Registry;
@@ -90,5 +91,10 @@ pub use events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
 pub use infrastructure::{
     InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
     DockerRegistryHandler,
+};
+pub use network::{
+    NetworkMode, StaticIpState, StaticIpDesired, StaticIpActive,
+    StaticIpRequest, StaticIpRelease, StaticIpSeverity,
+    ProbeResult, PoolExhausted, NetworkError,
 };
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

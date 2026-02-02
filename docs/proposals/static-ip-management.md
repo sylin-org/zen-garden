@@ -1,6 +1,6 @@
 # Static IP Management for Network Infrastructure Offerings
 
-**Status:** Proposal
+**Status:** Implemented
 **Author:** Infrastructure Team
 **Date:** 2026-02-01
 **Related:** Pi-hole, DNS offerings, DHCP lease stability
@@ -62,12 +62,27 @@ pub enum NetworkMode {
     },
 }
 
+/// Persistent static IP state with offering-bound lifecycle
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StaticIpState {
+    pub mode: NetworkMode,
+    /// Offerings currently using the static IP (reference counting)
+    /// When empty, system reverts to DHCP
+    pub requested_by: Vec<String>,
+}
+
 /// Request for static IP assignment (domain event)
 #[derive(Debug, Clone)]
 pub struct StaticIpRequest {
     pub offering: String,
     pub reason: String,
     pub severity: StaticIpSeverity,
+}
+
+/// Request to release static IP (domain event, on offering removal)
+#[derive(Debug, Clone)]
+pub struct StaticIpRelease {
+    pub offering: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -215,6 +230,7 @@ pub enum StaticIpPreference {
 {
   "version": 1,
   "mode": "static",
+  "requested_by": ["pihole"],
   "desired": {
     "address": "192.168.1.245",
     "prefix_length": 24,
@@ -226,8 +242,7 @@ pub enum StaticIpPreference {
     "address": "192.168.1.245",
     "obtained_via": "static",
     "applied_at": "2026-02-01T22:00:00Z"
-  },
-  "conflicts": []
+  }
 }
 ```
 
@@ -379,61 +394,174 @@ $ rake offer pihole
 
 ## Conflict Detection Algorithm
 
+### Individual IP Probing
+
 ```rust
 /// Probe an IP for conflicts using ARP (primary) and ICMP (fallback)
 async fn probe_ip_conflict(
     ip: Ipv4Addr,
     interface: &str,
-    timeout: Duration,
+    config: &ProbeConfig,
 ) -> ProbeResult {
-    // 1. ARP Probe (RFC 5227)
-    // Send ARP request with sender IP = 0.0.0.0
-    // If we get a reply, IP is in use
-    if let Ok(result) = arp_probe(ip, interface, timeout).await {
-        if result.conflict {
-            return ProbeResult::Conflict {
-                method: "arp",
-                responder_mac: result.mac,
-            };
-        }
+    // 1. Check local bindings first (fast)
+    if is_ip_bound_locally(ip) {
+        return ProbeResult::LocalConflict;
     }
 
-    // 2. ICMP Ping (fallback for environments where ARP fails)
-    if ping_probe(ip, timeout).await {
+    // 2. ARP Probe (RFC 5227) - Linux only
+    // Send ARP request with sender IP = 0.0.0.0
+    // If we get a reply, IP is in use
+    #[cfg(target_os = "linux")]
+    if let Ok(Some(mac)) = arp_probe(ip, interface, config).await {
+        return ProbeResult::Conflict {
+            method: "arp",
+            responder_mac: Some(mac),
+        };
+    }
+
+    // 3. ICMP Ping (fallback for all platforms)
+    if ping_probe(ip, config.ping_timeout).await {
         return ProbeResult::Conflict {
             method: "icmp",
             responder_mac: None,
         };
     }
 
-    // 3. Check local bindings
-    if is_ip_bound_locally(ip) {
-        return ProbeResult::LocalConflict;
-    }
-
     ProbeResult::Available
 }
+```
 
-/// Select an IP from the pool, probing each for conflicts
+### Parallel Batched Pool Selection
+
+IPs are probed in **parallel batches of 4** for faster discovery while avoiding network flooding:
+
+```rust
+const PROBE_BATCH_SIZE: usize = 4;
+
+/// Select an IP from the pool using parallel batched probing
 async fn select_ip_from_pool(
     config: &StaticIpPoolConfig,
     interface: &str,
 ) -> Result<Ipv4Addr, PoolExhausted> {
-    let start: u32 = config.pool_start.into();
-    let end: u32 = config.pool_end.into();
+    let all_ips: Vec<Ipv4Addr> = config.iter().collect();
 
-    for ip_int in start..=end {
-        let ip = Ipv4Addr::from(ip_int);
+    // Process in batches of 4
+    for batch in all_ips.chunks(PROBE_BATCH_SIZE) {
+        // Spawn all probes in batch concurrently
+        let probe_futures: Vec<_> = batch.iter().map(|&ip| {
+            async move { (ip, probe_ip_conflict(ip, interface, &config).await) }
+        }).collect();
 
-        match probe_ip_conflict(ip, interface, PROBE_TIMEOUT).await {
-            ProbeResult::Available => return Ok(ip),
-            ProbeResult::Conflict { .. } => continue,
-            ProbeResult::LocalConflict => continue,
+        // Wait for all probes in batch
+        let results = futures_util::future::join_all(probe_futures).await;
+
+        // Return lowest available IP from batch
+        if let Some(ip) = results.iter()
+            .filter(|(_, r)| matches!(r, ProbeResult::Available))
+            .map(|(ip, _)| *ip)
+            .min()
+        {
+            return Ok(ip);
         }
     }
 
-    Err(PoolExhausted)
+    Err(PoolExhausted { ... })
 }
+```
+
+**Performance:** For a pool of 11 IPs (`.240-.250`):
+- Sequential: Up to 11 × 2s = 22 seconds worst case
+- Batched (4): Up to 3 batches × 2s = 6 seconds worst case
+- Best case: First batch finds available IP in ~2 seconds
+
+## Offering-Bound Lifecycle
+
+Static IP assignment is **tied to offerings that request it**, not to the stone itself. This ensures the system is self-healing and doesn't leave orphaned configurations.
+
+### State Model
+
+```rust
+/// Persistent static IP state with reference tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticIpState {
+    pub mode: NetworkMode,
+    /// Offerings currently using the static IP (reference counting)
+    pub requested_by: Vec<String>,  // ["pihole", "bind9", ...]
+    pub desired: Option<StaticIpDesired>,
+    pub active: Option<StaticIpActive>,
+}
+```
+
+### Lifecycle Rules
+
+1. **First Request:** When first offering with `static_ip: required/preferred` (accepted) is installed:
+   - Probe and allocate IP from pool
+   - Apply static configuration
+   - Add offering to `requested_by`
+
+2. **Additional Requests:** When another offering requests static IP:
+   - Reuse existing static IP (no change to network)
+   - Add offering to `requested_by`
+
+3. **Offering Removal:** When an offering is removed:
+   - Remove from `requested_by`
+   - If `requested_by` becomes empty → **revert to DHCP**
+   - Clean up netplan config file
+
+4. **Upgrade/Reinstall:** Offering upgrade preserves static IP (no change to `requested_by`)
+
+### Example Flow
+
+```
+# Initial state
+requested_by: []
+mode: Dhcp
+
+# Install pihole (requests static IP)
+requested_by: ["pihole"]
+mode: Static { address: 192.168.1.245 }
+
+# Install bind9 (also requests static IP)
+requested_by: ["pihole", "bind9"]
+mode: Static { address: 192.168.1.245 }  # Same IP, no network change
+
+# Remove pihole
+requested_by: ["bind9"]
+mode: Static { address: 192.168.1.245 }  # Still have a requester
+
+# Remove bind9
+requested_by: []
+mode: Dhcp  # ← Automatic revert!
+```
+
+### State File Update
+
+```json
+{
+  "version": 1,
+  "mode": "static",
+  "requested_by": ["pihole", "bind9"],
+  "desired": {
+    "address": "192.168.1.245",
+    "prefix_length": 24,
+    "gateway": "192.168.1.1",
+    "dns": ["8.8.8.8", "1.1.1.1"],
+    "interface": "eth0"
+  },
+  "active": {
+    "address": "192.168.1.245",
+    "obtained_via": "static",
+    "applied_at": "2026-02-01T22:00:00Z"
+  }
+}
+```
+
+### Console Output on Revert
+
+```
+  [Network]  RELEASING   Last static IP requester (pihole) removed
+  [Network]  REVERTING   Removing static IP configuration...
+  [Network]  APPLIED     Reverted to DHCP (acquired 192.168.1.103)
 ```
 
 ## Safety Guarantees
@@ -444,6 +572,7 @@ async fn select_ip_from_pool(
 4. **Preserve desired state:** Even on fallback, we record what was wanted for debugging
 5. **Privilege check:** Verify root/CAP_NET_ADMIN before attempting changes
 6. **Timeout all probes:** Never hang waiting for network responses
+7. **Reference counting:** Static IP only reverts when ALL requesters are removed
 
 ## Constants & Tunables
 
@@ -509,6 +638,57 @@ pub const DEFAULT_POOL_END_SUFFIX: u8 = 250;
 1. Should we support IPv6 static addressing? (Recommendation: YAGNI for v1)
 2. Should pool config be per-offering or global? (Recommendation: Global pool, simpler)
 3. Should we auto-detect gateway/DNS from current DHCP? (Recommendation: Yes, as defaults)
+
+## Implementation Notes
+
+### Implemented Features
+
+| Feature | Status | Location |
+|---------|--------|----------|
+| Domain types | ✅ | `src/moss/src/domain/network.rs` |
+| Config schema | ✅ | `src/moss/src/infra/config.rs` |
+| ARP/ICMP probing | ✅ | `src/moss/src/infra/network/probe.rs` |
+| Linux netplan adapter | ✅ | `src/moss/src/infra/network/linux.rs` |
+| State persistence | ✅ | `src/moss/src/infra/network/state.rs` |
+| Manifest `network.static_ip` | ✅ | `src/common/src/manifests/sw.rs` |
+| Install hook | ✅ | `src/moss/src/tasks/job_executors.rs` |
+| Remove hook | ✅ | `src/moss/src/api/v1/services.rs` |
+| Parallel batched probing | ✅ | `src/moss/src/infra/network/mod.rs` |
+
+### Key Behaviors
+
+1. **Install Flow:**
+   - Checks `compiled.network.wants_static_ip()`
+   - If pool configured → probes in parallel batches, applies first available
+   - If `required` and fails → installation aborts
+   - If `preferred` and fails → installation continues with warning
+
+2. **Remove Flow:**
+   - Checks if offering was in `requested_by`
+   - Calls `revert_to_dhcp()` which decrements reference count
+   - If last requester → reverts to DHCP automatically
+
+3. **Hostname Resilience:**
+   - mDNS (`.local`) hostnames survive IP changes automatically
+   - Garden P2P chirps update topology with new IP
+   - Direct IP connections break on change
+
+### Files Changed
+
+```
+src/common/src/manifests/sw.rs          # NetworkRequirements, StaticIpPreference
+src/common/src/manifests/mod.rs         # Re-exports
+src/moss/src/domain/network.rs          # NetworkMode, StaticIpState, ProbeResult
+src/moss/src/domain/mod.rs              # Module declaration
+src/moss/src/infra/config.rs            # NetworkConfig, StaticIpPoolConfig
+src/moss/src/infra/network/mod.rs       # NetworkPlatform trait, select_ip_from_pool
+src/moss/src/infra/network/probe.rs     # probe_ip_conflict, ARP/ICMP
+src/moss/src/infra/network/linux.rs     # LinuxNetplan adapter
+src/moss/src/infra/network/state.rs     # load/save_network_state
+src/moss/src/tasks/job_executors.rs     # Install hook
+src/moss/src/api/v1/services.rs         # Remove hooks (delete + destroy)
+src/moss/embedded/manifests/sw/networking/pihole.snippet.yaml  # static_ip: preferred
+```
 
 ## Appendix: Netplan Configuration Example
 

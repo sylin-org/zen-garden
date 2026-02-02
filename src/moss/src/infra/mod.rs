@@ -32,6 +32,7 @@ pub mod harvest;
 pub mod harvest_store;
 pub mod listeners;
 pub mod manifests;
+pub mod network;
 pub mod nurturing_store;
 pub mod persistence;
 pub mod task_store;
@@ -45,7 +46,7 @@ pub mod update_transaction;
 pub use companions::CompanionRegistry;
 pub use api_helpers::{error_response, error_codes};
 pub use auth::NoAuth;
-pub use config::MossConfig;
+pub use config::{MossConfig, NetworkConfig, StaticIpPoolConfig};
 pub use container::ContainerRuntime;
 pub use garden_common::infra::network::get_local_ip;
 pub use process::{kill_existing_moss_processes_graceful, check_moss_processes_exist, kill_existing_moss_processes};
@@ -73,3 +74,10 @@ pub use embedded::{
 };
 pub use event_bus::{EventBus, EventListener, spawn_listener};
 pub use listeners::{ChirpListener, SeedBankCacheListener, SseEvent, SseListener, TimerListener};
+pub use network::{
+    NetworkPlatform, StaticIpApply,
+    detect_platform, select_ip_from_pool,
+    apply_static_from_pool, revert_to_dhcp,
+    load_network_state, save_network_state,
+    probe_ip_conflict, ProbeConfig,
+};

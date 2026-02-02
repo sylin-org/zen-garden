@@ -5,12 +5,89 @@
 //! - Exit code validation
 //! - Output pattern matching (regex)
 //! - Timeout handling
+//! - Windows fallback paths for common programs
 
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::process::Command;
 use std::time::Duration;
 use crate::manifests::CommandDetection;
+
+/// Windows fallback paths for common programs not in PATH
+#[cfg(windows)]
+fn get_windows_fallback_paths(program: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+
+    // Get LOCALAPPDATA for user-installed programs
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        match program {
+            "ollama" => {
+                // Standard Ollama install path
+                paths.push(format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data));
+            }
+            _ => {}
+        }
+    }
+
+    // Common Program Files locations
+    if let Ok(program_files) = std::env::var("ProgramFiles") {
+        match program {
+            "ollama" => {
+                paths.push(format!("{}\\Ollama\\ollama.exe", program_files));
+            }
+            _ => {}
+        }
+    }
+
+    paths
+}
+
+/// Try to find and execute a command, checking fallback paths on Windows
+#[cfg(windows)]
+fn try_execute_command(program: &str, args: &[String]) -> std::io::Result<std::process::Output> {
+    // First try the command as-is (relies on PATH)
+    match Command::new(program).args(args).output() {
+        Ok(output) => return Ok(output),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Command not found in PATH, try fallback paths
+            tracing::debug!(
+                program = %program,
+                "Command not found in PATH, trying fallback paths"
+            );
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Try fallback paths
+    for fallback_path in get_windows_fallback_paths(program) {
+        tracing::debug!(fallback_path = %fallback_path, "Trying fallback path");
+        match Command::new(&fallback_path).args(args).output() {
+            Ok(output) => {
+                tracing::info!(
+                    fallback_path = %fallback_path,
+                    "Found program via fallback path"
+                );
+                return Ok(output);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                continue; // Try next fallback
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    // All fallbacks failed, return the original "not found" error
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("Program '{}' not found in PATH or fallback locations", program)
+    ))
+}
+
+/// Execute command (non-Windows just uses PATH)
+#[cfg(not(windows))]
+fn try_execute_command(program: &str, args: &[String]) -> std::io::Result<std::process::Output> {
+    Command::new(program).args(args).output()
+}
 
 /// Detect service by executing a command
 ///
@@ -47,16 +124,27 @@ pub async fn detect_by_command(
             let program = program.to_string();
             let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
             move || {
-                Command::new(&program)
-                    .args(&args)
-                    .output()
+                try_execute_command(&program, &args)
             }
         })
     )
     .await
     .context("Command execution timeout")?
-    .context("Failed to spawn command")?
-    .context("Failed to execute command")?;
+    .context("Failed to spawn command task")?;
+
+    // Handle command execution result with detailed logging
+    let output = match output {
+        Ok(out) => out,
+        Err(e) => {
+            tracing::debug!(
+                command = %command,
+                error = %e,
+                error_kind = ?e.kind(),
+                "Command execution failed"
+            );
+            anyhow::bail!("Failed to execute command '{}': {}", command, e);
+        }
+    };
 
     // Check exit code
     let expected_code = config.expected_exit_code.unwrap_or(0);
@@ -209,5 +297,30 @@ mod tests {
 
         let result = detect_by_command(&config, Duration::from_secs(5)).await.unwrap();
         assert!(!result.detected);
+    }
+
+    /// Test Ollama detection - only runs if ollama is installed
+    #[tokio::test]
+    async fn test_detect_ollama() {
+        // Test with the actual pattern from the manifest
+        let config = CommandDetection {
+            command: "ollama --version".into(),
+            expected_pattern: Some(r"version is ([0-9]+\.[0-9]+\.[0-9]+)".into()),
+            expected_exit_code: Some(0),
+        };
+
+        match detect_by_command(&config, Duration::from_secs(5)).await {
+            Ok(result) => {
+                println!("Detection result: {:?}", result);
+                if result.detected {
+                    println!("✓ Ollama detected! Version: {:?}", result.version);
+                } else {
+                    println!("✗ Ollama NOT detected: {}", result.details);
+                }
+            }
+            Err(e) => {
+                println!("Detection error (ollama not installed?): {}", e);
+            }
+        }
     }
 }

@@ -983,45 +983,90 @@ async fn create_multicast_receiver(addr: &str, config: &DiscoveryConfig) -> Resu
         Domain::IPV6
     };
 
-    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-
-    // Enable SO_REUSEADDR for port reuse
-    socket.set_reuse_address(true)?;
-
-    // Enable broadcast (required to receive broadcast packets!)
-    socket.set_broadcast(true)?;
-
-    // Windows: Disable WSAECONNRESET from ICMP port unreachable
+    // Windows: Bind with retry/backoff to handle port release delays after restart
+    // On Windows, when a process exits (especially via std::process::exit()), the port
+    // may not be immediately released. This retry loop handles that overlap window.
     #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawSocket;
-        const SIO_UDP_CONNRESET: u32 = 0x9800000C;
-        let mut bytes_returned: u32 = 0;
-        let enable: u32 = 0;
-        unsafe {
-            let sock = socket.as_raw_socket() as usize;
-            let result = windows_sys::Win32::Networking::WinSock::WSAIoctl(
-                sock,
-                SIO_UDP_CONNRESET,
-                &enable as *const _ as *const _,
-                std::mem::size_of::<u32>() as u32,
-                std::ptr::null_mut(),
-                0,
-                &mut bytes_returned as *mut _,
-                std::ptr::null_mut(),
-                None,
-            );
-            if result != 0 {
-                tracing::warn!("Failed to disable SIO_UDP_CONNRESET");
+    const MAX_BIND_ATTEMPTS: u32 = 10;
+    #[cfg(windows)]
+    const BIND_RETRY_DELAYS_MS: [u64; 6] = [100, 200, 400, 800, 1600, 2000];
+
+    #[cfg(not(windows))]
+    const MAX_BIND_ATTEMPTS: u32 = 1;
+
+    let mut last_error = None;
+
+    for attempt in 0..MAX_BIND_ATTEMPTS {
+        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+
+        // Enable SO_REUSEADDR for port reuse
+        socket.set_reuse_address(true)?;
+
+        // Enable broadcast (required to receive broadcast packets!)
+        socket.set_broadcast(true)?;
+
+        // Windows: Disable WSAECONNRESET from ICMP port unreachable
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawSocket;
+            const SIO_UDP_CONNRESET: u32 = 0x9800000C;
+            let mut bytes_returned: u32 = 0;
+            let enable: u32 = 0;
+            unsafe {
+                let sock = socket.as_raw_socket() as usize;
+                let result = windows_sys::Win32::Networking::WinSock::WSAIoctl(
+                    sock,
+                    SIO_UDP_CONNRESET,
+                    &enable as *const _ as *const _,
+                    std::mem::size_of::<u32>() as u32,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut bytes_returned as *mut _,
+                    std::ptr::null_mut(),
+                    None,
+                );
+                if result != 0 {
+                    tracing::warn!("Failed to disable SIO_UDP_CONNRESET");
+                }
+            }
+        }
+
+        match socket.bind(&socket_addr.into()) {
+            Ok(()) => {
+                if attempt > 0 {
+                    tracing::info!(
+                        attempt = attempt + 1,
+                        "UDP bind succeeded after retry"
+                    );
+                }
+                // Continue with multicast setup below
+                socket.set_nonblocking(true)?;
+                let udp_socket = UdpSocket::from_std(socket.into())?;
+                return setup_multicast_joins(udp_socket, config).await;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                #[cfg(windows)]
+                {
+                    let delay_idx = (attempt as usize).min(BIND_RETRY_DELAYS_MS.len() - 1);
+                    let delay_ms = BIND_RETRY_DELAYS_MS[delay_idx];
+                    tracing::debug!(
+                        attempt = attempt + 1,
+                        delay_ms,
+                        "UDP bind failed, retrying (port may still be held by old process)"
+                    );
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
             }
         }
     }
 
-    socket.bind(&socket_addr.into())?;
-    socket.set_nonblocking(true)?;
+    Err(last_error.map(|e| anyhow::anyhow!("Bind failed after {} attempts: {}", MAX_BIND_ATTEMPTS, e))
+        .unwrap_or_else(|| anyhow::anyhow!("Bind failed")))
+}
 
-    let udp_socket = UdpSocket::from_std(socket.into())?;
-
+/// Setup multicast joins on all eligible interfaces
+async fn setup_multicast_joins(udp_socket: UdpSocket, config: &DiscoveryConfig) -> Result<UdpSocket> {
     // Join multicast group on all eligible interfaces
     let interfaces = enumerate_eligible_interfaces();
     let mut join_count = 0;

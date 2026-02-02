@@ -2,6 +2,23 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-02
+- **Unified Offering Model (Greenfield Refactor)** - merged dual-collection manifest system into single `Offering` struct
+  - `SwEntry` + `OfferingManifest` → unified `Offering` with mode-as-configuration
+  - Mode support now derived from `Option<ManagedConfig>`, `Option<AdoptedConfig>`, `Option<BorrowedConfig>`
+  - `OfferingRegistry` replaces `SwManifests`, `OfferingMetadata` replaces `SwFrontmatter`
+  - Removed all 6 legacy type aliases (clean codebase, no backwards compatibility shims)
+- **File renames to align with content**:
+  - `common/manifests/sw.rs` → `offering.rs` (contains `Offering` model)
+  - `common/manifests/offering.rs` → `detection.rs` (contains detection types for adopted mode)
+- **Removed legacy code from ManifestRegistry**:
+  - Deleted `offering_manifests` HashMap field
+  - Removed `get_offering_manifest()`, `add_offering_manifest()`, `add_offering_manifests()`, `load_legacy_offering_manifests()`
+- **Deleted orphaned duplicate files**:
+  - `moss/infra/manifests/hw.rs` - duplicate of `common/manifests/hw.rs`, never imported
+  - `moss/infra/manifests/sw.rs` - orphaned after unification
+- **Updated all consumers**: DetectionOrchestrator, adoption APIs, embedded manifest loading now use unified model
+
 ## 2026-01-29
 - **Package Structure v2.0** - Simplified to mirror target filesystem exactly
   - Package now has just `bin/` (→ /usr/local/bin) and `lib/` (→ /var/lib) folders

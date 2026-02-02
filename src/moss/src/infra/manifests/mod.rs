@@ -3,9 +3,13 @@
 //! This module now lives in `garden_common::manifests`.
 //! All manifest loading logic is reusable.
 
-// Re-export everything from common
+// Re-export the unified offering types from common
 pub use garden_common::manifests::{
+    // Hardware manifests
     HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR,
-    SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, runtime_manifests_dir,
+    // Unified offering model
+    Offering, OfferingRegistry, OfferingMetadata,
+    ManagedConfig, AdoptedConfig, BorrowedConfig,
+    ServiceTemplate, TemplateInfo, runtime_manifests_dir,
     ManifestRegistry, RUNTIME_MANIFESTS_DIR,
 };

@@ -29,7 +29,10 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
         .context(format!("No manifest found for offering {}", offering))?;
 
     // Parse the manifest to get ports, env, and volumes
-    let (ports, env, volumes) = parse_manifest_config(&manifest.snippet_yaml)?;
+    let snippet_yaml = manifest.managed.as_ref()
+        .map(|m| m.snippet_yaml.as_str())
+        .unwrap_or("");
+    let (ports, env, volumes) = parse_manifest_config(snippet_yaml)?;
 
     // Step 3: Stop the old container
     tracing::info!(offering, "Stopping old container");

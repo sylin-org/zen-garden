@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use garden_common::manifests::{DetectionMethod, DetectionRule, OfferingManifest};
+use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};
 use crate::docker::DockerManager;
 use crate::infra::detection::{
     detect_by_command, detect_by_container_inspect, detect_by_http_probe, DetectionResult,
@@ -60,19 +60,16 @@ impl DetectionOrchestrator {
         }
     }
 
-    /// Detect service using manifest rules
+    /// Detect service using offering rules
     ///
     /// Returns detection result with stability tracking.
     /// Result is cached according to rule TTL.
     pub async fn detect(
         &self,
-        manifest: &OfferingManifest,
+        offering: &Offering,
     ) -> Result<AggregatedDetectionResult> {
         // Get detection rules for current OS
-        let rules = match &manifest.detection {
-            Some(os_rules) => os_rules.get_current_os_rules(),
-            None => Vec::new(),
-        };
+        let rules = offering.get_detection_rules();
 
         if rules.is_empty() {
             return Ok(AggregatedDetectionResult {
@@ -90,18 +87,18 @@ impl DetectionOrchestrator {
         for rule in &rules {
             methods_tried += 1;
 
-            let cache_key = format!("{}:{:?}", manifest.name, rule.method);
+            let cache_key = format!("{}:{:?}", offering.name, rule.method);
 
             // Check cache first
             if let Some(cached) = self.cache.get(&cache_key) {
                 if cached.cached_at.elapsed() < cached.ttl {
                     tracing::debug!(
-                        offering = %manifest.name,
+                        offering = %offering.name,
                         method = ?rule.method,
                         "Using cached detection result"
                     );
 
-                    let stable = self.check_stability(&manifest.name, cached.result.detected, rule);
+                    let stable = self.check_stability(&offering.name, cached.result.detected, rule);
                     return Ok(AggregatedDetectionResult {
                         detected: cached.result.detected,
                         stable,
@@ -113,7 +110,7 @@ impl DetectionOrchestrator {
             }
 
             // Execute detection
-            let result = self.execute_detection(&manifest.name, rule).await?;
+            let result = self.execute_detection(&offering.name, rule).await?;
 
             // Update cache
             let ttl = Duration::from_secs(rule.cache_ttl_secs.unwrap_or(300));
@@ -127,7 +124,7 @@ impl DetectionOrchestrator {
             );
 
             // Update stability tracking
-            let stable = self.check_stability(&manifest.name, result.detected, rule);
+            let stable = self.check_stability(&offering.name, result.detected, rule);
 
             if result.detected {
                 return Ok(AggregatedDetectionResult {

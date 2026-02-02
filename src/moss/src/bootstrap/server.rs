@@ -160,5 +160,17 @@ pub async fn run(
         "Shutdown complete".to_string()
     ));
 
+    // Windows-only: Force exit to ensure ports are released
+    // On Windows, SSE connections and background tasks can keep the tokio runtime alive
+    // even after the server has stopped. This prevents the self-update flow from completing
+    // because the temp updater waits for the old process to exit.
+    // On Linux, we let the process exit naturally so systemd can properly detect the exit.
+    #[cfg(target_os = "windows")]
+    {
+        tracing::info!("Windows: forcing process exit to release ports");
+        std::process::exit(0);
+    }
+
+    #[cfg(not(target_os = "windows"))]
     Ok(())
 }

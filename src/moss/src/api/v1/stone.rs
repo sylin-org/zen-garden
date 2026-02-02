@@ -563,9 +563,11 @@ pub async fn deploy_stone_v1(
     }
     log_staged_files(&validated_bin_dir, &validated_bin_dir);
     
-    // Check if moss is included
-    let moss_path = validated_bin_dir.join("garden-moss");
+    // Check if moss is included (Windows: garden-moss.exe, Linux: garden-moss)
+    let moss_name = if cfg!(windows) { "garden-moss.exe" } else { "garden-moss" };
+    let moss_path = validated_bin_dir.join(moss_name);
     let contains_moss = moss_path.exists();
+    tracing::info!(moss_path = %moss_path.display(), contains_moss, "Checked for moss binary in package");
 
     // Copy scripts if present
     let scripts_dir = package_dir.join("scripts");

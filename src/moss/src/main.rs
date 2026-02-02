@@ -36,7 +36,10 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(target_os = "windows")]
     if cli.cleanup_updater {
-        return cleanup_updater_process().await;
+        // Cleanup temp updater, then continue to run daemon (don't return)
+        if let Err(e) = cleanup_updater_process().await {
+            eprintln!("Warning: Failed to cleanup updater: {}", e);
+        }
     }
 
     // Load and merge configuration (CLI > Env > File > Defaults)

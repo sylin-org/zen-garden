@@ -850,7 +850,10 @@ pub async fn get_manifest_v1(
         )
     })?;
 
-    Ok((StatusCode::OK, entry.snippet_yaml.clone()))
+    let yaml = entry.managed.as_ref()
+        .map(|m| m.snippet_yaml.clone())
+        .unwrap_or_default();
+    Ok((StatusCode::OK, yaml))
 }
 
 /// GET /api/v1/services/:service/logs - Stream service logs (SSE)

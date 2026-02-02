@@ -46,10 +46,12 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
     loop {
         interval.tick().await;
 
-        tracing::debug!("Running auto-adoption scan");
-
         // Get manifests that support adopted mode
         let adoptable_manifests = state.manifest_registry.offerings_by_mode(&OfferingMode::Adopted);
+        tracing::info!(
+            count = adoptable_manifests.len(),
+            "Running auto-adoption scan"
+        );
 
         let orchestrator = DetectionOrchestrator::new(state.docker.clone());
 
@@ -92,6 +94,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         protocol: manifest.category.clone(),
                     };
 
+                    // Get control config from adopted mode
+                    let control = manifest.get_control_config();
+
                     let adopted_info = AdoptedOfferingInfo {
                         name: format!("{}@adopted", manifest.name),
                         offering: manifest.name.clone(),
@@ -101,10 +106,10 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         health: ServiceHealthStatus::Healthy,
                         detected_at: chrono::Utc::now().to_rfc3339(),
                         version: result.version,
-                        start_command: manifest.control.as_ref().and_then(|c| c.start_command.clone()),
-                        stop_command: manifest.control.as_ref().and_then(|c| c.stop_command.clone()),
-                        restart_command: manifest.control.as_ref().and_then(|c| c.restart_command.clone()),
-                        health_check_url: manifest.control.as_ref().and_then(|c| c.health_check_url.clone()),
+                        start_command: control.and_then(|c| c.start_command.clone()),
+                        stop_command: control.and_then(|c| c.stop_command.clone()),
+                        restart_command: control.and_then(|c| c.restart_command.clone()),
+                        health_check_url: control.and_then(|c| c.health_check_url.clone()),
                         container_name: None,
                     };
 
@@ -129,8 +134,14 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         "Detected but not yet stable (waiting for stability threshold)"
                     );
                 }
-                Ok(_) => {
-                    // Not detected, skip
+                Ok(result) => {
+                    tracing::debug!(
+                        offering = %manifest.name,
+                        detected = result.detected,
+                        methods_tried = result.methods_tried,
+                        details = %result.details,
+                        "Detection completed (not detected)"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(

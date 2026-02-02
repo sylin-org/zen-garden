@@ -210,28 +210,38 @@ pub async fn install_windows_service() -> anyhow::Result<()> {
 
 /// Finalize Windows service update
 ///
-/// Called when running as garden-moss-new.exe after an update.
-/// Waits for the old process to exit, replaces the binary, and restarts the service.
+/// Called when running as garden-moss-temp.exe after an update.
+/// Waits for the old process to exit, installs staged binaries, and restarts.
 #[cfg(target_os = "windows")]
 pub async fn finalize_service_update() -> anyhow::Result<()> {
     use std::process::Command;
+    use std::path::Path;
 
     log_update("=== finalize_service_update: STARTED ===");
     println!("Finalizing Moss update...");
 
     let current_exe = std::env::current_exe()?;
     log_update(&format!("Current exe: {:?}", current_exe));
-    
+
     let exe_dir = current_exe.parent().ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
-    log_update(&format!("Exe directory: {:?}", exe_dir));
-    
-    let target_exe = exe_dir.join("garden-moss.exe");
-    log_update(&format!("Target exe: {:?}", target_exe));
+    log_update(&format!("Exe directory (install dir): {:?}", exe_dir));
+
+    // Staged binaries are in data_dir/staging/validated/bin/
+    let staging_bin_dir = Path::new(&garden_common::constants::paths::data_dir())
+        .join("staging")
+        .join("validated")
+        .join("bin");
+    log_update(&format!("Staging bin dir: {:?}", staging_bin_dir));
+
+    if !staging_bin_dir.exists() {
+        log_update("ERROR: Staging bin directory does not exist");
+        return Err(anyhow::anyhow!("Staging bin directory not found: {:?}", staging_bin_dir));
+    }
 
     // Wait for old process to exit (up to 30 seconds)
     println!("Waiting for old Moss process to exit...");
     log_update("Waiting for old moss process to exit (up to 30s)...");
-    
+
     for attempt in 1..=60 {
         let output = Command::new("tasklist")
             .args(["/FI", "IMAGENAME eq garden-moss.exe"])
@@ -252,11 +262,74 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 
-    println!("Old process exited. Replacing binary...");
-    log_update("Copying temp updater to target exe...");
-    std::fs::copy(&current_exe, &target_exe)?;
-    log_update("Binary replaced successfully");
-    println!("✓ Binary replaced successfully");
+    // Copy all staged binaries to install directory
+    println!("Installing staged binaries...");
+    log_update("Copying staged binaries to install directory...");
+
+    let mut installed_count = 0;
+    if let Ok(entries) = std::fs::read_dir(&staging_bin_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let src_path = entry.path();
+            let file_name = entry.file_name();
+
+            if src_path.is_file() {
+                // Top-level binaries go to exe_dir
+                let dest_path = exe_dir.join(&file_name);
+
+                log_update(&format!("Copying {:?} -> {:?}", src_path, dest_path));
+                match std::fs::copy(&src_path, &dest_path) {
+                    Ok(_) => {
+                        installed_count += 1;
+                        println!("  ✓ {}", file_name.to_string_lossy());
+                    }
+                    Err(e) => {
+                        log_update(&format!("ERROR copying {:?}: {}", file_name, e));
+                        eprintln!("  ✗ {} - {}", file_name.to_string_lossy(), e);
+                    }
+                }
+            } else if src_path.is_dir() {
+                // All subdirectories go to data_dir (e.g., .zen-garden/Companions)
+                let data_dir_str = garden_common::constants::paths::data_dir();
+                let subdir_dest = Path::new(&data_dir_str).join(&file_name);
+                log_update(&format!("Copying subdir {:?} -> {:?}", src_path, subdir_dest));
+
+                // Recursively copy directory
+                fn copy_dir_recursive(src: &Path, dest: &Path, log_fn: &dyn Fn(&str)) -> std::io::Result<u32> {
+                    let mut count = 0;
+                    if !dest.exists() {
+                        std::fs::create_dir_all(dest)?;
+                    }
+                    for entry in std::fs::read_dir(src)? {
+                        let entry = entry?;
+                        let src_path = entry.path();
+                        let dest_path = dest.join(entry.file_name());
+                        if src_path.is_dir() {
+                            count += copy_dir_recursive(&src_path, &dest_path, log_fn)?;
+                        } else {
+                            log_fn(&format!("Copying {:?} -> {:?}", src_path, dest_path));
+                            std::fs::copy(&src_path, &dest_path)?;
+                            count += 1;
+                        }
+                    }
+                    Ok(count)
+                }
+
+                match copy_dir_recursive(&src_path, &subdir_dest, &|msg| log_update(msg)) {
+                    Ok(count) => {
+                        installed_count += count;
+                        println!("  ✓ {}/ ({} files)", file_name.to_string_lossy(), count);
+                    }
+                    Err(e) => {
+                        log_update(&format!("ERROR copying {}: {}", file_name.to_string_lossy(), e));
+                        eprintln!("  ✗ {}/ - {}", file_name.to_string_lossy(), e);
+                    }
+                }
+            }
+        }
+    }
+
+    log_update(&format!("Installed {} binaries", installed_count));
+    println!("✓ Installed {} binaries", installed_count);
 
     // Check if running as service
     let is_service = std::env::var("RUNNING_AS_SERVICE").is_ok();
@@ -271,10 +344,32 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         log_update(&format!("Service start output: {:?}", String::from_utf8_lossy(&output.stdout)));
         println!("✓ Service start triggered");
     } else {
+        // Wait for port 7185 to become available (up to 10 seconds)
+        println!("Waiting for port 7185 to become available...");
+        log_update("Checking port 7185 availability...");
+
+        let port = garden_common::ports::MOSS_HTTP;
+        for attempt in 1..=20 {
+            match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
+                Ok(listener) => {
+                    drop(listener); // Release the port immediately
+                    log_update(&format!("Port {} available after attempt {}", port, attempt));
+                    break;
+                }
+                Err(_) => {
+                    if attempt == 20 {
+                        log_update(&format!("WARNING: Port {} still in use after 10s, launching anyway", port));
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        let target_exe = exe_dir.join("garden-moss.exe");
         println!("Launching new Moss...");
-        log_update("Launching new Moss with --cleanup-old...");
+        log_update(&format!("Launching new Moss: {:?} --cleanup-updater", target_exe));
         let child = Command::new(&target_exe)
-            .arg("--cleanup-old")
+            .arg("--cleanup-updater")
             .spawn()?;
         log_update(&format!("New Moss spawned with PID: {:?}", child.id()));
         println!("✓ New Moss launched");

@@ -74,24 +74,48 @@ impl SseClient {
     /// Start SSE client in background
     ///
     /// Connects to Moss and dispatches events to handler.
-    /// Automatically reconnects on disconnect.
+    /// Automatically reconnects on disconnect with exponential backoff.
     pub fn start<H: EventHandler>(config: SseClientConfig, handler: Arc<H>) -> JoinHandle<()> {
         tokio::spawn(async move {
+            let mut consecutive_failures = 0u32;
+            // Backoff pattern: 1-2-4-8-16-32 seconds
+            let backoff_secs = [1, 2, 4, 8, 16, 32];
+
             loop {
                 let url = config.url();
-                tracing::info!(endpoint = %url, "Connecting to SSE stream");
+
+                // Only log info on first attempt or after success
+                if consecutive_failures == 0 {
+                    tracing::info!(endpoint = %url, "Connecting to SSE stream");
+                }
 
                 match Self::connect_and_listen(&url, &handler).await {
                     Ok(()) => {
                         tracing::info!("SSE stream ended normally");
+                        consecutive_failures = 0;
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "SSE connection error");
+                        consecutive_failures += 1;
+
+                        // Use debug for connection refused (expected during startup)
+                        // Use warn for other errors or after many retries
+                        let error_str = e.to_string();
+                        if error_str.contains("refused") || error_str.contains("10061") {
+                            if consecutive_failures <= 3 {
+                                tracing::debug!(attempt = consecutive_failures, "SSE connection refused (service may be starting)");
+                            } else {
+                                tracing::warn!(attempt = consecutive_failures, "SSE connection still refused");
+                            }
+                        } else {
+                            tracing::warn!(error = %e, attempt = consecutive_failures, "SSE connection error");
+                        }
                     }
                 }
 
-                // Reconnect delay
-                tokio::time::sleep(config.reconnect_delay).await;
+                // Exponential backoff: 1-2-4-8-16-32 seconds
+                let idx = (consecutive_failures as usize).saturating_sub(1).min(backoff_secs.len() - 1);
+                let delay = Duration::from_secs(backoff_secs[idx]);
+                tokio::time::sleep(delay).await;
             }
         })
     }

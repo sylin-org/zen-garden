@@ -5,10 +5,10 @@
 
 pub mod category;
 pub mod ceremony;
-pub mod offering;
+pub mod detection;
 pub mod hw;
+pub mod offering;
 pub mod ports;
-pub mod sw;
 pub mod registry;
 
 pub use category::{
@@ -19,8 +19,9 @@ pub use category::{
     load_categories,
 };
 
-pub use offering::{
-    OfferingManifest,
+// Detection and control types
+pub use detection::{
+    OsDetectionRules,
     DetectionRule,
     DetectionMethod,
     DetectionConfig,
@@ -42,8 +43,12 @@ pub use ceremony::{
 // Re-export manifest loaders
 pub use hw::{HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR};
 pub use ports::{get_ports_catalog, init_ports_catalog, init_ports_catalog_from_str, load_ports_catalog};
-pub use sw::{
-    SwEntry, SwFrontmatter, SwManifests, ServiceTemplate, TemplateInfo, runtime_manifests_dir,
+pub use registry::{ManifestRegistry, discover_subdirectories, RUNTIME_MANIFESTS_DIR};
+
+// Unified Offering Model
+pub use offering::{
+    Offering, OfferingRegistry, OfferingMetadata,
+    ManagedConfig, AdoptedConfig, BorrowedConfig,
+    ServiceTemplate, TemplateInfo, runtime_manifests_dir,
     NetworkRequirements, StaticIpPreference,
 };
-pub use registry::{ManifestRegistry, discover_subdirectories, RUNTIME_MANIFESTS_DIR};

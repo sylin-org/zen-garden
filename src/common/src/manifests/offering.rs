@@ -1,377 +1,990 @@
-//! Offering manifest schema for multi-mode deployments
+//! Offering Manifests (Unified Model)
 //!
-//! Defines the structure for offering manifests that support:
-//! - Managed mode: Container-based deployment (current system)
-//! - Adopted mode: Existing service detection and management
-//! - Borrowed mode: External service announcement
+//! Single source of truth for all offering definitions. An offering can support
+//! multiple deployment modes - managed (container), adopted (native), borrowed (external).
 //!
-//! Philosophy: All advanced fields are OPTIONAL - minimal manifests should be 4-6 lines.
-//! Optional fields use `#[serde(skip_serializing_if)]` to ensure they're completely omitted
-//! when not present (not serialized as null/{}/[]).
+//! # Mode Support
+//!
+//! Mode support is determined by which configurations are present:
+//! - `managed.is_some()` → supports Managed mode (container deployment)
+//! - `adopted.is_some()` → supports Adopted mode (native service detection)
+//! - `borrowed.is_some()` → supports Borrowed mode (external service announcement)
+//!
+//! # Structure
+//!
+//! ```text
+//! Offering
+//! ├── name, category (identity)
+//! ├── managed: Option<ManagedConfig>      # Container deployment
+//! │   └── snippet_yaml, network, tasks
+//! ├── adopted: Option<AdoptedConfig>      # Native service detection
+//! │   └── detection, control
+//! ├── borrowed: Option<BorrowedConfig>    # External service
+//! │   └── location, health
+//! ├── metadata: OfferingMetadata          # UI display info
+//! ├── compatibility: Option<CompatibilityRules>
+//! ├── guidance: Option<String>            # User documentation
+//! └── connection_template: Option<String> # Service mesh
+//! ```
 
+use anyhow::{Context, Result};
+use crate::{CompatibilityRules, TaskDefinition, OfferingMode};
+use crate::types::AdoptedControlLevel;
+use crate::manifests::detection::{
+    OsDetectionRules, ControlConfig, LocationConfig, HealthConfig,
+};
 use serde::{Deserialize, Serialize};
-use crate::types::{AdoptedControlLevel, HealthMethod, OfferingMode};
+use std::collections::HashMap;
+use std::path::Path;
 
-/// Offering manifest (template + modes + detection)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OfferingManifest {
-    /// Offering name (e.g., "mongodb", "postgres")
-    pub name: String,
+use super::discover_subdirectories;
 
-    /// Display category (e.g., "database", "ai", "storage")
-    pub category: String,
+// ============================================================================
+// Network Requirements
+// ============================================================================
 
-    /// Brief description
-    pub description: String,
+/// Network requirements for an offering
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NetworkRequirements {
+    /// Static IP preference for this offering
+    #[serde(default)]
+    pub static_ip: StaticIpPreference,
 
-    /// Supported deployment modes (default: ["managed"])
-    #[serde(default = "default_modes")]
-    pub modes: Vec<OfferingMode>,
+    /// Human-readable reason (why this offering benefits from/requires static IP)
+    #[serde(default)]
+    pub static_ip_reason: Option<String>,
+}
 
-    /// Tags for filtering/search
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub tags: Vec<String>,
+impl NetworkRequirements {
+    pub fn wants_static_ip(&self) -> bool {
+        !matches!(self.static_ip, StaticIpPreference::None)
+    }
 
-    // ===== Managed Mode Configuration =====
-    /// Container image (required for managed mode)
+    pub fn requires_static_ip(&self) -> bool {
+        matches!(self.static_ip, StaticIpPreference::Required)
+    }
+}
+
+/// Static IP preference level
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StaticIpPreference {
+    #[default]
+    None,
+    Preferred,
+    Required,
+}
+
+impl StaticIpPreference {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Preferred => "preferred",
+            Self::Required => "required",
+        }
+    }
+}
+
+// ============================================================================
+// Mode-Specific Configurations
+// ============================================================================
+
+/// Managed mode: container-based deployment
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ManagedConfig {
+    /// Raw Docker Compose snippet (template with Tera expressions)
+    pub snippet_yaml: String,
+
+    /// Network requirements (static IP preference)
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub image: Option<String>,
+    pub network: Option<NetworkRequirements>,
 
-    /// Port mappings: (host_port, container_port)
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub ports: Vec<(u16, u16)>,
-
-    /// Environment variables
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub environment: Vec<String>,
-
-    /// Volume mounts: (host_path, container_path)
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub volumes: Vec<(String, String)>,
-
-    // ===== Adopted Mode Configuration =====
-    /// Detection rules for adopted mode (OS-specific)
-    /// Structure: { "windows": [...], "linux": [...], "macos": [...] }
-    /// Moss loads only the rules for current OS
+    /// Tasks to run during deployment lifecycle
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub detection: Option<OsDetectionRules>,
+    pub tasks: Option<Vec<TaskDefinition>>,
+}
 
-    /// Control configuration for adopted offerings
+/// Adopted mode: native service detection and control
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AdoptedConfig {
+    /// OS-specific detection rules
+    pub detection: OsDetectionRules,
+
+    /// Control commands (start/stop/restart)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub control: Option<ControlConfig>,
 
-    // ===== Borrowed Mode Configuration =====
-    /// Default location for borrowed offerings
+    /// Default control level when adopting
+    #[serde(default)]
+    pub default_control_level: AdoptedControlLevel,
+
+    /// Health check for adopted service
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub location: Option<LocationConfig>,
+    pub health_check: Option<HealthConfig>,
+}
+
+/// Borrowed mode: external service announcement
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BorrowedConfig {
+    /// Default/suggested location
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub default_location: Option<LocationConfig>,
 
     /// Health check configuration
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub health: Option<HealthConfig>,
 
-    /// Connection template (Tera format)
+    /// Whether location is required (vs optional)
+    #[serde(default)]
+    pub location_required: bool,
+}
+
+/// UI and documentation metadata
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct OfferingMetadata {
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description: Option<String>,
+
+    /// Search/filter tags
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub tags: Vec<String>,
+
+    /// Icon identifier or URL
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub icon: Option<String>,
+
+    /// Project homepage URL
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub homepage: Option<String>,
+
+    /// Documentation URL
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub documentation: Option<String>,
+
+    /// Primary port (for quick reference in UI)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub port: Option<u16>,
+}
+
+// ============================================================================
+// Runtime Manifests Directory
+// ============================================================================
+
+/// Get runtime manifests directory (uses platform-aware paths)
+pub fn runtime_manifests_dir() -> String {
+    if let Ok(dir) = std::env::var("GARDEN_MANIFESTS_DIR") {
+        return dir;
+    }
+
+    let production_dir = format!("{}/manifests", crate::constants::paths::data_dir());
+    if std::path::Path::new(&production_dir).exists() {
+        return production_dir;
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        let dev_paths = [
+            "src/moss/embedded/manifests",
+            "../moss/embedded/manifests",
+            "../../moss/embedded/manifests",
+            "../../../moss/embedded/manifests",
+        ];
+
+        for relative_path in dev_paths {
+            let path = current_dir.join(relative_path);
+            if path.exists() {
+                return path.to_string_lossy().to_string();
+            }
+        }
+    }
+
+    production_dir
+}
+
+// ============================================================================
+// Service Template (Parsed Container Config)
+// ============================================================================
+
+/// Parsed service template ready for container creation
+#[derive(Debug, Clone)]
+pub struct ServiceTemplate {
+    pub image: String,
+    pub ports: HashMap<String, (u16, u16)>,
+    pub environment: Vec<String>,
+    pub volumes: Vec<(String, String)>,
+    pub compatibility: Option<CompatibilityRules>,
+    pub tasks: HashMap<String, TaskDefinition>,
+    pub network: NetworkRequirements,
+}
+
+impl ServiceTemplate {
+    pub fn default_port(&self) -> Option<&(u16, u16)> {
+        self.ports.get("default")
+    }
+
+    pub fn default_host_port(&self) -> u16 {
+        self.default_port().map(|(host, _)| *host).unwrap_or(30000)
+    }
+
+    pub fn ports_vec(&self) -> Vec<(u16, u16)> {
+        let mut ports = Vec::with_capacity(self.ports.len());
+        if let Some(p) = self.ports.get("default") {
+            ports.push(*p);
+        }
+        let mut other_ports: Vec<_> = self.ports.iter()
+            .filter(|(k, _)| *k != "default")
+            .collect();
+        other_ports.sort_by_key(|(k, _)| *k);
+        for (_, port) in other_ports {
+            ports.push(*port);
+        }
+        ports
+    }
+}
+
+/// Template listing info (for API responses)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+// Internal: YAML parsing structures
+#[derive(Debug, Deserialize)]
+struct ComposeFile {
+    services: HashMap<String, ServiceConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ServiceConfig {
+    image: String,
+    #[serde(default)]
+    ports: HashMap<String, (u16, u16)>,
+    #[serde(default)]
+    environment: Option<serde_yaml::Value>,
+    #[serde(default)]
+    volumes: Vec<String>,
+    #[serde(default)]
+    tasks: HashMap<String, TaskDefinition>,
+    #[serde(default)]
+    network: NetworkRequirements,
+}
+
+// ============================================================================
+// Offering (Core Type)
+// ============================================================================
+
+/// Single source of truth for an offering definition
+///
+/// Mode support is determined by which configurations are present:
+/// - `managed.is_some()` → supports Managed mode (container deployment)
+/// - `adopted.is_some()` → supports Adopted mode (native service detection)
+/// - `borrowed.is_some()` → supports Borrowed mode (external service)
+#[derive(Debug, Clone)]
+pub struct Offering {
+    // ═══════════════════════════════════════════════════════════════════════
+    // IDENTITY
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Offering name (e.g., "mongodb", "ollama")
+    pub name: String,
+
+    /// Category (e.g., "data", "ai", "network")
+    pub category: String,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODE CONFIGURATIONS (at least one must be present)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Managed mode: container deployment
+    pub managed: Option<ManagedConfig>,
+
+    /// Adopted mode: native service detection & control
+    pub adopted: Option<AdoptedConfig>,
+
+    /// Borrowed mode: external service announcement
+    pub borrowed: Option<BorrowedConfig>,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CROSS-MODE FIELDS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// UI metadata (description, tags, icon, etc.)
+    pub metadata: OfferingMetadata,
+
+    /// Hardware compatibility rules
+    pub compatibility: Option<CompatibilityRules>,
+
+    /// User-facing guidance documentation (markdown)
+    pub guidance: Option<String>,
+
+    /// Connection template for dependent services (Tera format)
     pub connection_template: Option<String>,
 }
 
-fn default_modes() -> Vec<OfferingMode> {
-    vec![OfferingMode::Managed]
-}
-
-impl OfferingManifest {
-    /// Get the default (first) host port, for backwards compatibility
-    ///
-    /// Note: For named ports, use the snippet manifest format with HashMap<String, (u16, u16)>
-    pub fn default_host_port(&self) -> u16 {
-        self.ports.first().map(|(host, _)| *host).unwrap_or(0)
+impl Offering {
+    /// Get supported modes (derived from which configs are present)
+    pub fn modes(&self) -> Vec<OfferingMode> {
+        let mut modes = Vec::new();
+        if self.managed.is_some() {
+            modes.push(OfferingMode::Managed);
+        }
+        if self.adopted.is_some() {
+            modes.push(OfferingMode::Adopted);
+        }
+        if self.borrowed.is_some() {
+            modes.push(OfferingMode::Borrowed);
+        }
+        modes
     }
-}
 
-/// OS-specific detection rules
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OsDetectionRules {
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub windows: Option<Vec<DetectionRule>>,
+    /// Check if offering supports a specific mode
+    pub fn supports_mode(&self, mode: &OfferingMode) -> bool {
+        match mode {
+            OfferingMode::Managed => self.managed.is_some(),
+            OfferingMode::Adopted => self.adopted.is_some(),
+            OfferingMode::Borrowed => self.borrowed.is_some(),
+        }
+    }
 
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub linux: Option<Vec<DetectionRule>>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub macos: Option<Vec<DetectionRule>>,
-}
-
-impl OsDetectionRules {
     /// Get detection rules for the current OS
-    pub fn get_current_os_rules(&self) -> Vec<DetectionRule> {
-        #[cfg(target_os = "windows")]
-        return self.windows.clone().unwrap_or_default();
+    pub fn get_detection_rules(&self) -> Vec<crate::manifests::DetectionRule> {
+        self.adopted
+            .as_ref()
+            .map(|a| a.detection.get_current_os_rules())
+            .unwrap_or_default()
+    }
 
-        #[cfg(target_os = "linux")]
-        return self.linux.clone().unwrap_or_default();
+    /// Get control config for adopted mode
+    pub fn get_control_config(&self) -> Option<&ControlConfig> {
+        self.adopted.as_ref().and_then(|a| a.control.as_ref())
+    }
 
-        #[cfg(target_os = "macos")]
-        return self.macos.clone().unwrap_or_default();
+    /// Get description
+    pub fn description(&self) -> String {
+        self.metadata.description.clone()
+            .unwrap_or_else(|| format!("{} service", self.name))
+    }
 
-        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        Vec::new()
+    /// Get tags (normalized to lowercase)
+    pub fn tags(&self) -> Vec<String> {
+        self.metadata.tags.iter()
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    /// Get default host port from any available source
+    pub fn default_host_port(&self) -> u16 {
+        // Try metadata port first
+        if let Some(port) = self.metadata.port {
+            return port;
+        }
+        // Try parsing managed config for port
+        if let Some(ref managed) = self.managed {
+            if let Ok(template) = self.parse_managed_template(managed) {
+                let port = template.default_host_port();
+                if port != 30000 {
+                    return port;
+                }
+            }
+        }
+        8080 // Generic default
+    }
+
+    /// Convert to TemplateInfo for API responses
+    pub fn to_template_info(&self) -> TemplateInfo {
+        TemplateInfo {
+            name: self.name.clone(),
+            category: self.category.clone(),
+            description: self.description(),
+            tags: self.tags(),
+        }
+    }
+
+    /// Parse managed config snippet into ServiceTemplate
+    pub fn parse_template(&self) -> Result<ServiceTemplate> {
+        let managed = self.managed.as_ref()
+            .with_context(|| format!("Offering '{}' has no managed config", self.name))?;
+        self.parse_managed_template(managed)
+    }
+
+    fn parse_managed_template(&self, managed: &ManagedConfig) -> Result<ServiceTemplate> {
+        let yaml = managed.snippet_yaml.replace("\r\n", "\n");
+
+        // Try parsing as snippet format first (direct service config)
+        if let Ok(service_config) = serde_yaml::from_str::<ServiceConfig>(&yaml) {
+            return Ok(self.service_config_to_template(service_config));
+        }
+
+        // Fallback: try parsing as compose file (services: wrapper)
+        let compose: ComposeFile = serde_yaml::from_str(&yaml)
+            .with_context(|| format!(
+                "Failed to parse YAML for '{}'. First 100 chars: {}",
+                self.name,
+                &yaml[..yaml.len().min(100)]
+            ))?;
+
+        let service_config = compose
+            .services
+            .get(&self.name)
+            .with_context(|| format!("Service '{}' not found in compose file", self.name))?
+            .clone();
+
+        Ok(self.service_config_to_template(service_config))
+    }
+
+    fn service_config_to_template(&self, config: ServiceConfig) -> ServiceTemplate {
+        let environment = match &config.environment {
+            Some(serde_yaml::Value::Sequence(list)) => {
+                list.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            }
+            Some(serde_yaml::Value::Mapping(map)) => {
+                map.iter()
+                    .filter_map(|(k, v)| {
+                        let key = k.as_str()?;
+                        let value = v.as_str().unwrap_or("");
+                        Some(format!("{}={}", key, value))
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+
+        let volumes = config.volumes.iter()
+            .filter_map(|v| {
+                let parts: Vec<&str> = v.split(':').collect();
+                if parts.len() >= 2 {
+                    let host_path = if parts[0].starts_with('/') || parts[0].contains('\\') {
+                        parts[0].to_string()
+                    } else {
+                        #[cfg(target_os = "windows")]
+                        let base = "C:\\ProgramData\\ZenGarden\\volumes";
+                        #[cfg(not(target_os = "windows"))]
+                        let base = "/var/lib/zen-garden/volumes";
+                        format!("{}/{}", base, parts[0])
+                    };
+                    Some((host_path, parts[1].to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        ServiceTemplate {
+            image: config.image,
+            ports: config.ports,
+            environment,
+            volumes,
+            compatibility: self.compatibility.clone(),
+            tasks: config.tasks,
+            network: config.network,
+        }
     }
 }
 
-/// Detection rule for adopted offerings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DetectionRule {
-    /// Detection method
-    pub method: DetectionMethod,
+// ============================================================================
+// OfferingRegistry
+// ============================================================================
 
-    /// Method-specific configuration
-    #[serde(flatten)]
-    pub config: DetectionConfig,
-
-    /// Stability threshold (consecutive successes required)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub stability_threshold: Option<u8>,
-
-    /// Cache TTL in seconds (0 = no cache)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub cache_ttl_secs: Option<u64>,
+/// Collection of all offerings
+#[derive(Debug)]
+pub struct OfferingRegistry {
+    /// All offerings keyed by name
+    pub entries: HashMap<String, Offering>,
+    /// Discovered category names, sorted alphabetically
+    pub categories: Vec<String>,
 }
 
-/// Detection method
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum DetectionMethod {
-    /// Execute command (e.g., "mongod --version")
-    Command,
-    /// Inspect Docker container
-    ContainerInspect,
-    /// HTTP probe
-    HttpProbe,
+impl OfferingRegistry {
+    /// Create empty registry
+    pub fn empty() -> Self {
+        Self {
+            entries: HashMap::new(),
+            categories: Vec::new(),
+        }
+    }
+
+    /// Get an offering by name
+    pub fn get(&self, name: &str) -> Option<&Offering> {
+        self.entries.get(name)
+    }
+
+    /// Get mutable offering by name
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Offering> {
+        self.entries.get_mut(name)
+    }
+
+    /// Check if an offering exists
+    pub fn contains(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+
+    /// Get all offerings in a specific category
+    pub fn by_category(&self, category: &str) -> Vec<&Offering> {
+        self.entries.values()
+            .filter(|e| e.category == category)
+            .collect()
+    }
+
+    /// Get all offerings that support a specific mode
+    pub fn by_mode(&self, mode: &OfferingMode) -> Vec<&Offering> {
+        self.entries.values()
+            .filter(|e| e.supports_mode(mode))
+            .collect()
+    }
+
+    /// Get count of offerings
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Insert or update an offering
+    pub fn upsert(&mut self, offering: Offering) -> bool {
+        let existed = self.entries.contains_key(&offering.name);
+
+        if !self.categories.contains(&offering.category) {
+            self.categories.push(offering.category.clone());
+            self.categories.sort();
+        }
+
+        self.entries.insert(offering.name.clone(), offering);
+        existed
+    }
+
+    /// Load offerings from directory
+    ///
+    /// Scans for `.snippet.yaml` and `.manifest.yaml` files.
+    pub fn load(dir: &Path) -> Result<Self> {
+        let mut registry = Self::empty();
+
+        if !dir.exists() {
+            tracing::warn!(path = %dir.display(), "Manifests directory not found");
+            return Ok(registry);
+        }
+
+        let categories = discover_subdirectories(dir);
+
+        for category in &categories {
+            let category_dir = dir.join(category);
+            Self::load_category(&mut registry, &category_dir, category)?;
+        }
+
+        // Check root level
+        Self::load_category(&mut registry, dir, "uncategorized")?;
+
+        Ok(registry)
+    }
+
+    fn load_category(registry: &mut Self, dir: &Path, category: &str) -> Result<()> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Ok(());
+        };
+
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+
+            // Load .snippet.yaml (managed-only)
+            if name.ends_with(".snippet.yaml") {
+                let offering_name = name.trim_end_matches(".snippet.yaml");
+                if let Ok(offering) = Self::load_snippet_offering(dir, category, offering_name) {
+                    registry.upsert(offering);
+                }
+            }
+
+            // Load .manifest.yaml (full unified format)
+            if name.ends_with(".manifest.yaml") {
+                let offering_name = name.trim_end_matches(".manifest.yaml");
+                if let Ok(offering) = Self::load_manifest_offering(dir, category, offering_name) {
+                    registry.upsert(offering);
+                }
+            }
+
+            // Load .adopted.yaml (adopted-only)
+            if name.ends_with(".adopted.yaml") {
+                let offering_name = name.trim_end_matches(".adopted.yaml");
+                if let Ok(offering) = Self::load_adopted_offering(dir, category, offering_name) {
+                    // Merge with existing or insert new
+                    if let Some(existing) = registry.get_mut(offering_name) {
+                        existing.adopted = offering.adopted;
+                        existing.connection_template = offering.connection_template.or(existing.connection_template.clone());
+                    } else {
+                        registry.upsert(offering);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Load from .snippet.yaml (managed mode only)
+    fn load_snippet_offering(dir: &Path, category: &str, name: &str) -> Result<Offering> {
+        let snippet_path = dir.join(format!("{}.snippet.yaml", name));
+        let snippet_yaml = std::fs::read_to_string(&snippet_path)
+            .with_context(|| format!("Failed to read: {}", snippet_path.display()))?;
+
+        // Load optional files
+        let compatibility = Self::load_compatibility(dir, name);
+        let metadata = Self::load_metadata(dir, name, category);
+        let guidance = Self::load_guidance(dir, name);
+
+        Ok(Offering {
+            name: name.to_string(),
+            category: metadata.as_ref()
+                .and_then(|m| m.description.as_ref())
+                .map(|_| category.to_string())
+                .unwrap_or_else(|| category.to_string()),
+            managed: Some(ManagedConfig {
+                snippet_yaml,
+                network: None,
+                tasks: None,
+            }),
+            adopted: None,
+            borrowed: None,
+            metadata: metadata.unwrap_or_default(),
+            compatibility,
+            guidance,
+            connection_template: None,
+        })
+    }
+
+    /// Load from .manifest.yaml (full unified format)
+    fn load_manifest_offering(dir: &Path, category: &str, name: &str) -> Result<Offering> {
+        let manifest_path = dir.join(format!("{}.manifest.yaml", name));
+        let content = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("Failed to read: {}", manifest_path.display()))?;
+
+        // Parse the manifest YAML
+        let manifest: ManifestFile = serde_yaml::from_str(&content)
+            .with_context(|| format!("Failed to parse: {}", manifest_path.display()))?;
+
+        Ok(Offering {
+            name: manifest.name.unwrap_or_else(|| name.to_string()),
+            category: manifest.category.unwrap_or_else(|| category.to_string()),
+            managed: manifest.managed,
+            adopted: manifest.adopted,
+            borrowed: manifest.borrowed,
+            metadata: manifest.metadata.unwrap_or_default(),
+            compatibility: manifest.compatibility,
+            guidance: manifest.guidance,
+            connection_template: manifest.connection_template,
+        })
+    }
+
+    /// Load from .adopted.yaml (adopted mode only)
+    fn load_adopted_offering(dir: &Path, category: &str, name: &str) -> Result<Offering> {
+        let adopted_path = dir.join(format!("{}.adopted.yaml", name));
+        let content = std::fs::read_to_string(&adopted_path)
+            .with_context(|| format!("Failed to read: {}", adopted_path.display()))?;
+
+        let adopted_file: AdoptedFile = serde_yaml::from_str(&content)
+            .with_context(|| format!("Failed to parse: {}", adopted_path.display()))?;
+
+        Ok(Offering {
+            name: adopted_file.name.unwrap_or_else(|| name.to_string()),
+            category: adopted_file.category.unwrap_or_else(|| category.to_string()),
+            managed: None,
+            adopted: Some(AdoptedConfig {
+                detection: adopted_file.detection,
+                control: adopted_file.control,
+                default_control_level: adopted_file.default_control_level.unwrap_or_default(),
+                health_check: adopted_file.health_check,
+            }),
+            borrowed: None,
+            metadata: OfferingMetadata {
+                description: adopted_file.description,
+                tags: adopted_file.tags.unwrap_or_default(),
+                icon: None,
+                homepage: None,
+                documentation: None,
+                port: None,
+            },
+            compatibility: None,
+            guidance: None,
+            connection_template: adopted_file.connection_template,
+        })
+    }
+
+    fn load_compatibility(dir: &Path, name: &str) -> Option<CompatibilityRules> {
+        let path = dir.join(format!("{}.compatibility.yaml", name));
+        if !path.exists() {
+            return None;
+        }
+        std::fs::read_to_string(&path).ok()
+            .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
+    }
+
+    fn load_metadata(dir: &Path, name: &str, _category: &str) -> Option<OfferingMetadata> {
+        let path = dir.join(format!("{}.frontmatter.json", name));
+        if !path.exists() {
+            return None;
+        }
+        std::fs::read_to_string(&path).ok()
+            .and_then(|json| {
+                let json = crate::utils::strings::strip_bom(&json);
+                serde_json::from_str::<FrontmatterFile>(json).ok()
+            })
+            .map(|fm| OfferingMetadata {
+                description: fm.description,
+                tags: fm.tags.unwrap_or_default(),
+                icon: fm.icon,
+                homepage: fm.homepage,
+                documentation: fm.documentation,
+                port: fm.port,
+            })
+    }
+
+    fn load_guidance(dir: &Path, name: &str) -> Option<String> {
+        let path = dir.join(format!("{}.guidance.md", name));
+        if !path.exists() {
+            return None;
+        }
+        std::fs::read_to_string(&path).ok()
+            .map(|md| strip_markdown_frontmatter(&md))
+    }
+
+    /// Load offering from raw content (for embedded assets)
+    pub fn load_from_content(
+        relative_path: &str,
+        snippet_content: &str,
+        compatibility_content: Option<&str>,
+        frontmatter_content: Option<&str>,
+        guidance_content: Option<&str>,
+    ) -> Result<Offering> {
+        let parts: Vec<&str> = relative_path.split('/').collect();
+        if parts.len() < 3 {
+            anyhow::bail!("Invalid manifest path: {}", relative_path);
+        }
+
+        let category = parts[1].to_string();
+        let filename = parts.last().unwrap();
+        let name = filename.trim_end_matches(".snippet.yaml").to_string();
+
+        let compatibility = compatibility_content
+            .and_then(|yaml| serde_yaml::from_str(&yaml).ok());
+
+        let metadata = frontmatter_content
+            .and_then(|json| {
+                let json = crate::utils::strings::strip_bom(json);
+                serde_json::from_str::<FrontmatterFile>(json).ok()
+            })
+            .map(|fm| OfferingMetadata {
+                description: fm.description,
+                tags: fm.tags.unwrap_or_default(),
+                icon: fm.icon,
+                homepage: fm.homepage,
+                documentation: fm.documentation,
+                port: fm.port,
+            })
+            .unwrap_or_default();
+
+        let guidance = guidance_content.map(|md| strip_markdown_frontmatter(md));
+
+        Ok(Offering {
+            name,
+            category,
+            managed: Some(ManagedConfig {
+                snippet_yaml: snippet_content.to_string(),
+                network: None,
+                tasks: None,
+            }),
+            adopted: None,
+            borrowed: None,
+            metadata,
+            compatibility,
+            guidance,
+            connection_template: None,
+        })
+    }
 }
 
-/// Detection configuration (method-specific)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum DetectionConfig {
-    Command(CommandDetection),
-    ContainerInspect(ContainerInspectDetection),
-    HttpProbe(HttpProbeDetection),
+// ============================================================================
+// File Parsing Structures
+// ============================================================================
+
+/// Full manifest file format (.manifest.yaml)
+#[derive(Debug, Deserialize)]
+struct ManifestFile {
+    name: Option<String>,
+    category: Option<String>,
+    managed: Option<ManagedConfig>,
+    adopted: Option<AdoptedConfig>,
+    borrowed: Option<BorrowedConfig>,
+    metadata: Option<OfferingMetadata>,
+    compatibility: Option<CompatibilityRules>,
+    guidance: Option<String>,
+    connection_template: Option<String>,
 }
 
-/// Command-based detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandDetection {
-    /// Command to execute (e.g., "ollama --version", "mongod --version")
-    pub command: String,
-
-    /// Expected output pattern (regex)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub expected_pattern: Option<String>,
-
-    /// Expected exit code (default: 0)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub expected_exit_code: Option<i32>,
-}
-
-/// Container inspection detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContainerInspectDetection {
-    /// Container name pattern (regex)
-    pub container_pattern: String,
-
-    /// Expected image pattern (optional)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub image_pattern: Option<String>,
-}
-
-/// HTTP probe detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpProbeDetection {
-    /// URL to probe
-    pub url: String,
-
-    /// Expected HTTP status code (default: 200)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub expected_status: Option<u16>,
-
-    /// Timeout in milliseconds (default: 2000)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub timeout_ms: Option<u64>,
-}
-
-/// Control configuration for adopted offerings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ControlConfig {
-    /// Control level (default: monitor)
+/// Adopted-only file format (.adopted.yaml)
+#[derive(Debug, Deserialize)]
+struct AdoptedFile {
+    name: Option<String>,
+    category: Option<String>,
+    description: Option<String>,
     #[serde(default)]
-    pub level: AdoptedControlLevel,
-
-    /// Start command (required for full control)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub start_command: Option<String>,
-
-    /// Stop command (required for full control)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub stop_command: Option<String>,
-
-    /// Restart command (optional, defaults to stop + start)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub restart_command: Option<String>,
-
-    /// Health check URL for monitoring
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub health_check_url: Option<String>,
+    tags: Option<Vec<String>>,
+    detection: OsDetectionRules,
+    control: Option<ControlConfig>,
+    default_control_level: Option<AdoptedControlLevel>,
+    health_check: Option<HealthConfig>,
+    connection_template: Option<String>,
 }
 
-/// Location configuration for borrowed offerings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocationConfig {
-    pub host: String,
-    pub port: u16,
-    pub protocol: String,
+/// Legacy frontmatter file format (.frontmatter.json)
+#[derive(Debug, Deserialize)]
+struct FrontmatterFile {
+    description: Option<String>,
+    tags: Option<Vec<String>>,
+    icon: Option<String>,
+    homepage: Option<String>,
+    documentation: Option<String>,
+    port: Option<u16>,
 }
 
-/// Health check configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthConfig {
-    /// Health check method (default: http)
-    #[serde(default = "default_health_method")]
-    pub method: HealthMethod,
-
-    /// Interval in seconds (default: 30)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub interval_secs: Option<u64>,
-
-    /// Timeout in milliseconds (default: 2000)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub timeout_ms: Option<u64>,
-
-    /// HTTP-specific: endpoint path
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub http_path: Option<String>,
+/// Strip YAML frontmatter from markdown content
+fn strip_markdown_frontmatter(content: &str) -> String {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return content.to_string();
+    }
+    let after_first = &trimmed[3..];
+    if let Some(end_pos) = after_first.find("\n---") {
+        after_first[end_pos + 4..].trim_start_matches('\n').to_string()
+    } else {
+        content.to_string()
+    }
 }
 
-fn default_health_method() -> HealthMethod {
-    HealthMethod::Http
-}
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+    use std::fs;
 
-    #[test]
-    fn test_minimal_managed_manifest() {
-        // Tier 1: Minimal managed offering
-        let manifest = OfferingManifest {
-            name: "mongodb".into(),
-            category: "database".into(),
-            description: "MongoDB NoSQL database".into(),
-            modes: vec![OfferingMode::Managed],
-            tags: vec![],
-            image: Some("mongo:latest".into()),
-            ports: vec![(27017, 27017)],
-            environment: vec![],
-            volumes: vec![],
-            detection: None,
-            control: None,
-            location: None,
-            health: None,
-            connection_template: None,
-        };
+    fn create_test_offering(dir: &Path, category: &str, name: &str) {
+        let cat_dir = dir.join(category);
+        fs::create_dir_all(&cat_dir).unwrap();
 
-        let json = serde_json::to_string(&manifest).unwrap();
-        // Ensure optional empty/none fields are not present
-        assert!(!json.contains("\"tags\""));
-        assert!(!json.contains("\"environment\""));
-        assert!(!json.contains("\"volumes\""));
-        assert!(!json.contains("\"detection\""));
-        assert!(!json.contains("\"control\""));
-        assert!(!json.contains("\"location\""));
-        assert!(!json.contains("\"health\""));
+        fs::write(
+            cat_dir.join(format!("{}.snippet.yaml", name)),
+            format!("image: {}:latest\nports:\n  default: [8080, 8080]", name),
+        ).unwrap();
+
+        fs::write(
+            cat_dir.join(format!("{}.frontmatter.json", name)),
+            format!(r#"{{"description": "Test {} service", "tags": ["test"]}}"#, name),
+        ).unwrap();
     }
 
     #[test]
-    fn test_minimal_adopted_manifest() {
-        // Tier 1: Minimal adopted offering (4 lines in YAML)
-        let manifest = OfferingManifest {
-            name: "ollama".into(),
-            category: "ai".into(),
-            description: "Ollama AI runtime".into(),
-            modes: vec![OfferingMode::Adopted],
-            tags: vec![],
-            image: None,
-            ports: vec![],
-            environment: vec![],
-            volumes: vec![],
-            detection: Some(OsDetectionRules {
-                windows: Some(vec![DetectionRule {
-                    method: DetectionMethod::Command,
-                    config: DetectionConfig::Command(CommandDetection {
-                        command: "ollama --version".into(),
-                        expected_pattern: None,
-                        expected_exit_code: None,
-                    }),
-                    stability_threshold: None,
-                    cache_ttl_secs: None,
-                }]),
-                linux: None,
-                macos: None,
+    fn test_empty_registry() {
+        let registry = OfferingRegistry::empty();
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn test_load_offerings() {
+        let temp = TempDir::new().unwrap();
+        create_test_offering(temp.path(), "data", "mongodb");
+        create_test_offering(temp.path(), "cache", "redis");
+
+        let registry = OfferingRegistry::load(temp.path()).unwrap();
+
+        assert_eq!(registry.len(), 2);
+        assert!(registry.contains("mongodb"));
+        assert!(registry.contains("redis"));
+    }
+
+    #[test]
+    fn test_mode_support() {
+        let offering = Offering {
+            name: "test".to_string(),
+            category: "data".to_string(),
+            managed: Some(ManagedConfig {
+                snippet_yaml: "image: test".to_string(),
+                network: None,
+                tasks: None,
             }),
-            control: None,
-            location: None,
-            health: None,
+            adopted: None,
+            borrowed: None,
+            metadata: OfferingMetadata::default(),
+            compatibility: None,
+            guidance: None,
             connection_template: None,
         };
 
-        let json = serde_json::to_string(&manifest).unwrap();
-        assert!(json.contains("adopted"));
-        assert!(!json.contains("\"control\""));
+        assert!(offering.supports_mode(&OfferingMode::Managed));
+        assert!(!offering.supports_mode(&OfferingMode::Adopted));
+        assert!(!offering.supports_mode(&OfferingMode::Borrowed));
+        assert_eq!(offering.modes().len(), 1);
     }
 
     #[test]
-    fn test_minimal_borrowed_manifest() {
-        // Tier 1: Minimal borrowed offering
-        let manifest = OfferingManifest {
-            name: "nas-storage".into(),
-            category: "storage".into(),
-            description: "NAS storage".into(),
-            modes: vec![OfferingMode::Borrowed],
-            tags: vec![],
-            image: None,
-            ports: vec![],
-            environment: vec![],
-            volumes: vec![],
-            detection: None,
-            control: None,
-            location: Some(LocationConfig {
-                host: "nas.local".into(),
-                port: 445,
-                protocol: "smb".into(),
+    fn test_by_mode() {
+        let mut registry = OfferingRegistry::empty();
+
+        registry.upsert(Offering {
+            name: "mongodb".to_string(),
+            category: "data".to_string(),
+            managed: Some(ManagedConfig {
+                snippet_yaml: "image: mongo".to_string(),
+                network: None,
+                tasks: None,
             }),
-            health: None,
+            adopted: None,
+            borrowed: None,
+            metadata: OfferingMetadata::default(),
+            compatibility: None,
+            guidance: None,
             connection_template: None,
-        };
+        });
 
-        let json = serde_json::to_string(&manifest).unwrap();
-        assert!(json.contains("borrowed"));
-        assert!(!json.contains("\"health\""));
-    }
+        registry.upsert(Offering {
+            name: "ollama".to_string(),
+            category: "ai".to_string(),
+            managed: None,
+            adopted: Some(AdoptedConfig {
+                detection: OsDetectionRules {
+                    windows: None,
+                    linux: None,
+                    macos: None,
+                },
+                control: None,
+                default_control_level: AdoptedControlLevel::default(),
+                health_check: None,
+            }),
+            borrowed: None,
+            metadata: OfferingMetadata::default(),
+            compatibility: None,
+            guidance: None,
+            connection_template: None,
+        });
 
-    #[test]
-    fn test_default_modes() {
-        let modes = default_modes();
-        assert_eq!(modes.len(), 1);
-        assert_eq!(modes[0], OfferingMode::Managed);
-    }
-
-    #[test]
-    fn test_control_level_default() {
-        let config = ControlConfig {
-            level: AdoptedControlLevel::default(),
-            start_command: None,
-            stop_command: None,
-            restart_command: None,
-            health_check_url: None,
-        };
-        assert_eq!(config.level, AdoptedControlLevel::Monitor);
+        assert_eq!(registry.by_mode(&OfferingMode::Managed).len(), 1);
+        assert_eq!(registry.by_mode(&OfferingMode::Adopted).len(), 1);
+        assert_eq!(registry.by_mode(&OfferingMode::Borrowed).len(), 0);
     }
 }

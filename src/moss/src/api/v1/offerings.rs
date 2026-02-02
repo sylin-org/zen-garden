@@ -202,7 +202,12 @@ pub async fn get_offering_manifest_v1(
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     match state.manifest_registry.sw.get(&name) {
-        Some(entry) => Ok((StatusCode::OK, entry.snippet_yaml.clone())),
+        Some(entry) => {
+            let yaml = entry.managed.as_ref()
+                .map(|m| m.snippet_yaml.clone())
+                .unwrap_or_default();
+            Ok((StatusCode::OK, yaml))
+        }
         None => {
             let mut details = HashMap::new();
             details.insert("name".to_string(), serde_json::json!(name));

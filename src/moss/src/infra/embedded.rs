@@ -203,7 +203,7 @@ pub struct ManifestSource {
 // Manifest Loading with Overlay
 // ============================================================================
 
-use garden_common::manifests::SwManifests;
+use garden_common::manifests::{Offering, OfferingRegistry};
 use anyhow::Result;
 
 /// Load software manifests with embedded + filesystem overlay
@@ -217,8 +217,8 @@ use anyhow::Result;
 ///    - If new → add new entry
 /// 
 /// Use `-vvv` to see detailed loading progress.
-pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
-    let mut manifests = SwManifests::empty();
+pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry> {
+    let mut manifests = OfferingRegistry::empty();
     let mut embedded_count = 0;
     let mut fs_new_count = 0;
     let mut fs_override_count = 0;
@@ -271,7 +271,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
         }
 
         // Parse and add the entry
-        match SwManifests::load_entry_from_content(
+        match OfferingRegistry::load_from_content(
             path_str,
             &snippet_content,
             compat_content.as_deref(),
@@ -295,7 +295,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
                         "Guidance content found but not loaded into entry"
                     );
                 }
-                manifests.upsert_entry(entry);
+                manifests.upsert(entry);
                 embedded_count += 1;
             }
             Err(e) => {
@@ -359,10 +359,10 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
             let guidance_path = path.with_file_name(format!("{}.guidance.md", offering_name));
             let guidance_content = std::fs::read_to_string(&guidance_path).ok();
 
-            // Build relative path for load_entry_from_content
+            // Build relative path for load_from_content
             let relative_path = format!("sw/{}/{}.snippet.yaml", category, offering_name);
 
-            match SwManifests::load_entry_from_content(
+            match OfferingRegistry::load_from_content(
                 &relative_path,
                 &snippet_content,
                 compat_content.as_deref(),
@@ -384,12 +384,16 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
                         if sw_entry.compatibility.is_none() && existing.compatibility.is_some() {
                             sw_entry.compatibility = existing.compatibility.clone();
                         }
-                        if sw_entry.frontmatter.is_none() && existing.frontmatter.is_some() {
-                            sw_entry.frontmatter = existing.frontmatter.clone();
+                        // Preserve metadata fields if filesystem didn't provide them
+                        if sw_entry.metadata.description.is_none() && existing.metadata.description.is_some() {
+                            sw_entry.metadata.description = existing.metadata.description.clone();
+                        }
+                        if sw_entry.metadata.tags.is_empty() && !existing.metadata.tags.is_empty() {
+                            sw_entry.metadata.tags = existing.metadata.tags.clone();
                         }
                     }
 
-                    let was_override = manifests.upsert_entry(sw_entry);
+                    let was_override = manifests.upsert(sw_entry);
                     if was_override {
                         tracing::debug!(
                             offering = %offering_name,
@@ -445,10 +449,122 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<SwManifests> {
     Ok(manifests)
 }
 
+// ============================================================================
+// Embedded Offering Manifests (Adopted/Borrowed)
+// ============================================================================
+
+/// Load embedded offerings for adoption/borrowing
+///
+/// Scans embedded assets for `.adopted.yaml` files and parses them
+/// as unified Offering structs with AdoptedConfig.
+///
+/// # Returns
+/// Vec of Offering definitions
+pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
+    use garden_common::manifests::{
+        AdoptedConfig, OfferingMetadata,
+        OsDetectionRules, ControlConfig, HealthConfig,
+    };
+    use garden_common::types::AdoptedControlLevel;
+    use serde::Deserialize;
+
+    /// File format for .adopted.yaml files
+    #[derive(Debug, Deserialize)]
+    struct AdoptedFile {
+        name: Option<String>,
+        category: Option<String>,
+        description: Option<String>,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+        detection: OsDetectionRules,
+        control: Option<ControlConfig>,
+        default_control_level: Option<AdoptedControlLevel>,
+        health_check: Option<HealthConfig>,
+        connection_template: Option<String>,
+    }
+
+    let mut offerings = Vec::new();
+
+    for path in EmbeddedManifests::iter() {
+        let path_str = path.as_ref();
+
+        // Only process .adopted.yaml files
+        if !path_str.ends_with(".adopted.yaml") {
+            continue;
+        }
+
+        let Some(content) = EmbeddedManifests::get_string(path_str) else {
+            tracing::warn!(path = %path_str, "Failed to read embedded adopted manifest");
+            continue;
+        };
+
+        // Extract category and name from path (sw/category/name.adopted.yaml)
+        let parts: Vec<&str> = path_str.split('/').collect();
+        let (category, name) = if parts.len() >= 3 {
+            let cat = parts[1].to_string();
+            let filename = parts.last().unwrap();
+            let n = filename.trim_end_matches(".adopted.yaml").to_string();
+            (cat, n)
+        } else {
+            tracing::warn!(path = %path_str, "Invalid path format for adopted manifest");
+            continue;
+        };
+
+        match serde_yaml::from_str::<AdoptedFile>(&content) {
+            Ok(file) => {
+                let offering = Offering {
+                    name: file.name.unwrap_or(name.clone()),
+                    category: file.category.unwrap_or(category),
+                    managed: None,
+                    adopted: Some(AdoptedConfig {
+                        detection: file.detection,
+                        control: file.control,
+                        default_control_level: file.default_control_level.unwrap_or_default(),
+                        health_check: file.health_check,
+                    }),
+                    borrowed: None,
+                    metadata: OfferingMetadata {
+                        description: file.description,
+                        tags: file.tags.unwrap_or_default(),
+                        icon: None,
+                        homepage: None,
+                        documentation: None,
+                        port: None,
+                    },
+                    compatibility: None,
+                    guidance: None,
+                    connection_template: file.connection_template,
+                };
+
+                tracing::debug!(
+                    name = %offering.name,
+                    path = %path_str,
+                    "Loaded embedded adopted offering"
+                );
+                offerings.push(offering);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %path_str,
+                    error = %e,
+                    "Failed to parse embedded adopted manifest"
+                );
+            }
+        }
+    }
+
+    tracing::info!(
+        count = offerings.len(),
+        "Loaded embedded adopted offerings"
+    );
+
+    offerings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_embedded_manifests_list() {
         // This will be empty if no manifests are in embedded/manifests/
@@ -456,12 +572,22 @@ mod tests {
         // Just verify it doesn't panic
         println!("Embedded manifests: {:?}", files);
     }
-    
+
     #[test]
     fn test_embedded_companions_list() {
         // This will be empty if no companions are in embedded/companions/{platform}/
         let companions = EmbeddedCompanions::list_companions();
         // Just verify it doesn't panic
         println!("Embedded companions: {:?}", companions);
+    }
+
+    #[test]
+    fn test_embedded_adopted_offerings() {
+        let offerings = load_embedded_adopted_offerings();
+        println!("Embedded adopted offerings: {:?}", offerings.iter().map(|o| &o.name).collect::<Vec<_>>());
+
+        for offering in &offerings {
+            println!("  {} ({:?}): {:?}", offering.name, offering.category, offering.modes());
+        }
     }
 }

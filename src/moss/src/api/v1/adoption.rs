@@ -33,11 +33,11 @@ pub async fn list_adoptable_v1(
 
     let mut adoptable = Vec::new();
 
-    for manifest in adoptable_manifests {
+    for offering in adoptable_manifests {
         // Check if already adopted
         let already_adopted = {
             let adopted = state.adopted_offerings.read().await;
-            adopted.iter().any(|a| a.offering == manifest.name)
+            adopted.iter().any(|a| a.offering == offering.name)
         };
 
         if already_adopted {
@@ -46,12 +46,12 @@ pub async fn list_adoptable_v1(
 
         // Try detection (this will use cached results if available)
         let orchestrator = crate::domain::DetectionOrchestrator::new(state.docker.clone());
-        match orchestrator.detect(manifest).await {
+        match orchestrator.detect(offering).await {
             Ok(result) if result.detected && result.stable => {
                 adoptable.push(AdoptableOffering {
-                    name: manifest.name.clone(),
-                    category: manifest.category.clone(),
-                    description: manifest.description.clone(),
+                    name: offering.name.clone(),
+                    category: offering.category.clone(),
+                    description: offering.description(),
                     version: result.version,
                     detection_method: "auto".to_string(), // Could track actual method used
                 });
@@ -94,9 +94,8 @@ pub async fn adopt_offering_v1(
         }
     }
 
-    // Find manifest for offering
-    let manifest = state.manifest_registry.get_offering_manifest(&offering)
-        .cloned()
+    // Find offering definition
+    let offering_def = state.manifest_registry.get_offering(&offering)
         .ok_or_else(|| error_response(
             StatusCode::NOT_FOUND,
             "OFFERING_NOT_FOUND",
@@ -104,8 +103,8 @@ pub async fn adopt_offering_v1(
             None,
         ))?;
 
-    // Verify manifest supports adopted mode
-    if !manifest.modes.iter().any(|m| matches!(m, garden_common::OfferingMode::Adopted)) {
+    // Verify offering supports adopted mode
+    if !offering_def.supports_mode(&garden_common::OfferingMode::Adopted) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "NOT_ADOPTABLE",
@@ -116,7 +115,7 @@ pub async fn adopt_offering_v1(
 
     // Detect offering
     let orchestrator = crate::domain::DetectionOrchestrator::new(state.docker.clone());
-    let detection_result = orchestrator.detect(&manifest).await
+    let detection_result = orchestrator.detect(offering_def).await
         .map_err(|e| error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "DETECTION_FAILED",
@@ -133,12 +132,12 @@ pub async fn adopt_offering_v1(
         ));
     }
 
-    // Extract location from manifest or detection result
+    // Extract location from offering or detection result
     // For now, use placeholder - real implementation would extract from detection
     let location = garden_common::ServiceLocation {
         host: req.location.unwrap_or_else(|| "localhost".to_string()),
         port: req.port.unwrap_or(0),
-        protocol: manifest.category.clone(),
+        protocol: offering_def.category.clone(),
     };
 
     let control_level = req.control_level
@@ -150,6 +149,9 @@ pub async fn adopt_offering_v1(
         })
         .unwrap_or_default();
 
+    // Get control config from adopted mode
+    let control = offering_def.get_control_config();
+
     let adopted_info = AdoptedOfferingInfo {
         name: format!("{}@adopted", offering),
         offering: offering.clone(),
@@ -159,10 +161,10 @@ pub async fn adopt_offering_v1(
         health: garden_common::ServiceHealthStatus::Healthy,
         detected_at: chrono::Utc::now().to_rfc3339(),
         version: detection_result.version,
-        start_command: manifest.control.as_ref().and_then(|c| c.start_command.clone()),
-        stop_command: manifest.control.as_ref().and_then(|c| c.stop_command.clone()),
-        restart_command: manifest.control.as_ref().and_then(|c| c.restart_command.clone()),
-        health_check_url: manifest.control.as_ref().and_then(|c| c.health_check_url.clone()),
+        start_command: control.and_then(|c| c.start_command.clone()),
+        stop_command: control.and_then(|c| c.stop_command.clone()),
+        restart_command: control.and_then(|c| c.restart_command.clone()),
+        health_check_url: control.and_then(|c| c.health_check_url.clone()),
         container_name: None,
     };
 

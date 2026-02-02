@@ -84,10 +84,29 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let manifest_registry = match infra::load_sw_manifests_with_overlay(&manifests_dir) {
         Ok(sw_manifests) => {
             match infra::ManifestRegistry::from_sw_manifests(sw_manifests, hw_dir_opt) {
-                Ok(registry) => {
+                Ok(mut registry) => {
+                    // Inject embedded adopted offerings (detection/control rules)
+                    // Merge with existing - filesystem takes precedence
+                    let embedded_adopted = infra::load_embedded_adopted_offerings();
+                    let mut embedded_count = 0;
+                    for offering in embedded_adopted {
+                        // Only add if not already present from filesystem
+                        if !registry.sw.contains(&offering.name) {
+                            registry.upsert_offering(offering);
+                            embedded_count += 1;
+                        } else if let Some(existing) = registry.sw.get_mut(&offering.name) {
+                            // Merge adopted config into existing offering
+                            if existing.adopted.is_none() && offering.adopted.is_some() {
+                                existing.adopted = offering.adopted;
+                                embedded_count += 1;
+                            }
+                        }
+                    }
+
                     tracing::info!(
-                        sw_count = registry.sw.entries.len(),
+                        offerings = registry.sw.entries.len(),
                         hw_count = registry.hw.entries.len(),
+                        embedded_adopted = embedded_count,
                         "ManifestRegistry loaded"
                     );
                     Arc::new(registry)

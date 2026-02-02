@@ -47,9 +47,9 @@ pub fn default_template(protocol: &str) -> String {
 /// Looks up offering's connection_template to determine protocol,
 /// falls back to category default_protocol, then "tcp" as last resort.
 pub async fn infer_protocol(offering_name: &str, category: &str, state: &crate::app_state::AppState) -> String {
-    // Try to get protocol from offering manifest's connection_template
-    if let Some(manifest) = state.manifest_registry.get_offering_manifest(offering_name) {
-        if let Some(ref template) = manifest.connection_template {
+    // Try to get protocol from offering's connection_template
+    if let Some(offering) = state.manifest_registry.get_offering(offering_name) {
+        if let Some(ref template) = offering.connection_template {
             // Extract protocol from template (e.g., "mongodb://", "postgresql://")
             if let Some(proto_end) = template.find("://") {
                 let protocol = &template[..proto_end];

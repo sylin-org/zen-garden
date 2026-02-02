@@ -1,20 +1,17 @@
 //! Unified Manifest Registry
 //!
 //! Single source of truth for all manifests - loaded once at startup.
-//! Replaces the fragmented TemplateLoader and manifest_loader approach.
 //!
 //! # Structure
 //!
 //! ```text
 //! ManifestRegistry
-//! ├── sw: SwManifests              # Software offerings (container templates)
-//! │   ├── entries: HashMap         # Keyed by offering name (e.g., "mongodb")
-//! │   └── categories: Vec          # Discovered category names
-//! ├── hw: HwManifests              # Hardware manifests
-//! │   ├── entries: HashMap         # Keyed by "vendor/model" (e.g., "dell/wyse-5070")
-//! │   └── vendors: Vec             # Discovered vendor names
-//! └── offering_manifests: HashMap  # Multi-mode offering definitions (adoption/borrowing)
-//!     └── OfferingManifest         # Detection rules, control commands, etc.
+//! ├── sw: OfferingRegistry          # All offerings (managed, adopted, borrowed)
+//! │   ├── entries: HashMap          # Keyed by offering name (e.g., "mongodb")
+//! │   └── categories: Vec           # Discovered category names
+//! └── hw: HwManifests               # Hardware manifests
+//!     ├── entries: HashMap          # Keyed by "vendor/model"
+//!     └── vendors: Vec              # Discovered vendor names
 //! ```
 //!
 //! # Usage
@@ -23,32 +20,23 @@
 //! // Load once at startup
 //! let registry = ManifestRegistry::load(Path::new("/var/lib/zen-garden/manifests"))?;
 //!
-//! // Access software offerings
-//! if let Some(entry) = registry.sw.get("mongodb") {
-//!     let template = entry.parse_template()?;
+//! // Access offerings (all modes)
+//! if let Some(offering) = registry.sw.get("mongodb") {
+//!     let template = offering.parse_template()?;
 //! }
 //!
-//! // List all offerings
-//! for entry in registry.sw.entries.values() {
-//!     println!("{}: {}", entry.name, entry.category);
-//! }
-//!
-//! // Check for adoptable offerings
-//! for manifest in registry.offering_manifests.values() {
-//!     if manifest.modes.contains(&OfferingMode::Adopted) {
-//!         // This offering can be adopted
-//!     }
+//! // Find adoptable offerings
+//! for offering in registry.offerings_by_mode(&OfferingMode::Adopted) {
+//!     // This offering supports adopted mode
 //! }
 //! ```
 
 use anyhow::{Context, Result};
-use crate::manifests::{OfferingManifest, SwManifests, HwManifests};
-use std::collections::HashMap;
+use crate::manifests::{OfferingRegistry, HwManifests, Offering};
+use crate::OfferingMode;
 use std::path::Path;
-use walkdir::WalkDir;
 
-/// Runtime manifests directory for multi-mode offerings (adoption/borrowing)
-/// Linux: /var/lib/zen-garden/manifests, Windows: .zen-garden/manifests
+/// Runtime manifests directory
 #[cfg(target_os = "linux")]
 pub const RUNTIME_MANIFESTS_DIR: &str = "/var/lib/zen-garden/manifests";
 
@@ -61,36 +49,21 @@ pub const RUNTIME_MANIFESTS_DIR: &str = ".zen-garden/manifests";
 /// Single source of truth for all manifests
 ///
 /// Loaded once at startup, provides access to:
-/// - Software offerings (container templates)
+/// - Software offerings (all modes: managed, adopted, borrowed)
 /// - Hardware manifests (device definitions)
-/// - Offering manifests (multi-mode definitions for adoption/borrowing)
 #[derive(Debug)]
 pub struct ManifestRegistry {
-    /// Software offering manifests (container templates)
-    pub sw: SwManifests,
+    /// All offerings (unified model)
+    pub sw: OfferingRegistry,
     /// Hardware manifests (device definitions)
     pub hw: HwManifests,
-    /// Multi-mode offering manifests (adoption/borrowing definitions)
-    pub offering_manifests: HashMap<String, OfferingManifest>,
 }
 
 impl ManifestRegistry {
     /// Load all manifests from the runtime directories
-    ///
-    /// Scans directories once and loads:
-    /// - Software manifests from `base_dir/sw/{category}/*.snippet.yaml`
-    /// - Hardware manifests from `base_dir/hw/{vendor}/*.manifest.yaml`
-    /// - Offering manifests from `base_dir/{category}/*.manifest.yaml`
-    ///
-    /// Note: Moss uses `load_sw_manifests_with_overlay()` which handles the sw/ subdirectory.
-    /// This function is used directly only for testing.
-    ///
-    /// # Arguments
-    /// * `sw_dir` - Directory containing software manifests with category subdirs
-    /// * `hw_dir` - Directory containing hardware manifests (e.g., /var/lib/zen-garden/manifests/hw)
     pub fn load(sw_dir: &Path, hw_dir: Option<&Path>) -> Result<Self> {
-        let sw = SwManifests::load(sw_dir)
-            .with_context(|| format!("Failed to load software manifests from {}", sw_dir.display()))?;
+        let sw = OfferingRegistry::load(sw_dir)
+            .with_context(|| format!("Failed to load offerings from {}", sw_dir.display()))?;
 
         let hw = if let Some(dir) = hw_dir {
             HwManifests::load(dir)
@@ -99,108 +72,26 @@ impl ManifestRegistry {
             HwManifests::empty()
         };
 
-        // Load offering manifests (for adoption/borrowing)
-        let manifests_dir = Path::new(RUNTIME_MANIFESTS_DIR);
-        let offering_manifests = Self::load_offering_manifests(manifests_dir);
-
         tracing::info!(
-            sw_count = sw.entries.len(),
-            sw_categories = sw.categories.len(),
+            offerings = sw.entries.len(),
+            categories = sw.categories.len(),
             hw_count = hw.entries.len(),
-            hw_vendors = hw.vendors.len(),
-            offering_count = offering_manifests.len(),
             "ManifestRegistry loaded"
         );
 
-        Ok(Self { sw, hw, offering_manifests })
+        Ok(Self { sw, hw })
     }
 
-    /// Load offering manifests for multi-mode offerings (adoption/borrowing)
-    fn load_offering_manifests(dir: &Path) -> HashMap<String, OfferingManifest> {
-        let mut manifests = HashMap::new();
-
-        if !dir.exists() {
-            tracing::debug!(
-                path = %dir.display(),
-                "Offering manifests directory not found"
-            );
-            return manifests;
-        }
-
-        for entry in WalkDir::new(dir)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-
-            // Skip directories and non-YAML files
-            if !path.is_file() {
-                continue;
-            }
-
-            let extension = path.extension().and_then(|s| s.to_str());
-            if !matches!(extension, Some("yaml") | Some("yml")) {
-                continue;
-            }
-
-            // Load and parse the manifest
-            match std::fs::read_to_string(path) {
-                Ok(content) => {
-                    match serde_yaml::from_str::<OfferingManifest>(&content) {
-                        Ok(manifest) => {
-                            // Basic validation
-                            if manifest.name.is_empty() || manifest.category.is_empty() || manifest.modes.is_empty() {
-                                tracing::warn!(
-                                    path = %path.display(),
-                                    "Skipping invalid offering manifest (missing name, category, or modes)"
-                                );
-                                continue;
-                            }
-                            tracing::debug!(
-                                name = %manifest.name,
-                                path = %path.display(),
-                                modes = ?manifest.modes,
-                                "Loaded offering manifest"
-                            );
-                            manifests.insert(manifest.name.clone(), manifest);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                path = %path.display(),
-                                error = %e,
-                                "Failed to parse offering manifest"
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "Failed to read offering manifest"
-                    );
-                }
-            }
-        }
-
-        manifests
-    }
-
-    /// Create an empty registry (for testing or when no manifests exist)
+    /// Create an empty registry
     pub fn empty() -> Self {
         Self {
-            sw: SwManifests::empty(),
+            sw: OfferingRegistry::empty(),
             hw: HwManifests::empty(),
-            offering_manifests: HashMap::new(),
         }
     }
-    
-    /// Create registry from pre-loaded SwManifests (for overlay loading)
-    /// 
-    /// Use this when SwManifests was loaded with custom logic (e.g., embedded + overlay).
-    /// Hardware manifests and offering manifests are loaded from filesystem.
-    pub fn from_sw_manifests(sw: SwManifests, hw_dir: Option<&Path>) -> Result<Self> {
+
+    /// Create registry from pre-loaded OfferingRegistry
+    pub fn from_sw_manifests(sw: OfferingRegistry, hw_dir: Option<&Path>) -> Result<Self> {
         let hw = if let Some(dir) = hw_dir {
             HwManifests::load(dir)
                 .with_context(|| format!("Failed to load hardware manifests from {}", dir.display()))?
@@ -208,44 +99,43 @@ impl ManifestRegistry {
             HwManifests::empty()
         };
 
-        // Load offering manifests (for adoption/borrowing)
-        let manifests_dir = Path::new(RUNTIME_MANIFESTS_DIR);
-        let offering_manifests = Self::load_offering_manifests(manifests_dir);
-
         tracing::info!(
-            sw_count = sw.entries.len(),
-            sw_categories = sw.categories.len(),
+            offerings = sw.entries.len(),
+            categories = sw.categories.len(),
             hw_count = hw.entries.len(),
-            hw_vendors = hw.vendors.len(),
-            offering_count = offering_manifests.len(),
-            "ManifestRegistry created from pre-loaded SwManifests"
+            "ManifestRegistry created"
         );
 
-        Ok(Self { sw, hw, offering_manifests })
+        Ok(Self { sw, hw })
     }
 
     /// Get total count of all manifests
     pub fn total_count(&self) -> usize {
-        self.sw.entries.len() + self.hw.entries.len() + self.offering_manifests.len()
+        self.sw.entries.len() + self.hw.entries.len()
     }
 
-    /// Get an offering manifest by name
-    pub fn get_offering_manifest(&self, name: &str) -> Option<&OfferingManifest> {
-        self.offering_manifests.get(name)
+    /// Get all offerings that support a specific mode
+    pub fn offerings_by_mode(&self, mode: &OfferingMode) -> Vec<&Offering> {
+        self.sw.by_mode(mode)
     }
 
-    /// Get all offering manifests that support a specific mode
-    pub fn offerings_by_mode(&self, mode: &crate::OfferingMode) -> Vec<&OfferingManifest> {
-        self.offering_manifests
-            .values()
-            .filter(|m| m.modes.contains(mode))
-            .collect()
+    /// Get offering by name
+    pub fn get_offering(&self, name: &str) -> Option<&Offering> {
+        self.sw.get(name)
+    }
+
+    /// Get mutable offering by name
+    pub fn get_offering_mut(&mut self, name: &str) -> Option<&mut Offering> {
+        self.sw.get_mut(name)
+    }
+
+    /// Insert or update an offering
+    pub fn upsert_offering(&mut self, offering: Offering) -> bool {
+        self.sw.upsert(offering)
     }
 }
 
 /// Discover subdirectories in a directory, skipping hidden and internal prefixes
-///
-/// Used by both sw and hw to discover categories/vendors dynamically.
 pub fn discover_subdirectories(dir: &Path) -> Vec<String> {
     let mut subdirs = Vec::new();
 
@@ -254,7 +144,6 @@ pub fn discover_subdirectories(dir: &Path) -> Vec<String> {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
 
-            // Include only directories, skip hidden (.) and internal (_) prefixes
             if path.is_dir() && !name.starts_with('.') && !name.starts_with('_') {
                 subdirs.push(name);
             }
@@ -283,13 +172,10 @@ mod tests {
     fn test_discover_subdirectories() {
         let temp = TempDir::new().unwrap();
 
-        // Create some directories
         fs::create_dir(temp.path().join("data")).unwrap();
         fs::create_dir(temp.path().join("cache")).unwrap();
         fs::create_dir(temp.path().join(".hidden")).unwrap();
         fs::create_dir(temp.path().join("_internal")).unwrap();
-
-        // Create a file (should be ignored)
         fs::write(temp.path().join("file.txt"), "test").unwrap();
 
         let subdirs = discover_subdirectories(temp.path());
@@ -297,8 +183,6 @@ mod tests {
         assert_eq!(subdirs.len(), 2);
         assert!(subdirs.contains(&"cache".to_string()));
         assert!(subdirs.contains(&"data".to_string()));
-        assert!(!subdirs.contains(&".hidden".to_string()));
-        assert!(!subdirs.contains(&"_internal".to_string()));
     }
 
     #[test]

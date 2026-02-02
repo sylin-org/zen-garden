@@ -159,7 +159,7 @@ impl InfrastructureHandlerRegistry {
                     let tags = manifest_entry
                         .map(|entry| entry.tags())
                         .unwrap_or_default();
-                    let port = manifest_entry.and_then(|entry| entry.port());
+                    let port = manifest_entry.and_then(|entry| entry.metadata.port);
 
                     if handler.matches(&service.offering, &service.category, &tags) {
                         instances.push(OfferingInstance {

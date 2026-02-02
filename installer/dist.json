@@ -65,19 +65,25 @@
   },
 
   "assets": {
-    "scripts": {
+    "shellScripts": {
       "source": "installer",
       "destination": "bin/",
       "files": [
-        "garden-upgrade.sh",
         "moss-update-helper.sh"
       ],
       "lineEndings": "lf",
       "platforms": ["linux"]
     },
+    "serviceFile": {
+      "source": "installer/package-assets",
+      "destination": "scripts/etc/systemd/system/",
+      "files": ["garden-moss.service"],
+      "lineEndings": "lf",
+      "platforms": ["linux"]
+    },
     "gardenConfig": {
       "source": "installer",
-      "destination": "lib/zen-garden/",
+      "destination": "scripts/var/lib/zen-garden/",
       "files": ["garden.conf"],
       "lineEndings": "lf",
       "platforms": ["linux"]

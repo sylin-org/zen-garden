@@ -1,26 +1,30 @@
 #!/bin/bash
-# moss-update-helper.sh - Process pending upgrades before Moss starts
-#
-# Package structure mirrors target filesystem:
-#   bin/  → /usr/local/bin/
-#   lib/  → /var/lib/
+# moss-update-helper.sh - Process validated upgrades before Moss starts
 #
 # Flow:
-# 1. push2all.ps1 uploads package to /var/lib/zen-garden/staging/pending-upgrade.tar.gz
-# 2. On next Moss restart, this script extracts and installs the package
-# 3. garden-upgrade.sh handles validated/ staging (for API-based upgrades)
+# 1. push2all.ps1 sends package to Moss HTTP API (/api/v1/stone/deploy)
+# 2. Moss validates and extracts to /var/lib/zen-garden/staging/validated/
+# 3. Moss triggers service restart
+# 4. This script (ExecStartPre) installs from validated/ before Moss starts
+#
+# Package structure in validated/:
+#   bin/      → /usr/local/bin/     (full mirror copy)
+#   scripts/  → filesystem paths    (scripts/X/Y/Z → /X/Y/Z)
+#
+# Post-install hooks:
+#   - /etc/systemd/system/* → systemctl daemon-reload
+#   - /usr/local/bin/*      → chmod 755
+#   - /var/lib/zen-garden/* → chown stone:stone
 
 set -euo pipefail
 
-# Configuration
 STAGING_DIR="/var/lib/zen-garden/staging"
-PACKAGE_FILE="$STAGING_DIR/pending-upgrade.tar.gz"
+VALIDATED_DIR="$STAGING_DIR/validated"
 
 log() {
     echo "[moss-update-helper] $1"
 }
 
-# Ensure staging directories exist with correct permissions
 ensure_staging_dirs() {
     if [[ ! -d "$STAGING_DIR" ]]; then
         mkdir -p "$STAGING_DIR"
@@ -29,90 +33,133 @@ ensure_staging_dirs() {
     fi
 }
 
-# Process pending package upgrade
-process_package_upgrade() {
-    if [[ ! -f "$PACKAGE_FILE" ]]; then
-        log "No pending upgrade package"
+# Deploy bin/ → /usr/local/bin/ (full mirror copy)
+deploy_bin() {
+    local src_dir="$1"
+
+    if [[ ! -d "$src_dir" ]]; then
         return 0
     fi
 
-    log "Found upgrade package: $PACKAGE_FILE"
+    cp -r "$src_dir/"* /usr/local/bin/
 
-    local work_dir
-    work_dir=$(mktemp -d)
-    trap 'rm -rf "$work_dir"' RETURN
+    # Make all files executable
+    find /usr/local/bin -maxdepth 1 -type f -exec chmod 755 {} \;
 
-    # Extract package
-    if ! tar -xzf "$PACKAGE_FILE" -C "$work_dir"; then
-        log "ERROR: Failed to extract package"
-        rm -f "$PACKAGE_FILE"
-        return 1
+    # Handle subdirectories (companions, etc.)
+    if [[ -d /usr/local/bin/companions ]]; then
+        find /usr/local/bin/companions -type f -exec chmod 755 {} \;
     fi
 
-    # Find package directory (zen-garden-X.Y.Z-linux-amd64/)
-    local pkg_dir
-    pkg_dir=$(find "$work_dir" -maxdepth 1 -type d -name "zen-garden-*" | head -1)
-    if [[ -z "$pkg_dir" ]]; then
-        log "ERROR: Invalid package structure - no zen-garden-* directory found"
-        rm -f "$PACKAGE_FILE"
-        return 1
-    fi
-
-    log "Installing from: $(basename "$pkg_dir")"
-
-    # Deploy bin/ → /usr/local/bin/
-    if [[ -d "$pkg_dir/bin" ]]; then
-        cp -r "$pkg_dir/bin/"* /usr/local/bin/
-        find /usr/local/bin -type f -exec chmod 755 {} \;
-        local bin_count
-        bin_count=$(find "$pkg_dir/bin" -type f | wc -l)
-        log "Deployed bin/ ($bin_count files)"
-    fi
-
-    # Deploy lib/ → /var/lib/
-    if [[ -d "$pkg_dir/lib" ]]; then
-        cp -r "$pkg_dir/lib/"* /var/lib/
-        chown -R stone:stone /var/lib/zen-garden
-        local lib_count
-        lib_count=$(find "$pkg_dir/lib" -type f | wc -l)
-        log "Deployed lib/ ($lib_count files)"
-    fi
-
-    # Apply garden configuration (timezone, NTP)
-    if [[ -f /var/lib/zen-garden/garden.conf ]]; then
-        # shellcheck source=/dev/null
-        source /var/lib/zen-garden/garden.conf
-        
-        # Apply timezone if specified and different from current
-        if [[ -n "${timezone:-}" ]]; then
-            current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
-            if [[ "$current_tz" != "$timezone" ]]; then
-                log "Setting timezone: $timezone (was: $current_tz)"
-                timedatectl set-timezone "$timezone" || log "WARNING: Failed to set timezone"
-            fi
-        fi
-        
-        # Ensure NTP is enabled
-        if ! timedatectl show --property=NTP --value 2>/dev/null | grep -q "yes"; then
-            log "Enabling NTP time synchronization"
-            timedatectl set-ntp true || log "WARNING: Failed to enable NTP"
-        fi
-    fi
-
-    # Cleanup
-    rm -f "$PACKAGE_FILE"
-    rm -f "$STAGING_DIR"/*.staged 2>/dev/null || true
-    
-    log "Package upgrade complete"
+    local count
+    count=$(find "$src_dir" -type f | wc -l)
+    log "Deployed bin/ ($count files) → /usr/local/bin/"
 }
 
-# Main
+# Deploy scripts/ → filesystem paths (traversal)
+deploy_scripts() {
+    local src_dir="$1"
+    local needs_daemon_reload=false
+
+    if [[ ! -d "$src_dir" ]]; then
+        return 0
+    fi
+
+    log "Deploying scripts/ (filesystem-mirrored paths)..."
+
+    # Find all files in scripts/ and copy to their mirror paths
+    while IFS= read -r -d '' file; do
+        # Get relative path from scripts/
+        local rel_path="${file#$src_dir/}"
+        local target_path="/$rel_path"
+        local target_dir
+        target_dir=$(dirname "$target_path")
+
+        # Ensure target directory exists
+        mkdir -p "$target_dir"
+
+        # Copy file
+        cp "$file" "$target_path"
+        log "  $rel_path → $target_path"
+
+        # Apply post-install hooks based on path
+        case "$target_path" in
+            /etc/systemd/system/*)
+                needs_daemon_reload=true
+                chmod 644 "$target_path"
+                ;;
+            /usr/local/bin/*)
+                chmod 755 "$target_path"
+                ;;
+            /var/lib/zen-garden/*)
+                chown stone:stone "$target_path" 2>/dev/null || true
+                ;;
+        esac
+    done < <(find "$src_dir" -type f -print0)
+
+    # Run daemon-reload if any systemd files were updated
+    if [[ "$needs_daemon_reload" == true ]]; then
+        log "Running systemctl daemon-reload..."
+        systemctl daemon-reload || log "WARNING: daemon-reload failed"
+    fi
+
+    local count
+    count=$(find "$src_dir" -type f | wc -l)
+    log "Deployed scripts/ ($count files)"
+}
+
+# Apply garden configuration (timezone, NTP)
+apply_garden_config() {
+    if [[ ! -f /var/lib/zen-garden/garden.conf ]]; then
+        return 0
+    fi
+
+    # shellcheck source=/dev/null
+    source /var/lib/zen-garden/garden.conf
+
+    # Apply timezone if specified and different from current
+    if [[ -n "${timezone:-}" ]]; then
+        local current_tz
+        current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
+        if [[ "$current_tz" != "$timezone" ]]; then
+            log "Setting timezone: $timezone (was: $current_tz)"
+            timedatectl set-timezone "$timezone" || log "WARNING: Failed to set timezone"
+        fi
+    fi
+
+    # Ensure NTP is enabled
+    if ! timedatectl show --property=NTP --value 2>/dev/null | grep -q "yes"; then
+        log "Enabling NTP time synchronization"
+        timedatectl set-ntp true || log "WARNING: Failed to enable NTP"
+    fi
+}
+
+process_validated_upgrade() {
+    if [[ ! -d "$VALIDATED_DIR/bin" ]]; then
+        log "No validated upgrade pending"
+        return 0
+    fi
+
+    log "Found validated upgrade in: $VALIDATED_DIR"
+
+    # Deploy bin/ → /usr/local/bin/
+    deploy_bin "$VALIDATED_DIR/bin"
+
+    # Deploy scripts/ → filesystem paths
+    deploy_scripts "$VALIDATED_DIR/scripts"
+
+    # Apply garden configuration
+    apply_garden_config
+
+    # Cleanup validated staging
+    rm -rf "$VALIDATED_DIR"
+    log "Upgrade complete"
+}
+
 main() {
     log "Starting update check..."
-
     ensure_staging_dirs
-    process_package_upgrade
-
+    process_validated_upgrade
     log "Update check complete"
 }
 

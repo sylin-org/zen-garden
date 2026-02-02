@@ -1,280 +1,80 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Push new garden-moss and garden-rake binaries to all discovered stones on the network.
+    Push Zen Garden packages to all discovered stones on the network.
 
 .DESCRIPTION
     This script:
-    1. Builds release binaries for all platforms (unless -SkipBuild is used)
-    2. Discovers all stones via UDP broadcast (port 7184)
-    3. Deploys binaries using either HTTP API or SSH method
-    4. Waits for each stone to restart and come back online
-    5. Reports success/failure for each stone
+    1. Discovers all stones via UDP broadcast/multicast (port 7184)
+    2. Deploys packages using HTTP API (/api/v1/stone/deploy)
+    3. Waits for each stone to restart and come back online
+    4. Reports success/failure for each stone
 
 .PARAMETER Timeout
-    Discovery timeout in seconds (default: 3)
+    Discovery timeout in seconds (default: 5)
 
 .PARAMETER Sequential
-    Push to stones sequentially instead of in parallel (HTTP method only).
-    Use this when you need to see detailed output for each stone or for debugging.
-    Default behavior is parallel deployment for faster updates.
+    Push to stones sequentially instead of in parallel.
+    Use for debugging to see detailed output per stone.
 
 .PARAMETER Port
-    Override the port number (default: 0 = use discovered port, typically 7185)
+    Override the port number (default: 0 = use discovered port)
 
-.PARAMETER SkipBuild
-    Skip the automatic build step (useful for testing)
-
-.PARAMETER Method
-    Deployment method: 'HTTP' (via API) or 'SSH' (direct file transfer)
-    - HTTP: Uses /api/v1/stone/upgrade endpoint (requires API to be working)
-    - SSH: Transfers files via pscp and restarts service (workaround when API unavailable)
-    Default: HTTP
-
-.PARAMETER SSHUser
-    SSH username for SSH method (default: stone)
-
-.PARAMETER SSHPassword
-    SSH password for SSH method (default: stone)
+.PARAMETER Build
+    Build binaries before deploying
 
 .EXAMPLE
     .\push2all.ps1
-    Build and deploy via HTTP API to all discovered stones
-    
-.EXAMPLE
-    .\push2all.ps1 -Method SSH
-    Build and deploy via SSH to all discovered stones
+    Deploy to all discovered stones using existing packages
 
 .EXAMPLE
-    .\push2all.ps1 -Method SSH -SSHUser admin -SSHPassword mypassword
-    Deploy via SSH with custom credentials
+    .\push2all.ps1 -Build
+    Build packages first, then deploy to all stones
 
 .EXAMPLE
     .\push2all.ps1 -Sequential
-    Deploy via HTTP API one stone at a time (for debugging)
-
-.EXAMPLE
-    .\push2all.ps1 -SkipBuild -Method SSH
-    Deploy via SSH without rebuilding binaries
-
-.EXAMPLE
-    .\push2all.ps1 -Y
-    Deploy with all default options (no prompts)
+    Deploy one stone at a time (for debugging)
 #>
 
 param(
     [int]$Timeout = 5,
     [switch]$Sequential,
-    [int]$Port = 0,  # Override port (0 = use discovered port)
-    [switch]$SkipBuild,  # Skip automatic build (for testing)
-    [switch]$Build,  # Force build
-    [ValidateSet('HTTP', 'SSH', '')]
-    [string]$Method = '',  # Deployment method: HTTP (API) or SSH (direct file copy) - empty prompts menu
-    [ValidateSet('Package', 'MossRake', 'MossOnly', '')]
-    [string]$PublishMode = '',  # What to publish: Package (full), MossRake (legacy), MossOnly - empty prompts menu
-    [switch]$ForceSSH,  # Emergency mode: Stop service, copy directly to /usr/local/bin, restart (bypasses validation)
-    [string]$SSHUser = 'stone',  # SSH username
-    [string]$SSHPassword = 'stone',  # SSH password
-    [Alias("Y")]
-    [bool]$Yes = $true  # Accept all defaults (non-interactive mode) - default is now automatic
+    [int]$Port = 0,
+    [switch]$Build
 )
 
 $ErrorActionPreference = "Stop"
 
-function Read-SingleKey {
-    <#
-    .SYNOPSIS
-        Read a single keypress without requiring Enter. Returns the key char or $null if Esc.
-    #>
-    param(
-        [string[]]$ValidKeys,
-        [string]$DefaultKey = $null
-    )
-
-    Write-Host "Press a key (Esc to abort): " -NoNewline -ForegroundColor DarkGray
-
-    while ($true) {
-        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-
-        # Esc to abort
-        if ($key.VirtualKeyCode -eq 27) {
-            Write-Host "Aborted" -ForegroundColor Yellow
-            exit 0
-        }
-
-        # Enter for default
-        if ($key.VirtualKeyCode -eq 13 -and $DefaultKey) {
-            Write-Host $DefaultKey
-            return $DefaultKey
-        }
-
-        # Check if valid key
-        $char = $key.Character.ToString()
-        if ($ValidKeys -contains $char) {
-            Write-Host $char
-            return $char
-        }
-    }
-}
-
-# Show build menu if not explicitly specified
-$shouldBuild = $false
-if (-not $SkipBuild -and -not $Build) {
-    if ($Yes) {
-        # Auto-accept default: don't build
-        $shouldBuild = $false
-    } else {
-        Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-        Write-Host "║  Build Binaries?                                   ║" -ForegroundColor Cyan
-        Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
-
-        Write-Host "  [1] Yes, build now" -ForegroundColor White
-        Write-Host "      Compiles latest code for all platforms" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "  [2] No, use existing binaries (default)" -ForegroundColor White
-        Write-Host "      Uses binaries from previous build" -ForegroundColor Gray
-        Write-Host ""
-
-        $buildChoice = Read-SingleKey -ValidKeys @("1", "2") -DefaultKey "2"
-
-        $shouldBuild = ($buildChoice -eq "1")
-        Write-Host ""
-    }
-} elseif ($Build) {
-    $shouldBuild = $true
-}
-
-# Show deployment method menu if not specified
-if ([string]::IsNullOrEmpty($Method)) {
-    if ($Yes) {
-        # Auto-accept default: HTTP
-        $Method = "HTTP"
-    } else {
-        Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-        Write-Host "║  Select Deployment Method (applies to all stones)  ║" -ForegroundColor Cyan
-        Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
-
-        Write-Host "  [1] HTTP API (default)" -ForegroundColor White
-        Write-Host "      Uses /api/v1/stone/upgrade endpoint" -ForegroundColor Gray
-        Write-Host "      Requires moss API to be working" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "  [2] SSH File Transfer" -ForegroundColor White
-        Write-Host "      Direct file copy via SSH + service restart" -ForegroundColor Gray
-        Write-Host "      Fallback when API is unavailable" -ForegroundColor Gray
-        Write-Host ""
-
-        $choice = Read-SingleKey -ValidKeys @("1", "2") -DefaultKey "1"
-
-        switch ($choice) {
-            "2" { $Method = "SSH" }
-            default { $Method = "HTTP" }
-        }
-
-        Write-Host ""
-    }
-}
-
-# Show "What to publish?" menu if not specified
-if ([string]::IsNullOrEmpty($PublishMode)) {
-    if ($Yes) {
-        # Auto-accept default: Package
-        $PublishMode = "Package"
-    } else {
-        Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-        Write-Host "║  What to Publish?                                  ║" -ForegroundColor Cyan
-        Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
-
-        Write-Host "  [1] Full Package (default)" -ForegroundColor White
-        Write-Host "      Complete deployment package with all binaries" -ForegroundColor Gray
-        Write-Host "      Uses /api/v1/stone/deploy endpoint" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "  [2] moss + rake" -ForegroundColor White
-        Write-Host "      Individual binary deployment (legacy)" -ForegroundColor Gray
-        Write-Host "      Uses /api/v1/stone/upgrade endpoint" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "  [3] just moss" -ForegroundColor White
-        Write-Host "      Deploy only the moss daemon" -ForegroundColor Gray
-        Write-Host ""
-
-        $publishChoice = Read-SingleKey -ValidKeys @("1", "2", "3") -DefaultKey "1"
-
-        switch ($publishChoice) {
-            "2" { $PublishMode = "MossRake" }
-            "3" { $PublishMode = "MossOnly" }
-            default { $PublishMode = "Package" }
-        }
-
-        Write-Host ""
-    }
-}
-
-# Build release binaries if requested
-if ($shouldBuild) {
-    Write-Host "🔨 Building release binaries for all platforms..." -ForegroundColor Cyan
-    Write-Host ""
-    
+# Build if requested
+if ($Build) {
+    Write-Host "`n🔨 Building packages..." -ForegroundColor Cyan
     $buildScript = Join-Path $PSScriptRoot "dist.ps1"
     & $buildScript
-    
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ Build failed" -ForegroundColor Red
         exit 1
     }
-    
     Write-Host ""
 }
 
-# Define binary and package paths
+# Find packages
 $distRoot = Resolve-Path "$PSScriptRoot/../dist"
-$linuxMoss = Join-Path $distRoot "linux/garden-moss"
-$linuxRake = Join-Path $distRoot "linux/garden-rake"
-$windowsMoss = Join-Path $distRoot "windows/garden-moss.exe"
-$windowsRake = Join-Path $distRoot "windows/garden-rake.exe"
 $packagesDir = Join-Path $distRoot "packages"
 
-# Find latest packages (if using package mode)
 $linuxPackage = $null
 $windowsPackage = $null
 
-if ($PublishMode -eq "Package") {
-    # Find the latest packages
-    if (Test-Path $packagesDir) {
-        $linuxPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-amd64.tar.gz" | Sort-Object LastWriteTime -Descending
-        $windowsPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-amd64.zip" | Sort-Object LastWriteTime -Descending
+if (Test-Path $packagesDir) {
+    $linuxPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-amd64.tar.gz" | Sort-Object LastWriteTime -Descending
+    $windowsPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-amd64.zip" | Sort-Object LastWriteTime -Descending
+    if ($linuxPackages.Count -gt 0) { $linuxPackage = $linuxPackages[0].FullName }
+    if ($windowsPackages.Count -gt 0) { $windowsPackage = $windowsPackages[0].FullName }
+}
 
-        if ($linuxPackages.Count -gt 0) { $linuxPackage = $linuxPackages[0].FullName }
-        if ($windowsPackages.Count -gt 0) { $windowsPackage = $windowsPackages[0].FullName }
-    }
-
-    # Require at least one package (not both) - stones without matching package will be skipped later
-    if (-not $linuxPackage -and -not $windowsPackage) {
-        Write-Host "⚠️  No deployment packages found in $packagesDir" -ForegroundColor Yellow
-        Write-Host "   Run dist.ps1 first to create packages, or choose a different publish mode." -ForegroundColor Yellow
-        exit 1
-    }
-
-    Write-Host "📦 Using packages:" -ForegroundColor Cyan
-    if ($linuxPackage) {
-        Write-Host "   Linux:   $(Split-Path -Leaf $linuxPackage)" -ForegroundColor Gray
-    } else {
-        Write-Host "   Linux:   (not available - Linux stones will be skipped)" -ForegroundColor Yellow
-    }
-    if ($windowsPackage) {
-        Write-Host "   Windows: $(Split-Path -Leaf $windowsPackage)" -ForegroundColor Gray
-    } else {
-        Write-Host "   Windows: (not available - Windows stones will be skipped)" -ForegroundColor Yellow
-    }
-    Write-Host ""
-} else {
-    # Validate individual binaries exist for legacy modes
-    if (-not (Test-Path $linuxMoss)) { throw "Linux moss binary not found: $linuxMoss" }
-    if ($PublishMode -ne "MossOnly") {
-        if (-not (Test-Path $linuxRake)) { throw "Linux rake binary not found: $linuxRake" }
-    }
-    if (-not (Test-Path $windowsMoss)) { throw "Windows moss binary not found: $windowsMoss" }
-    if ($PublishMode -ne "MossOnly") {
-        if (-not (Test-Path $windowsRake)) { throw "Windows rake binary not found: $windowsRake" }
-    }
+if (-not $linuxPackage -and -not $windowsPackage) {
+    Write-Host "⚠️  No packages found in $packagesDir" -ForegroundColor Yellow
+    Write-Host "   Run with -Build flag or run dist.ps1 first." -ForegroundColor Yellow
+    exit 1
 }
 
 function Write-Status {
@@ -289,144 +89,95 @@ function Write-Status {
 }
 
 function Get-LanBindAddress {
-    <#
-    .SYNOPSIS
-        Get a LAN-suitable local IP address for binding UDP sockets.
-        Prioritizes: 192.168.x.x > 10.x.x.x > 172.16-23.x.x
-        This ensures broadcasts go out the correct interface on multi-homed systems.
-
-        Mirrors the logic in discovery.rs get_lan_bind_address()
-    #>
-
     $candidates = @()
+    $adapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue
 
-    # Get all IPv4 addresses from network adapters
-    $Companions = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue
-
-    foreach ($Companion in $Companions) {
-        $ip = $Companion.IPAddress
+    foreach ($adapter in $adapters) {
+        $ip = $adapter.IPAddress
         $octets = $ip.Split('.')
-
         if ($octets.Count -ne 4) { continue }
 
         $first = [int]$octets[0]
         $second = [int]$octets[1]
 
-        # Skip loopback
-        if ($first -eq 127) { continue }
-
-        # Skip link-local (169.254.x.x)
-        if ($first -eq 169) { continue }
-
-        # Skip Docker bridge (172.17.x.x) and WSL/Hyper-V ranges (172.24+)
+        # Skip loopback, link-local, Docker/WSL ranges
+        if ($first -eq 127 -or $first -eq 169) { continue }
         if ($first -eq 172 -and ($second -eq 17 -or $second -ge 24)) { continue }
 
-        # Prioritize by network type
         $priority = switch ($first) {
-            192 { if ($second -eq 168) { 1 } else { 4 } }  # 192.168.x.x - home/small office
-            10 { 2 }                                        # 10.x.x.x - enterprise
-            172 { if ($second -ge 16 -and $second -le 23) { 3 } else { 4 } }  # 172.16-23.x.x
+            192 { if ($second -eq 168) { 1 } else { 4 } }
+            10 { 2 }
+            172 { if ($second -ge 16 -and $second -le 23) { 3 } else { 4 } }
             default { 4 }
         }
 
-        $candidates += [PSCustomObject]@{
-            Priority = $priority
-            IP = $ip
-        }
+        $candidates += [PSCustomObject]@{ Priority = $priority; IP = $ip }
     }
 
-    # Sort by priority (lower is better)
-    # Note: Sort-Object returns a single object (not array) when there's only one item
     $sorted = @($candidates | Sort-Object Priority)
-
-    if ($sorted.Count -gt 0) {
-        return $sorted[0].IP
-    }
-
-    return $null  # Fall back to default binding
+    if ($sorted.Count -gt 0) { return $sorted[0].IP }
+    return $null
 }
 
-function Discover-AllStones {
+function Find-AllStones {
     param([int]$TimeoutSeconds)
 
     Write-Status "🔍 Discovering stones on network (timeout: ${TimeoutSeconds}s)..."
 
-    # Get best LAN interface for reliable broadcast on multi-homed systems
     $lanIP = Get-LanBindAddress
-
     if ($lanIP) {
         Write-Status "   Binding to LAN interface: $lanIP"
-        # Bind to port 7184 so we can receive broadcast responses!
         $localEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse($lanIP), 7184)
         $udpClient = New-Object System.Net.Sockets.UdpClient $localEndpoint
     } else {
         Write-Status "   No LAN interface found, using default binding" -Type "Warning"
-        # Bind to port 7184 to receive broadcast responses
         $udpClient = New-Object System.Net.Sockets.UdpClient 7184
     }
 
     $udpClient.EnableBroadcast = $true
-    
-    # Prepare discovery request (wrapped in UdpAnnouncement envelope)
+
     $requestId = [guid]::NewGuid().ToString()
-    $requestData = @{
-        discover = "moss"
-        request_id = $requestId
-        requester = "push2all-script"
-    }
-    
-    # NOTE: Field name is "type" not "announcement_type" (serde rename in UdpAnnouncement)
     $announcement = @{
         type = "discovery_request"
-        data = $requestData
+        data = @{
+            discover = "moss"
+            request_id = $requestId
+            requester = "push2all"
+        }
     } | ConvertTo-Json -Compress
-    
+
     $requestBytes = [System.Text.Encoding]::UTF8.GetBytes($announcement)
-    
-    # Send to multicast group (239.255.42.99) - matches multicast-first discovery
-    # Also send to limited broadcast as fallback for older moss versions
-    $multicastGroup = [System.Net.IPAddress]::Parse("239.255.42.99")
-    $multicastEndpoint = New-Object System.Net.IPEndPoint($multicastGroup, 7184)
+
+    $multicastEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse("239.255.42.99"), 7184)
     $broadcastEndpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Broadcast, 7184)
-    
-    # Send multicast (primary)
+
     $sent1 = $udpClient.Send($requestBytes, $requestBytes.Length, $multicastEndpoint)
-    # Send broadcast (fallback for older versions)
     $sent2 = $udpClient.Send($requestBytes, $requestBytes.Length, $broadcastEndpoint)
-    
-    $boundAddr = if ($lanIP) { $lanIP } else { "0.0.0.0" }
-    Write-Status "   Sent discovery: multicast $sent1 bytes + broadcast $sent2 bytes from $boundAddr"
-    
-    # Collect responses with shorter individual timeout but keep trying for full duration
+
+    Write-Status "   Sent discovery: multicast $sent1 bytes + broadcast $sent2 bytes"
+
     [System.Collections.ArrayList]$stones = @()
-    $seenStones = @{}  # Deduplication: track by stone_name
+    $seenStones = @{}
     $remoteEP = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    
-    $udpClient.Client.ReceiveTimeout = 1000  # 1 second timeout per receive attempt
-    
+    $udpClient.Client.ReceiveTimeout = 1000
+
     $startTime = Get-Date
     while (((Get-Date) - $startTime).TotalSeconds -lt $TimeoutSeconds) {
         try {
             $responseBytes = $udpClient.Receive([ref]$remoteEP)
             $responseJson = [System.Text.Encoding]::UTF8.GetString($responseBytes)
             $envelope = $responseJson | ConvertFrom-Json
-            
-            # Check if this is a discovery_response (field is "type" not "announcement_type")
+
             if ($envelope.type -eq "discovery_response") {
                 $response = $envelope.data
-                
-                # Deduplicate by stone_name (same stone may respond to both multicast and broadcast)
-                if ($seenStones.ContainsKey($response.stone_name)) {
-                    continue
-                }
+                if ($seenStones.ContainsKey($response.stone_name)) { continue }
                 $seenStones[$response.stone_name] = $true
-                
-                # Override port if specified
+
                 $endpoint = $response.stone_endpoint
                 if ($Port -gt 0) {
                     $endpoint = $endpoint -replace ':\d+$', ":$Port"
                 }
-                
+
                 $stones.Add([PSCustomObject]@{
                     Name = $response.stone_name
                     Endpoint = $endpoint
@@ -435,480 +186,48 @@ function Discover-AllStones {
                 Write-Status "   ✓ Found: $($response.stone_name) at $endpoint" -Type "Success"
             }
         }
-        catch [System.Net.Sockets.SocketException] {
-            # Timeout on this receive - continue waiting if time remains
-            continue
-        }
-        catch {
-            Write-Status "   Warning: Failed to parse response from $($remoteEP.Address): $_" -Type "Warning"
-        }
+        catch [System.Net.Sockets.SocketException] { continue }
+        catch { Write-Status "   Warning: Failed to parse response: $_" -Type "Warning" }
     }
-    
+
     $udpClient.Close()
-    
     Write-Status "   Discovery complete: Found $($stones.Count) stone(s)" -Type "Success"
     return $stones
 }
 
 function Resolve-StoneEndpoint {
-    <#
-    .SYNOPSIS
-        Resolve the actual reachable endpoint for a stone.
-
-        When stones report 127.0.0.1 (due to IP detection issues), this function
-        provides fallbacks:
-        1. Use the UDP source address (the real IP from discovery response)
-        2. Try mDNS resolution (<stone-name>.local)
-
-        This allows push2all to work even when stones have broken IP detection.
-    #>
     param([PSCustomObject]$Stone)
 
     $endpoint = $Stone.Endpoint
-
-    # Check if endpoint contains loopback address
     if ($endpoint -match "127\.0\.0\.1|localhost") {
-        Write-Status "   ⚠️  $($Stone.Name) reports loopback address, using fallback resolution" -Type "Warning"
-
-        # Extract port from original endpoint
-        $port = "7185"  # Default
-        if ($endpoint -match ":(\d+)") {
-            $port = $Matches[1]
-        }
-
-        # Fallback 1: Use UDP source address (we already know the real IP from discovery)
+        Write-Status "   ⚠️  $($Stone.Name) reports loopback, using UDP source address" -Type "Warning"
+        $port = "7185"
+        if ($endpoint -match ":(\d+)") { $port = $Matches[1] }
         if ($Stone.Address -and $Stone.Address -ne "127.0.0.1") {
-            $resolvedEndpoint = "http://$($Stone.Address):$port"
-            Write-Status "      → Using UDP source address: $resolvedEndpoint" -Type "Success"
-            return $resolvedEndpoint
+            return "http://$($Stone.Address):$port"
         }
-
-        # Fallback 2: Try mDNS resolution (<stone-name>.local)
-        $mdnsName = "$($Stone.Name).local"
-        Write-Status "      → Trying mDNS resolution: $mdnsName"
-
-        try {
-            $resolved = [System.Net.Dns]::GetHostAddresses($mdnsName) |
-                Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
-                Select-Object -First 1
-
-            if ($resolved) {
-                $resolvedEndpoint = "http://$($resolved.IPAddressToString):$port"
-                Write-Status "      → Resolved via mDNS: $resolvedEndpoint" -Type "Success"
-                return $resolvedEndpoint
-            }
-        }
-        catch {
-            Write-Status "      → mDNS resolution failed: $_" -Type "Warning"
-        }
-
-        # Last resort: return original (will likely fail)
-        Write-Status "      → No fallback available, using original endpoint" -Type "Warning"
-        return $endpoint
     }
-
     return $endpoint
 }
 
 function Get-StoneInfo {
     param([PSCustomObject]$Stone)
 
-    # Resolve actual endpoint (handles loopback fallback)
     $resolvedEndpoint = Resolve-StoneEndpoint -Stone $Stone
 
     try {
         $url = "$($resolvedEndpoint.TrimEnd('/'))/health"
         $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 3
-
         return [PSCustomObject]@{
-            OS = if ($health.os) { $health.os } else { "linux" }  # Default to linux for older versions
-            Architecture = if ($health.architecture) { $health.architecture } else { "x86_64" }
-            ResolvedEndpoint = $resolvedEndpoint  # Pass through the resolved endpoint
-        }
-    }
-    catch {
-        Write-Status "   Warning: Could not query $($Stone.Name) health endpoint, assuming Linux x86_64" -Type "Warning"
-        return [PSCustomObject]@{
-            OS = "linux"
-            Architecture = "x86_64"
+            OS = if ($health.os) { $health.os } else { "linux" }
             ResolvedEndpoint = $resolvedEndpoint
         }
     }
-}
-
-function Get-BinariesForPlatform {
-    param([string]$OS, [string]$Architecture)
-    
-    if ($OS -match "windows") {
+    catch {
         return [PSCustomObject]@{
-            Moss = $windowsMoss
-            Rake = $windowsRake
-            Platform = "Windows"
+            OS = "linux"
+            ResolvedEndpoint = $resolvedEndpoint
         }
-    }
-    else {
-        return [PSCustomObject]@{
-            Moss = $linuxMoss
-            Rake = $linuxRake
-            Platform = "Linux"
-        }
-    }
-}
-
-function Test-BinaryFile {
-    param([string]$Path, [bool]$AllowPE = $false)
-    
-    Write-Status "📦 Validating binary file: $(Split-Path -Leaf $Path)..."
-    
-    if (-not (Test-Path $Path)) {
-        throw "Binary file not found: $Path"
-    }
-    
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    $sizeMb = [math]::Round($bytes.Length / 1MB, 2)
-    
-    # Check binary format
-    $format = "Unknown"
-    if ($bytes.Length -ge 4) {
-        # ELF header: 0x7f 'E' 'L' 'F'
-        if ($bytes[0] -eq 0x7f -and $bytes[1] -eq 0x45 -and $bytes[2] -eq 0x4c -and $bytes[3] -eq 0x46) {
-            $format = "ELF (Linux)"
-        }
-        # PE header: 'M' 'Z' (DOS stub)
-        elseif ($bytes[0] -eq 0x4d -and $bytes[1] -eq 0x5a) {
-            $format = "PE (Windows)"
-            if (-not $AllowPE) {
-                throw "Windows PE binary not expected for this platform"
-            }
-        }
-        else {
-            throw "Not a valid executable binary"
-        }
-    }
-    else {
-        throw "File too small to be a valid binary"
-    }
-    
-    Write-Status "   ✓ Size: $sizeMb MB" -Type "Success"
-    Write-Status "   ✓ Format: $format" -Type "Success"
-    
-    return $bytes
-}
-
-function Push-MossOnlyToStone {
-    param(
-        [PSCustomObject]$Stone,
-        [byte[]]$MossBinaryData,
-        [string]$Platform
-    )
-
-    Write-Status "`n🚀 Pushing moss to $($Stone.Name) ($Platform)..."
-
-    $mossBase64 = [Convert]::ToBase64String($MossBinaryData)
-    $mossPayload = @{
-        component = "garden-moss"
-        binary_data = $mossBase64
-    } | ConvertTo-Json -Depth 10 -Compress
-
-    $url = "$($Stone.Endpoint.TrimEnd('/'))/api/v1/stone/upgrade"
-
-    try {
-        $response = Invoke-RestMethod -Uri $url -Method Post -Body $mossPayload -ContentType "application/json; charset=utf-8" -TimeoutSec 30
-
-        Write-Status "   ✅ Moss upload successful" -Type "Success"
-        if ($response.architecture) {
-            Write-Status "      Architecture: $($response.architecture)"
-        }
-
-        # Wait for moss to restart
-        Write-Status "   ⏳ Waiting for moss to restart..."
-        Start-Sleep -Seconds 3
-
-        # Poll health endpoint
-        $healthUrl = "$($Stone.Endpoint.TrimEnd('/'))/health"
-        $maxAttempts = 10
-        $online = $false
-
-        for ($i = 1; $i -le $maxAttempts; $i++) {
-            Start-Sleep -Seconds 1
-            try {
-                $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
-                if ($health.status) {
-                    Write-Status "   ✅ $($Stone.Name) is back online" -Type "Success"
-                    $online = $true
-                    break
-                }
-            }
-            catch {
-                Write-Host "." -NoNewline
-            }
-        }
-
-        if (-not $online) {
-            Write-Status "   ⚠️  $($Stone.Name) moss did not respond after restart" -Type "Warning"
-            return $false
-        }
-
-        Write-Status "   ✅ $($Stone.Name) moss updated" -Type "Success"
-        return $true
-    }
-    catch {
-        Write-Status "   ✗ Failed to push moss to $($Stone.Name)" -Type "Error"
-        Write-Status "      Error: $_" -Type "Error"
-        return $false
-    }
-}
-
-function Push-BinariesToStone {
-    param(
-        [PSCustomObject]$Stone,
-        [byte[]]$MossBinaryData,
-        [byte[]]$RakeBinaryData,
-        [string]$Platform
-    )
-
-    Write-Status "`n🚀 Pushing binaries to $($Stone.Name) ($Platform)..."
-    
-    # Push moss first
-    Write-Status "   [1/2] Uploading garden-moss..."
-    $mossBase64 = [Convert]::ToBase64String($MossBinaryData)
-    $mossPayload = @{
-        component = "garden-moss"
-        binary_data = $mossBase64
-    } | ConvertTo-Json -Depth 10 -Compress
-    
-    $url = "$($Stone.Endpoint.TrimEnd('/'))/api/v1/stone/upgrade"
-    
-    try {
-        $response = Invoke-RestMethod -Uri $url -Method Post -Body $mossPayload -ContentType "application/json; charset=utf-8" -TimeoutSec 30
-        
-        Write-Status "   ✅ Moss upload successful" -Type "Success"
-        if ($response.architecture) {
-            Write-Status "      Architecture: $($response.architecture)"
-        }
-        
-        # Wait for moss to restart
-        Write-Status "   ⏳ Waiting for moss to restart..."
-        Start-Sleep -Seconds 3
-        
-        # Poll health endpoint
-        $healthUrl = "$($Stone.Endpoint.TrimEnd('/'))/health"
-        $maxAttempts = 10
-        $online = $false
-        
-        for ($i = 1; $i -le $maxAttempts; $i++) {
-            Start-Sleep -Seconds 1
-            try {
-                $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
-                if ($health.status) {
-                    Write-Status "   ✅ $($Stone.Name) is back online" -Type "Success"
-                    $online = $true
-                    break
-                }
-            }
-            catch {
-                Write-Host "." -NoNewline
-            }
-        }
-        
-        if (-not $online) {
-            Write-Status "   ⚠️  $($Stone.Name) moss did not respond after restart" -Type "Warning"
-            Write-Status "      Skipping rake push" -Type "Warning"
-            return $false
-        }
-        
-        # Push rake
-        Write-Status "   [2/2] Uploading garden-rake..."
-        $rakeBase64 = [Convert]::ToBase64String($RakeBinaryData)
-        $rakePayload = @{
-            component = "garden-rake"
-            binary_data = $rakeBase64
-        } | ConvertTo-Json -Depth 10 -Compress
-        
-        try {
-            $rakeResponse = Invoke-RestMethod -Uri $url -Method Post -Body $rakePayload -ContentType "application/json; charset=utf-8" -TimeoutSec 30
-            Write-Status "   ✅ Rake upload successful" -Type "Success"
-            Write-Status "   ✅ $($Stone.Name) fully updated" -Type "Success"
-            return $true
-        }
-        catch {
-            Write-Status "   ⚠️  Rake push failed but moss is updated" -Type "Warning"
-            Write-Status "      Error: $_" -Type "Warning"
-            return $true  # Still count as success since moss updated
-        }
-        
-    }
-    catch {
-        Write-Status "   ✗ Failed to push to $($Stone.Name)" -Type "Error"
-        Write-Status "      Error: $_" -Type "Error"
-        return $false
-    }
-}
-
-function Push-BinariesViaSSH {
-    param(
-        [PSCustomObject]$Stone,
-        [string]$MossPath,
-        [string]$RakePath,
-        [string]$SSHUser,
-        [string]$SSHPassword,
-        [string]$Platform
-    )
-    
-    Write-Status "`n🚀 Pushing binaries to $($Stone.Name) via SSH ($Platform)..."
-    
-    $targetHost = $Stone.Address
-    
-    # Auto-accept SSH host key if not cached
-    Write-Status "   🔑 Ensuring SSH host key is cached..."
-    $keyCheck = echo y | plink -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "echo OK" 2>&1
-    if ($keyCheck -notmatch "OK") {
-        Write-Status "   ⚠️  Host key acceptance may have failed, continuing anyway..." -Type "Warning"
-    }
-    
-    # Test SSH connectivity
-    Write-Status "   🔍 Testing SSH connectivity..."
-    try {
-        $testResult = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "echo OK" 2>&1
-        if ($testResult -notmatch "OK") {
-            Write-Status "   ✗ SSH connection test failed" -Type "Error"
-            return $false
-        }
-    }
-    catch {
-        Write-Status "   ✗ SSH connection failed: $_" -Type "Error"
-        return $false
-    }
-    
-    try {
-        # Ensure staging directory exists
-        Write-Status "   📁 Preparing staging directory..."
-        & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "mkdir -p /home/stone/bin" 2>&1 | Out-Null
-
-        # FORCE MODE: Stop service, copy directly to /usr/local/bin, restart
-        if ($ForceSSH) {
-            Write-Status "   ⚠️  FORCE MODE: Bypassing validation, direct install" -Type "Warning"
-            
-            # Stop the service
-            Write-Status "   ⏹️  Stopping garden-moss service..."
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo systemctl stop garden-moss" 2>&1 | Out-Null
-            
-            # Transfer directly to /usr/local/bin via temp location
-            Write-Status "   📦 Transferring garden-moss to temp location..."
-            $pscpResult = & pscp -batch -pw $SSHPassword "$MossPath" "${SSHUser}@${targetHost}:/tmp/garden-moss.tmp" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Status "   ✗ Failed to transfer moss binary" -Type "Error"
-                Write-Status "      $pscpResult" -Type "Error"
-                return $false
-            }
-            
-            # Move to /usr/local/bin with sudo
-            Write-Status "   🔧 Installing to /usr/local/bin..."
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo mv /tmp/garden-moss.tmp /usr/local/bin/garden-moss && sudo chmod 755 /usr/local/bin/garden-moss" 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Status "   ✗ Failed to install binary" -Type "Error"
-                return $false
-            }
-            
-            # Handle rake if provided
-            if (-not [string]::IsNullOrEmpty($RakePath)) {
-                Write-Status "   📦 Transferring garden-rake to temp location..."
-                $pscpResult = & pscp -batch -pw $SSHPassword "$RakePath" "${SSHUser}@${targetHost}:/tmp/garden-rake.tmp" 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Status "   ✗ Failed to transfer rake binary" -Type "Error"
-                    Write-Status "      $pscpResult" -Type "Error"
-                    return $false
-                }
-                
-                Write-Status "   🔧 Installing rake to /usr/local/bin..."
-                & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo mv /tmp/garden-rake.tmp /usr/local/bin/garden-rake && sudo chmod 755 /usr/local/bin/garden-rake" 2>&1 | Out-Null
-            }
-            
-            # Start the service
-            Write-Status "   ▶️  Starting garden-moss service..."
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo systemctl start garden-moss" 2>&1 | Out-Null
-            
-            # Wait for service
-            Write-Status "   ⏳ Waiting for service to start..."
-            Start-Sleep -Seconds 5
-            
-            # Verify version
-            $version = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "/usr/local/bin/garden-moss --version 2>&1" 2>&1
-            Write-Status "   📌 Version: $version" -Type "Info"
-            
-            $serviceStatus = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "systemctl is-active garden-moss 2>/dev/null" 2>&1
-            if ($serviceStatus -match "active") {
-                Write-Status "   ✅ $($Stone.Name) forcibly updated via SSH" -Type "Success"
-                return $true
-            } else {
-                Write-Status "   ⚠️  Service may not be active: $serviceStatus" -Type "Warning"
-                return $false
-            }
-        }
-
-        # NORMAL SSH MODE: Stage files for systemd scripts to handle
-        # Clean up any existing staged files (may be root-owned from previous runs)
-        Write-Status "   🧹 Cleaning up existing staged files..."
-        & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo rm -f /home/stone/bin/*.staged" 2>&1 | Out-Null
-
-        # Transfer moss binary
-        $mossOnly = [string]::IsNullOrEmpty($RakePath)
-        $stepPrefix = if ($mossOnly) { "" } else { "[1/2] " }
-        Write-Status "   ${stepPrefix}Transferring garden-moss..."
-        $pscpResult = & pscp -batch -pw $SSHPassword "$MossPath" "${SSHUser}@${targetHost}:/home/stone/bin/garden-moss.staged" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "   ✗ Failed to transfer moss binary" -Type "Error"
-            Write-Status "      $pscpResult" -Type "Error"
-            # Diagnose: show directory permissions and any existing files
-            Write-Status "   🔍 Diagnosing staging directory..." -Type "Warning"
-            $diagResult = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "ls -la /home/stone/bin/ 2>&1; stat /home/stone/bin 2>&1" 2>&1
-            foreach ($line in $diagResult) {
-                Write-Status "      $line" -Type "Warning"
-            }
-            return $false
-        }
-        Write-Status "   ✅ Moss transferred" -Type "Success"
-
-        # Transfer rake binary (if provided)
-        if (-not $mossOnly) {
-            Write-Status "   [2/2] Transferring garden-rake..."
-            $pscpResult = & pscp -batch -pw $SSHPassword "$RakePath" "${SSHUser}@${targetHost}:/home/stone/bin/garden-rake.staged" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Status "   ✗ Failed to transfer rake binary" -Type "Error"
-                Write-Status "      $pscpResult" -Type "Error"
-                return $false
-            }
-            Write-Status "   ✅ Rake transferred" -Type "Success"
-        }
-        
-        # Restart moss service to apply updates
-        Write-Status "   🔄 Restarting garden-moss service..."
-        & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo systemctl restart garden-moss" 2>&1 | Out-Null
-        
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "   ⚠️  Service restart command returned error, but staged files are in place" -Type "Warning"
-            return $true  # Files are staged, so partial success
-        }
-        
-        # Wait for service to come online
-        Write-Status "   ⏳ Waiting for service to restart..."
-        Start-Sleep -Seconds 5
-        
-        # Verify service is running
-        $serviceStatus = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "systemctl is-active garden-moss 2>/dev/null" 2>&1
-        
-        if ($serviceStatus -match "active") {
-            Write-Status "   ✅ $($Stone.Name) fully updated via SSH" -Type "Success"
-            return $true
-        }
-        else {
-            Write-Status "   ⚠️  Service status unclear, but binaries transferred" -Type "Warning"
-            return $true
-        }
-    }
-    catch {
-        Write-Status "   ✗ SSH deployment failed: $_" -Type "Error"
-        return $false
     }
 }
 
@@ -924,39 +243,28 @@ function Push-PackageToStone {
     $url = "$($Stone.Endpoint.TrimEnd('/'))/api/v1/stone/deploy"
     $packageName = Split-Path -Leaf $PackagePath
 
-    # Compute SHA256 hash
-    Write-Status "   Computing package checksum..."
+    Write-Status "   Computing checksum..."
     $hash = (Get-FileHash $PackagePath -Algorithm SHA256).Hash.ToLower()
 
     try {
         Write-Status "   Uploading $packageName..."
-
-        # Read package file
         $packageBytes = [System.IO.File]::ReadAllBytes($PackagePath)
         $sizeMb = [math]::Round($packageBytes.Length / 1MB, 2)
         Write-Status "   Package size: $sizeMb MB"
 
-        # Send package with hash header
-        $headers = @{
-            "X-Package-SHA256" = $hash
-        }
-
+        $headers = @{ "X-Package-SHA256" = $hash }
         $response = Invoke-RestMethod -Uri $url -Method Post -Body $packageBytes -ContentType "application/octet-stream" -Headers $headers -TimeoutSec 120
 
         if ($response.status -eq "accepted") {
             Write-Status "   ✅ Package uploaded and staged" -Type "Success"
-            Write-Status "      Version: $($response.version)"
 
-            # Wait for moss to restart (package deployment triggers auto-restart)
             Write-Status "   ⏳ Waiting for service to restart..."
             Start-Sleep -Seconds 5
 
-            # Poll health endpoint
             $healthUrl = "$($Stone.Endpoint.TrimEnd('/'))/health"
-            $maxAttempts = 15
             $online = $false
 
-            for ($i = 1; $i -le $maxAttempts; $i++) {
+            for ($i = 1; $i -le 15; $i++) {
                 Start-Sleep -Seconds 2
                 try {
                     $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 3
@@ -966,9 +274,7 @@ function Push-PackageToStone {
                         break
                     }
                 }
-                catch {
-                    Write-Host "." -NoNewline
-                }
+                catch { Write-Host "." -NoNewline }
             }
 
             if (-not $online) {
@@ -976,7 +282,7 @@ function Push-PackageToStone {
                 return $false
             }
 
-            Write-Status "   ✅ $($Stone.Name) fully updated via package" -Type "Success"
+            Write-Status "   ✅ $($Stone.Name) updated" -Type "Success"
             return $true
         }
         else {
@@ -985,440 +291,151 @@ function Push-PackageToStone {
         }
     }
     catch {
-        Write-Status "   ✗ Failed to deploy package to $($Stone.Name)" -Type "Error"
+        Write-Status "   ✗ Failed to deploy to $($Stone.Name)" -Type "Error"
         Write-Status "      Error: $_" -Type "Error"
-        return $false
-    }
-}
-
-function Push-PackageViaSSH {
-    param(
-        [PSCustomObject]$Stone,
-        [string]$PackagePath,
-        [string]$SSHUser,
-        [string]$SSHPassword,
-        [string]$Platform
-    )
-
-    Write-Status "`n📦 Pushing package to $($Stone.Name) via SSH ($Platform)..."
-
-    $targetHost = $Stone.Address
-    $packageName = Split-Path -Leaf $PackagePath
-
-    # Determine staging path based on platform
-    if ($Platform -eq "Windows") {
-        $stagingPath = "C:/ProgramData/ZenGarden/staging/pending-upgrade.zip"
-    } else {
-        $stagingPath = "/var/lib/zen-garden/staging/pending-upgrade.tar.gz"
-    }
-
-    # Auto-accept SSH host key if not cached
-    Write-Status "   🔑 Ensuring SSH host key is cached..."
-    $keyCheck = echo y | plink -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "echo OK" 2>&1
-    if ($keyCheck -notmatch "OK") {
-        Write-Status "   ⚠️  Host key acceptance may have failed, continuing anyway..." -Type "Warning"
-    }
-
-    # Test SSH connectivity
-    Write-Status "   🔍 Testing SSH connectivity..."
-    try {
-        $testResult = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "echo OK" 2>&1
-        if ($testResult -notmatch "OK") {
-            Write-Status "   ✗ SSH connection test failed" -Type "Error"
-            return $false
-        }
-    }
-    catch {
-        Write-Status "   ✗ SSH connection failed: $_" -Type "Error"
-        return $false
-    }
-
-    try {
-        # Ensure staging directory exists
-        Write-Status "   📁 Preparing staging directory..."
-        if ($Platform -eq "Windows") {
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "mkdir -p 'C:/ProgramData/ZenGarden/staging'" 2>&1 | Out-Null
-        } else {
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo mkdir -p /var/lib/zen-garden/staging && sudo chown root:root /var/lib/zen-garden/staging" 2>&1 | Out-Null
-        }
-
-        # Transfer package
-        Write-Status "   📤 Transferring $packageName..."
-        $pscpResult = & pscp -batch -pw $SSHPassword "$PackagePath" "${SSHUser}@${targetHost}:$stagingPath" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "   ✗ Failed to transfer package" -Type "Error"
-            Write-Status "      $pscpResult" -Type "Error"
-            return $false
-        }
-        Write-Status "   ✅ Package transferred" -Type "Success"
-
-        # Restart service to apply upgrade
-        Write-Status "   🔄 Restarting garden-moss service..."
-        if ($Platform -eq "Windows") {
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "Restart-Service garden-moss" 2>&1 | Out-Null
-        } else {
-            & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "sudo systemctl restart garden-moss" 2>&1 | Out-Null
-        }
-
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "   ⚠️  Service restart command returned error, but package is staged" -Type "Warning"
-            return $true  # Package is staged, so partial success
-        }
-
-        # Wait for service to come online
-        Write-Status "   ⏳ Waiting for service to restart..."
-        Start-Sleep -Seconds 8
-
-        # Verify service is running
-        if ($Platform -eq "Windows") {
-            $serviceStatus = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "(Get-Service garden-moss).Status" 2>&1
-            $isActive = $serviceStatus -match "Running"
-        } else {
-            $serviceStatus = & plink -batch -ssh "${SSHUser}@${targetHost}" -pw $SSHPassword "systemctl is-active garden-moss 2>/dev/null" 2>&1
-            $isActive = $serviceStatus -match "active"
-        }
-
-        if ($isActive) {
-            Write-Status "   ✅ $($Stone.Name) fully updated via SSH package" -Type "Success"
-            return $true
-        }
-        else {
-            Write-Status "   ⚠️  Service status unclear, but package transferred" -Type "Warning"
-            return $true
-        }
-    }
-    catch {
-        Write-Status "   ✗ SSH package deployment failed: $_" -Type "Error"
         return $false
     }
 }
 
 # Main execution
 try {
-    $publishDesc = switch ($PublishMode) {
-        "Package" { "Full Package" }
-        "MossRake" { "moss + rake" }
-        "MossOnly" { "moss only" }
-        default { "binaries" }
-    }
-
     Write-Status "`n═══════════════════════════════════════════════════════════════"
-    Write-Status "  Push Zen Garden ($publishDesc) to All Stones"
+    Write-Status "  Push Zen Garden Packages to All Stones"
     Write-Status "═══════════════════════════════════════════════════════════════`n"
 
-    # Discover stones
-    $stones = Discover-AllStones -TimeoutSeconds $Timeout
+    Write-Status "📦 Using packages:" -ForegroundColor Cyan
+    if ($linuxPackage) {
+        Write-Status "   Linux:   $(Split-Path -Leaf $linuxPackage)"
+    } else {
+        Write-Status "   Linux:   (not available)" -Type "Warning"
+    }
+    if ($windowsPackage) {
+        Write-Status "   Windows: $(Split-Path -Leaf $windowsPackage)"
+    } else {
+        Write-Status "   Windows: (not available)" -Type "Warning"
+    }
+    Write-Host ""
+
+    $stones = Find-AllStones -TimeoutSeconds $Timeout
 
     if ($stones.Count -eq 0) {
         Write-Status "`n⚠️  No stones discovered on the network" -Type "Warning"
-        Write-Status "   Make sure stones are running and reachable" -Type "Warning"
         exit 1
     }
 
-    # Detect platform for each stone and prepare configs
-    Write-Status "`n🔍 Detecting platform and resolving endpoints for each stone..."
+    # Detect platform and prepare configs
+    Write-Status "`n🔍 Detecting platform for each stone..."
     $stoneConfigs = @()
     $skippedStones = @()
+
     foreach ($stone in $stones) {
-        Write-Status "   $($stone.Name): " -NoNewline
         $info = Get-StoneInfo -Stone $stone
-        $binaries = Get-BinariesForPlatform -OS $info.OS -Architecture $info.Architecture
+        $platform = if ($info.OS -match "windows") { "Windows" } else { "Linux" }
+        $packagePath = if ($platform -eq "Windows") { $windowsPackage } else { $linuxPackage }
 
-        # Determine package path for this platform
-        $packagePath = if ($binaries.Platform -eq "Windows") { $windowsPackage } else { $linuxPackage }
-
-        # Skip stones without a matching package (in Package mode)
-        if ($PublishMode -eq "Package" -and -not $packagePath) {
-            Write-Status "$($binaries.Platform) - SKIPPED (no $($binaries.Platform.ToLower()) package available)" -Type "Warning"
+        if (-not $packagePath) {
+            Write-Status "   $($stone.Name): $platform - SKIPPED (no package)" -Type "Warning"
             $skippedStones += $stone.Name
             continue
         }
 
-        Write-Status "$($binaries.Platform) $($info.Architecture)" -Type "Success"
-
-        # Create a modified stone object with the resolved endpoint
-        $resolvedStone = [PSCustomObject]@{
-            Name = $stone.Name
-            Endpoint = $info.ResolvedEndpoint  # Use resolved endpoint (handles loopback fallback)
-            Address = $stone.Address
-        }
+        Write-Status "   $($stone.Name): $platform" -Type "Success"
 
         $stoneConfigs += [PSCustomObject]@{
-            Stone = $resolvedStone
-            Platform = $binaries.Platform
-            MossPath = $binaries.Moss
-            RakePath = $binaries.Rake
+            Stone = [PSCustomObject]@{
+                Name = $stone.Name
+                Endpoint = $info.ResolvedEndpoint
+                Address = $stone.Address
+            }
+            Platform = $platform
             PackagePath = $packagePath
         }
     }
 
-    # Check if any stones remain after filtering
     if ($stoneConfigs.Count -eq 0) {
-        Write-Status "`n⚠️  No stones can be deployed to (all were skipped due to missing packages)" -Type "Warning"
-        Write-Status "   Build packages for the required platforms first." -Type "Warning"
+        Write-Status "`n⚠️  No stones can be deployed to" -Type "Warning"
         exit 1
     }
 
     if ($skippedStones.Count -gt 0) {
-        Write-Status "`n⚠️  Skipped $($skippedStones.Count) stone(s) due to missing packages: $($skippedStones -join ', ')" -Type "Warning"
+        Write-Status "`n⚠️  Skipped $($skippedStones.Count) stone(s): $($skippedStones -join ', ')" -Type "Warning"
     }
 
-    # Validate binaries if not using package mode
-    $mossLinuxData = $null
-    $rakeLinuxData = $null
-    $mossWindowsData = $null
-    $rakeWindowsData = $null
-
-    if ($PublishMode -ne "Package") {
-        Write-Status "`n📦 Validating binaries..."
-
-        $needsLinux = @($stoneConfigs | Where-Object { $_.Platform -eq "Linux" }).Count -gt 0
-        $needsWindows = @($stoneConfigs | Where-Object { $_.Platform -eq "Windows" }).Count -gt 0
-
-        if ($needsLinux) {
-            $mossLinuxData = Test-BinaryFile -Path $linuxMoss -AllowPE $false
-            if ($PublishMode -ne "MossOnly") {
-                $rakeLinuxData = Test-BinaryFile -Path $linuxRake -AllowPE $false
-            }
-        }
-
-        if ($needsWindows) {
-            $mossWindowsData = Test-BinaryFile -Path $windowsMoss -AllowPE $true
-            if ($PublishMode -ne "MossOnly") {
-                $rakeWindowsData = Test-BinaryFile -Path $windowsRake -AllowPE $true
-            }
-        }
-    }
-
-    # Push to all stones
-    Write-Status "`n📡 Pushing $publishDesc to $($stones.Count) stone(s) via $Method..."
-    
-    if ($Method -eq 'SSH') {
-        # Check for required tools
-        if (-not (Get-Command pscp -ErrorAction SilentlyContinue)) {
-            Write-Status "✗ pscp not found. Please install PuTTY tools." -Type "Error"
-            exit 1
-        }
-        if (-not (Get-Command plink -ErrorAction SilentlyContinue)) {
-            Write-Status "✗ plink not found. Please install PuTTY tools." -Type "Error"
-            exit 1
-        }
-    }
+    # Deploy
+    Write-Status "`n📡 Pushing packages to $($stoneConfigs.Count) stone(s)..."
 
     $results = @()
 
-    # Deployment based on PublishMode and Method
-    if ($PublishMode -eq "Package") {
-        if (-not $Sequential -and $Method -ne 'SSH') {
-            # Parallel HTTP package deployment
-            Write-Status "   Mode: Parallel package deployment via HTTP`n"
-
-            $jobs = @()
-            foreach ($config in $stoneConfigs) {
-                # Read package bytes for this platform
-                $packageBytes = [System.IO.File]::ReadAllBytes($config.PackagePath)
-                $packageHash = (Get-FileHash $config.PackagePath -Algorithm SHA256).Hash.ToLower()
-
-                $jobs += Start-Job -ScriptBlock {
-                    param($StoneName, $StoneEndpoint, $PackageBytes, $PackageHash, $Platform)
-
-                    $url = "$($StoneEndpoint.TrimEnd('/'))/api/v1/stone/deploy"
-
-                    try {
-                        # Send package with hash header
-                        $headers = @{
-                            "X-Package-SHA256" = $PackageHash
-                        }
-
-                        $response = Invoke-RestMethod -Uri $url -Method Post -Body $PackageBytes -ContentType "application/octet-stream" -Headers $headers -TimeoutSec 120
-
-                        if ($response.status -ne "accepted") {
-                            return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Unexpected response: $($response.status)" }
-                        }
-
-                        # Wait for service to restart
-                        Start-Sleep -Seconds 5
-
-                        # Poll health endpoint
-                        $healthUrl = "$($StoneEndpoint.TrimEnd('/'))/health"
-                        $online = $false
-
-                        for ($i = 1; $i -le 15; $i++) {
-                            Start-Sleep -Seconds 2
-                            try {
-                                $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 3
-                                if ($health.status) {
-                                    $online = $true
-                                    break
-                                }
-                            }
-                            catch {}
-                        }
-
-                        if (-not $online) {
-                            return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Stone did not come back online" }
-                        }
-
-                        return @{ Success = $true; Name = $StoneName; Platform = $Platform }
-                    }
-                    catch {
-                        return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = $_.Exception.Message }
-                    }
-                } -ArgumentList $config.Stone.Name, $config.Stone.Endpoint, $packageBytes, $packageHash, $config.Platform
-
-                Write-Status "   ⏳ Started: $($config.Stone.Name)" -Type "Info"
-            }
-
-            # Wait for all jobs with progress indicator
-            Write-Status "`n   Waiting for all deployments to complete..."
-            $completed = 0
-            while ($completed -lt $jobs.Count) {
-                $done = @($jobs | Where-Object { $_.State -eq 'Completed' }).Count
-                if ($done -gt $completed) {
-                    $completed = $done
-                    Write-Status "   Progress: $completed/$($jobs.Count) complete"
-                }
-                Start-Sleep -Milliseconds 500
-            }
-
-            $results = $jobs | Receive-Job
-            $jobs | Remove-Job
-        }
-        else {
-            # Sequential package deployment (SSH or non-parallel HTTP)
-            Write-Status "   Mode: Sequential package deployment via $Method`n"
-
-            foreach ($config in $stoneConfigs) {
-                if ($Method -eq 'SSH') {
-                    $success = Push-PackageViaSSH `
-                        -Stone $config.Stone `
-                        -PackagePath $config.PackagePath `
-                        -SSHUser $SSHUser `
-                        -SSHPassword $SSHPassword `
-                        -Platform $config.Platform
-                }
-                else {
-                    $success = Push-PackageToStone `
-                        -Stone $config.Stone `
-                        -PackagePath $config.PackagePath `
-                        -Platform $config.Platform
-                }
-
-                $results += @{
-                    Success = $success
-                    Name = $config.Stone.Name
-                    Platform = $config.Platform
-                }
-            }
-        }
-    }
-    elseif ($Method -eq 'SSH') {
-        # SSH binary deployment (legacy modes)
-        Write-Status "   Mode: SSH file transfer + service restart`n"
-
-        foreach ($config in $stoneConfigs) {
-            $success = Push-BinariesViaSSH `
-                -Stone $config.Stone `
-                -MossPath $config.MossPath `
-                -RakePath $(if ($PublishMode -eq "MossOnly") { $null } else { $config.RakePath }) `
-                -SSHUser $SSHUser `
-                -SSHPassword $SSHPassword `
-                -Platform $config.Platform
-
-            $results += @{
-                Success = $success
-                Name = $config.Stone.Name
-                Platform = $config.Platform
-            }
-        }
-    }
-    elseif (-not $Sequential -and $PublishMode -ne "MossOnly") {
-        # Parallel HTTP deployment (moss + rake only)
-        Write-Status "   Mode: Parallel HTTP deployment`n"
+    if (-not $Sequential) {
+        # Parallel deployment
+        Write-Status "   Mode: Parallel deployment`n"
 
         $jobs = @()
         foreach ($config in $stoneConfigs) {
-            $mossBinary = if ($config.Platform -eq "Windows") { $mossWindowsData } else { $mossLinuxData }
-            $rakeBinary = if ($config.Platform -eq "Windows") { $rakeWindowsData } else { $rakeLinuxData }
+            $packageBytes = [System.IO.File]::ReadAllBytes($config.PackagePath)
+            $packageHash = (Get-FileHash $config.PackagePath -Algorithm SHA256).Hash.ToLower()
 
             $jobs += Start-Job -ScriptBlock {
-                param($StoneName, $StoneEndpoint, $MossBinary, $RakeBinary, $Platform)
+                param($StoneName, $StoneEndpoint, $PackageBytes, $PackageHash, $Platform)
 
-                $mossBase64 = [Convert]::ToBase64String($MossBinary)
-                $mossPayload = @{
-                    component = "garden-moss"
-                    binary_data = $mossBase64
-                } | ConvertTo-Json -Depth 10 -Compress
-
-                $url = "$($StoneEndpoint.TrimEnd('/'))/api/v1/stone/upgrade"
+                $url = "$($StoneEndpoint.TrimEnd('/'))/api/v1/stone/deploy"
 
                 try {
-                    # Push moss
-                    $response = Invoke-RestMethod -Uri $url -Method Post -Body $mossPayload -ContentType "application/json; charset=utf-8" -TimeoutSec 30
+                    $headers = @{ "X-Package-SHA256" = $PackageHash }
+                    $response = Invoke-RestMethod -Uri $url -Method Post -Body $PackageBytes -ContentType "application/octet-stream" -Headers $headers -TimeoutSec 120
 
-                    # Wait and check health
-                    Start-Sleep -Seconds 4
+                    if ($response.status -ne "accepted") {
+                        return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Unexpected: $($response.status)" }
+                    }
+
+                    Start-Sleep -Seconds 5
+
                     $healthUrl = "$($StoneEndpoint.TrimEnd('/'))/health"
-
                     $online = $false
-                    for ($i = 1; $i -le 10; $i++) {
-                        Start-Sleep -Seconds 1
+
+                    for ($i = 1; $i -le 15; $i++) {
+                        Start-Sleep -Seconds 2
                         try {
-                            $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
-                            if ($health.status) {
-                                $online = $true
-                                break
-                            }
+                            $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 3
+                            if ($health.status) { $online = $true; break }
                         }
                         catch {}
                     }
 
                     if (-not $online) {
-                        return @{ Success = $false; Name = $StoneName; Error = "Moss did not come back online" }
+                        return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Did not come back online" }
                     }
 
-                    # Push rake
-                    $rakeBase64 = [Convert]::ToBase64String($RakeBinary)
-                    $rakePayload = @{
-                        component = "garden-rake"
-                        binary_data = $rakeBase64
-                    } | ConvertTo-Json -Depth 10 -Compress
-
-                    try {
-                        Invoke-RestMethod -Uri $url -Method Post -Body $rakePayload -ContentType "application/json; charset=utf-8" -TimeoutSec 30 | Out-Null
-                        return @{ Success = $true; Name = $StoneName; Platform = $Platform }
-                    }
-                    catch {
-                        # Moss updated, rake failed - still success
-                        return @{ Success = $true; Name = $StoneName; Platform = $Platform; Warning = "Rake push failed" }
-                    }
+                    return @{ Success = $true; Name = $StoneName; Platform = $Platform }
                 }
                 catch {
-                    return @{ Success = $false; Name = $StoneName; Error = $_.Exception.Message }
+                    return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = $_.Exception.Message }
                 }
-            } -ArgumentList $config.Stone.Name, $config.Stone.Endpoint, $mossBinary, $rakeBinary, $config.Platform
+            } -ArgumentList $config.Stone.Name, $config.Stone.Endpoint, $packageBytes, $packageHash, $config.Platform
+
+            Write-Status "   ⏳ Started: $($config.Stone.Name)"
         }
 
-        # Wait for all jobs
-        $jobs | Wait-Job | Out-Null
+        Write-Status "`n   Waiting for deployments..."
+        $completed = 0
+        while ($completed -lt $jobs.Count) {
+            $done = @($jobs | Where-Object { $_.State -eq 'Completed' }).Count
+            if ($done -gt $completed) {
+                $completed = $done
+                Write-Status "   Progress: $completed/$($jobs.Count)"
+            }
+            Start-Sleep -Milliseconds 500
+        }
+
         $results = $jobs | Receive-Job
         $jobs | Remove-Job
     }
     else {
-        # Sequential HTTP deployment (legacy modes)
-        Write-Status "   Mode: Sequential HTTP deployment`n"
+        # Sequential deployment
+        Write-Status "   Mode: Sequential deployment`n"
 
         foreach ($config in $stoneConfigs) {
-            $mossBinary = if ($config.Platform -eq "Windows") { $mossWindowsData } else { $mossLinuxData }
-            $rakeBinary = if ($config.Platform -eq "Windows") { $rakeWindowsData } else { $rakeLinuxData }
-
-            if ($PublishMode -eq "MossOnly") {
-                # Push only moss
-                $success = Push-MossOnlyToStone -Stone $config.Stone -MossBinaryData $mossBinary -Platform $config.Platform
-            }
-            else {
-                $success = Push-BinariesToStone -Stone $config.Stone -MossBinaryData $mossBinary -RakeBinaryData $rakeBinary -Platform $config.Platform
-            }
+            $success = Push-PackageToStone -Stone $config.Stone -PackagePath $config.PackagePath -Platform $config.Platform
             $results += @{
                 Success = $success
                 Name = $config.Stone.Name
@@ -1426,34 +443,29 @@ try {
             }
         }
     }
-    
+
     # Summary
     Write-Status "`n═══════════════════════════════════════════════════════════════"
     Write-Status "  Deployment Summary"
     Write-Status "═══════════════════════════════════════════════════════════════`n"
-    
-    $totalStones = if ($stones -is [System.Collections.ArrayList]) { $stones.Count } else { @($stones).Count }
+
+    $totalStones = @($stones).Count
     $successful = @($results | Where-Object { $_.Success }).Count
     $failed = @($results | Where-Object { -not $_.Success }).Count
-    
+
     Write-Status "   Total stones: $totalStones"
     Write-Status "   Successful: $successful" -Type "Success"
     if ($failed -gt 0) {
         Write-Status "   Failed: $failed" -Type "Error"
-    }
-    
-    if ($failed -gt 0) {
         Write-Status "`nFailed stones:"
         foreach ($result in ($results | Where-Object { -not $_.Success })) {
             Write-Status "   ✗ $($result.Name)" -Type "Error"
-            if ($result.PSObject.Properties['Error'] -and $result.Error) {
-                Write-Status "      $($result.Error)" -Type "Error"
-            }
+            if ($result.Error) { Write-Status "      $($result.Error)" -Type "Error" }
         }
     }
-    
+
     Write-Status ""
-    
+
     if ($failed -eq 0) {
         Write-Status "✅ All stones updated successfully!" -Type "Success"
         exit 0

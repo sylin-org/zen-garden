@@ -9,9 +9,11 @@
 //! - borrowed - List borrowed services
 //! - find - Service discovery with connection strings
 //! - config - Service configuration for automation
+//! - capabilities - List offering capabilities (models, extensions, etc.)
 
 pub mod adopted;
 pub mod borrowed;
+pub mod capabilities;
 pub mod config;
 pub mod find;
 pub mod list;
@@ -21,6 +23,7 @@ pub mod watch;
 
 pub use adopted::AdoptedCommand;
 pub use borrowed::BorrowedCommand;
+pub use capabilities::CapabilitiesCommand;
 pub use config::ConfigCommand;
 pub use find::{FindCommand, FindOutputFormat};
 pub use list::ListCommand;

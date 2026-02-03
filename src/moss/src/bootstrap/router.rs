@@ -52,6 +52,7 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/offerings/:name", get(api::v1::offerings::get_offering_v1))
         .route("/api/v1/stone/offerings/:name", delete(api::v1::offerings::take_away_offering_v1))
         .route("/api/v1/stone/offerings/:name/manifest", get(api::v1::offerings::get_offering_manifest_v1))
+        .route("/api/v1/stone/offerings/:name/capabilities", get(api::v1::offering_capabilities::list_offering_capabilities_v1))
         .route("/api/v1/stone/offerings/:offering/adopt", post(api::v1::adoption::adopt_offering_v1))
         .route("/api/v1/stone/offerings/:offering/adopt", delete(api::v1::adoption::unadopt_offering_v1))
         .route("/api/v1/stone/offerings/borrow", post(api::v1::adoption::borrow_service_v1))
@@ -154,6 +155,11 @@ pub fn configure(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
         .route("/api/v1/jobs/:job_id", get(api::v1::jobs::get_job_status))
+
+        // ══════════════════════════════════════════════════════════════════
+        // /api/v1/helpers/* - Internal utility endpoints
+        // ══════════════════════════════════════════════════════════════════
+        .route("/api/v1/helpers/json-transform", post(api::v1::helpers::json_transform))
 
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/manifest - API documentation

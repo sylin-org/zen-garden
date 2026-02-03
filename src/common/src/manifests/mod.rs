@@ -3,6 +3,7 @@
 //! Provides structured schemas for offering manifests that support
 //! multiple deployment modes (managed, adopted, borrowed).
 
+pub mod capabilities;
 pub mod category;
 pub mod ceremony;
 pub mod detection;
@@ -51,4 +52,13 @@ pub use offering::{
     ManagedConfig, AdoptedConfig, BorrowedConfig,
     ServiceTemplate, TemplateInfo, runtime_manifests_dir,
     NetworkRequirements, StaticIpPreference,
+};
+
+// Capability Manifest Schema
+pub use capabilities::{
+    CapabilityManifest, CapabilityTypeConfig, CapabilityDisplayConfig,
+    MutabilityMode, ModeCommands, PlatformCommands,
+    ListOperationConfig, AddOperationConfig, RemoveOperationConfig,
+    TransformSpec, FieldMappings, OutputFormat,
+    ProgressConfig, SummaryConfig,
 };

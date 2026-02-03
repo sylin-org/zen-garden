@@ -1,7 +1,8 @@
 //! Auto-adoption background task
 //!
 //! Continuous adoption loop that:
-//! - Scans for adoptable offerings every 5 minutes
+//! - Scans immediately on startup, then at 30-second intervals for fast initial detection
+//! - Switches to 5-minute intervals after stability is established
 //! - Detects services configured for adopted mode
 //! - Adopts stable detected services automatically
 //! - Respects stability thresholds and exclusion rules
@@ -16,11 +17,15 @@ use garden_common::{AdoptedOfferingInfo, ServiceLocation, ServiceHealthStatus, O
 /// Background auto-adoption loop
 ///
 /// This task should be spawned with tokio::spawn() at daemon startup.
-/// It runs indefinitely, scanning for adoptable offerings every 5 minutes.
+/// Uses fast initial detection (30s intervals) then switches to normal (5min).
 ///
 /// # Non-Blocking
 /// This function never returns - it's designed to run in the background
 /// for the entire daemon lifetime. Spawn it and forget it.
+///
+/// # Detection Strategy
+/// - First 6 scans: 30-second intervals (allows 2+ stability checks in ~2 minutes)
+/// - After that: 5-minute intervals for steady-state monitoring
 ///
 /// # What It Does
 /// 1. Scans all manifests with adopted mode support
@@ -40,20 +45,39 @@ use garden_common::{AdoptedOfferingInfo, ServiceLocation, ServiceHealthStatus, O
 /// // Task runs forever in background
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
-    // Run immediately on startup, then every 5 minutes
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+    // Fast initial detection: 30 seconds for first 6 scans, then 5 minutes
+    const FAST_INTERVAL_SECS: u64 = 30;
+    const NORMAL_INTERVAL_SECS: u64 = 300;
+    const FAST_SCAN_COUNT: u32 = 6;
+
+    // Keep orchestrator persistent across scans to maintain stability tracking
+    let orchestrator = DetectionOrchestrator::new(state.docker.clone());
+
+    let mut scan_count: u32 = 0;
 
     loop {
-        interval.tick().await;
+        // Use fast interval for initial scans, then switch to normal
+        let interval_secs = if scan_count < FAST_SCAN_COUNT {
+            FAST_INTERVAL_SECS
+        } else {
+            NORMAL_INTERVAL_SECS
+        };
+
+        // First scan runs immediately (no sleep), subsequent scans wait
+        if scan_count > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+        }
+        scan_count = scan_count.saturating_add(1);
 
         // Get manifests that support adopted mode
         let adoptable_manifests = state.manifest_registry.offerings_by_mode(&OfferingMode::Adopted);
+        let mode = if scan_count <= FAST_SCAN_COUNT { "fast" } else { "normal" };
         tracing::info!(
             count = adoptable_manifests.len(),
+            scan = scan_count,
+            mode = mode,
             "Running auto-adoption scan"
         );
-
-        let orchestrator = DetectionOrchestrator::new(state.docker.clone());
 
         for manifest in adoptable_manifests {
             // Check exclusion list

@@ -120,6 +120,16 @@ enum Commands {
         at: Option<String>,
     },
 
+    /// List capabilities for an offering (models, extensions, etc.)
+    Capabilities {
+        /// Offering name to query
+        offering: String,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
     /// Remove a service (soft delete - container preserved as stray)
     Remove {
         /// Service name to remove
@@ -1649,6 +1659,11 @@ async fn async_main() -> anyhow::Result<()> {
 
         Commands::List { at } => {
             let cmd = commands::discovery::ListCommand::new(quiet_mode);
+            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        }
+
+        Commands::Capabilities { offering, at } => {
+            let cmd = commands::discovery::CapabilitiesCommand::new(offering, quiet_mode);
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
         }
 

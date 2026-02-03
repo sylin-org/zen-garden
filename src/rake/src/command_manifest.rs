@@ -26,6 +26,7 @@ pub mod cmd {
     pub const WATCH: &str = "watch";
     pub const LIST: &str = "list";
     pub const STATUS: &str = "status";
+    pub const CAPABILITIES: &str = "capabilities";
 
     // Lifecycle
     pub const OFFER: &str = "offer";

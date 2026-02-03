@@ -1,0 +1,467 @@
+//! Capability executor implementation
+//!
+//! Executes manifest-defined commands to discover capabilities.
+
+use anyhow::{Context, Result, bail};
+use garden_common::{
+    CapabilityCollection, CapabilityItem, CapabilityDisplay, ServiceInfo, OfferingMode,
+};
+use garden_common::manifests::{
+    CapabilityManifest, CapabilityTypeConfig, ListOperationConfig, ModeCommands, OutputFormat,
+    FieldMappings,
+};
+use std::collections::HashMap;
+use std::process::Stdio;
+use tokio::process::Command;
+
+/// Context for capability execution
+///
+/// Contains all the variables needed to template and execute commands.
+pub struct ExecutorContext {
+    /// Service mode (managed vs adopted)
+    pub mode: OfferingMode,
+
+    /// Container name (for managed mode, e.g., "zen-offering-ollama")
+    pub container_name: Option<String>,
+
+    /// Service port (for adopted mode HTTP endpoints)
+    pub port: u16,
+}
+
+/// Capability executor - runs manifest commands to discover capabilities
+pub struct CapabilityExecutor;
+
+impl CapabilityExecutor {
+    /// Create a new executor
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// List capabilities for an offering using its manifest
+    ///
+    /// # Arguments
+    /// * `service` - The service to query
+    /// * `manifest` - The capability manifest defining how to query
+    /// * `mode` - The offering mode (managed or adopted)
+    ///
+    /// # Returns
+    /// Vector of capability collections (one per capability type)
+    pub async fn list_capabilities(
+        &self,
+        service: &ServiceInfo,
+        manifest: &CapabilityManifest,
+        mode: OfferingMode,
+    ) -> Result<Vec<CapabilityCollection>> {
+        let mut collections = Vec::new();
+
+        // Build execution context with templating variables
+        let context = ExecutorContext {
+            mode,
+            container_name: Some(format!("zen-offering-{}", service.name)),
+            port: service.ports.native,
+        };
+
+        // Execute list command for each capability type
+        for cap_config in &manifest.capabilities {
+            match self.list_capability_type(service, cap_config, &context).await {
+                Ok(collection) => {
+                    tracing::debug!(
+                        offering = %manifest.offering,
+                        cap_type = %cap_config.cap_type,
+                        count = collection.items.len(),
+                        "Discovered capabilities"
+                    );
+                    collections.push(collection);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        offering = %manifest.offering,
+                        cap_type = %cap_config.cap_type,
+                        error = ?e,
+                        "Failed to list capability type"
+                    );
+                    // Continue with other capability types
+                }
+            }
+        }
+
+        Ok(collections)
+    }
+
+    /// List capabilities for a single capability type
+    async fn list_capability_type(
+        &self,
+        service: &ServiceInfo,
+        config: &CapabilityTypeConfig,
+        context: &ExecutorContext,
+    ) -> Result<CapabilityCollection> {
+        let list_config = &config.list;
+
+        // Get command for current mode and platform
+        let command = self.get_command(&list_config.commands, context)?;
+
+        // Template the command
+        let templated = self.template_command(&command, context)?;
+
+        tracing::debug!(
+            service = %service.name,
+            cap_type = %config.cap_type,
+            command = %templated,
+            "Executing capability list command"
+        );
+
+        // Execute the command
+        let output = self.execute_command(&templated, list_config.timeout_secs, context).await?;
+
+        // Parse and transform the output
+        let items = self.transform_output(&output, list_config).await?;
+
+        // Build collection
+        Ok(CapabilityCollection {
+            cap_type: config.cap_type.clone(),
+            display: CapabilityDisplay {
+                singular: config.display.singular.clone(),
+                plural: config.display.plural.clone(),
+            },
+            items,
+            discovered_at: chrono::Utc::now(),
+        })
+    }
+
+    /// Get command string for current mode and platform
+    fn get_command(&self, commands: &ModeCommands, context: &ExecutorContext) -> Result<String> {
+        let platform_commands = match context.mode {
+            OfferingMode::Managed => commands.managed.as_ref(),
+            OfferingMode::Adopted => commands.adopted.as_ref(),
+            OfferingMode::Borrowed => bail!("Borrowed mode does not support capability discovery"),
+        };
+
+        let platform_commands = platform_commands
+            .with_context(|| format!("No commands defined for {:?} mode", context.mode))?;
+
+        // Get command for current platform
+        platform_commands
+            .for_current_platform()
+            .map(String::from)
+            .with_context(|| "No command defined for current platform")
+    }
+
+    /// Template command with context variables
+    fn template_command(&self, command: &str, context: &ExecutorContext) -> Result<String> {
+        let mut result = command.to_string();
+
+        // Replace {{container_name}}
+        if let Some(ref container_name) = context.container_name {
+            result = result.replace("{{container_name}}", container_name);
+        }
+
+        // Replace {{port}}
+        result = result.replace("{{port}}", &context.port.to_string());
+
+        // Verify no unresolved placeholders remain
+        if result.contains("{{") {
+            let start = result.find("{{").unwrap();
+            let end = result[start..].find("}}").map(|i| start + i + 2).unwrap_or(result.len());
+            let placeholder = &result[start..end];
+            bail!("Unresolved placeholder in command: {}", placeholder);
+        }
+
+        Ok(result)
+    }
+
+    /// Execute a shell command
+    async fn execute_command(
+        &self,
+        command: &str,
+        timeout_secs: u64,
+        _context: &ExecutorContext,
+    ) -> Result<String> {
+        // Use shell to execute command
+        #[cfg(target_os = "windows")]
+        let (shell, flag) = ("cmd", "/C");
+
+        #[cfg(not(target_os = "windows"))]
+        let (shell, flag) = ("sh", "-c");
+
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            Command::new(shell)
+                .arg(flag)
+                .arg(command)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output(),
+        )
+        .await
+        .context("Command timed out")?
+        .context("Failed to execute command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            bail!(
+                "Command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+                output.status.code(),
+                stdout,
+                stderr
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Transform raw command output into CapabilityItems
+    async fn transform_output(
+        &self,
+        output: &str,
+        config: &ListOperationConfig,
+    ) -> Result<Vec<CapabilityItem>> {
+        match config.output {
+            OutputFormat::Json => self.transform_json(output, config),
+            OutputFormat::Lines => self.transform_lines(output),
+            OutputFormat::Number => Ok(Vec::new()), // Number format is for summary only
+        }
+    }
+
+    /// Transform JSON output using transform spec
+    fn transform_json(
+        &self,
+        output: &str,
+        config: &ListOperationConfig,
+    ) -> Result<Vec<CapabilityItem>> {
+        let json: serde_json::Value = serde_json::from_str(output)
+            .context("Failed to parse command output as JSON")?;
+
+        // Extract items array using items_path
+        let items_array = self.extract_path(&json, &config.transform.items_path)?;
+
+        let array = items_array.as_array()
+            .context("items_path did not resolve to an array")?;
+
+        // Transform each item
+        let mut items = Vec::with_capacity(array.len());
+        for item in array {
+            match self.transform_item(item, &config.transform.fields) {
+                Ok(cap_item) => items.push(cap_item),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to transform item, skipping");
+                    continue;
+                }
+            }
+        }
+
+        Ok(items)
+    }
+
+    /// Transform line-based output (each line is an item name)
+    fn transform_lines(&self, output: &str) -> Result<Vec<CapabilityItem>> {
+        let items = output
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .map(|name| CapabilityItem::new(name))
+            .collect();
+
+        Ok(items)
+    }
+
+    /// Extract a value from JSON using simple path notation
+    fn extract_path(&self, value: &serde_json::Value, path: &str) -> Result<serde_json::Value> {
+        let path = path.trim();
+
+        // Handle root
+        if path == "." {
+            return Ok(value.clone());
+        }
+
+        // Remove leading dot if present
+        let path = path.strip_prefix('.').unwrap_or(path);
+
+        // Split by dots and navigate
+        let mut current = value;
+        for segment in path.split('.') {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                continue;
+            }
+
+            current = current.get(segment).with_context(|| {
+                format!("Field '{}' not found in path", segment)
+            })?;
+        }
+
+        Ok(current.clone())
+    }
+
+    /// Transform a single JSON object into a CapabilityItem
+    fn transform_item(
+        &self,
+        item: &serde_json::Value,
+        fields: &FieldMappings,
+    ) -> Result<CapabilityItem> {
+
+        // Extract required name field
+        let name = self.extract_path(item, &fields.name)?
+            .as_str()
+            .context("name field is not a string")?
+            .to_string();
+
+        // Extract optional version
+        let version = fields
+            .version
+            .as_ref()
+            .and_then(|path| self.extract_path(item, path).ok())
+            .and_then(|v| v.as_str().map(String::from));
+
+        // Extract optional size_bytes
+        let size_bytes = fields
+            .size_bytes
+            .as_ref()
+            .and_then(|path| self.extract_path(item, path).ok())
+            .and_then(|v| v.as_u64());
+
+        // Compute human-readable size from bytes
+        let size = size_bytes.map(format_bytes);
+
+        // Extract metadata fields
+        let mut metadata = HashMap::new();
+        for (key, path) in &fields.metadata {
+            if let Ok(value) = self.extract_path(item, path) {
+                if !value.is_null() {
+                    metadata.insert(key.clone(), value);
+                }
+            }
+        }
+
+        Ok(CapabilityItem {
+            name,
+            version,
+            size,
+            size_bytes,
+            status: None,
+            metadata,
+        })
+    }
+}
+
+impl Default for CapabilityExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Format bytes as human-readable string
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+
+    if bytes >= TB {
+        format!("{:.1} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_extract_path_simple() {
+        let executor = CapabilityExecutor::new();
+        let value = json!({"name": "llama2", "size": 123});
+
+        assert_eq!(
+            executor.extract_path(&value, ".name").unwrap(),
+            json!("llama2")
+        );
+        assert_eq!(
+            executor.extract_path(&value, ".size").unwrap(),
+            json!(123)
+        );
+    }
+
+    #[test]
+    fn test_extract_path_nested() {
+        let executor = CapabilityExecutor::new();
+        let value = json!({
+            "details": {
+                "family": "llama",
+                "quantization": "Q4_0"
+            }
+        });
+
+        assert_eq!(
+            executor.extract_path(&value, ".details.family").unwrap(),
+            json!("llama")
+        );
+    }
+
+    #[test]
+    fn test_extract_path_root() {
+        let executor = CapabilityExecutor::new();
+        let value = json!({"a": 1});
+        assert_eq!(executor.extract_path(&value, ".").unwrap(), value);
+    }
+
+    #[test]
+    fn test_template_command() {
+        let executor = CapabilityExecutor::new();
+        let context = ExecutorContext {
+            mode: OfferingMode::Adopted,
+            container_name: Some("zen-offering-ollama".to_string()),
+            port: 11434,
+        };
+
+        let command = "curl -s http://localhost:{{port}}/api/tags";
+        let result = executor.template_command(command, &context).unwrap();
+        assert_eq!(result, "curl -s http://localhost:11434/api/tags");
+    }
+
+    #[test]
+    fn test_template_command_container() {
+        let executor = CapabilityExecutor::new();
+        let context = ExecutorContext {
+            mode: OfferingMode::Managed,
+            container_name: Some("zen-offering-ollama".to_string()),
+            port: 11434,
+        };
+
+        let command = "docker exec {{container_name}} curl -s http://localhost:11434/api/tags";
+        let result = executor.template_command(command, &context).unwrap();
+        assert_eq!(
+            result,
+            "docker exec zen-offering-ollama curl -s http://localhost:11434/api/tags"
+        );
+    }
+
+    #[test]
+    fn test_transform_lines() {
+        let executor = CapabilityExecutor::new();
+        let output = "llama2\nmistral\ncodellama\n";
+
+        let items = executor.transform_lines(output).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].name, "llama2");
+        assert_eq!(items[1].name, "mistral");
+        assert_eq!(items[2].name, "codellama");
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1500), "1.5 KB");
+        assert_eq!(format_bytes(1_500_000), "1.4 MB");
+        assert_eq!(format_bytes(3_826_793_472), "3.6 GB");
+        assert_eq!(format_bytes(2_000_000_000_000), "1.8 TB");
+    }
+}

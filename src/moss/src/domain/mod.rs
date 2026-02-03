@@ -34,6 +34,7 @@ pub mod harvest;
 pub mod nurturing;
 pub mod storage_cache;
 pub mod sub_capability;
+pub mod capabilities;
 pub mod events;
 pub mod infrastructure;
 pub mod network;
@@ -87,6 +88,7 @@ pub use storage_cache::{
 pub use sub_capability::{
     discover_sub_capabilities, refresh_all_sub_capabilities,
 };
+pub use capabilities::{CapabilityExecutor, ExecutorContext};
 pub use events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
 pub use infrastructure::{
     InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,

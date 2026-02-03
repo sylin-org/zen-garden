@@ -1,0 +1,74 @@
+# Ollama Capabilities Manifest
+# Defines how to discover, add, and remove Ollama models
+
+version: "1"
+offering: ollama
+
+capabilities:
+  - type: model
+    display:
+      singular: model
+      plural: models
+    mutability: hot
+
+    list:
+      # Commands to fetch raw model list (mode and platform specific)
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} curl -s http://localhost:11434/api/tags"
+          windows: "docker exec {{container_name}} curl -s http://localhost:11434/api/tags"
+          macos: "docker exec {{container_name}} curl -s http://localhost:11434/api/tags"
+        adopted:
+          linux: "curl -s http://localhost:{{port}}/api/tags"
+          windows: "curl.exe -s http://localhost:{{port}}/api/tags"
+          macos: "curl -s http://localhost:{{port}}/api/tags"
+
+      # Transform Ollama's JSON response to normalized format
+      transform:
+        items_path: ".models"
+        fields:
+          name: ".name"
+          size_bytes: ".size"
+          metadata:
+            family: ".details.family"
+            quantization: ".details.quantization_level"
+            modified: ".modified_at"
+            format: ".details.format"
+            parameter_size: ".details.parameter_size"
+
+      output: json
+      timeout_secs: 10
+
+    # Add model (pull from registry)
+    add:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} ollama pull {{item}}"
+          windows: "docker exec {{container_name}} ollama pull {{item}}"
+          macos: "docker exec {{container_name}} ollama pull {{item}}"
+        adopted:
+          linux: "ollama pull {{item}}"
+          windows: "ollama.exe pull {{item}}"
+          macos: "ollama pull {{item}}"
+      timeout_secs: 7200  # 2 hours for large model downloads
+      progress:
+        pattern: "(\\d+)%"
+
+    # Remove model
+    remove:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} ollama rm {{item}}"
+          windows: "docker exec {{container_name}} ollama rm {{item}}"
+          macos: "docker exec {{container_name}} ollama rm {{item}}"
+        adopted:
+          linux: "ollama rm {{item}}"
+          windows: "ollama.exe rm {{item}}"
+          macos: "ollama rm {{item}}"
+      timeout_secs: 60
+
+    # Summary for rake list display
+    summary:
+      format: "{{count}} models"

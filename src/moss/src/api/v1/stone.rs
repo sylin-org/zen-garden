@@ -20,7 +20,7 @@ use crate::AppState;
 use crate::api::responses::ApiResponse;
 use garden_common::api_utils::ApiErrorResponse;
 use crate::domain::validate_binary_architecture;
-use garden_common::{names::{MOSS_BINARY, RAKE_BINARY}, HardwareCapabilities, ServiceInfo};
+use garden_common::{names::{MOSS_BINARY, RAKE_BINARY}, HardwareCapabilities, Offering};
 
 // ============================================================================
 // Stone Info Endpoint (for observe command)
@@ -31,8 +31,8 @@ use garden_common::{names::{MOSS_BINARY, RAKE_BINARY}, HardwareCapabilities, Ser
 pub struct StoneInfoResponse {
     /// Hardware capabilities (CPU, memory, GPU, storage)
     pub capabilities: HardwareCapabilities,
-    /// Active services on this stone
-    pub services: Vec<ServiceInfo>,
+    /// Active offerings on this stone
+    pub offerings: Vec<Offering>,
     /// Stone endpoint (for reference)
     pub endpoint: String,
 }
@@ -41,10 +41,10 @@ pub struct StoneInfoResponse {
 ///
 /// Returns everything needed for `observe` command in one response.
 /// Optimized for garden-wide discovery and status displays.
-/// Eliminates multiple round-trips (capabilities + services).
+/// Eliminates multiple round-trips (capabilities + offerings).
 ///
 /// # Response
-/// - 200: StoneInfoResponse with capabilities + services + endpoint
+/// - 200: StoneInfoResponse with capabilities + offerings + endpoint
 /// - 500: Internal error
 pub async fn get_stone_info_v1(
     State(state): State<AppState>,
@@ -58,8 +58,8 @@ pub async fn get_stone_info_v1(
         })
     };
 
-    // Get services (from unified offerings registry)
-    let services: Vec<ServiceInfo> = state.get_services().await;
+    // Get offerings from registry
+    let offerings = state.get_offerings().await;
 
     // Build endpoint
     let current_ip = state.network_monitor.get_ip().await;
@@ -67,7 +67,7 @@ pub async fn get_stone_info_v1(
 
     let response = StoneInfoResponse {
         capabilities,
-        services,
+        offerings,
         endpoint,
     };
 

@@ -1135,67 +1135,6 @@ impl Default for AdoptedControlLevel {
     }
 }
 
-/// Service network location
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceLocation {
-    pub host: String,
-    pub port: u16,
-    pub protocol: String,  // "http", "tcp", "mongodb", "postgres", etc.
-}
-
-/// Adopted offering information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdoptedOfferingInfo {
-    pub name: String,
-    pub offering: String,
-    pub mode: OfferingMode,
-    pub location: ServiceLocation,
-    pub control_level: AdoptedControlLevel,
-    pub health: ServiceHealthStatus,
-    pub detected_at: String,  // ISO 8601
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub version: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub start_command: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub stop_command: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub restart_command: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub health_check_url: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub container_name: Option<String>,
-
-    /// Sub-capabilities discovered at runtime (e.g., models for Ollama)
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub sub_capabilities: Vec<SubCapability>,
-}
-
-/// Borrowed offering information (external service)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BorrowedOfferingInfo {
-    pub name: String,
-    pub offering: String,
-    pub mode: OfferingMode,
-    pub location: ServiceLocation,
-    pub announced_at: String,  // ISO 8601
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub health_method: Option<HealthMethod>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub credentials_key: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub connection_template: Option<String>,
-}
-
 /// Health check method for borrowed offerings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -1212,10 +1151,9 @@ pub enum HealthMethod {
 // Unified Offering Types (Runtime Instances)
 // ============================================================================
 
-/// Unified offering instance representing any running/adopted/borrowed service
+/// Offering instance representing any running/adopted/borrowed service
 ///
-/// Replaces the separate ServiceInfo, AdoptedOfferingInfo, and BorrowedOfferingInfo types
-/// with a single structure that uses an enum for mode-specific data.
+/// A unified structure that uses an enum for mode-specific data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Offering {
     // ═══════════════════════════════════════════════════════════════
@@ -1359,42 +1297,6 @@ fn default_protocol() -> String {
 }
 
 impl OfferingLocation {
-    /// Create from legacy Ports struct (for managed offerings)
-    pub fn from_ports(ports: &Ports) -> Self {
-        Self {
-            host: "localhost".to_string(),
-            port: ports.native,
-            protocol: "http".to_string(),
-            agnostic_port: ports.agnostic,
-        }
-    }
-
-    /// Create from legacy ServiceLocation struct
-    pub fn from_service_location(loc: &ServiceLocation) -> Self {
-        Self {
-            host: loc.host.clone(),
-            port: loc.port,
-            protocol: loc.protocol.clone(),
-            agnostic_port: None,
-        }
-    }
-
-    /// Convert to legacy Ports struct
-    pub fn to_ports(&self) -> Ports {
-        Ports {
-            native: self.port,
-            agnostic: self.agnostic_port,
-        }
-    }
-
-    /// Convert to legacy ServiceLocation struct
-    pub fn to_service_location(&self) -> ServiceLocation {
-        ServiceLocation {
-            host: self.host.clone(),
-            port: self.port,
-            protocol: self.protocol.clone(),
-        }
-    }
 }
 
 /// Mode-specific data as enum variants
@@ -1557,106 +1459,6 @@ impl Offering {
     pub fn borrowed_data_mut(&mut self) -> Option<&mut BorrowedData> {
         match &mut self.mode_data {
             OfferingModeData::Borrowed(data) => Some(data),
-            _ => None,
-        }
-    }
-
-    /// Create from legacy ServiceInfo
-    pub fn from_service_info(svc: ServiceInfo) -> Self {
-        Self {
-            offering_id: if svc.offering_id.is_empty() {
-                crate::utils::generate_guidv7()
-            } else {
-                svc.offering_id
-            },
-            name: svc.name,
-            offering: svc.offering,
-            version: svc.version,
-            status: svc.status.into(),
-            health: svc.health,
-            sub_capabilities: svc.sub_capabilities,
-            location: OfferingLocation::from_ports(&svc.ports),
-            mode_data: OfferingModeData::Managed(ManagedData {
-                resources: svc.resources,
-                job_id: svc.job_id,
-                guidance: svc.guidance,
-            }),
-            registered_at: chrono::Utc::now(),
-            updated_at: None,
-        }
-    }
-
-    /// Create from legacy AdoptedOfferingInfo
-    pub fn from_adopted_offering(adopted: AdoptedOfferingInfo) -> Self {
-        let detected_at = chrono::DateTime::parse_from_rfc3339(&adopted.detected_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
-
-        Self {
-            offering_id: crate::utils::generate_guidv7(),
-            name: adopted.name,
-            offering: adopted.offering,
-            version: adopted.version.unwrap_or_else(|| "unknown".to_string()),
-            status: OfferingStatus::Running, // Adopted offerings that exist are running
-            health: adopted.health,
-            sub_capabilities: adopted.sub_capabilities,
-            location: OfferingLocation::from_service_location(&adopted.location),
-            mode_data: OfferingModeData::Adopted(AdoptedData {
-                control_level: adopted.control_level,
-                start_command: adopted.start_command,
-                stop_command: adopted.stop_command,
-                restart_command: adopted.restart_command,
-                health_check_url: adopted.health_check_url,
-                container_name: adopted.container_name,
-                detected_at,
-            }),
-            registered_at: detected_at,
-            updated_at: None,
-        }
-    }
-
-    /// Create from legacy BorrowedOfferingInfo
-    pub fn from_borrowed_offering(borrowed: BorrowedOfferingInfo) -> Self {
-        let announced_at = chrono::DateTime::parse_from_rfc3339(&borrowed.announced_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
-
-        Self {
-            offering_id: crate::utils::generate_guidv7(),
-            name: borrowed.name,
-            offering: borrowed.offering,
-            version: "unknown".to_string(),
-            status: OfferingStatus::Running, // Borrowed offerings are assumed running
-            health: ServiceHealthStatus::Healthy, // Until probed otherwise
-            sub_capabilities: Vec::new(),
-            location: OfferingLocation::from_service_location(&borrowed.location),
-            mode_data: OfferingModeData::Borrowed(BorrowedData {
-                health_method: borrowed.health_method,
-                credentials_key: borrowed.credentials_key,
-                connection_template: borrowed.connection_template,
-                announced_at,
-            }),
-            registered_at: announced_at,
-            updated_at: None,
-        }
-    }
-
-    /// Convert to legacy ServiceInfo (for backward compatibility)
-    pub fn to_service_info(&self) -> Option<ServiceInfo> {
-        match &self.mode_data {
-            OfferingModeData::Managed(data) => Some(ServiceInfo {
-                offering_id: self.offering_id.clone(),
-                name: self.name.clone(),
-                offering: self.offering.clone(),
-                version: self.version.clone(),
-                status: self.status.into(),
-                health: self.health.clone(),
-                ports: self.location.to_ports(),
-                resources: data.resources.clone(),
-                job_id: data.job_id.clone(),
-                sub_capabilities: self.sub_capabilities.clone(),
-                guidance: data.guidance.clone(),
-            }),
             _ => None,
         }
     }
@@ -1994,79 +1796,6 @@ mod tests {
         assert_eq!(json, "\"full\"");
         let deserialized: AdoptedControlLevel = serde_json::from_str(&json).unwrap();
         assert_eq!(level, deserialized);
-    }
-
-    #[test]
-    fn test_service_location_serde() {
-        let location = ServiceLocation {
-            host: "localhost".into(),
-            port: 27017,
-            protocol: "mongodb".into(),
-        };
-        let json = serde_json::to_string(&location).unwrap();
-        let deserialized: ServiceLocation = serde_json::from_str(&json).unwrap();
-        assert_eq!(location.host, deserialized.host);
-        assert_eq!(location.port, deserialized.port);
-        assert_eq!(location.protocol, deserialized.protocol);
-    }
-
-    #[test]
-    fn test_adopted_offering_minimal() {
-        // Test minimal adopted offering (all optional fields omitted)
-        let info = AdoptedOfferingInfo {
-            name: "my-mongodb".into(),
-            offering: "mongodb".into(),
-            mode: OfferingMode::Adopted,
-            location: ServiceLocation {
-                host: "localhost".into(),
-                port: 27017,
-                protocol: "mongodb".into(),
-            },
-            control_level: AdoptedControlLevel::Monitor,
-            health: ServiceHealthStatus::Healthy,
-            detected_at: "2024-01-01T00:00:00Z".into(),
-            version: None,
-            start_command: None,
-            stop_command: None,
-            restart_command: None,
-            health_check_url: None,
-            container_name: None,
-            sub_capabilities: Vec::new(),
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        // Ensure optional fields are not present in JSON
-        assert!(!json.contains("version"));
-        assert!(!json.contains("start_command"));
-        assert!(!json.contains("stop_command"));
-        let deserialized: AdoptedOfferingInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(info.name, deserialized.name);
-        assert_eq!(info.offering, deserialized.offering);
-    }
-
-    #[test]
-    fn test_borrowed_offering_minimal() {
-        // Test minimal borrowed offering
-        let info = BorrowedOfferingInfo {
-            name: "nas-storage".into(),
-            offering: "storage".into(),
-            mode: OfferingMode::Borrowed,
-            location: ServiceLocation {
-                host: "nas.local".into(),
-                port: 445,
-                protocol: "smb".into(),
-            },
-            announced_at: "2024-01-01T00:00:00Z".into(),
-            health_method: None,
-            credentials_key: None,
-            connection_template: None,
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        // Ensure optional fields are not present in JSON
-        assert!(!json.contains("health_method"));
-        assert!(!json.contains("credentials_key"));
-        assert!(!json.contains("connection_template"));
-        let deserialized: BorrowedOfferingInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(info.name, deserialized.name);
     }
 
     #[test]

@@ -9,7 +9,7 @@
 
 use crate::AppState;
 use crate::domain::adopt_offering_container;
-use garden_common::{console, Offering};
+use garden_common::console;
 
 /// Reconcile container state with the registry
 ///
@@ -68,12 +68,10 @@ pub async fn reconcile_services(
         }
 
         match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
-            Ok(Some(info)) => {
+            Ok(Some(adopted_offering)) => {
                 tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
-                // Convert ServiceInfo to Offering and add to unified registry
-                let unified = Offering::from_service_info(info);
                 let mut offerings = state.offerings.write().await;
-                offerings.push(unified);
+                offerings.push(adopted_offering);
                 adopted.push(offering);
             }
             Ok(None) => {

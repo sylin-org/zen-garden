@@ -8,14 +8,16 @@
 //! This is pure domain logic - delegates I/O to infra layer.
 
 use crate::AppState;
-use garden_common::ServiceInfo;
 use crate::domain::{
     CompatibilityDecision, evaluate_compatibility, get_current_compat_capabilities,
 };
 use crate::docker::DockerManager;
 use crate::infra::ManifestRegistry;
 use garden_common::utils::ids::generate_guidv7;
-use garden_common::{OfferingGuidance, Ports, ServiceHealthStatus, ServiceStatus};
+use garden_common::{
+    ManagedData, Offering, OfferingGuidance, OfferingLocation, OfferingModeData,
+    OfferingStatus, ServiceHealthStatus,
+};
 
 /// Adopt a container for a specific offering into the registry
 ///
@@ -25,14 +27,14 @@ use garden_common::{OfferingGuidance, Ports, ServiceHealthStatus, ServiceStatus}
 /// 3. Running image matches expected image (or marks as degraded)
 ///
 /// # Returns
-/// - `Ok(Some(ServiceInfo))`: Container successfully adopted
+/// - `Ok(Some(Offering))`: Container successfully adopted
 /// - `Ok(None)`: No template found for offering (container left alone)
 /// - `Err(_)`: Adoption failed (Docker API error)
 ///
 /// # Composability
 /// This function is pure domain logic - it doesn't modify state directly.
 /// Callers are responsible for:
-/// - Adding returned ServiceInfo to registry
+/// - Adding returned Offering to registry
 /// - Persisting registry changes
 /// - Emitting events
 pub async fn adopt_offering_container(
@@ -40,7 +42,7 @@ pub async fn adopt_offering_container(
     manifest_registry: &ManifestRegistry,
     offering: &str,
     stone_name: &str,
-) -> anyhow::Result<Option<ServiceInfo>> {
+) -> anyhow::Result<Option<Offering>> {
     // Only adopt if the offering maps to a known template (valid manifest/template).
     let entry = match manifest_registry.sw.get(offering) {
         Some(e) => e,
@@ -70,10 +72,10 @@ pub async fn adopt_offering_container(
         }
     }
 
-    let status = docker
+    let service_status = docker
         .get_service_status(offering)
         .await
-        .unwrap_or(ServiceStatus::Unknown);
+        .unwrap_or(garden_common::ServiceStatus::Unknown);
     let mut health = docker
         .get_service_health(offering)
         .await
@@ -129,25 +131,38 @@ pub async fn adopt_offering_container(
         OfferingGuidance { content, variables }
     });
 
-    let adopted = ServiceInfo {
+    // Convert ServiceStatus to OfferingStatus
+    let status = match (&health, service_status) {
+        (ServiceHealthStatus::Degraded, garden_common::ServiceStatus::Running) => OfferingStatus::Degraded,
+        (_, garden_common::ServiceStatus::Running) => OfferingStatus::Running,
+        (_, garden_common::ServiceStatus::Stopped) => OfferingStatus::Stopped,
+        (_, garden_common::ServiceStatus::Installing) => OfferingStatus::Installing,
+        (_, garden_common::ServiceStatus::Degraded) => OfferingStatus::Degraded,
+        (_, garden_common::ServiceStatus::Maintenance) => OfferingStatus::Maintenance,
+        (_, garden_common::ServiceStatus::Unknown) => OfferingStatus::Unknown,
+    };
+
+    let adopted = Offering {
         offering_id: generate_guidv7(),
         name: offering.to_string(),
         offering: offering.to_string(),
         version,
-        status: if health == ServiceHealthStatus::Degraded && status == ServiceStatus::Running {
-            ServiceStatus::Degraded
-        } else {
-            status
-        },
+        status,
         health,
-        ports: Ports {
-            native: native_port,
-            agnostic: None,
-        },
-        resources: None,
-        job_id: None,
         sub_capabilities: Vec::new(),
-        guidance,
+        location: OfferingLocation {
+            host: "localhost".to_string(),
+            port: native_port,
+            protocol: "http".to_string(),
+            agnostic_port: None,
+        },
+        mode_data: OfferingModeData::Managed(ManagedData {
+            resources: None,
+            job_id: None,
+            guidance,
+        }),
+        registered_at: chrono::Utc::now(),
+        updated_at: None,
     };
 
     Ok(Some(adopted))
@@ -163,14 +178,14 @@ pub async fn adopt_offering_container(
 ///
 /// # Returns
 /// `AdoptionResult` containing:
-/// - `adopted`: Successfully adopted ServiceInfo entries
+/// - `adopted`: Successfully adopted Offering entries
 /// - `no_template`: Containers with no matching template
 /// - `failed`: Containers that failed adoption with error messages
 ///
 /// # Composability
 /// This function is pure domain logic - it doesn't modify state.
 /// Callers are responsible for:
-/// - Adding adopted services to registry
+/// - Adding adopted offerings to registry
 /// - Persisting registry changes
 /// - Emitting events
 /// - Logging warnings for failed adoptions
@@ -225,7 +240,7 @@ pub async fn adopt_existing_containers(
 #[derive(Debug, Default)]
 pub struct AdoptionResult {
     /// Successfully adopted containers
-    pub adopted: Vec<ServiceInfo>,
+    pub adopted: Vec<Offering>,
     /// Containers with no matching template (left unregistered)
     pub no_template: Vec<String>,
     /// Containers that failed adoption (offering, error message)

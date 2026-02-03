@@ -246,9 +246,8 @@ pub async fn create_service_v1(
         };
 
         if !in_registry {
-            if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
-                let unified = Offering::from_service_info(info);
-                state.upsert_offering(unified, true).await;
+            if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
+                state.upsert_offering(adopted_offering, true).await;
                 let _ = state.persist_offerings().await;
 
                 let ctx = SuggestionContext::from_headers(&headers, "create_service");

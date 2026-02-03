@@ -1,7 +1,7 @@
 ﻿//! Application state shared across HTTP handlers
 //!
 //! Holds all dependencies for moss daemon:
-//! - Service registry (Vec<ServiceInfo>)
+//! - Offerings registry (Vec<Offering>)
 //! - Docker manager
 //! - Manifest registry (unified software/hardware manifests)
 //! - Job tracking
@@ -20,7 +20,7 @@ use garden_common::console::ConsolePrinter;
 use garden_common::storage::SeedBankInfo;
 use garden_common::NetworkMetrics;
 use crate::tasks::NetworkMonitor;
-use garden_common::{HardwareCapabilities, ServiceInfo, StoneResources};
+use garden_common::{HardwareCapabilities, StoneResources};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -376,15 +376,6 @@ impl AppState {
             .iter()
             .find(|o| o.offering_id == offering_id)
             .cloned()
-    }
-
-    /// Get snapshot of managed services as legacy ServiceInfo
-    pub async fn get_services(&self) -> Vec<ServiceInfo> {
-        self.offerings.read().await
-            .iter()
-            .filter(|o| o.is_managed())
-            .filter_map(|o| o.to_service_info())
-            .collect()
     }
 
     /// Update stone health and immediately chirp

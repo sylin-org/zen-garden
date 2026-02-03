@@ -150,7 +150,8 @@ pub fn load_categories<P: AsRef<Path>>(manifests_dir: P) -> Result<CategoryRegis
             if config_path.exists() {
                 match std::fs::read_to_string(&config_path) {
                     Ok(content) => {
-                        match serde_json::from_str::<CategoryConfig>(&content) {
+                        let content = crate::utils::strings::strip_bom(&content);
+                        match serde_json::from_str::<CategoryConfig>(content) {
                             Ok(config) => {
                                 registry.register(config);
                             }

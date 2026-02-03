@@ -132,7 +132,8 @@ pub fn read_tending() -> Result<TendingState> {
     let path = tending_file_path()?;
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read tending file: {}", path.display()))?;
-    let state: TendingState = serde_json::from_str(&content)
+    let content = garden_common::utils::strings::strip_bom(&content);
+    let state: TendingState = serde_json::from_str(content)
         .context("Failed to parse tending file")?;
     Ok(state)
 }

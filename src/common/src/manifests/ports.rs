@@ -14,8 +14,9 @@ static PORTS_CATALOG: OnceLock<WellKnownPortsCatalog> = OnceLock::new();
 pub fn load_ports_catalog(path: &Path) -> Result<WellKnownPortsCatalog, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read ports catalog: {}", e))?;
+    let content = crate::utils::strings::strip_bom(&content);
 
-    serde_yaml::from_str(&content)
+    serde_yaml::from_str(content)
         .map_err(|e| format!("Failed to parse ports catalog: {}", e))
 }
 
@@ -34,6 +35,7 @@ pub fn get_ports_catalog() -> Option<&'static WellKnownPortsCatalog> {
 
 /// Load ports catalog from embedded content (for compiled-in manifests)
 pub fn load_ports_catalog_from_str(content: &str) -> Result<WellKnownPortsCatalog, String> {
+    let content = crate::utils::strings::strip_bom(content);
     serde_yaml::from_str(content)
         .map_err(|e| format!("Failed to parse ports catalog: {}", e))
 }

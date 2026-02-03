@@ -194,8 +194,9 @@ impl HwManifests {
     fn load_entry(vendor_dir: &Path, vendor: &str, model_name: &str) -> Result<HwEntry> {
         // Load manifest YAML (required)
         let manifest_path = vendor_dir.join(format!("{}.manifest.yaml", model_name));
-        let manifest_yaml = std::fs::read_to_string(&manifest_path)
+        let manifest_yaml_raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("Failed to read manifest: {}", manifest_path.display()))?;
+        let manifest_yaml = crate::utils::strings::strip_bom(&manifest_yaml_raw).to_string();
 
         // Parse manifest
         let manifest = match serde_yaml::from_str::<HwManifestData>(&manifest_yaml) {
@@ -214,7 +215,9 @@ impl HwManifests {
         // Load compatibility YAML (optional)
         let compat_path = vendor_dir.join(format!("{}.compatibility.yaml", model_name));
         let compatibility_yaml = if compat_path.exists() {
-            std::fs::read_to_string(&compat_path).ok()
+            std::fs::read_to_string(&compat_path)
+                .ok()
+                .map(|s| crate::utils::strings::strip_bom(&s).to_string())
         } else {
             None
         };

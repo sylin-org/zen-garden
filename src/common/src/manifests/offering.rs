@@ -638,8 +638,9 @@ impl OfferingRegistry {
     /// Load from .snippet.yaml (managed mode only)
     fn load_snippet_offering(dir: &Path, category: &str, name: &str) -> Result<Offering> {
         let snippet_path = dir.join(format!("{}.snippet.yaml", name));
-        let snippet_yaml = std::fs::read_to_string(&snippet_path)
+        let snippet_yaml_raw = std::fs::read_to_string(&snippet_path)
             .with_context(|| format!("Failed to read: {}", snippet_path.display()))?;
+        let snippet_yaml = crate::utils::strings::strip_bom(&snippet_yaml_raw).to_string();
 
         // Load optional files
         let compatibility = Self::load_compatibility(dir, name);
@@ -669,11 +670,12 @@ impl OfferingRegistry {
     /// Load from .manifest.yaml (full unified format)
     fn load_manifest_offering(dir: &Path, category: &str, name: &str) -> Result<Offering> {
         let manifest_path = dir.join(format!("{}.manifest.yaml", name));
-        let content = std::fs::read_to_string(&manifest_path)
+        let content_raw = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("Failed to read: {}", manifest_path.display()))?;
+        let content = crate::utils::strings::strip_bom(&content_raw);
 
         // Parse the manifest YAML
-        let manifest: ManifestFile = serde_yaml::from_str(&content)
+        let manifest: ManifestFile = serde_yaml::from_str(content)
             .with_context(|| format!("Failed to parse: {}", manifest_path.display()))?;
 
         Ok(Offering {
@@ -692,10 +694,11 @@ impl OfferingRegistry {
     /// Load from .adopted.yaml (adopted mode only)
     fn load_adopted_offering(dir: &Path, category: &str, name: &str) -> Result<Offering> {
         let adopted_path = dir.join(format!("{}.adopted.yaml", name));
-        let content = std::fs::read_to_string(&adopted_path)
+        let content_raw = std::fs::read_to_string(&adopted_path)
             .with_context(|| format!("Failed to read: {}", adopted_path.display()))?;
+        let content = crate::utils::strings::strip_bom(&content_raw);
 
-        let adopted_file: AdoptedFile = serde_yaml::from_str(&content)
+        let adopted_file: AdoptedFile = serde_yaml::from_str(content)
             .with_context(|| format!("Failed to parse: {}", adopted_path.display()))?;
 
         Ok(Offering {
@@ -729,7 +732,10 @@ impl OfferingRegistry {
             return None;
         }
         std::fs::read_to_string(&path).ok()
-            .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
+            .and_then(|yaml| {
+                let yaml = crate::utils::strings::strip_bom(&yaml);
+                serde_yaml::from_str(yaml).ok()
+            })
     }
 
     fn load_metadata(dir: &Path, name: &str, _category: &str) -> Option<OfferingMetadata> {
@@ -758,7 +764,10 @@ impl OfferingRegistry {
             return None;
         }
         std::fs::read_to_string(&path).ok()
-            .map(|md| strip_markdown_frontmatter(&md))
+            .map(|md| {
+                let md = crate::utils::strings::strip_bom(&md);
+                strip_markdown_frontmatter(md)
+            })
     }
 
     /// Load offering from raw content (for embedded assets)
@@ -778,14 +787,16 @@ impl OfferingRegistry {
         let filename = parts.last().unwrap();
         let name = filename.trim_end_matches(".snippet.yaml").to_string();
 
+        // Strip BOM from all input content
+        let snippet_content = crate::utils::strings::strip_bom(snippet_content);
+
         let compatibility = compatibility_content
-            .and_then(|yaml| serde_yaml::from_str(&yaml).ok());
+            .map(crate::utils::strings::strip_bom)
+            .and_then(|yaml| serde_yaml::from_str(yaml).ok());
 
         let metadata = frontmatter_content
-            .and_then(|json| {
-                let json = crate::utils::strings::strip_bom(json);
-                serde_json::from_str::<FrontmatterFile>(json).ok()
-            })
+            .map(crate::utils::strings::strip_bom)
+            .and_then(|json| serde_json::from_str::<FrontmatterFile>(json).ok())
             .map(|fm| OfferingMetadata {
                 description: fm.description,
                 tags: fm.tags.unwrap_or_default(),
@@ -796,7 +807,9 @@ impl OfferingRegistry {
             })
             .unwrap_or_default();
 
-        let guidance = guidance_content.map(|md| strip_markdown_frontmatter(md));
+        let guidance = guidance_content
+            .map(crate::utils::strings::strip_bom)
+            .map(strip_markdown_frontmatter);
 
         Ok(Offering {
             name,

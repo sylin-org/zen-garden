@@ -499,7 +499,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         };
 
         // Strip UTF-8 BOM if present (some editors add it)
-        let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
+        let content = garden_common::utils::strings::strip_bom(&content);
 
         // Extract category and name from path (sw/category/name.adopted.yaml)
         let parts: Vec<&str> = path_str.split('/').collect();

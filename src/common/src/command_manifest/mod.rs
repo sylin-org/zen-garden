@@ -275,12 +275,14 @@ impl CommandManifest {
     /// Load from JSON file
     pub fn from_json_file(path: &std::path::Path) -> Result<Self, std::io::Error> {
         let content = std::fs::read_to_string(path)?;
-        serde_json::from_str(&content)
+        let content = crate::utils::strings::strip_bom(&content);
+        serde_json::from_str(content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
-    
+
     /// Load from JSON string
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        let json = crate::utils::strings::strip_bom(json);
         serde_json::from_str(json)
     }
     

@@ -177,7 +177,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                     // Get control config from adopted mode
                     let control = manifest.get_control_config();
 
-                    let adopted_offering = garden_common::UnifiedOffering {
+                    let adopted_offering = garden_common::Offering {
                         offering_id: garden_common::utils::ids::generate_guidv7(),
                         name: format!("{}@adopted", manifest.name),
                         offering: manifest.name.clone(),

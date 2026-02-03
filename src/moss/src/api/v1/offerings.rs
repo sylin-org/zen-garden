@@ -60,7 +60,7 @@ pub async fn list_offerings_v1(
 ) -> Result<(StatusCode, Json<ApiResponse<Vec<OfferingView>>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     // Get installed services from unified offerings registry
     let offerings_guard = state.offerings.read().await;
-    let installed: HashMap<String, &garden_common::UnifiedOffering> = offerings_guard
+    let installed: HashMap<String, &garden_common::Offering> = offerings_guard
         .iter()
         .map(|o| (o.name.clone(), o))
         .collect();
@@ -85,7 +85,7 @@ pub async fn list_offerings_v1(
                 image,
                 compatibility: None,
                 health: Some(simplify_health(&offering.status)),
-                uptime: None, // TODO: Track uptime in UnifiedOffering
+                uptime: None, // TODO: Track uptime in Offering
             });
         }
     }

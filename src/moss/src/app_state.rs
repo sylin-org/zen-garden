@@ -53,13 +53,10 @@ pub use crate::domain::{
     CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
 };
 
-// Offering types (unified and legacy)
+// Offering types (unified)
 pub use garden_common::{
-    // Unified offering types
-    UnifiedOffering, OfferingModeData, ManagedData, AdoptedData, BorrowedData,
+    Offering, OfferingModeData, ManagedData, AdoptedData, BorrowedData,
     OfferingStatus, OfferingLocation, OfferingMode,
-    // Legacy types (for backward compatibility during migration)
-    AdoptedOfferingInfo, BorrowedOfferingInfo,
 };
 
 /// Application state for HTTP handlers
@@ -76,7 +73,7 @@ pub struct AppState {
 
     /// Unified offerings registry (all modes: managed, adopted, borrowed)
     /// Single source of truth for all running offerings
-    pub offerings: Arc<RwLock<Vec<UnifiedOffering>>>,
+    pub offerings: Arc<RwLock<Vec<Offering>>>,
 
     /// Manifest registry - single source of truth for all manifests
     /// Contains both software (sw) and hardware (hw) manifests
@@ -231,22 +228,17 @@ impl AppState {
     /// Reads the current offerings and saves to disk atomically.
     pub async fn persist_offerings(&self) -> anyhow::Result<()> {
         let offerings = self.offerings.read().await;
-        crate::infra::save_unified_offerings(&offerings).await
-    }
-
-    /// Legacy alias for persist_offerings (backward compatibility)
-    pub async fn persist_registry(&self) -> anyhow::Result<()> {
-        self.persist_offerings().await
+        crate::infra::save_offerings(&offerings).await
     }
 
     /// Sync self_entry services from offerings
     ///
-    /// Converts UnifiedOffering → TopologyServiceEntry and updates self_entry.
+    /// Converts Offering → TopologyServiceEntry and updates self_entry.
     /// Optionally triggers immediate chirp announcement (if network is ready).
     /// Called after any offerings modification.
     pub async fn sync_self_services(&self, auto_chirp: bool) {
         let offerings = self.offerings.read().await;
-        let topology_services = garden_common::TopologyServiceEntry::from_unified_offerings(&offerings);
+        let topology_services = garden_common::TopologyServiceEntry::from_offerings(&offerings);
 
         {
             let mut entry = self.self_entry.write().await;
@@ -268,7 +260,7 @@ impl AppState {
     ///
     /// Immediately syncs to self_entry and triggers chirp.
     /// This is the primary method for offering state changes.
-    pub async fn upsert_offering(&self, mut offering: UnifiedOffering, auto_chirp: bool) {
+    pub async fn upsert_offering(&self, mut offering: Offering, auto_chirp: bool) {
         offering.touch();
         {
             let mut offerings = self.offerings.write().await;
@@ -284,14 +276,6 @@ impl AppState {
         if let Err(e) = self.persist_offerings().await {
             tracing::error!(error = ?e, "Failed to persist offerings after upsert");
         }
-    }
-
-    /// Legacy: Add or update a single managed service
-    ///
-    /// Converts ServiceInfo to UnifiedOffering and calls upsert_offering.
-    pub async fn upsert_service(&self, service: ServiceInfo, auto_chirp: bool) {
-        let offering = UnifiedOffering::from_service_info(service);
-        self.upsert_offering(offering, auto_chirp).await;
     }
 
     /// Remove an offering by ID
@@ -329,7 +313,7 @@ impl AppState {
     /// Batch update offerings (for reconciliation)
     ///
     /// Replaces entire offerings registry and triggers chirp.
-    pub async fn replace_offerings(&self, offerings: Vec<UnifiedOffering>, auto_chirp: bool) {
+    pub async fn replace_offerings(&self, offerings: Vec<Offering>, auto_chirp: bool) {
         {
             let mut registry = self.offerings.write().await;
             *registry = offerings;
@@ -342,35 +326,17 @@ impl AppState {
         }
     }
 
-    /// Legacy: Batch update managed services
-    pub async fn replace_services(&self, services: Vec<ServiceInfo>, auto_chirp: bool) {
-        // Convert to UnifiedOfferings, preserving existing non-managed offerings
-        let offerings = self.offerings.read().await;
-        let mut new_offerings: Vec<UnifiedOffering> = offerings
-            .iter()
-            .filter(|o| !o.is_managed())
-            .cloned()
-            .collect();
-        drop(offerings);
-
-        for svc in services {
-            new_offerings.push(UnifiedOffering::from_service_info(svc));
-        }
-
-        self.replace_offerings(new_offerings, auto_chirp).await;
-    }
-
     // ========================================================================
-    // Unified Offering Accessors
+    // Offering Accessors
     // ========================================================================
 
     /// Get all offerings
-    pub async fn get_offerings(&self) -> Vec<UnifiedOffering> {
+    pub async fn get_offerings(&self) -> Vec<Offering> {
         self.offerings.read().await.clone()
     }
 
     /// Get managed offerings only
-    pub async fn get_managed_offerings(&self) -> Vec<UnifiedOffering> {
+    pub async fn get_managed_offerings(&self) -> Vec<Offering> {
         self.offerings.read().await
             .iter()
             .filter(|o| o.is_managed())
@@ -379,7 +345,7 @@ impl AppState {
     }
 
     /// Get adopted offerings only
-    pub async fn get_adopted_offerings(&self) -> Vec<UnifiedOffering> {
+    pub async fn get_adopted_offerings(&self) -> Vec<Offering> {
         self.offerings.read().await
             .iter()
             .filter(|o| o.is_adopted())
@@ -388,7 +354,7 @@ impl AppState {
     }
 
     /// Get borrowed offerings only
-    pub async fn get_borrowed_offerings(&self) -> Vec<UnifiedOffering> {
+    pub async fn get_borrowed_offerings(&self) -> Vec<Offering> {
         self.offerings.read().await
             .iter()
             .filter(|o| o.is_borrowed())
@@ -397,7 +363,7 @@ impl AppState {
     }
 
     /// Find offering by name or offering type
-    pub async fn find_offering(&self, name: &str) -> Option<UnifiedOffering> {
+    pub async fn find_offering(&self, name: &str) -> Option<Offering> {
         self.offerings.read().await
             .iter()
             .find(|o| o.name.eq_ignore_ascii_case(name) || o.offering.eq_ignore_ascii_case(name))
@@ -405,7 +371,7 @@ impl AppState {
     }
 
     /// Find offering by ID
-    pub async fn find_offering_by_id(&self, offering_id: &str) -> Option<UnifiedOffering> {
+    pub async fn find_offering_by_id(&self, offering_id: &str) -> Option<Offering> {
         self.offerings.read().await
             .iter()
             .find(|o| o.offering_id == offering_id)

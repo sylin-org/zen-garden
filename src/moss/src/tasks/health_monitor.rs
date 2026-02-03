@@ -128,8 +128,8 @@ pub async fn health_monitor_task(state: AppState) {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
                         match adopt_offering_container(&state.docker, &state.manifest_registry, container_name, &state.stone_name).await {
                             Ok(Some(info)) => {
-                                // Convert to UnifiedOffering and upsert
-                                let unified = garden_common::UnifiedOffering::from_service_info(info);
+                                // Convert to Offering and upsert
+                                let unified = garden_common::Offering::from_service_info(info);
                                 state.upsert_offering(unified, true).await;
                                 state_changed = true;
                             }

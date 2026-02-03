@@ -742,8 +742,8 @@ impl TopologyServiceEntry {
             .collect()
     }
 
-    /// Create from UnifiedOffering
-    pub fn from_unified_offering(offering: &UnifiedOffering) -> Self {
+    /// Create from Offering
+    pub fn from_offering(offering: &Offering) -> Self {
         Self {
             offering_id: offering.offering_id.clone(),
             name: offering.name.clone(),
@@ -760,10 +760,10 @@ impl TopologyServiceEntry {
         }
     }
 
-    /// Batch convert UnifiedOffering vec to TopologyServiceEntry vec
-    pub fn from_unified_offerings(offerings: &[UnifiedOffering]) -> Vec<Self> {
+    /// Batch convert Offering vec to TopologyServiceEntry vec
+    pub fn from_offerings(offerings: &[Offering]) -> Vec<Self> {
         offerings.iter()
-            .map(Self::from_unified_offering)
+            .map(Self::from_offering)
             .collect()
     }
 }
@@ -1217,7 +1217,7 @@ pub enum HealthMethod {
 /// Replaces the separate ServiceInfo, AdoptedOfferingInfo, and BorrowedOfferingInfo types
 /// with a single structure that uses an enum for mode-specific data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnifiedOffering {
+pub struct Offering {
     // ═══════════════════════════════════════════════════════════════
     // IDENTITY (common to all modes)
     // ═══════════════════════════════════════════════════════════════
@@ -1489,10 +1489,10 @@ pub struct BorrowedData {
 }
 
 // ============================================================================
-// UnifiedOffering Helper Methods
+// Offering Helper Methods
 // ============================================================================
 
-impl UnifiedOffering {
+impl Offering {
     /// Get the offering mode
     pub fn mode(&self) -> OfferingMode {
         self.mode_data.mode()
@@ -1656,46 +1656,6 @@ impl UnifiedOffering {
                 job_id: data.job_id.clone(),
                 sub_capabilities: self.sub_capabilities.clone(),
                 guidance: data.guidance.clone(),
-            }),
-            _ => None,
-        }
-    }
-
-    /// Convert to legacy AdoptedOfferingInfo (for backward compatibility)
-    pub fn to_adopted_offering_info(&self) -> Option<AdoptedOfferingInfo> {
-        match &self.mode_data {
-            OfferingModeData::Adopted(data) => Some(AdoptedOfferingInfo {
-                name: self.name.clone(),
-                offering: self.offering.clone(),
-                mode: OfferingMode::Adopted,
-                location: self.location.to_service_location(),
-                control_level: data.control_level.clone(),
-                health: self.health.clone(),
-                detected_at: data.detected_at.to_rfc3339(),
-                version: Some(self.version.clone()),
-                start_command: data.start_command.clone(),
-                stop_command: data.stop_command.clone(),
-                restart_command: data.restart_command.clone(),
-                health_check_url: data.health_check_url.clone(),
-                container_name: data.container_name.clone(),
-                sub_capabilities: self.sub_capabilities.clone(),
-            }),
-            _ => None,
-        }
-    }
-
-    /// Convert to legacy BorrowedOfferingInfo (for backward compatibility)
-    pub fn to_borrowed_offering_info(&self) -> Option<BorrowedOfferingInfo> {
-        match &self.mode_data {
-            OfferingModeData::Borrowed(data) => Some(BorrowedOfferingInfo {
-                name: self.name.clone(),
-                offering: self.offering.clone(),
-                mode: OfferingMode::Borrowed,
-                location: self.location.to_service_location(),
-                announced_at: data.announced_at.to_rfc3339(),
-                health_method: data.health_method.clone(),
-                credentials_key: data.credentials_key.clone(),
-                connection_template: data.connection_template.clone(),
             }),
             _ => None,
         }

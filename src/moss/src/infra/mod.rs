@@ -66,7 +66,7 @@ pub use persistence::{
     load_registry, save_registry, save_registry_vec,
     load_offerings_cache, save_offerings_cache, load_or_generate_stone_id,
     load_adopted_offerings, save_adopted_offerings, load_borrowed_offerings, save_borrowed_offerings,
-    load_unified_offerings, save_unified_offerings,
+    load_offerings, save_offerings,
 };
 pub use garden_common::infra::platform::{is_running_from_removable_media, shutdown_signal};
 pub use secrets::SecretsManager;

@@ -82,13 +82,13 @@ pub async fn save_borrowed_offerings(offerings: &[garden_common::BorrowedOfferin
 /// Load unified offerings from disk
 ///
 /// Tries the new unified file first, then migrates from legacy files if needed.
-pub async fn load_unified_offerings() -> Result<Vec<garden_common::UnifiedOffering>> {
+pub async fn load_offerings() -> Result<Vec<garden_common::Offering>> {
     let unified_path = PathBuf::from(garden_common::names::CONFIG_DIR).join("moss-offerings.json");
 
     // Try new unified file first
     match tokio::fs::read_to_string(&unified_path).await {
         Ok(content) => {
-            let offerings: Vec<garden_common::UnifiedOffering> = serde_json::from_str(&content)?;
+            let offerings: Vec<garden_common::Offering> = serde_json::from_str(&content)?;
             tracing::info!(count = offerings.len(), "Loaded unified offerings from disk");
             return Ok(offerings);
         }
@@ -103,14 +103,14 @@ pub async fn load_unified_offerings() -> Result<Vec<garden_common::UnifiedOfferi
 }
 
 /// Migrate from legacy three-file format to unified format
-async fn migrate_legacy_offerings() -> Result<Vec<garden_common::UnifiedOffering>> {
+async fn migrate_legacy_offerings() -> Result<Vec<garden_common::Offering>> {
     let mut offerings = Vec::new();
 
     // Load and convert ServiceInfo (managed)
     if let Ok(managed) = load_registry().await {
         tracing::info!(count = managed.len(), "Migrating managed offerings from legacy registry");
         for svc in managed {
-            offerings.push(garden_common::UnifiedOffering::from_service_info(svc));
+            offerings.push(garden_common::Offering::from_service_info(svc));
         }
     }
 
@@ -118,7 +118,7 @@ async fn migrate_legacy_offerings() -> Result<Vec<garden_common::UnifiedOffering
     if let Ok(adopted) = load_adopted_offerings().await {
         tracing::info!(count = adopted.len(), "Migrating adopted offerings from legacy file");
         for a in adopted {
-            offerings.push(garden_common::UnifiedOffering::from_adopted_offering(a));
+            offerings.push(garden_common::Offering::from_adopted_offering(a));
         }
     }
 
@@ -126,13 +126,13 @@ async fn migrate_legacy_offerings() -> Result<Vec<garden_common::UnifiedOffering
     if let Ok(borrowed) = load_borrowed_offerings().await {
         tracing::info!(count = borrowed.len(), "Migrating borrowed offerings from legacy file");
         for b in borrowed {
-            offerings.push(garden_common::UnifiedOffering::from_borrowed_offering(b));
+            offerings.push(garden_common::Offering::from_borrowed_offering(b));
         }
     }
 
     // Save unified format if we have any offerings (complete migration)
     if !offerings.is_empty() {
-        if let Err(e) = save_unified_offerings(&offerings).await {
+        if let Err(e) = save_offerings(&offerings).await {
             tracing::warn!(error = ?e, "Failed to save migrated unified offerings");
         } else {
             tracing::info!(count = offerings.len(), "Migration complete - saved unified offerings");
@@ -145,7 +145,7 @@ async fn migrate_legacy_offerings() -> Result<Vec<garden_common::UnifiedOffering
 }
 
 /// Save unified offerings to disk (atomic write)
-pub async fn save_unified_offerings(offerings: &[garden_common::UnifiedOffering]) -> Result<()> {
+pub async fn save_offerings(offerings: &[garden_common::Offering]) -> Result<()> {
     let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
     let path = dir.join("moss-offerings.json");
     tokio::fs::create_dir_all(&dir).await?;

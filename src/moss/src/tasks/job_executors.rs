@@ -23,7 +23,7 @@ use garden_common::templates::{TemplateContext, render_template};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     ManagedData, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
-    ServiceHealthStatus, UnifiedOffering,
+    ServiceHealthStatus, Offering,
 };
 
 /// Substitute template variables in guidance markdown
@@ -584,7 +584,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
         } else {
             // Fallback: entry was somehow removed, recreate it
             let new_id = generate_guidv7();
-            let unified = UnifiedOffering {
+            let unified = Offering {
                 offering_id: new_id.clone(),
                 name: offering.to_string(),
                 offering: offering.to_string(),
@@ -784,7 +784,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 
         // Add to offerings registry
         let offering_id = generate_guidv7();
-        let unified = UnifiedOffering {
+        let unified = Offering {
             offering_id: offering_id.clone(),
             name: offering.clone(),
             offering: offering.clone(),

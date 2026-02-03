@@ -10,7 +10,7 @@ use axum::{
 };
 use garden_common::{
     api_utils::ApiErrorResponse,
-    CapabilityCollection, OfferingMode, ServiceInfo, ServiceStatus, Ports, UnifiedOffering,
+    CapabilityCollection, OfferingMode, ServiceInfo, ServiceStatus, Ports, Offering,
 };
 use serde::{Deserialize, Serialize};
 
@@ -376,8 +376,8 @@ pub struct RemoveCapabilityQuery {
     pub cap_type: Option<String>,
 }
 
-/// Convert UnifiedOffering to ServiceInfo for capability executor compatibility
-async fn offering_to_service_info(offering: &UnifiedOffering, state: &AppState) -> ServiceInfo {
+/// Convert Offering to ServiceInfo for capability executor compatibility
+async fn offering_to_service_info(offering: &Offering, state: &AppState) -> ServiceInfo {
     // Use location port, falling back to manifest default
     let port = if offering.location.port > 0 {
         offering.location.port

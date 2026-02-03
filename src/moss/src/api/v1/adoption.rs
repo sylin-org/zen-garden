@@ -17,7 +17,7 @@ use crate::{error_response, AppState};
 use garden_common::{
     api_utils::ApiErrorResponse,
     AdoptedControlLevel, AdoptedData, BorrowedData, OfferingLocation,
-    OfferingModeData, OfferingStatus, ServiceHealthStatus, UnifiedOffering,
+    OfferingModeData, OfferingStatus, ServiceHealthStatus, Offering,
 };
 use garden_common::utils::ids::generate_guidv7;
 use serde::{Deserialize, Serialize};
@@ -82,7 +82,7 @@ pub async fn adopt_offering_v1(
     Path(offering): Path<String>,
     headers: HeaderMap,
     Json(req): Json<AdoptOfferingRequest>,
-) -> Result<Json<ApiResponse<UnifiedOffering>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Check if already adopted
     {
         let offerings = state.offerings.read().await;
@@ -155,7 +155,7 @@ pub async fn adopt_offering_v1(
     // Get control config from adopted mode
     let control = offering_def.get_control_config();
 
-    let unified = UnifiedOffering {
+    let unified = Offering {
         offering_id: generate_guidv7(),
         name: format!("{}@adopted", offering),
         offering: offering.clone(),
@@ -196,7 +196,7 @@ pub async fn adopt_offering_v1(
 pub async fn list_adopted_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<UnifiedOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<Vec<Offering>>>, (StatusCode, Json<ApiErrorResponse>)> {
     let offerings = state.get_adopted_offerings().await;
 
     let ctx = SuggestionContext::from_headers(&headers, "list_adopted");
@@ -212,7 +212,7 @@ pub async fn list_adopted_v1(
 pub async fn list_borrowed_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<UnifiedOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<Vec<Offering>>>, (StatusCode, Json<ApiErrorResponse>)> {
     let offerings = state.get_borrowed_offerings().await;
 
     let ctx = SuggestionContext::from_headers(&headers, "list_borrowed");
@@ -313,7 +313,7 @@ pub async fn borrow_service_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<BorrowOfferingRequest>,
-) -> Result<Json<ApiResponse<UnifiedOffering>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Check if already borrowed with this name
     {
         let offerings = state.offerings.read().await;
@@ -348,7 +348,7 @@ pub async fn borrow_service_v1(
         agnostic_port: None,
     };
 
-    let unified = UnifiedOffering {
+    let unified = Offering {
         offering_id: generate_guidv7(),
         name: req.name.clone(),
         offering: req.name.clone(), // For borrowed, name and offering are the same

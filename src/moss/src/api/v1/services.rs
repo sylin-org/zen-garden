@@ -13,11 +13,11 @@ use garden_common::{
     api_utils::{ApiErrorResponse, sanitize_query, sanitize_name, sanitize_tag, is_suspicious},
     utils::ids::generate_guidv7,
     ManagedData, OfferingLocation, OfferingModeData, OfferingStatus,
-    Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus, UnifiedOffering,
+    Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus, Offering,
 };
 
-/// Convert UnifiedOffering to ServiceInfo for API responses
-fn offering_to_service_info(o: &UnifiedOffering) -> ServiceInfo {
+/// Convert Offering to ServiceInfo for API responses
+fn offering_to_service_info(o: &Offering) -> ServiceInfo {
     ServiceInfo {
         offering_id: o.offering_id.clone(),
         name: o.name.clone(),
@@ -40,39 +40,6 @@ fn offering_to_service_info(o: &UnifiedOffering) -> ServiceInfo {
         job_id: o.managed_data().and_then(|m| m.job_id.clone()),
         sub_capabilities: o.sub_capabilities.clone(),
         guidance: o.managed_data().and_then(|m| m.guidance.clone()),
-    }
-}
-
-/// Convert ServiceInfo to UnifiedOffering (managed mode)
-fn service_info_to_offering(info: ServiceInfo) -> UnifiedOffering {
-    UnifiedOffering {
-        offering_id: info.offering_id,
-        name: info.name,
-        offering: info.offering,
-        version: info.version,
-        status: match info.status {
-            ServiceStatus::Running => OfferingStatus::Running,
-            ServiceStatus::Stopped => OfferingStatus::Stopped,
-            ServiceStatus::Installing => OfferingStatus::Installing,
-            ServiceStatus::Degraded => OfferingStatus::Degraded,
-            ServiceStatus::Maintenance => OfferingStatus::Maintenance,
-            ServiceStatus::Unknown => OfferingStatus::Unknown,
-        },
-        health: info.health,
-        sub_capabilities: info.sub_capabilities,
-        location: OfferingLocation {
-            host: "localhost".to_string(),
-            port: info.ports.native,
-            protocol: "http".to_string(),
-            agnostic_port: info.ports.agnostic,
-        },
-        mode_data: OfferingModeData::Managed(ManagedData {
-            resources: info.resources,
-            job_id: info.job_id,
-            guidance: info.guidance,
-        }),
-        registered_at: chrono::Utc::now(),
-        updated_at: None,
     }
 }
 
@@ -280,7 +247,7 @@ pub async fn create_service_v1(
 
         if !in_registry {
             if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
-                let unified = UnifiedOffering::from_service_info(info);
+                let unified = Offering::from_service_info(info);
                 state.upsert_offering(unified, true).await;
                 let _ = state.persist_offerings().await;
 
@@ -368,7 +335,7 @@ pub async fn create_service_v1(
     // This ensures `rake list` shows the service as planting
     {
         let native_port = compiled.default_host_port();
-        let installing_offering = UnifiedOffering {
+        let installing_offering = Offering {
             offering_id: generate_guidv7(),
             name: offering.clone(),
             offering: offering.clone(),
@@ -1003,7 +970,7 @@ pub async fn reconcile_inventory_v1(
 
     // Persist changes if any adoptions or drops occurred
     if result.has_changes() {
-        let _ = state.persist_registry().await;
+        let _ = state.persist_offerings().await;
     }
 
     Ok((

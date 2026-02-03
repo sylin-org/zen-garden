@@ -289,7 +289,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Phase 10.5: Load unified offerings from disk (includes managed, adopted, borrowed)
-    let unified_offerings = match infra::load_unified_offerings().await {
+    let offerings = match infra::load_offerings().await {
         Ok(offerings) => {
             let managed = offerings.iter().filter(|o| o.is_managed()).count();
             let adopted = offerings.iter().filter(|o| o.is_adopted()).count();
@@ -331,7 +331,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let state = AppState {
         stone_id: stone_id.clone(),
         stone_name: stone_name.clone(),
-        offerings: Arc::new(RwLock::new(unified_offerings)),
+        offerings: Arc::new(RwLock::new(offerings)),
         manifest_registry: manifest_registry.clone(),
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),

@@ -306,10 +306,10 @@ pub async fn get_portrait_data(
         }
     };
 
-    // === Offerings (services) ===
+    // === Offerings (managed containers + adopted native services) ===
     let offerings = {
         let registry = state.registry.read().await;
-        registry
+        let mut offerings: Vec<PortraitOffering> = registry
             .iter()
             .map(|svc| {
                 let status_str = match svc.status {
@@ -334,7 +334,27 @@ pub async fn get_portrait_data(
                     health: health_str.to_string(),
                 }
             })
-            .collect()
+            .collect();
+
+        // Include adopted offerings (native services like Ollama)
+        let adopted = state.adopted_offerings.read().await;
+        for adopted_info in adopted.iter() {
+            let health_str = match adopted_info.health {
+                garden_common::ServiceHealthStatus::Healthy => "healthy",
+                garden_common::ServiceHealthStatus::Degraded => "degraded",
+                garden_common::ServiceHealthStatus::Offline => "offline",
+            };
+
+            offerings.push(PortraitOffering {
+                name: adopted_info.offering.clone(),
+                container: None, // Adopted offerings don't have containers
+                port: adopted_info.location.port,
+                status: "running".to_string(), // Adopted offerings that passed detection are running
+                health: health_str.to_string(),
+            });
+        }
+
+        offerings
     };
 
     // === Seed Banks ===

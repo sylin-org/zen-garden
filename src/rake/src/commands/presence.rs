@@ -4,7 +4,7 @@
 //! Connects to /api/v1/stone/presence/stream and displays events.
 
 use anyhow::{Result, Context};
-use garden_common::presence::{event_types, PresenceSnapshot, StoneState, ServiceState};
+use garden_common::presence::{event_types, PresenceSnapshot, StoneState, OfferingState};
 use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
 
 /// Stream presence events from a stone
@@ -169,18 +169,18 @@ fn display_snapshot(snapshot: &PresenceSnapshot) {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("📸 Presence Snapshot");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    
+
     display_stone_state(&snapshot.stone);
-    
-    if !snapshot.services.is_empty() {
-        println!("\nServices ({}):", snapshot.services.len());
-        for service in &snapshot.services {
-            display_service_state(service);
+
+    if !snapshot.offerings.is_empty() {
+        println!("\nOfferings ({}):", snapshot.offerings.len());
+        for offering in &snapshot.offerings {
+            display_offering_state(offering);
         }
     } else {
-        println!("\nNo services running");
+        println!("\nNo offerings running");
     }
-    
+
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("\nListening for events...\n");
 }
@@ -204,14 +204,15 @@ fn display_stone_state(stone: &StoneState) {
     println!("  Uptime: {}h {}m", uptime_hours, uptime_minutes);
 }
 
-/// Display service state
-fn display_service_state(service: &ServiceState) {
-    let state_icon = match service.state.as_str() {
+/// Display offering state
+fn display_offering_state(offering: &OfferingState) {
+    let status_icon = match offering.status.as_str() {
         "running" => "✅",
         "stopped" => "⏹️ ",
+        "dormant" => "💤",
         "exited" => "❌",
         _ => "❓",
     };
-    
-    println!("  {} {} ({})", state_icon, service.name, service.state);
+
+    println!("  {} {} ({})", status_icon, offering.name, offering.status);
 }

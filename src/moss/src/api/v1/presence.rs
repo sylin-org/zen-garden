@@ -18,7 +18,7 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::domain::StoneEvent;
 use crate::infra::SseEvent;
-use garden_common::presence::{event_types, EventFilter, PresenceSnapshot, StoneState, ServiceState, ClientNotification};
+use garden_common::presence::{event_types, EventFilter, PresenceSnapshot, StoneState, OfferingState, ClientNotification};
 
 #[derive(Debug, Deserialize)]
 pub struct PresenceQuery {
@@ -95,15 +95,27 @@ pub async fn stream_stone_presence(
 async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     let registry = state.registry.read().await;
 
-    // Map services
-    let services: Vec<ServiceState> = registry
+    // Map managed offerings (containers)
+    let mut offerings: Vec<OfferingState> = registry
         .iter()
-        .map(|svc| ServiceState {
+        .map(|svc| OfferingState {
             name: svc.name.clone(),
-            state: format!("{:?}", svc.status), // Convert ServiceStatus to String
-            health: "healthy".to_string(), // TODO: Real health check
+            status: format!("{:?}", svc.status).to_lowercase(),
+            health: format!("{:?}", svc.health).to_lowercase(),
         })
         .collect();
+
+    // Include adopted offerings
+    {
+        let adopted = state.adopted_offerings.read().await;
+        for adopted_info in adopted.iter() {
+            offerings.push(OfferingState {
+                name: adopted_info.offering.clone(),
+                status: "running".to_string(), // Adopted offerings that passed detection are running
+                health: format!("{:?}", adopted_info.health).to_lowercase(),
+            });
+        }
+    }
 
     // Compute stone state
     let uptime = state.start_time.elapsed().as_secs();
@@ -141,7 +153,7 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             uptime_seconds: uptime,
             pond_active: false, // TODO: Real pond status
         },
-        services,
+        offerings,
         timestamp: chrono::Utc::now(),
     }
 }

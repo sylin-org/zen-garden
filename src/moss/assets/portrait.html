@@ -554,7 +554,7 @@
                 addActivityEvent({
                     timestamp: snapshot.timestamp || new Date().toISOString(),
                     level: 'info',
-                    message: `Connected: ${snapshot.stone?.name || 'stone'} (${snapshot.services?.length || 0} services)`
+                    message: `Connected: ${snapshot.stone?.name || 'stone'} (${snapshot.offerings?.length || 0} offerings)`
                 });
                 updateConnectionState(true);
             } catch (err) {

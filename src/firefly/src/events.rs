@@ -17,7 +17,7 @@ use crate::animation::{AnimationContext, Health, Override};
 struct PresenceSnapshot {
     stone: StoneState,
     #[serde(default)]
-    services: Vec<ServiceState>,
+    offerings: Vec<OfferingState>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,11 +31,11 @@ struct StoneState {
 }
 
 #[derive(Debug, Deserialize)]
-struct ServiceState {
+struct OfferingState {
     #[allow(dead_code)]
     name: String,
     #[allow(dead_code)]
-    state: String,
+    status: String,
 }
 
 /// Service event payload
@@ -103,7 +103,7 @@ impl EventHandler for FireflyEventHandler {
                 if let Ok(snapshot) = serde_json::from_str::<PresenceSnapshot>(&event.data) {
                     tracing::info!(
                         health = %snapshot.stone.health,
-                        offerings = snapshot.services.len(),
+                        offerings = snapshot.offerings.len(),
                         cpu = %snapshot.stone.cpu_percent,
                         memory = %snapshot.stone.memory_percent,
                         "Received presence snapshot"
@@ -119,13 +119,13 @@ impl EventHandler for FireflyEventHandler {
                     ctx.load = ctx.load.clamp(0.0, 1.0);
 
                     // Update offering count (affects activity level)
-                    ctx.offering_count = snapshot.services.len();
+                    ctx.offering_count = snapshot.offerings.len();
 
                     // Update service presence (for blue fireflies)
-                    ctx.has_services = !snapshot.services.is_empty();
+                    ctx.has_services = !snapshot.offerings.is_empty();
 
                     // Check for seed-bank (storage service)
-                    ctx.has_seed_bank = snapshot.services.iter().any(|s| {
+                    ctx.has_seed_bank = snapshot.offerings.iter().any(|s| {
                         s.name.contains("seed-bank") || s.name.contains("storage")
                     });
 

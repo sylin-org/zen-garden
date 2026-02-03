@@ -26,7 +26,7 @@ impl EventFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresenceSnapshot {
     pub stone: StoneState,
-    pub services: Vec<ServiceState>,
+    pub offerings: Vec<OfferingState>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -42,11 +42,11 @@ pub struct StoneState {
     pub pond_active: bool,
 }
 
-/// Service state summary
+/// Offering state summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceState {
+pub struct OfferingState {
     pub name: String,
-    pub state: String,       // "running", "stopped", etc.
+    pub status: String,      // "running", "stopped", "dormant", etc.
     pub health: String,      // "healthy", "unhealthy"
 }
 

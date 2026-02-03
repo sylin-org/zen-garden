@@ -1,7 +1,7 @@
 # Unified Offering Model
 
-**Status**: Implementation In Progress
-**Last Updated**: 2026-02-02
+**Status**: Part 7 (Runtime Instances) Complete, Parts 2-6 (Manifest Unification) Pending
+**Last Updated**: 2026-02-03
 
 This document consolidates research and implementation decisions for unifying `SwEntry` and `OfferingManifest` into a single offering model.
 
@@ -420,6 +420,251 @@ connection_template: |
 
 ---
 
+## Part 7: Unified Runtime Instances
+
+### Problem Statement
+
+The codebase has **three separate types** for runtime offering instances:
+
+1. **ServiceInfo** (`moss-registry.json`) - Managed container offerings
+2. **AdoptedOfferingInfo** (`moss-adopted.json`) - Adopted native services
+3. **BorrowedOfferingInfo** (`moss-borrowed.json`) - External borrowed services
+
+This creates:
+- Three separate AppState fields: `registry`, `adopted_offerings`, `borrowed_offerings`
+- Three separate persistence files
+- ~74 lines of duplicated code (conversions, parallel iterations)
+- Inconsistent capability handling
+
+### Solution: UnifiedOffering
+
+Replace all three types with a single `UnifiedOffering` struct:
+
+```rust
+pub struct UnifiedOffering {
+    // IDENTITY (common to all modes)
+    pub offering_id: String,           // GUIDv7 for all modes
+    pub name: String,                  // Instance name
+    pub offering: String,              // Template/manifest name
+    pub version: String,               // Always present ("unknown" if undetected)
+
+    // STATE (common to all modes)
+    pub status: OfferingStatus,        // Running/Stopped/Installing/etc
+    pub health: ServiceHealthStatus,   // Healthy/Degraded/Offline
+    pub sub_capabilities: Vec<SubCapability>,
+
+    // LOCATION (unified)
+    pub location: OfferingLocation,    // host, port, protocol, agnostic_port
+
+    // MODE-SPECIFIC (enum with associated data)
+    pub mode_data: OfferingModeData,
+
+    // TIMESTAMPS
+    pub registered_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// Mode-specific data as tagged enum
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum OfferingModeData {
+    Managed(ManagedData),   // resources, job_id, guidance
+    Adopted(AdoptedData),   // control_level, commands, health_check_url, detected_at
+    Borrowed(BorrowedData), // health_method, credentials_key, connection_template, announced_at
+}
+```
+
+### Mode-Specific Data Structures
+
+```rust
+/// Managed mode: container-based deployment tracked by Moss
+pub struct ManagedData {
+    pub resources: Option<ContainerResources>,  // CPU, memory usage
+    pub job_id: Option<String>,                  // Installation tracking
+    pub guidance: Option<OfferingGuidance>,      // Post-install docs
+}
+
+/// Adopted mode: native service detected and adopted by Moss
+pub struct AdoptedData {
+    pub control_level: AdoptedControlLevel,      // Full/Monitor/Announce
+    pub start_command: Option<String>,
+    pub stop_command: Option<String>,
+    pub restart_command: Option<String>,
+    pub health_check_url: Option<String>,
+    pub container_name: Option<String>,          // If adopted from container
+    pub detected_at: DateTime<Utc>,
+}
+
+/// Borrowed mode: external service announced by Moss
+pub struct BorrowedData {
+    pub health_method: Option<HealthMethod>,     // Http/Tcp/None
+    pub credentials_key: Option<String>,
+    pub connection_template: Option<String>,
+    pub announced_at: DateTime<Utc>,
+}
+```
+
+### UnifiedOffering Helper Methods
+
+```rust
+impl UnifiedOffering {
+    // === Mode Checks ===
+    pub fn mode(&self) -> OfferingMode;
+    pub fn is_managed(&self) -> bool;
+    pub fn is_adopted(&self) -> bool;
+    pub fn is_borrowed(&self) -> bool;
+
+    // === Mode Data Access ===
+    pub fn managed_data(&self) -> Option<&ManagedData>;
+    pub fn managed_data_mut(&mut self) -> Option<&mut ManagedData>;
+    pub fn adopted_data(&self) -> Option<&AdoptedData>;
+    pub fn adopted_data_mut(&mut self) -> Option<&mut AdoptedData>;
+    pub fn borrowed_data(&self) -> Option<&BorrowedData>;
+    pub fn borrowed_data_mut(&mut self) -> Option<&mut BorrowedData>;
+
+    // === Legacy Conversion ===
+    pub fn from_service_info(info: ServiceInfo) -> Self;
+    pub fn from_adopted_offering(info: AdoptedOfferingInfo) -> Self;
+    pub fn from_borrowed_offering(info: BorrowedOfferingInfo) -> Self;
+    pub fn to_service_info(&self) -> Option<ServiceInfo>;  // Only for managed
+
+    // === Timestamps ===
+    pub fn touch(&mut self);  // Updates updated_at to now
+}
+```
+
+### Unified Storage
+
+**Single file**: `moss-offerings.json`
+
+```json
+[
+  {
+    "offering_id": "018d3c8f-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+    "name": "ollama",
+    "offering": "ollama",
+    "version": "0.1.24",
+    "status": "running",
+    "health": "healthy",
+    "location": { "host": "localhost", "port": 11434, "protocol": "http" },
+    "mode_data": {
+      "mode": "adopted",
+      "control_level": "monitor",
+      "health_check_url": "http://localhost:11434/api/tags",
+      "detected_at": "2026-02-01T12:00:00Z"
+    },
+    "sub_capabilities": [{ "type": "model", "items": ["llama2", "mistral"] }],
+    "registered_at": "2026-02-01T12:00:00Z"
+  }
+]
+```
+
+### AppState Changes
+
+```rust
+pub struct AppState {
+    /// Unified offering registry (single collection for all modes)
+    pub offerings: Arc<RwLock<Vec<UnifiedOffering>>>,
+
+    // ... other fields unchanged
+}
+
+impl AppState {
+    // === Primary Accessors ===
+    pub async fn get_offerings(&self) -> Vec<UnifiedOffering>;
+    pub async fn get_managed_offerings(&self) -> Vec<UnifiedOffering>;
+    pub async fn get_adopted_offerings(&self) -> Vec<UnifiedOffering>;
+    pub async fn get_borrowed_offerings(&self) -> Vec<UnifiedOffering>;
+    pub async fn find_offering(&self, name: &str) -> Option<UnifiedOffering>;
+    pub async fn find_offering_by_id(&self, id: &str) -> Option<UnifiedOffering>;
+
+    // === Mutators (auto-persist + auto-chirp) ===
+    pub async fn upsert_offering(&self, offering: UnifiedOffering, auto_chirp: bool);
+    pub async fn remove_offering(&self, offering_id: &str, auto_chirp: bool);
+    pub async fn replace_offerings(&self, offerings: Vec<UnifiedOffering>, auto_chirp: bool);
+
+    // === Legacy Compatibility ===
+    pub async fn get_services(&self) -> Vec<ServiceInfo>;  // Managed only
+    pub async fn upsert_service(&self, service: ServiceInfo, auto_chirp: bool);
+    pub async fn replace_services(&self, services: Vec<ServiceInfo>, auto_chirp: bool);
+
+    // === Persistence ===
+    pub async fn persist_offerings(&self) -> Result<()>;
+    pub async fn persist_registry(&self) -> Result<()>;  // Alias for persist_offerings
+}
+```
+
+### Benefits
+
+- **Single source of truth** for all running offerings
+- **Uniform capability handling** across all modes
+- **Simplified APIs** - one collection to iterate
+- **Consistent persistence** - one file to manage
+- **74+ lines of duplicated code eliminated**
+
+### Migration Support
+
+The persistence layer includes automatic migration from legacy files:
+
+```rust
+// In persistence.rs
+pub async fn load_unified_offerings() -> Result<Vec<UnifiedOffering>> {
+    // 1. Try loading unified file first
+    if let Ok(offerings) = load_from_file("moss-offerings.json") {
+        return Ok(offerings);
+    }
+
+    // 2. Migrate from legacy files if unified doesn't exist
+    let mut offerings = Vec::new();
+
+    // Load and convert legacy managed services
+    if let Ok(services) = load_registry().await {
+        offerings.extend(services.into_iter().map(UnifiedOffering::from_service_info));
+    }
+
+    // Load and convert legacy adopted offerings
+    if let Ok(adopted) = load_adopted_offerings().await {
+        offerings.extend(adopted.into_iter().map(UnifiedOffering::from_adopted_offering));
+    }
+
+    // Load and convert legacy borrowed offerings
+    if let Ok(borrowed) = load_borrowed_offerings().await {
+        offerings.extend(borrowed.into_iter().map(UnifiedOffering::from_borrowed_offering));
+    }
+
+    // 3. Save unified format (legacy files preserved)
+    if !offerings.is_empty() {
+        save_unified_offerings(&offerings).await?;
+    }
+
+    Ok(offerings)
+}
+```
+
+**Legacy files are preserved** during migration for safety. They can be manually archived after verifying the unified file is correct.
+
+### Runtime Instance Status
+
+| Task | Status |
+|------|--------|
+| Add UnifiedOffering types | ✅ Done |
+| Add unified persistence | ✅ Done |
+| Update AppState | ✅ Done |
+| Update portrait.rs | ✅ Done |
+| Update offering_capabilities.rs | ✅ Done |
+| Update auto_adoption.rs | ✅ Done |
+| Update adoption.rs | ✅ Done |
+| Update services.rs | ✅ Done |
+| Update health_monitor.rs | ✅ Done |
+| Update coordinator.rs | ✅ Done |
+| Update job_executors.rs | ✅ Done |
+| Update nurturing_scheduler.rs | ✅ Done |
+| Update task_scheduler.rs | ✅ Done |
+| Update state_provider.rs | ✅ Done |
+| Update stone.rs | ✅ Done |
+| Remove legacy types | ⏳ Deferred (kept for API compat)
+
+---
+
 ## Naming Considerations
 
 The user feedback indicated preference for these names:
@@ -429,3 +674,13 @@ The user feedback indicated preference for these names:
 - **OfferingFitness**: Compatibility evaluation result
 
 Current `SwEntry` may be renamed to `OfferingManifest` in a future phase to align with domain language.
+
+### Field Naming Conventions
+
+In `UnifiedOffering`:
+- **`name`**: Instance identifier (e.g., `"my-mongodb"`, `"ollama@adopted"`)
+- **`offering`**: Template/manifest type (e.g., `"mongodb"`, `"ollama"`)
+
+For adopted services, the naming convention is `"{offering}@adopted"` to distinguish from managed instances.
+
+For borrowed services, `name` and `offering` are typically the same since there's no manifest template.

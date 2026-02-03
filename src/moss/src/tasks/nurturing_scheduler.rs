@@ -144,11 +144,11 @@ impl NurturingScheduler {
 
         // Look up offering to get offering_id
         let (offering_id, actual_name) = {
-            let registry = self.state.registry.read().await;
-            registry
+            let offerings = self.state.offerings.read().await;
+            offerings
                 .iter()
-                .find(|s| s.name == offering_name || s.offering_id == offering_name)
-                .map(|s| (s.offering_id.clone(), s.name.clone()))
+                .find(|o| o.name == offering_name || o.offering_id == offering_name)
+                .map(|o| (o.offering_id.clone(), o.name.clone()))
                 .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in registry", offering_name))?
         };
 
@@ -429,11 +429,11 @@ pub async fn trigger_nurturing(state: &AppState, offering_name: &str) -> Result<
 /// Used for batch nurturing or testing.
 pub async fn trigger_all_nurturing(state: &AppState) -> Vec<NurturingWorkflowResult> {
     let offerings: Vec<String> = {
-        let registry = state.registry.read().await;
-        registry
+        let offerings = state.offerings.read().await;
+        offerings
             .iter()
-            .filter(|s| s.status == garden_common::ServiceStatus::Running)
-            .map(|s| s.name.clone())
+            .filter(|o| o.status == garden_common::OfferingStatus::Running)
+            .map(|o| o.name.clone())
             .collect()
     };
 

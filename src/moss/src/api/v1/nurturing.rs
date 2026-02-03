@@ -89,10 +89,10 @@ pub async fn get_offering_slots(
 ) -> Result<Json<ApiResponse<Option<OfferingSlots>>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering by name to get the offering_id
     let offering_id = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == offering || s.offering_id == offering)
-            .map(|s| s.offering_id.clone())
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == offering || o.offering_id == offering)
+            .map(|o| o.offering_id.clone())
     };
 
     let slots = if let Some(id) = offering_id {
@@ -131,10 +131,10 @@ pub async fn create_snapshot(
 ) -> Result<Json<ApiResponse<NurturingResult>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering to get offering_id
     let (offering_id, offering_name) = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == offering)
-            .map(|s| (s.offering_id.clone(), s.name.clone()))
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == offering)
+            .map(|o| (o.offering_id.clone(), o.name.clone()))
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
@@ -193,10 +193,10 @@ pub async fn restore_snapshot(
 ) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering to get offering_id
     let offering_id = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == offering)
-            .map(|s| s.offering_id.clone())
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == offering)
+            .map(|o| o.offering_id.clone())
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
@@ -271,10 +271,10 @@ pub async fn delete_nurturing(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering to get offering_id
     let offering_id = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == offering || s.offering_id == offering)
-            .map(|s| s.offering_id.clone())
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == offering || o.offering_id == offering)
+            .map(|o| o.offering_id.clone())
     };
 
     let offering_id = offering_id.unwrap_or(offering.clone());
@@ -328,10 +328,10 @@ pub async fn replicate_to_seed_bank(
 ) -> Result<Json<ApiResponse<ReplicationResult>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering to get offering_id
     let offering_id = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == offering || s.offering_id == offering)
-            .map(|s| s.offering_id.clone())
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == offering || o.offering_id == offering)
+            .map(|o| o.offering_id.clone())
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
@@ -417,10 +417,10 @@ pub async fn restore_from_seed_bank(
 ) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering to get offering_id
     let (offering_id, offering_name) = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == offering || s.offering_id == offering)
-            .map(|s| (s.offering_id.clone(), s.name.clone()))
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == offering || o.offering_id == offering)
+            .map(|o| (o.offering_id.clone(), o.name.clone()))
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",

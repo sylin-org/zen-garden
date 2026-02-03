@@ -58,11 +58,8 @@ pub async fn get_stone_info_v1(
         })
     };
 
-    // Get services (reuse existing registry logic)
-    let services: Vec<ServiceInfo> = {
-        let registry = state.registry.read().await;
-        registry.clone()
-    };
+    // Get services (from unified offerings registry)
+    let services: Vec<ServiceInfo> = state.get_services().await;
 
     // Build endpoint
     let current_ip = state.network_monitor.get_ip().await;

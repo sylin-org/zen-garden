@@ -9,7 +9,7 @@ use crate::{
     start_lantern_registration,
     start_discovery_listener, start_hardware_detection,
     start_registry_loader, start_catalog_builder,
-    start_health_monitor, start_auto_adoption,
+    start_health_monitor, start_auto_adoption, start_auto_adoption_with_config,
     install_batch_task,
     // Network monitoring
     NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
@@ -288,6 +288,29 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     }
 
+    // Phase 10.5: Load unified offerings from disk (includes managed, adopted, borrowed)
+    let unified_offerings = match infra::load_unified_offerings().await {
+        Ok(offerings) => {
+            let managed = offerings.iter().filter(|o| o.is_managed()).count();
+            let adopted = offerings.iter().filter(|o| o.is_adopted()).count();
+            let borrowed = offerings.iter().filter(|o| o.is_borrowed()).count();
+            if !offerings.is_empty() {
+                tracing::info!(
+                    total = offerings.len(),
+                    managed = managed,
+                    adopted = adopted,
+                    borrowed = borrowed,
+                    "Restored unified offerings from disk"
+                );
+            }
+            offerings
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to load unified offerings, starting fresh");
+            Vec::new()
+        }
+    };
+
     // Phase 11: Build AppState
     // Note: manifest_registry and infrastructure_handlers already created at Phase 1
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
@@ -308,9 +331,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let state = AppState {
         stone_id: stone_id.clone(),
         stone_name: stone_name.clone(),
-        registry: Arc::new(RwLock::new(Vec::new())),
-        adopted_offerings: Arc::new(RwLock::new(Vec::new())),
-        borrowed_offerings: Arc::new(RwLock::new(Vec::new())),
+        offerings: Arc::new(RwLock::new(unified_offerings)),
         manifest_registry: manifest_registry.clone(),
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),
@@ -653,6 +674,9 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     start_health_monitor(state.clone());
     if let Some(cfg) = config.file_config.clone() {
         start_auto_adoption(state.clone(), cfg, &console_printer);
+    } else {
+        // No config file - use default adoption config (profile-aware)
+        start_auto_adoption_with_config(state.clone(), infra::AdoptionConfig::default(), &console_printer);
     }
 
     // Phase 17.5: Storage monitoring (Linux only)

@@ -7,6 +7,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
 use garden_common::ui::rendering::{self as ui, TerminalInfo};
+use garden_common::SubCapability;
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -28,6 +29,8 @@ struct FoundService {
     offering: String,
     category: String,
     status: String,
+    #[serde(default)]
+    sub_capabilities: Vec<SubCapability>,
 }
 
 // Use shared ApiResponse from garden-common
@@ -81,10 +84,21 @@ impl Command for ListCommand {
 
 /// Render services in a formatted table
 fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
-    let mut table = ui::TableBuilder::new()
-        .add_column(ui::constants::MAX_SERVICE_NAME_LEN, ui::Align::Left)
-        .add_column(20, ui::Align::Left)
-        .add_column(16, ui::Align::Left);
+    // Check if any service has sub-capabilities to show the column
+    let has_capabilities = services.iter().any(|s| !s.sub_capabilities.is_empty());
+
+    let mut table = if has_capabilities {
+        ui::TableBuilder::new()
+            .add_column(ui::constants::MAX_SERVICE_NAME_LEN, ui::Align::Left)
+            .add_column(20, ui::Align::Left)
+            .add_column(16, ui::Align::Left)
+            .add_column(14, ui::Align::Left)
+    } else {
+        ui::TableBuilder::new()
+            .add_column(ui::constants::MAX_SERVICE_NAME_LEN, ui::Align::Left)
+            .add_column(20, ui::Align::Left)
+            .add_column(16, ui::Align::Left)
+    };
 
     let mut running_count = 0;
     let mut stopped_count = 0;
@@ -98,15 +112,28 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
         }
 
         let status_display = ui::status_indicator(&status_lower, term.supports_color);
-        table.add_row(vec![
-            ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
-            status_display,
-            if svc.offering.is_empty() {
-                garden_common::VALUE_UNKNOWN.to_string()
-            } else {
-                svc.offering.clone()
-            },
-        ]);
+        let offering_display = if svc.offering.is_empty() {
+            garden_common::VALUE_UNKNOWN.to_string()
+        } else {
+            svc.offering.clone()
+        };
+
+        if has_capabilities {
+            // Show capability summary (e.g., "12 models")
+            let cap_summary = format_capability_summary(&svc.sub_capabilities);
+            table.add_row(vec![
+                ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
+                status_display,
+                offering_display,
+                cap_summary,
+            ]);
+        } else {
+            table.add_row(vec![
+                ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
+                status_display,
+                offering_display,
+            ]);
+        }
     }
 
     println!("{}", table.render());
@@ -118,4 +145,44 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
         running_count,
         stopped_count
     );
+}
+
+/// Format capability summary (e.g., "12 models", "3 ext.")
+fn format_capability_summary(caps: &[SubCapability]) -> String {
+    if caps.is_empty() {
+        return String::new();
+    }
+
+    // Sum all items across capability types
+    let total: usize = caps.iter().map(|c| c.items.len()).sum();
+    if total == 0 {
+        return String::new();
+    }
+
+    // Use first capability type for label
+    if let Some(first) = caps.first() {
+        let label = if total == 1 {
+            // Truncate singular type for display
+            truncate_cap_type(&first.cap_type, false)
+        } else {
+            // Use plural form
+            truncate_cap_type(&first.cap_type, true)
+        };
+        format!("{} {}", total, label)
+    } else {
+        format!("{}", total)
+    }
+}
+
+/// Truncate capability type for compact display
+fn truncate_cap_type(cap_type: &str, plural: bool) -> String {
+    let base = match cap_type.to_lowercase().as_str() {
+        "model" => if plural { "models" } else { "model" },
+        "extension" => if plural { "ext." } else { "ext." },
+        "module" => if plural { "mods." } else { "mod." },
+        "plugin" => if plural { "plug." } else { "plug." },
+        "collection" => if plural { "coll." } else { "coll." },
+        _ => if plural { cap_type } else { cap_type },
+    };
+    base.to_string()
 }

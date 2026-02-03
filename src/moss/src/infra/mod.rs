@@ -46,7 +46,7 @@ pub mod update_transaction;
 pub use companions::CompanionRegistry;
 pub use api_helpers::{error_response, error_codes};
 pub use auth::NoAuth;
-pub use config::{MossConfig, NetworkConfig, StaticIpPoolConfig};
+pub use config::{MossConfig, NetworkConfig, StaticIpPoolConfig, AdoptionConfig};
 pub use container::ContainerRuntime;
 pub use garden_common::infra::network::get_local_ip;
 pub use process::{kill_existing_moss_processes_graceful, check_moss_processes_exist, kill_existing_moss_processes};
@@ -62,7 +62,12 @@ pub use manifests::{
     HwManifests, HwEntry,
 };
 pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
-pub use persistence::{load_registry, save_registry, save_registry_vec, load_offerings_cache, save_offerings_cache, load_or_generate_stone_id};
+pub use persistence::{
+    load_registry, save_registry, save_registry_vec,
+    load_offerings_cache, save_offerings_cache, load_or_generate_stone_id,
+    load_adopted_offerings, save_adopted_offerings, load_borrowed_offerings, save_borrowed_offerings,
+    load_unified_offerings, save_unified_offerings,
+};
 pub use garden_common::infra::platform::{is_running_from_removable_media, shutdown_signal};
 pub use secrets::SecretsManager;
 pub use garden_common::infra::archive::{Archiver, ArchiveInfo, create_archive, extract_archive, calculate_checksum, verify_checksum};

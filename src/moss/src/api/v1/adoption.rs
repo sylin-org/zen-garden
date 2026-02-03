@@ -16,8 +16,10 @@ use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::{error_response, AppState};
 use garden_common::{
     api_utils::ApiErrorResponse,
-    AdoptedOfferingInfo, BorrowedOfferingInfo,
+    AdoptedControlLevel, AdoptedData, BorrowedData, OfferingLocation,
+    OfferingModeData, OfferingStatus, ServiceHealthStatus, UnifiedOffering,
 };
+use garden_common::utils::ids::generate_guidv7;
 use serde::{Deserialize, Serialize};
 
 /// GET /api/v1/offerings/adoptable - List offerings available for adoption
@@ -36,8 +38,8 @@ pub async fn list_adoptable_v1(
     for offering in adoptable_manifests {
         // Check if already adopted
         let already_adopted = {
-            let adopted = state.adopted_offerings.read().await;
-            adopted.iter().any(|a| a.offering == offering.name)
+            let offerings = state.offerings.read().await;
+            offerings.iter().any(|o| o.offering == offering.name && o.is_adopted())
         };
 
         if already_adopted {
@@ -80,11 +82,11 @@ pub async fn adopt_offering_v1(
     Path(offering): Path<String>,
     headers: HeaderMap,
     Json(req): Json<AdoptOfferingRequest>,
-) -> Result<Json<ApiResponse<AdoptedOfferingInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<UnifiedOffering>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Check if already adopted
     {
-        let adopted = state.adopted_offerings.read().await;
-        if adopted.iter().any(|a| a.offering == offering) {
+        let offerings = state.offerings.read().await;
+        if offerings.iter().any(|o| o.offering == offering && o.is_adopted()) {
             return Err(error_response(
                 StatusCode::CONFLICT,
                 "ALREADY_ADOPTED",
@@ -133,18 +135,19 @@ pub async fn adopt_offering_v1(
     }
 
     // Extract location from offering or detection result
-    // For now, use placeholder - real implementation would extract from detection
-    let location = garden_common::ServiceLocation {
-        host: req.location.unwrap_or_else(|| "localhost".to_string()),
-        port: req.port.unwrap_or(0),
+    let location = OfferingLocation {
+        host: req.location.clone().unwrap_or_else(|| "localhost".to_string()),
+        port: req.port.unwrap_or_else(|| offering_def.default_host_port()),
         protocol: offering_def.category.clone(),
+        agnostic_port: None,
     };
 
     let control_level = req.control_level
+        .as_ref()
         .and_then(|s| match s.as_str() {
-            "full" => Some(garden_common::AdoptedControlLevel::Full),
-            "monitor" => Some(garden_common::AdoptedControlLevel::Monitor),
-            "announce" => Some(garden_common::AdoptedControlLevel::Announce),
+            "full" => Some(AdoptedControlLevel::Full),
+            "monitor" => Some(AdoptedControlLevel::Monitor),
+            "announce" => Some(AdoptedControlLevel::Announce),
             _ => None,
         })
         .unwrap_or_default();
@@ -152,36 +155,39 @@ pub async fn adopt_offering_v1(
     // Get control config from adopted mode
     let control = offering_def.get_control_config();
 
-    let adopted_info = AdoptedOfferingInfo {
+    let unified = UnifiedOffering {
+        offering_id: generate_guidv7(),
         name: format!("{}@adopted", offering),
         offering: offering.clone(),
-        mode: garden_common::OfferingMode::Adopted,
+        version: detection_result.version.unwrap_or_else(|| "unknown".to_string()),
+        status: OfferingStatus::Running,
+        health: ServiceHealthStatus::Healthy,
+        sub_capabilities: Vec::new(), // Populated by capabilities discovery task
         location,
-        control_level,
-        health: garden_common::ServiceHealthStatus::Healthy,
-        detected_at: chrono::Utc::now().to_rfc3339(),
-        version: detection_result.version,
-        start_command: control.and_then(|c| c.start_command.clone()),
-        stop_command: control.and_then(|c| c.stop_command.clone()),
-        restart_command: control.and_then(|c| c.restart_command.clone()),
-        health_check_url: control.and_then(|c| c.health_check_url.clone()),
-        container_name: None,
+        mode_data: OfferingModeData::Adopted(AdoptedData {
+            control_level,
+            start_command: control.as_ref().and_then(|c| c.start_command.clone()),
+            stop_command: control.as_ref().and_then(|c| c.stop_command.clone()),
+            restart_command: control.as_ref().and_then(|c| c.restart_command.clone()),
+            health_check_url: control.as_ref().and_then(|c| c.health_check_url.clone()),
+            container_name: None,
+            detected_at: chrono::Utc::now(),
+        }),
+        registered_at: chrono::Utc::now(),
+        updated_at: None,
     };
 
-    // Add to registry
-    {
-        let mut adopted = state.adopted_offerings.write().await;
-        adopted.push(adopted_info.clone());
+    // Add to registry and persist
+    state.upsert_offering(unified.clone(), true).await;
+    if let Err(e) = state.persist_offerings().await {
+        tracing::error!(error = ?e, "Failed to persist offerings after adoption");
     }
-
-    // Persist adopted offerings registry
-    // TODO: Add persistence for adopted offerings
 
     let ctx = SuggestionContext::from_headers(&headers, "adopt_offering");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
-        data: adopted_info,
+        data: unified,
         suggestions,
     }))
 }
@@ -190,10 +196,8 @@ pub async fn adopt_offering_v1(
 pub async fn list_adopted_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<AdoptedOfferingInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let adopted = state.adopted_offerings.read().await;
-    let offerings = adopted.clone();
-    drop(adopted);
+) -> Result<Json<ApiResponse<Vec<UnifiedOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offerings = state.get_adopted_offerings().await;
 
     let ctx = SuggestionContext::from_headers(&headers, "list_adopted");
     let suggestions = generate_suggestions(&ctx);
@@ -208,10 +212,8 @@ pub async fn list_adopted_v1(
 pub async fn list_borrowed_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<BorrowedOfferingInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let borrowed = state.borrowed_offerings.read().await;
-    let offerings = borrowed.clone();
-    drop(borrowed);
+) -> Result<Json<ApiResponse<Vec<UnifiedOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offerings = state.get_borrowed_offerings().await;
 
     let ctx = SuggestionContext::from_headers(&headers, "list_borrowed");
     let suggestions = generate_suggestions(&ctx);
@@ -230,23 +232,28 @@ pub async fn unadopt_offering_v1(
     Path(offering): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let mut adopted = state.adopted_offerings.write().await;
+    // Find the offering to remove
+    let found = {
+        let offerings = state.offerings.read().await;
+        offerings.iter().find(|o| o.offering == offering && o.is_adopted()).cloned()
+    };
 
-    let initial_len = adopted.len();
-    adopted.retain(|a| a.offering != offering);
-
-    if adopted.len() == initial_len {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            "NOT_ADOPTED",
-            format!("Offering '{}' is not currently adopted", offering),
-            None,
-        ));
+    match found {
+        Some(to_remove) => {
+            state.remove_offering(&to_remove.offering_id, true).await;
+            if let Err(e) = state.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist offerings after unadopt");
+            }
+        }
+        None => {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                "NOT_ADOPTED",
+                format!("Offering '{}' is not currently adopted", offering),
+                None,
+            ));
+        }
     }
-
-    drop(adopted);
-
-    // TODO: Persist adopted offerings registry
 
     let ctx = SuggestionContext::from_headers(&headers, "unadopt_offering");
     let suggestions = generate_suggestions(&ctx);
@@ -306,11 +313,11 @@ pub async fn borrow_service_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<BorrowOfferingRequest>,
-) -> Result<Json<ApiResponse<BorrowedOfferingInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<UnifiedOffering>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Check if already borrowed with this name
     {
-        let borrowed = state.borrowed_offerings.read().await;
-        if borrowed.iter().any(|b| b.name == req.name) {
+        let offerings = state.offerings.read().await;
+        if offerings.iter().any(|o| o.name == req.name && o.is_borrowed()) {
             return Err(error_response(
                 StatusCode::CONFLICT,
                 "ALREADY_BORROWED",
@@ -334,36 +341,43 @@ pub async fn borrow_service_v1(
     let port = url_parsed.port().unwrap_or(0);
     let protocol = url_parsed.scheme().to_string();
 
-    let location = garden_common::ServiceLocation {
+    let location = OfferingLocation {
         host,
         port,
         protocol,
+        agnostic_port: None,
     };
 
-    let borrowed_info = BorrowedOfferingInfo {
+    let unified = UnifiedOffering {
+        offering_id: generate_guidv7(),
         name: req.name.clone(),
         offering: req.name.clone(), // For borrowed, name and offering are the same
-        mode: garden_common::OfferingMode::Borrowed,
+        version: "unknown".to_string(),
+        status: OfferingStatus::Running,
+        health: ServiceHealthStatus::Offline, // Unknown until health check runs
+        sub_capabilities: Vec::new(),
         location,
-        announced_at: chrono::Utc::now().to_rfc3339(),
-        health_method: None,
-        credentials_key: None,
-        connection_template: Some(req.url.clone()),
+        mode_data: OfferingModeData::Borrowed(BorrowedData {
+            health_method: None,
+            credentials_key: None,
+            connection_template: Some(req.url.clone()),
+            announced_at: chrono::Utc::now(),
+        }),
+        registered_at: chrono::Utc::now(),
+        updated_at: None,
     };
 
-    // Add to registry
-    {
-        let mut borrowed = state.borrowed_offerings.write().await;
-        borrowed.push(borrowed_info.clone());
+    // Add to registry and persist
+    state.upsert_offering(unified.clone(), true).await;
+    if let Err(e) = state.persist_offerings().await {
+        tracing::error!(error = ?e, "Failed to persist offerings after borrow");
     }
-
-    // TODO: Persist borrowed offerings registry
 
     let ctx = SuggestionContext::from_headers(&headers, "borrow_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
-        data: borrowed_info,
+        data: unified,
         suggestions,
     }))
 }
@@ -376,23 +390,28 @@ pub async fn unborrow_service_v1(
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let mut borrowed = state.borrowed_offerings.write().await;
+    // Find the offering to remove
+    let found = {
+        let offerings = state.offerings.read().await;
+        offerings.iter().find(|o| o.name == name && o.is_borrowed()).cloned()
+    };
 
-    let initial_len = borrowed.len();
-    borrowed.retain(|b| b.name != name);
-
-    if borrowed.len() == initial_len {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            "NOT_BORROWED",
-            format!("Service '{}' is not currently registered as borrowed", name),
-            None,
-        ));
+    match found {
+        Some(to_remove) => {
+            state.remove_offering(&to_remove.offering_id, true).await;
+            if let Err(e) = state.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist offerings after unborrow");
+            }
+        }
+        None => {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                "NOT_BORROWED",
+                format!("Service '{}' is not currently registered as borrowed", name),
+                None,
+            ));
+        }
     }
-
-    drop(borrowed);
-
-    // TODO: Persist borrowed offerings registry
 
     let ctx = SuggestionContext::from_headers(&headers, "unborrow_service");
     let suggestions = generate_suggestions(&ctx);

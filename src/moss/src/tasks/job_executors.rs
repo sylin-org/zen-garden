@@ -21,7 +21,10 @@ use crate::infra::network::{load_network_state, apply_static_from_pool};
 use garden_common::console;
 use garden_common::templates::{TemplateContext, render_template};
 use garden_common::utils::ids::generate_guidv7;
-use garden_common::{OfferingGuidance, Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus};
+use garden_common::{
+    ManagedData, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
+    ServiceHealthStatus, UnifiedOffering,
+};
 
 /// Substitute template variables in guidance markdown
 ///
@@ -199,63 +202,68 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         "Backfill: manifest registry state"
     );
 
-    // First pass: collect services that need guidance
-    // For backfilling, we use the manifest's ports since existing services may only have a single port stored
-    let services_needing_guidance: Vec<(String, String, std::collections::HashMap<String, (u16, u16)>)> = {
-        let registry = state.registry.read().await;
+    // First pass: collect offerings that need guidance
+    // For backfilling, we use the manifest's ports since existing offerings may only have a single port stored
+    let offerings_needing_guidance: Vec<(String, String, String, std::collections::HashMap<String, (u16, u16)>)> = {
+        let offerings = state.offerings.read().await;
         tracing::info!(
-            service_count = registry.len(),
-            "Backfill: checking services in registry"
+            offering_count = offerings.len(),
+            "Backfill: checking offerings in registry"
         );
 
-        registry
+        offerings
             .iter()
-            .filter(|svc| {
-                let has_guidance = svc.guidance.is_some();
-                let manifest_has_guidance = state.manifest_registry.sw.get(&svc.offering)
+            .filter(|o| o.is_managed())
+            .filter(|o| {
+                let has_guidance = o.managed_data()
+                    .map(|m| m.guidance.is_some())
+                    .unwrap_or(false);
+                let manifest_has_guidance = state.manifest_registry.sw.get(&o.offering)
                     .map(|m| m.guidance.is_some())
                     .unwrap_or(false);
 
                 tracing::info!(
-                    service = %svc.name,
-                    offering = %svc.offering,
+                    offering = %o.name,
+                    offering_type = %o.offering,
                     has_guidance = has_guidance,
                     manifest_has_guidance = manifest_has_guidance,
-                    "Backfill: checking service"
+                    "Backfill: checking offering"
                 );
 
-                // Only consider services without guidance where manifest has guidance
+                // Only consider offerings without guidance where manifest has guidance
                 !has_guidance && manifest_has_guidance
             })
-            .filter_map(|svc| {
+            .filter_map(|o| {
                 // Get ports from the manifest template for proper template substitution
-                let ports = state.manifest_registry.sw.get(&svc.offering)
+                let ports = state.manifest_registry.sw.get(&o.offering)
                     .and_then(|m| m.parse_template().ok())
                     .map(|t| t.ports)?;
-                Some((svc.name.clone(), svc.offering.clone(), ports))
+                Some((o.offering_id.clone(), o.name.clone(), o.offering.clone(), ports))
             })
             .collect()
     };
 
-    if services_needing_guidance.is_empty() {
-        tracing::info!("Backfill: no services need guidance");
+    if offerings_needing_guidance.is_empty() {
+        tracing::info!("Backfill: no offerings need guidance");
         return 0;
     }
 
     tracing::info!(
-        count = services_needing_guidance.len(),
-        "Backfilling missing guidance for services"
+        count = offerings_needing_guidance.len(),
+        "Backfilling missing guidance for offerings"
     );
 
-    // Second pass: update services with generated guidance
+    // Second pass: update offerings with generated guidance
     {
-        let mut registry = state.registry.write().await;
-        for (name, offering, ports) in services_needing_guidance {
-            if let Some(guidance) = build_guidance(state, &name, &offering, &ports, static_ip) {
-                if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
-                    svc.guidance = Some(guidance);
-                    updated += 1;
-                    tracing::debug!(service = %name, "Backfilled guidance");
+        let mut offerings = state.offerings.write().await;
+        for (offering_id, name, offering_type, ports) in offerings_needing_guidance {
+            if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip) {
+                if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                    if let Some(ref mut managed) = o.managed_data_mut() {
+                        managed.guidance = Some(guidance);
+                        updated += 1;
+                        tracing::debug!(offering = %name, "Backfilled guidance");
+                    }
                 }
             }
         }
@@ -263,10 +271,10 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 
     // Persist if we made changes
     if updated > 0 {
-        if let Err(e) = state.persist_registry().await {
-            tracing::error!(error = ?e, "Failed to persist registry after guidance backfill");
+        if let Err(e) = state.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist offerings after guidance backfill");
         } else {
-            tracing::info!(count = updated, "Guidance backfill complete, registry persisted");
+            tracing::info!(count = updated, "Guidance backfill complete, offerings persisted");
         }
     }
 
@@ -559,46 +567,51 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
 
     emit_job_progress(state, "info", format!("Creating container for {}", offering), job_id, offering);
 
-    // Update existing registry entry (created with Installing status before job started)
+    // Update existing offering entry (created with Installing status before job started)
     // Change status from Installing to Running and clear job_id
     let offering_id = {
-        let mut registry = state.registry.write().await;
-        if let Some(existing) = registry.iter_mut().find(|svc| svc.name == offering) {
-            existing.status = ServiceStatus::Running;
+        let mut offerings = state.offerings.write().await;
+        if let Some(existing) = offerings.iter_mut().find(|o| o.name == offering) {
+            existing.status = OfferingStatus::Running;
             existing.health = ServiceHealthStatus::Healthy;
-            existing.job_id = None;
             existing.version = image_version.clone();
-            existing.ports = Ports {
-                native: native_port,
-                agnostic: None,
-            };
-            existing.guidance = guidance.clone();
+            existing.location.port = native_port;
+            if let Some(ref mut managed) = existing.managed_data_mut() {
+                managed.job_id = None;
+                managed.guidance = guidance.clone();
+            }
             existing.offering_id.clone()
         } else {
             // Fallback: entry was somehow removed, recreate it
             let new_id = generate_guidv7();
-            let info = ServiceInfo {
+            let unified = UnifiedOffering {
                 offering_id: new_id.clone(),
                 name: offering.to_string(),
                 offering: offering.to_string(),
                 version: image_version.clone(),
-                status: ServiceStatus::Running,
+                status: OfferingStatus::Running,
                 health: ServiceHealthStatus::Healthy,
-                ports: Ports {
-                    native: native_port,
-                    agnostic: None,
-                },
-                resources: None,
-                job_id: None,
                 sub_capabilities: Vec::new(),
-                guidance,
+                location: OfferingLocation {
+                    host: "localhost".to_string(),
+                    port: native_port,
+                    protocol: "http".to_string(),
+                    agnostic_port: None,
+                },
+                mode_data: OfferingModeData::Managed(ManagedData {
+                    resources: None,
+                    job_id: None,
+                    guidance,
+                }),
+                registered_at: chrono::Utc::now(),
+                updated_at: None,
             };
-            registry.push(info);
+            offerings.push(unified);
             new_id
         }
     };
 
-    let _ = state.persist_registry().await;
+    let _ = state.persist_offerings().await;
 
     // Sync services to self_entry and broadcast chirp so topology reflects the change immediately
     state.sync_self_services(true).await;
@@ -769,35 +782,41 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             continue;
         }
 
-        // Add to registry
+        // Add to offerings registry
         let offering_id = generate_guidv7();
-        let info = ServiceInfo {
+        let unified = UnifiedOffering {
             offering_id: offering_id.clone(),
             name: offering.clone(),
             offering: offering.clone(),
             version: image_version,
-            status: ServiceStatus::Running,
+            status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,
-            ports: Ports {
-                native: native_port,
-                agnostic: None,
-            },
-            resources: None,
-            job_id: None,
             sub_capabilities: Vec::new(),
-            guidance,
+            location: OfferingLocation {
+                host: "localhost".to_string(),
+                port: native_port,
+                protocol: "http".to_string(),
+                agnostic_port: None,
+            },
+            mode_data: OfferingModeData::Managed(ManagedData {
+                resources: None,
+                job_id: None,
+                guidance,
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: None,
         };
 
         {
-            let mut registry = state.registry.write().await;
-            if let Some(existing) = registry.iter_mut().find(|svc| svc.name == offering) {
-                *existing = info;
+            let mut offerings = state.offerings.write().await;
+            if let Some(existing) = offerings.iter_mut().find(|o| o.name == offering) {
+                *existing = unified;
             } else {
-                registry.push(info);
+                offerings.push(unified);
             }
         }
 
-        let _ = state.persist_registry().await;
+        let _ = state.persist_offerings().await;
 
         // Sync services to self_entry and broadcast chirp so topology reflects the change immediately
         state.sync_self_services(true).await;
@@ -853,19 +872,19 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
     tracing::info!(job_id, "Batch installation completed");
 }
 
-/// Remove an Installing entry from the registry on failure
+/// Remove an Installing entry from the offerings registry on failure
 ///
 /// Called when a service installation fails to clean up the placeholder entry
 /// that was created before the installation job started.
 async fn remove_installing_entry(state: &AppState, offering: &str) {
-    let mut registry = state.registry.write().await;
-    if let Some(pos) = registry.iter().position(|svc| svc.name == offering && svc.status == ServiceStatus::Installing) {
-        registry.remove(pos);
-        tracing::debug!(offering, "Removed Installing entry from registry after failure");
+    let mut offerings = state.offerings.write().await;
+    if let Some(pos) = offerings.iter().position(|o| o.name == offering && o.status == OfferingStatus::Installing) {
+        offerings.remove(pos);
+        tracing::debug!(offering, "Removed Installing entry from offerings after failure");
     }
-    drop(registry);
-    let _ = state.persist_registry().await;
-    
+    drop(offerings);
+    let _ = state.persist_offerings().await;
+
     // Sync services to self_entry to reflect the removal
     state.sync_self_services(true).await;
 }

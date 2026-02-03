@@ -97,6 +97,9 @@ pub struct PortraitOffering {
     pub port: u16,
     pub status: String,
     pub health: String,
+    /// Formatted capabilities string (e.g., "llama2, mistral +10")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<String>,
 }
 
 /// Companion (adapter) entry
@@ -172,6 +175,36 @@ fn derive_stone_color(stone_id: &str) -> String {
     let hash = hasher.finish();
     let hue = (hash % 360) as u16;
     format!("hsl({}, 55%, 50%)", hue)
+}
+
+/// Format sub-capabilities into a compact display string.
+///
+/// Shows up to 2 capability names, with overflow count.
+/// Examples:
+///   - ["llama2"] -> "llama2"
+///   - ["llama2", "mistral"] -> "llama2, mistral"
+///   - ["llama2", "mistral", "phi3", ...] -> "llama2, mistral +10"
+fn format_capabilities(sub_capabilities: &[garden_common::SubCapability]) -> Option<String> {
+    // Collect all items across all capability types
+    let all_items: Vec<&str> = sub_capabilities
+        .iter()
+        .flat_map(|cap| cap.items.iter().map(|s| s.as_str()))
+        .collect();
+
+    if all_items.is_empty() {
+        return None;
+    }
+
+    const MAX_VISIBLE: usize = 2;
+    let total = all_items.len();
+
+    if total <= MAX_VISIBLE {
+        Some(all_items.join(", "))
+    } else {
+        let visible: Vec<&str> = all_items.into_iter().take(MAX_VISIBLE).collect();
+        let overflow = total - MAX_VISIBLE;
+        Some(format!("{} +{}", visible.join(", "), overflow))
+    }
 }
 
 /// GET /
@@ -308,53 +341,35 @@ pub async fn get_portrait_data(
 
     // === Offerings (managed containers + adopted native services) ===
     let offerings = {
-        let registry = state.registry.read().await;
-        let mut offerings: Vec<PortraitOffering> = registry
+        let offerings_guard = state.offerings.read().await;
+        offerings_guard
             .iter()
-            .map(|svc| {
-                let status_str = match svc.status {
-                    garden_common::ServiceStatus::Running => "running",
-                    garden_common::ServiceStatus::Stopped => "stopped",
-                    garden_common::ServiceStatus::Installing => "installing",
-                    garden_common::ServiceStatus::Maintenance => "maintenance",
-                    garden_common::ServiceStatus::Degraded => "degraded",
-                    garden_common::ServiceStatus::Unknown => "unknown",
+            .map(|o| {
+                let status_str = match o.status {
+                    garden_common::OfferingStatus::Running => "running",
+                    garden_common::OfferingStatus::Stopped => "stopped",
+                    garden_common::OfferingStatus::Installing => "installing",
+                    garden_common::OfferingStatus::Maintenance => "maintenance",
+                    garden_common::OfferingStatus::Degraded => "degraded",
+                    garden_common::OfferingStatus::Unknown => "unknown",
                 };
-                let health_str = match svc.health {
+                let health_str = match o.health {
                     garden_common::ServiceHealthStatus::Healthy => "healthy",
                     garden_common::ServiceHealthStatus::Degraded => "degraded",
                     garden_common::ServiceHealthStatus::Offline => "offline",
                 };
 
                 PortraitOffering {
-                    name: svc.name.clone(),
-                    container: Some(svc.offering.clone()),
-                    port: svc.ports.native,
+                    name: o.name.clone(),
+                    // Managed offerings have containers, adopted/borrowed don't
+                    container: if o.is_managed() { Some(o.offering.clone()) } else { None },
+                    port: o.location.port,
                     status: status_str.to_string(),
                     health: health_str.to_string(),
+                    capabilities: format_capabilities(&o.sub_capabilities),
                 }
             })
-            .collect();
-
-        // Include adopted offerings (native services like Ollama)
-        let adopted = state.adopted_offerings.read().await;
-        for adopted_info in adopted.iter() {
-            let health_str = match adopted_info.health {
-                garden_common::ServiceHealthStatus::Healthy => "healthy",
-                garden_common::ServiceHealthStatus::Degraded => "degraded",
-                garden_common::ServiceHealthStatus::Offline => "offline",
-            };
-
-            offerings.push(PortraitOffering {
-                name: adopted_info.offering.clone(),
-                container: None, // Adopted offerings don't have containers
-                port: adopted_info.location.port,
-                status: "running".to_string(), // Adopted offerings that passed detection are running
-                health: health_str.to_string(),
-            });
-        }
-
-        offerings
+            .collect()
     };
 
     // === Seed Banks ===
@@ -449,15 +464,15 @@ pub async fn get_portrait_guidance(
     use axum::response::Response;
     use axum::body::Body;
 
-    // Collect all guidance from installed services
+    // Collect all guidance from installed offerings (managed only)
     let guidance_sections: Vec<(String, String)> = {
-        let registry = state.registry.read().await;
-        registry
+        let offerings = state.offerings.read().await;
+        offerings
             .iter()
-            .filter_map(|svc| {
-                svc.guidance
-                    .as_ref()
-                    .map(|g| (svc.name.clone(), g.content.clone()))
+            .filter_map(|o| {
+                o.managed_data()
+                    .and_then(|m| m.guidance.as_ref())
+                    .map(|g| (o.name.clone(), g.content.clone()))
             })
             .collect()
     };

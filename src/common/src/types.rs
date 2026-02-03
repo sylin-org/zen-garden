@@ -741,6 +741,31 @@ impl TopologyServiceEntry {
             .map(|svc| Self::from_service_info(svc, None))
             .collect()
     }
+
+    /// Create from UnifiedOffering
+    pub fn from_unified_offering(offering: &UnifiedOffering) -> Self {
+        Self {
+            offering_id: offering.offering_id.clone(),
+            name: offering.name.clone(),
+            offering: offering.offering.clone(),
+            category: offering.offering.clone(), // Use offering as category
+            status: match offering.status {
+                OfferingStatus::Running => SERVICE_RUNNING,
+                OfferingStatus::Stopped => SERVICE_STOPPED,
+                OfferingStatus::Installing => SERVICE_INSTALLING,
+                OfferingStatus::Maintenance => SERVICE_MAINTENANCE,
+                OfferingStatus::Degraded => SERVICE_DEGRADED,
+                OfferingStatus::Unknown => SERVICE_UNKNOWN,
+            }.to_string(),
+        }
+    }
+
+    /// Batch convert UnifiedOffering vec to TopologyServiceEntry vec
+    pub fn from_unified_offerings(offerings: &[UnifiedOffering]) -> Vec<Self> {
+        offerings.iter()
+            .map(Self::from_unified_offering)
+            .collect()
+    }
 }
 
 /// Stone connectivity status
@@ -1146,6 +1171,10 @@ pub struct AdoptedOfferingInfo {
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub container_name: Option<String>,
+
+    /// Sub-capabilities discovered at runtime (e.g., models for Ollama)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub sub_capabilities: Vec<SubCapability>,
 }
 
 /// Borrowed offering information (external service)
@@ -1177,6 +1206,505 @@ pub enum HealthMethod {
     Tcp,
     /// No health check (always assume healthy)
     None,
+}
+
+// ============================================================================
+// Unified Offering Types (Runtime Instances)
+// ============================================================================
+
+/// Unified offering instance representing any running/adopted/borrowed service
+///
+/// Replaces the separate ServiceInfo, AdoptedOfferingInfo, and BorrowedOfferingInfo types
+/// with a single structure that uses an enum for mode-specific data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedOffering {
+    // ═══════════════════════════════════════════════════════════════
+    // IDENTITY (common to all modes)
+    // ═══════════════════════════════════════════════════════════════
+    /// Unique identifier (GUIDv7) - generated for all modes
+    pub offering_id: String,
+
+    /// Instance name (e.g., "my-mongodb", "ollama@adopted")
+    pub name: String,
+
+    /// Offering type/template name (e.g., "mongodb", "ollama")
+    pub offering: String,
+
+    /// Version string (always present, "unknown" if undetected)
+    #[serde(default = "default_version_unknown")]
+    pub version: String,
+
+    // ═══════════════════════════════════════════════════════════════
+    // STATE (common to all modes)
+    // ═══════════════════════════════════════════════════════════════
+    /// Current operational status
+    pub status: OfferingStatus,
+
+    /// Health status (unified across modes)
+    pub health: ServiceHealthStatus,
+
+    /// Runtime-discovered capabilities (models, extensions, etc.)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_capabilities: Vec<SubCapability>,
+
+    // ═══════════════════════════════════════════════════════════════
+    // LOCATION (unified port handling)
+    // ═══════════════════════════════════════════════════════════════
+    /// Service network location
+    pub location: OfferingLocation,
+
+    // ═══════════════════════════════════════════════════════════════
+    // MODE-SPECIFIC DATA (enum with associated data)
+    // ═══════════════════════════════════════════════════════════════
+    /// Mode-specific configuration and state
+    pub mode_data: OfferingModeData,
+
+    // ═══════════════════════════════════════════════════════════════
+    // TIMESTAMPS
+    // ═══════════════════════════════════════════════════════════════
+    /// When this offering was first registered/detected/announced
+    pub registered_at: chrono::DateTime<chrono::Utc>,
+
+    /// When this offering was last updated (status change, health change, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+fn default_version_unknown() -> String {
+    "unknown".to_string()
+}
+
+/// Unified offering status (expanded from ServiceStatus)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OfferingStatus {
+    /// Being installed/pulled (managed only)
+    Installing,
+    /// Running and operational
+    Running,
+    /// Stopped or not running
+    Stopped,
+    /// In maintenance mode
+    Maintenance,
+    /// Running but degraded
+    Degraded,
+    /// Status cannot be determined
+    Unknown,
+}
+
+impl std::fmt::Display for OfferingStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Installing => write!(f, "installing"),
+            Self::Running => write!(f, "running"),
+            Self::Stopped => write!(f, "stopped"),
+            Self::Maintenance => write!(f, "maintenance"),
+            Self::Degraded => write!(f, "degraded"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+impl From<ServiceStatus> for OfferingStatus {
+    fn from(status: ServiceStatus) -> Self {
+        match status {
+            ServiceStatus::Installing => Self::Installing,
+            ServiceStatus::Running => Self::Running,
+            ServiceStatus::Stopped => Self::Stopped,
+            ServiceStatus::Maintenance => Self::Maintenance,
+            ServiceStatus::Degraded => Self::Degraded,
+            ServiceStatus::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<OfferingStatus> for ServiceStatus {
+    fn from(status: OfferingStatus) -> Self {
+        match status {
+            OfferingStatus::Installing => Self::Installing,
+            OfferingStatus::Running => Self::Running,
+            OfferingStatus::Stopped => Self::Stopped,
+            OfferingStatus::Maintenance => Self::Maintenance,
+            OfferingStatus::Degraded => Self::Degraded,
+            OfferingStatus::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// Unified network location (replaces Ports + ServiceLocation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfferingLocation {
+    /// Host address (localhost for managed, configurable for adopted/borrowed)
+    #[serde(default = "default_localhost")]
+    pub host: String,
+
+    /// Primary service port
+    pub port: u16,
+
+    /// Protocol hint (http, tcp, mongodb, postgres, etc.)
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
+
+    /// Optional agnostic port (managed containers only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agnostic_port: Option<u16>,
+}
+
+fn default_localhost() -> String {
+    "localhost".to_string()
+}
+
+fn default_protocol() -> String {
+    "http".to_string()
+}
+
+impl OfferingLocation {
+    /// Create from legacy Ports struct (for managed offerings)
+    pub fn from_ports(ports: &Ports) -> Self {
+        Self {
+            host: "localhost".to_string(),
+            port: ports.native,
+            protocol: "http".to_string(),
+            agnostic_port: ports.agnostic,
+        }
+    }
+
+    /// Create from legacy ServiceLocation struct
+    pub fn from_service_location(loc: &ServiceLocation) -> Self {
+        Self {
+            host: loc.host.clone(),
+            port: loc.port,
+            protocol: loc.protocol.clone(),
+            agnostic_port: None,
+        }
+    }
+
+    /// Convert to legacy Ports struct
+    pub fn to_ports(&self) -> Ports {
+        Ports {
+            native: self.port,
+            agnostic: self.agnostic_port,
+        }
+    }
+
+    /// Convert to legacy ServiceLocation struct
+    pub fn to_service_location(&self) -> ServiceLocation {
+        ServiceLocation {
+            host: self.host.clone(),
+            port: self.port,
+            protocol: self.protocol.clone(),
+        }
+    }
+}
+
+/// Mode-specific data as enum variants
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum OfferingModeData {
+    /// Container managed by Moss
+    Managed(ManagedData),
+
+    /// Native service adopted by Moss
+    Adopted(AdoptedData),
+
+    /// External service announced by Moss
+    Borrowed(BorrowedData),
+}
+
+impl OfferingModeData {
+    /// Get the offering mode
+    pub fn mode(&self) -> OfferingMode {
+        match self {
+            Self::Managed(_) => OfferingMode::Managed,
+            Self::Adopted(_) => OfferingMode::Adopted,
+            Self::Borrowed(_) => OfferingMode::Borrowed,
+        }
+    }
+}
+
+/// Data specific to managed (container) offerings
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ManagedData {
+    /// Container resources (CPU, memory usage)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ContainerResources>,
+
+    /// Job ID for tracking installation progress
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+
+    /// Cached post-installation guidance
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<OfferingGuidance>,
+}
+
+/// Data specific to adopted (native) offerings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdoptedData {
+    /// Control level (Full/Monitor/Announce)
+    #[serde(default)]
+    pub control_level: AdoptedControlLevel,
+
+    /// Start command (if control_level allows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_command: Option<String>,
+
+    /// Stop command (if control_level allows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_command: Option<String>,
+
+    /// Restart command (if control_level allows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart_command: Option<String>,
+
+    /// Health check URL for HTTP health probes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health_check_url: Option<String>,
+
+    /// Container name if adopted from a container
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
+
+    /// When the service was detected
+    pub detected_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Data specific to borrowed (external) offerings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BorrowedData {
+    /// Health check method (Http/Tcp/None)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health_method: Option<HealthMethod>,
+
+    /// Key to retrieve credentials from secrets store
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credentials_key: Option<String>,
+
+    /// Connection string template
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_template: Option<String>,
+
+    /// When this service was announced
+    pub announced_at: chrono::DateTime<chrono::Utc>,
+}
+
+// ============================================================================
+// UnifiedOffering Helper Methods
+// ============================================================================
+
+impl UnifiedOffering {
+    /// Get the offering mode
+    pub fn mode(&self) -> OfferingMode {
+        self.mode_data.mode()
+    }
+
+    /// Check if this is a managed container
+    pub fn is_managed(&self) -> bool {
+        matches!(self.mode_data, OfferingModeData::Managed(_))
+    }
+
+    /// Check if this is an adopted service
+    pub fn is_adopted(&self) -> bool {
+        matches!(self.mode_data, OfferingModeData::Adopted(_))
+    }
+
+    /// Check if this is a borrowed service
+    pub fn is_borrowed(&self) -> bool {
+        matches!(self.mode_data, OfferingModeData::Borrowed(_))
+    }
+
+    /// Get managed-specific data (if managed)
+    pub fn managed_data(&self) -> Option<&ManagedData> {
+        match &self.mode_data {
+            OfferingModeData::Managed(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get mutable managed-specific data (if managed)
+    pub fn managed_data_mut(&mut self) -> Option<&mut ManagedData> {
+        match &mut self.mode_data {
+            OfferingModeData::Managed(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get adopted-specific data (if adopted)
+    pub fn adopted_data(&self) -> Option<&AdoptedData> {
+        match &self.mode_data {
+            OfferingModeData::Adopted(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get mutable adopted-specific data (if adopted)
+    pub fn adopted_data_mut(&mut self) -> Option<&mut AdoptedData> {
+        match &mut self.mode_data {
+            OfferingModeData::Adopted(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get borrowed-specific data (if borrowed)
+    pub fn borrowed_data(&self) -> Option<&BorrowedData> {
+        match &self.mode_data {
+            OfferingModeData::Borrowed(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get mutable borrowed-specific data (if borrowed)
+    pub fn borrowed_data_mut(&mut self) -> Option<&mut BorrowedData> {
+        match &mut self.mode_data {
+            OfferingModeData::Borrowed(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Create from legacy ServiceInfo
+    pub fn from_service_info(svc: ServiceInfo) -> Self {
+        Self {
+            offering_id: if svc.offering_id.is_empty() {
+                crate::utils::generate_guidv7()
+            } else {
+                svc.offering_id
+            },
+            name: svc.name,
+            offering: svc.offering,
+            version: svc.version,
+            status: svc.status.into(),
+            health: svc.health,
+            sub_capabilities: svc.sub_capabilities,
+            location: OfferingLocation::from_ports(&svc.ports),
+            mode_data: OfferingModeData::Managed(ManagedData {
+                resources: svc.resources,
+                job_id: svc.job_id,
+                guidance: svc.guidance,
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: None,
+        }
+    }
+
+    /// Create from legacy AdoptedOfferingInfo
+    pub fn from_adopted_offering(adopted: AdoptedOfferingInfo) -> Self {
+        let detected_at = chrono::DateTime::parse_from_rfc3339(&adopted.detected_at)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+
+        Self {
+            offering_id: crate::utils::generate_guidv7(),
+            name: adopted.name,
+            offering: adopted.offering,
+            version: adopted.version.unwrap_or_else(|| "unknown".to_string()),
+            status: OfferingStatus::Running, // Adopted offerings that exist are running
+            health: adopted.health,
+            sub_capabilities: adopted.sub_capabilities,
+            location: OfferingLocation::from_service_location(&adopted.location),
+            mode_data: OfferingModeData::Adopted(AdoptedData {
+                control_level: adopted.control_level,
+                start_command: adopted.start_command,
+                stop_command: adopted.stop_command,
+                restart_command: adopted.restart_command,
+                health_check_url: adopted.health_check_url,
+                container_name: adopted.container_name,
+                detected_at,
+            }),
+            registered_at: detected_at,
+            updated_at: None,
+        }
+    }
+
+    /// Create from legacy BorrowedOfferingInfo
+    pub fn from_borrowed_offering(borrowed: BorrowedOfferingInfo) -> Self {
+        let announced_at = chrono::DateTime::parse_from_rfc3339(&borrowed.announced_at)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+
+        Self {
+            offering_id: crate::utils::generate_guidv7(),
+            name: borrowed.name,
+            offering: borrowed.offering,
+            version: "unknown".to_string(),
+            status: OfferingStatus::Running, // Borrowed offerings are assumed running
+            health: ServiceHealthStatus::Healthy, // Until probed otherwise
+            sub_capabilities: Vec::new(),
+            location: OfferingLocation::from_service_location(&borrowed.location),
+            mode_data: OfferingModeData::Borrowed(BorrowedData {
+                health_method: borrowed.health_method,
+                credentials_key: borrowed.credentials_key,
+                connection_template: borrowed.connection_template,
+                announced_at,
+            }),
+            registered_at: announced_at,
+            updated_at: None,
+        }
+    }
+
+    /// Convert to legacy ServiceInfo (for backward compatibility)
+    pub fn to_service_info(&self) -> Option<ServiceInfo> {
+        match &self.mode_data {
+            OfferingModeData::Managed(data) => Some(ServiceInfo {
+                offering_id: self.offering_id.clone(),
+                name: self.name.clone(),
+                offering: self.offering.clone(),
+                version: self.version.clone(),
+                status: self.status.into(),
+                health: self.health.clone(),
+                ports: self.location.to_ports(),
+                resources: data.resources.clone(),
+                job_id: data.job_id.clone(),
+                sub_capabilities: self.sub_capabilities.clone(),
+                guidance: data.guidance.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Convert to legacy AdoptedOfferingInfo (for backward compatibility)
+    pub fn to_adopted_offering_info(&self) -> Option<AdoptedOfferingInfo> {
+        match &self.mode_data {
+            OfferingModeData::Adopted(data) => Some(AdoptedOfferingInfo {
+                name: self.name.clone(),
+                offering: self.offering.clone(),
+                mode: OfferingMode::Adopted,
+                location: self.location.to_service_location(),
+                control_level: data.control_level.clone(),
+                health: self.health.clone(),
+                detected_at: data.detected_at.to_rfc3339(),
+                version: Some(self.version.clone()),
+                start_command: data.start_command.clone(),
+                stop_command: data.stop_command.clone(),
+                restart_command: data.restart_command.clone(),
+                health_check_url: data.health_check_url.clone(),
+                container_name: data.container_name.clone(),
+                sub_capabilities: self.sub_capabilities.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Convert to legacy BorrowedOfferingInfo (for backward compatibility)
+    pub fn to_borrowed_offering_info(&self) -> Option<BorrowedOfferingInfo> {
+        match &self.mode_data {
+            OfferingModeData::Borrowed(data) => Some(BorrowedOfferingInfo {
+                name: self.name.clone(),
+                offering: self.offering.clone(),
+                mode: OfferingMode::Borrowed,
+                location: self.location.to_service_location(),
+                announced_at: data.announced_at.to_rfc3339(),
+                health_method: data.health_method.clone(),
+                credentials_key: data.credentials_key.clone(),
+                connection_template: data.connection_template.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Update the timestamp
+    pub fn touch(&mut self) {
+        self.updated_at = Some(chrono::Utc::now());
+    }
 }
 
 // ============================================================================
@@ -1543,6 +2071,7 @@ mod tests {
             restart_command: None,
             health_check_url: None,
             container_name: None,
+            sub_capabilities: Vec::new(),
         };
         let json = serde_json::to_string(&info).unwrap();
         // Ensure optional fields are not present in JSON

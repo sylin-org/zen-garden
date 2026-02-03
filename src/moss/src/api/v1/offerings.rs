@@ -58,34 +58,34 @@ pub async fn list_offerings_v1(
     State(state): State<AppState>,
     Query(query): Query<OfferingsQuery>,
 ) -> Result<(StatusCode, Json<ApiResponse<Vec<OfferingView>>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
-    // Get installed services from registry
-    let registry = state.registry.read().await;
-    let installed: HashMap<String, &crate::ServiceInfo> = registry
+    // Get installed services from unified offerings registry
+    let offerings_guard = state.offerings.read().await;
+    let installed: HashMap<String, &garden_common::UnifiedOffering> = offerings_guard
         .iter()
-        .map(|s| (s.name.clone(), s))
+        .map(|o| (o.name.clone(), o))
         .collect();
-    
+
     // Get available offerings from index (may still be building)
     let idx_guard = state.offerings_index.read().await;
     let offerings_index = idx_guard.as_ref();
     let catalog_building = offerings_index.is_none();
-    
+
     let mut offerings: Vec<OfferingView> = Vec::new();
-    
+
     // Add installed offerings with runtime details
     if query.state.as_deref() != Some("available") {
-        for service in registry.iter() {
-            let image = state.docker.get_service_image(&service.name).await.unwrap_or_else(|_| "<unknown>".to_string());
+        for offering in offerings_guard.iter() {
+            let image = state.docker.get_service_image(&offering.name).await.unwrap_or_else(|_| "<unknown>".to_string());
             offerings.push(OfferingView {
-                name: service.name.clone(),
+                name: offering.name.clone(),
                 state: "installed".to_string(),
-                category: service.offering.clone(),
-                description: format!("{} service", service.offering),
+                category: offering.offering.clone(),
+                description: format!("{} service", offering.offering),
                 tags: vec![],
                 image,
                 compatibility: None,
-                health: Some(simplify_health(&service.status)),
-                uptime: None, // TODO: Track uptime in ServiceInfo
+                health: Some(simplify_health(&offering.status)),
+                uptime: None, // TODO: Track uptime in UnifiedOffering
             });
         }
     }
@@ -136,17 +136,17 @@ pub async fn get_offering_v1(
     Path(name): Path<String>,
 ) -> Result<(StatusCode, Json<ApiResponse<serde_json::Value>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     // Check if installed
-    let registry = state.registry.read().await;
-    if let Some(service) = registry.iter().find(|s| s.name == name) {
+    let offerings_guard = state.offerings.read().await;
+    if let Some(offering) = offerings_guard.iter().find(|o| o.name == name) {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse {
                 data: serde_json::json!({
-                    "name": service.name,
+                    "name": offering.name,
                     "state": "installed",
-                    "category": service.offering,
-                    "health": simplify_health(&service.status),
-                    "version": service.version,
+                    "category": offering.offering,
+                    "health": simplify_health(&offering.status),
+                    "version": offering.version,
                 }),
                 suggestions: None,
             }),
@@ -325,13 +325,13 @@ pub async fn refresh_catalog_v1(
 
 // Helper functions
 
-fn simplify_health(status: &garden_common::ServiceStatus) -> String {
-    use garden_common::{ServiceStatus, constants};
+fn simplify_health(status: &garden_common::OfferingStatus) -> String {
+    use garden_common::{OfferingStatus, constants};
     match status {
-        ServiceStatus::Running => constants::HEALTH_HEALTHY.to_string(),
-        ServiceStatus::Stopped | ServiceStatus::Unknown => constants::HEALTH_UNHEALTHY.to_string(),
-        ServiceStatus::Maintenance | ServiceStatus::Degraded => constants::HEALTH_DEGRADED.to_string(),
-        ServiceStatus::Installing => constants::HEALTH_INSTALLING.to_string(),
+        OfferingStatus::Running => constants::HEALTH_HEALTHY.to_string(),
+        OfferingStatus::Stopped | OfferingStatus::Unknown => constants::HEALTH_UNHEALTHY.to_string(),
+        OfferingStatus::Maintenance | OfferingStatus::Degraded => constants::HEALTH_DEGRADED.to_string(),
+        OfferingStatus::Installing => constants::HEALTH_INSTALLING.to_string(),
     }
 }
 

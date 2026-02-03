@@ -53,9 +53,13 @@ pub use crate::domain::{
     CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
 };
 
-// Offering modes types
+// Offering types (unified and legacy)
 pub use garden_common::{
-    AdoptedOfferingInfo, BorrowedOfferingInfo, OfferingMode,
+    // Unified offering types
+    UnifiedOffering, OfferingModeData, ManagedData, AdoptedData, BorrowedData,
+    OfferingStatus, OfferingLocation, OfferingMode,
+    // Legacy types (for backward compatibility during migration)
+    AdoptedOfferingInfo, BorrowedOfferingInfo,
 };
 
 /// Application state for HTTP handlers
@@ -70,15 +74,9 @@ pub struct AppState {
     /// Stone identity (e.g., "stone-01", hostname)
     pub stone_name: String,
 
-    /// Service registry (persisted to disk)
-    /// Vec format for compatibility with existing persistence layer
-    pub registry: Arc<RwLock<Vec<ServiceInfo>>>,
-
-    /// Adopted offerings registry (native/existing services)
-    pub adopted_offerings: Arc<RwLock<Vec<AdoptedOfferingInfo>>>,
-
-    /// Borrowed offerings registry (external network services)
-    pub borrowed_offerings: Arc<RwLock<Vec<BorrowedOfferingInfo>>>,
+    /// Unified offerings registry (all modes: managed, adopted, borrowed)
+    /// Single source of truth for all running offerings
+    pub offerings: Arc<RwLock<Vec<UnifiedOffering>>>,
 
     /// Manifest registry - single source of truth for all manifests
     /// Contains both software (sw) and hardware (hw) manifests
@@ -228,22 +226,27 @@ impl AppState {
         &self.stone_name
     }
 
-    /// Persist registry to disk
+    /// Persist offerings to disk
     ///
-    /// Reads the current registry and saves to disk atomically.
-    pub async fn persist_registry(&self) -> anyhow::Result<()> {
-        let registry = self.registry.read().await;
-        crate::infra::save_registry_vec(&registry).await
+    /// Reads the current offerings and saves to disk atomically.
+    pub async fn persist_offerings(&self) -> anyhow::Result<()> {
+        let offerings = self.offerings.read().await;
+        crate::infra::save_unified_offerings(&offerings).await
     }
-    
-    /// Sync self_entry services from registry
+
+    /// Legacy alias for persist_offerings (backward compatibility)
+    pub async fn persist_registry(&self) -> anyhow::Result<()> {
+        self.persist_offerings().await
+    }
+
+    /// Sync self_entry services from offerings
     ///
-    /// Converts ServiceInfo → TopologyServiceEntry and updates self_entry.
+    /// Converts UnifiedOffering → TopologyServiceEntry and updates self_entry.
     /// Optionally triggers immediate chirp announcement (if network is ready).
-    /// Called after any registry modification.
+    /// Called after any offerings modification.
     pub async fn sync_self_services(&self, auto_chirp: bool) {
-        let registry = self.registry.read().await;
-        let topology_services = garden_common::TopologyServiceEntry::from_service_infos(&registry);
+        let offerings = self.offerings.read().await;
+        let topology_services = garden_common::TopologyServiceEntry::from_unified_offerings(&offerings);
 
         {
             let mut entry = self.self_entry.write().await;
@@ -251,7 +254,7 @@ impl AppState {
             entry.last_seen = chrono::Utc::now();
         }
 
-        tracing::debug!(count = registry.len(), "Synced self_entry services from registry");
+        tracing::debug!(count = offerings.len(), "Synced self_entry services from offerings");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.self_entry.read().await.clone();
@@ -260,60 +263,164 @@ impl AppState {
             }
         }
     }
-    
-    /// Add or update a single service in registry and self_entry
-    /// 
+
+    /// Add or update a single offering
+    ///
     /// Immediately syncs to self_entry and triggers chirp.
-    /// This is the primary method for service state changes.
-    pub async fn upsert_service(&self, service: ServiceInfo, auto_chirp: bool) {
+    /// This is the primary method for offering state changes.
+    pub async fn upsert_offering(&self, mut offering: UnifiedOffering, auto_chirp: bool) {
+        offering.touch();
         {
-            let mut registry = self.registry.write().await;
-            if let Some(pos) = registry.iter().position(|s| s.name == service.name) {
-                registry[pos] = service;
+            let mut offerings = self.offerings.write().await;
+            if let Some(pos) = offerings.iter().position(|o| o.offering_id == offering.offering_id) {
+                offerings[pos] = offering;
             } else {
-                registry.push(service);
+                offerings.push(offering);
             }
         }
-        
+
         self.sync_self_services(auto_chirp).await;
-        
-        if let Err(e) = self.persist_registry().await {
-            tracing::error!(error = ?e, "Failed to persist registry after upsert");
+
+        if let Err(e) = self.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist offerings after upsert");
         }
     }
-    
-    /// Remove a service from registry and self_entry
-    /// 
+
+    /// Legacy: Add or update a single managed service
+    ///
+    /// Converts ServiceInfo to UnifiedOffering and calls upsert_offering.
+    pub async fn upsert_service(&self, service: ServiceInfo, auto_chirp: bool) {
+        let offering = UnifiedOffering::from_service_info(service);
+        self.upsert_offering(offering, auto_chirp).await;
+    }
+
+    /// Remove an offering by ID
+    ///
+    /// Immediately syncs to self_entry and triggers chirp.
+    pub async fn remove_offering(&self, offering_id: &str, auto_chirp: bool) {
+        {
+            let mut offerings = self.offerings.write().await;
+            offerings.retain(|o| o.offering_id != offering_id);
+        }
+
+        self.sync_self_services(auto_chirp).await;
+
+        if let Err(e) = self.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist offerings after removal");
+        }
+    }
+
+    /// Remove an offering by name
+    ///
     /// Immediately syncs to self_entry and triggers chirp.
     pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
         {
-            let mut registry = self.registry.write().await;
-            registry.retain(|s| s.name != service_name);
+            let mut offerings = self.offerings.write().await;
+            offerings.retain(|o| o.name != service_name);
         }
-        
+
         self.sync_self_services(auto_chirp).await;
-        
-        if let Err(e) = self.persist_registry().await {
-            tracing::error!(error = ?e, "Failed to persist registry after removal");
+
+        if let Err(e) = self.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist offerings after removal");
         }
     }
-    
-    /// Batch update services (for reconciliation/adoption)
-    /// 
-    /// Replaces entire registry and triggers chirp.
-    pub async fn replace_services(&self, services: Vec<ServiceInfo>, auto_chirp: bool) {
+
+    /// Batch update offerings (for reconciliation)
+    ///
+    /// Replaces entire offerings registry and triggers chirp.
+    pub async fn replace_offerings(&self, offerings: Vec<UnifiedOffering>, auto_chirp: bool) {
         {
-            let mut registry = self.registry.write().await;
-            *registry = services;
+            let mut registry = self.offerings.write().await;
+            *registry = offerings;
         }
-        
+
         self.sync_self_services(auto_chirp).await;
-        
-        if let Err(e) = self.persist_registry().await {
-            tracing::error!(error = ?e, "Failed to persist registry after batch update");
+
+        if let Err(e) = self.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist offerings after batch update");
         }
     }
-    
+
+    /// Legacy: Batch update managed services
+    pub async fn replace_services(&self, services: Vec<ServiceInfo>, auto_chirp: bool) {
+        // Convert to UnifiedOfferings, preserving existing non-managed offerings
+        let offerings = self.offerings.read().await;
+        let mut new_offerings: Vec<UnifiedOffering> = offerings
+            .iter()
+            .filter(|o| !o.is_managed())
+            .cloned()
+            .collect();
+        drop(offerings);
+
+        for svc in services {
+            new_offerings.push(UnifiedOffering::from_service_info(svc));
+        }
+
+        self.replace_offerings(new_offerings, auto_chirp).await;
+    }
+
+    // ========================================================================
+    // Unified Offering Accessors
+    // ========================================================================
+
+    /// Get all offerings
+    pub async fn get_offerings(&self) -> Vec<UnifiedOffering> {
+        self.offerings.read().await.clone()
+    }
+
+    /// Get managed offerings only
+    pub async fn get_managed_offerings(&self) -> Vec<UnifiedOffering> {
+        self.offerings.read().await
+            .iter()
+            .filter(|o| o.is_managed())
+            .cloned()
+            .collect()
+    }
+
+    /// Get adopted offerings only
+    pub async fn get_adopted_offerings(&self) -> Vec<UnifiedOffering> {
+        self.offerings.read().await
+            .iter()
+            .filter(|o| o.is_adopted())
+            .cloned()
+            .collect()
+    }
+
+    /// Get borrowed offerings only
+    pub async fn get_borrowed_offerings(&self) -> Vec<UnifiedOffering> {
+        self.offerings.read().await
+            .iter()
+            .filter(|o| o.is_borrowed())
+            .cloned()
+            .collect()
+    }
+
+    /// Find offering by name or offering type
+    pub async fn find_offering(&self, name: &str) -> Option<UnifiedOffering> {
+        self.offerings.read().await
+            .iter()
+            .find(|o| o.name.eq_ignore_ascii_case(name) || o.offering.eq_ignore_ascii_case(name))
+            .cloned()
+    }
+
+    /// Find offering by ID
+    pub async fn find_offering_by_id(&self, offering_id: &str) -> Option<UnifiedOffering> {
+        self.offerings.read().await
+            .iter()
+            .find(|o| o.offering_id == offering_id)
+            .cloned()
+    }
+
+    /// Get snapshot of managed services as legacy ServiceInfo
+    pub async fn get_services(&self) -> Vec<ServiceInfo> {
+        self.offerings.read().await
+            .iter()
+            .filter(|o| o.is_managed())
+            .filter_map(|o| o.to_service_info())
+            .collect()
+    }
+
     /// Update stone health and immediately chirp
     ///
     /// Use this when stone-level status changes (not just services).
@@ -337,11 +444,6 @@ impl AppState {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");
             }
         }
-    }
-    
-    /// Get snapshot of services (read-only)
-    pub async fn get_services(&self) -> Vec<ServiceInfo> {
-        self.registry.read().await.clone()
     }
 
     /// Announce resolution change (IP/MAC changed)

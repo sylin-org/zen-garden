@@ -7,14 +7,20 @@ Sub-capabilities are runtime-discovered features within offerings. For example, 
 | Operation | Status | CLI | API |
 |-----------|--------|-----|-----|
 | **List** | Implemented | `rake capabilities <offering>` | `GET .../capabilities` |
-| **Add** | Planned | `rake capabilities add <offering> <name>` | `POST .../capabilities` |
-| **Remove** | Planned | `rake capabilities remove <offering> <name>` | `DELETE .../capabilities/:name` |
+| **Add** | Implemented | `rake capabilities add <offering> <name>` | `POST .../capabilities` |
+| **Remove** | Implemented | `rake capabilities remove <offering> <name>` | `DELETE .../capabilities/:name` |
 
 ## Quick Start
 
 ```bash
 # List capabilities for an offering
 rake capabilities ollama
+
+# Add a capability (e.g., pull a model)
+rake capabilities add ollama llama3
+
+# Remove a capability
+rake capabilities remove ollama phi
 
 # Via API
 curl http://localhost:7185/api/v1/stone/offerings/ollama/capabilities
@@ -57,19 +63,92 @@ rake capabilities redis
 rake capabilities ollama --at my-stone
 ```
 
-### Sample Output
+**Example: List Ollama models**
 
-```
+```bash
+$ rake capabilities ollama
+
 OLLAMA CAPABILITIES (adopted)
 
-  MODELS (12)
+  MODELS (4)
 
-    dolphin-llama3:8b                          4.3 GB
-    deepseek-r1:32b                           18.5 GB
     llama3.1:8b-instruct-q6_K                  6.1 GB
+    deepseek-r1:32b                           18.5 GB
+    mistral:latest                             4.1 GB
     llama2:latest                              3.6 GB
-    ...
 ```
+
+**Example: List PostgreSQL extensions**
+
+```bash
+$ rake capabilities postgresql
+
+POSTGRESQL CAPABILITIES (managed)
+
+  EXTENSIONS (3)
+
+    pgvector                                   v0.7.0   public
+    uuid-ossp                                  v1.1     public
+    pg_stat_statements                         v1.10    public
+```
+
+### Add Capability
+
+```bash
+# Add a capability (e.g., pull a model)
+rake capabilities add <offering> <name>
+
+# Examples
+rake capabilities add ollama llama3
+rake capabilities add ollama deepseek-r1:8b
+rake capabilities add ollama mistral:7b-instruct
+
+# With capability type (if offering has multiple types)
+rake capabilities add ollama llama3 --type model
+
+# Target a specific stone
+rake capabilities add ollama llama3 --at my-stone
+```
+
+### Remove Capability
+
+```bash
+# Remove a capability
+rake capabilities remove <offering> <name>
+
+# Examples
+rake capabilities remove ollama phi
+rake capabilities remove ollama llama2:7b
+
+# Target a specific stone
+rake capabilities remove ollama phi --at my-stone
+```
+
+### Find by Capability
+
+Use `rake find` to discover services that have specific capabilities:
+
+```bash
+# Find ollama instances that have the llama2 model
+rake find ollama[llama2]
+
+# Find any service with a specific model (garden-wide)
+rake find model:llama2
+
+# Find any service with a capability (any type)
+rake find cap:llama2
+
+# Find with connection string output
+rake find ollama[mistral] --format uri
+```
+
+**Supported syntaxes:**
+
+| Syntax | Example | Description |
+|--------|---------|-------------|
+| `name[item]` | `ollama[llama2]` | Find offering with specific capability |
+| `model:item` | `model:llama2` | Find any service with model |
+| `cap:item` | `cap:embeddings` | Generic capability search (any type) |
 
 ## API Reference
 
@@ -130,42 +209,62 @@ curl -s http://localhost:7185/api/v1/stone/offerings/ollama/capabilities
 }
 ```
 
-### Add Capability (Planned)
-
-> **Coming Soon**: Add capability support is planned for a future release.
+### Add Capability
 
 **Endpoint**: `POST /api/v1/stone/offerings/:name/capabilities`
 
-**CLI**:
-```bash
-# Pull/install a capability
-rake capabilities add ollama llama2:7b
-rake capabilities add postgresql pgvector
+**Parameters**:
+- `name` (path): Offering name (e.g., "ollama")
+
+**Request Body**:
+```json
+{
+  "name": "llama3",
+  "type": "model"  // optional, defaults to first capability type
+}
 ```
 
-**API**:
+**Example Request**:
 ```bash
 curl -X POST http://localhost:7185/api/v1/stone/offerings/ollama/capabilities \
   -H "Content-Type: application/json" \
-  -d '{"name": "llama2:7b"}'
+  -d '{"name": "llama3"}'
 ```
 
-### Remove Capability (Planned)
+**Example Response**:
+```json
+{
+  "data": {
+    "success": true,
+    "capability": "llama3",
+    "operation": "add"
+  }
+}
+```
 
-> **Coming Soon**: Remove capability support is planned for a future release.
+### Remove Capability
 
 **Endpoint**: `DELETE /api/v1/stone/offerings/:name/capabilities/:capability`
 
-**CLI**:
+**Parameters**:
+- `name` (path): Offering name (e.g., "ollama")
+- `capability` (path): Capability name to remove (e.g., "llama3")
+- `type` (query, optional): Capability type
+
+**Example Request**:
 ```bash
-# Remove/uninstall a capability
-rake capabilities remove ollama llama2:7b
-rake capabilities remove postgresql pgvector
+curl -X DELETE http://localhost:7185/api/v1/stone/offerings/ollama/capabilities/phi
 ```
 
-**API**:
-```bash
-curl -X DELETE http://localhost:7185/api/v1/stone/offerings/ollama/capabilities/llama2:7b
+**Example Response**:
+```json
+{
+  "data": {
+    "success": true,
+    "capability": "phi",
+    "operation": "remove"
+  }
+}
 ```
 
 ### Related Endpoints
@@ -265,24 +364,27 @@ capabilities:
       timeout_secs: 30
       cache_ttl_secs: 300
 
-    # Add operation (planned)
-    # add:
-    #   commands:
-    #     managed:
-    #       linux: "docker exec {{container_name}} ollama pull {{name}}"
-    #     adopted:
-    #       linux: "ollama pull {{name}}"
-    #       windows: "ollama pull {{name}}"
-    #   timeout_secs: 600  # Model downloads can take time
+    # Add operation
+    add:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} ollama pull {{item}}"
+        adopted:
+          linux: "ollama pull {{item}}"
+          windows: "ollama.exe pull {{item}}"
+      timeout_secs: 7200  # Model downloads can take time (2 hours max)
 
-    # Remove operation (planned)
-    # remove:
-    #   commands:
-    #     managed:
-    #       linux: "docker exec {{container_name}} ollama rm {{name}}"
-    #     adopted:
-    #       linux: "ollama rm {{name}}"
-    #       windows: "ollama rm {{name}}"
+    # Remove operation
+    remove:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} ollama rm {{item}}"
+        adopted:
+          linux: "ollama rm {{item}}"
+          windows: "ollama.exe rm {{item}}"
+      timeout_secs: 60
 ```
 
 ### Template Variables
@@ -292,6 +394,7 @@ capabilities:
 | `{{container_name}}` | Container name for managed mode | `zen-offering-ollama` |
 | `{{port}}` | Service port | `11434` |
 | `{{host}}` | Service host | `localhost` |
+| `{{item}}` | Capability name (for add/remove) | `llama3` |
 
 ### Output Formats
 

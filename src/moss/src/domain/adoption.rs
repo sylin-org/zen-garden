@@ -7,7 +7,8 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::{AppState, ServiceInfo};
+use crate::AppState;
+use garden_common::ServiceInfo;
 use crate::domain::{
     CompatibilityDecision, evaluate_compatibility, get_current_compat_capabilities,
 };
@@ -190,8 +191,8 @@ pub async fn adopt_existing_containers(
 
     for offering in existing {
         let already = {
-            let reg = state.registry.read().await;
-            reg.iter().any(|s| s.name == offering)
+            let offerings = state.offerings.read().await;
+            offerings.iter().any(|o| o.name == offering || o.offering == offering)
         };
         if already {
             continue;

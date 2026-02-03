@@ -53,6 +53,8 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/offerings/:name", delete(api::v1::offerings::take_away_offering_v1))
         .route("/api/v1/stone/offerings/:name/manifest", get(api::v1::offerings::get_offering_manifest_v1))
         .route("/api/v1/stone/offerings/:name/capabilities", get(api::v1::offering_capabilities::list_offering_capabilities_v1))
+        .route("/api/v1/stone/offerings/:name/capabilities", post(api::v1::offering_capabilities::add_offering_capability_v1))
+        .route("/api/v1/stone/offerings/:name/capabilities/:capability", delete(api::v1::offering_capabilities::remove_offering_capability_v1))
         .route("/api/v1/stone/offerings/:offering/adopt", post(api::v1::adoption::adopt_offering_v1))
         .route("/api/v1/stone/offerings/:offering/adopt", delete(api::v1::adoption::unadopt_offering_v1))
         .route("/api/v1/stone/offerings/borrow", post(api::v1::adoption::borrow_service_v1))

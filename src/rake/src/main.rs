@@ -120,13 +120,24 @@ enum Commands {
         at: Option<String>,
     },
 
-    /// List capabilities for an offering (models, extensions, etc.)
+    /// Manage capabilities for an offering (models, extensions, etc.)
+    #[command(
+        after_long_help = "Examples:\n  \
+        garden-rake capabilities ollama              # List Ollama models\n  \
+        garden-rake capabilities add ollama llama3  # Pull llama3 model\n  \
+        garden-rake capabilities remove ollama phi  # Remove phi model"
+    )]
     Capabilities {
-        /// Offering name to query
-        offering: String,
+        /// Subcommand (add, remove) or none for list
+        #[command(subcommand)]
+        action: Option<CapabilitiesAction>,
+
+        /// Offering name to query (for list without subcommand)
+        #[arg(required_unless_present = "action")]
+        offering: Option<String>,
 
         /// Moss endpoint (omit to auto-discover)
-        #[arg(long)]
+        #[arg(long, global = true)]
         at: Option<String>,
     },
 
@@ -1049,6 +1060,30 @@ enum OfferAction {
 }
 
 #[derive(Debug, Subcommand)]
+enum CapabilitiesAction {
+    /// Add a capability to an offering (e.g., pull a model)
+    Add {
+        /// Offering name
+        offering: String,
+        /// Capability name to add (e.g., "llama3", "phi:medium")
+        name: String,
+        /// Capability type (optional, defaults to first type in manifest)
+        #[arg(long = "type", short = 't')]
+        cap_type: Option<String>,
+    },
+    /// Remove a capability from an offering (e.g., delete a model)
+    Remove {
+        /// Offering name
+        offering: String,
+        /// Capability name to remove
+        name: String,
+        /// Capability type (optional)
+        #[arg(long = "type", short = 't')]
+        cap_type: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum PondAction {
     /// Initialize pond security (place keystone)
     Init {
@@ -1662,9 +1697,23 @@ async fn async_main() -> anyhow::Result<()> {
             dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
         }
 
-        Commands::Capabilities { offering, at } => {
-            let cmd = commands::discovery::CapabilitiesCommand::new(offering, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+        Commands::Capabilities { action, offering, at } => {
+            match action {
+                Some(CapabilitiesAction::Add { offering, name, cap_type }) => {
+                    let cmd = commands::discovery::AddCapabilityCommand::new(offering, name, cap_type, quiet_mode);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                Some(CapabilitiesAction::Remove { offering, name, cap_type }) => {
+                    let cmd = commands::discovery::RemoveCapabilityCommand::new(offering, name, cap_type, quiet_mode);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                None => {
+                    // Default: list capabilities
+                    let offering = offering.expect("offering required when no subcommand");
+                    let cmd = commands::discovery::CapabilitiesCommand::new(offering, quiet_mode);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+            }
         }
 
         Commands::Remove { service, at, force } => {

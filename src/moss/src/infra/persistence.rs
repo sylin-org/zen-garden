@@ -13,6 +13,170 @@ fn offerings_cache_path() -> PathBuf {
     PathBuf::from(garden_common::names::CONFIG_DIR).join("offerings_cache.json")
 }
 
+/// Load adopted offerings from disk
+///
+/// Returns empty vec if file doesn't exist.
+pub async fn load_adopted_offerings() -> Result<Vec<garden_common::AdoptedOfferingInfo>> {
+    let path = PathBuf::from(garden_common::names::CONFIG_DIR).join("moss-adopted.json");
+
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => {
+            let offerings: Vec<garden_common::AdoptedOfferingInfo> = serde_json::from_str(&content)?;
+            tracing::info!(count = offerings.len(), "Loaded adopted offerings from disk");
+            Ok(offerings)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!("No adopted offerings file found, starting fresh");
+            Ok(Vec::new())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Save adopted offerings to disk (atomic write)
+pub async fn save_adopted_offerings(offerings: &[garden_common::AdoptedOfferingInfo]) -> Result<()> {
+    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let path = dir.join("moss-adopted.json");
+    tokio::fs::create_dir_all(&dir).await?;
+
+    atomic_write(path, &offerings).await?;
+    tracing::debug!(count = offerings.len(), "Saved adopted offerings to disk");
+    Ok(())
+}
+
+/// Load borrowed offerings from disk
+///
+/// Returns empty vec if file doesn't exist.
+pub async fn load_borrowed_offerings() -> Result<Vec<garden_common::BorrowedOfferingInfo>> {
+    let path = PathBuf::from(garden_common::names::CONFIG_DIR).join("moss-borrowed.json");
+
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => {
+            let offerings: Vec<garden_common::BorrowedOfferingInfo> = serde_json::from_str(&content)?;
+            tracing::info!(count = offerings.len(), "Loaded borrowed offerings from disk");
+            Ok(offerings)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!("No borrowed offerings file found, starting fresh");
+            Ok(Vec::new())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Save borrowed offerings to disk (atomic write)
+pub async fn save_borrowed_offerings(offerings: &[garden_common::BorrowedOfferingInfo]) -> Result<()> {
+    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let path = dir.join("moss-borrowed.json");
+    tokio::fs::create_dir_all(&dir).await?;
+
+    atomic_write(path, &offerings).await?;
+    tracing::debug!(count = offerings.len(), "Saved borrowed offerings to disk");
+    Ok(())
+}
+
+// ============================================================================
+// Unified Offerings Persistence
+// ============================================================================
+
+/// Load unified offerings from disk
+///
+/// Tries the new unified file first, then migrates from legacy files if needed.
+pub async fn load_unified_offerings() -> Result<Vec<garden_common::UnifiedOffering>> {
+    let unified_path = PathBuf::from(garden_common::names::CONFIG_DIR).join("moss-offerings.json");
+
+    // Try new unified file first
+    match tokio::fs::read_to_string(&unified_path).await {
+        Ok(content) => {
+            let offerings: Vec<garden_common::UnifiedOffering> = serde_json::from_str(&content)?;
+            tracing::info!(count = offerings.len(), "Loaded unified offerings from disk");
+            return Ok(offerings);
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!("No unified offerings file, checking for legacy files to migrate");
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    // Fall back to migration from legacy files
+    migrate_legacy_offerings().await
+}
+
+/// Migrate from legacy three-file format to unified format
+async fn migrate_legacy_offerings() -> Result<Vec<garden_common::UnifiedOffering>> {
+    let mut offerings = Vec::new();
+
+    // Load and convert ServiceInfo (managed)
+    if let Ok(managed) = load_registry().await {
+        tracing::info!(count = managed.len(), "Migrating managed offerings from legacy registry");
+        for svc in managed {
+            offerings.push(garden_common::UnifiedOffering::from_service_info(svc));
+        }
+    }
+
+    // Load and convert AdoptedOfferingInfo
+    if let Ok(adopted) = load_adopted_offerings().await {
+        tracing::info!(count = adopted.len(), "Migrating adopted offerings from legacy file");
+        for a in adopted {
+            offerings.push(garden_common::UnifiedOffering::from_adopted_offering(a));
+        }
+    }
+
+    // Load and convert BorrowedOfferingInfo
+    if let Ok(borrowed) = load_borrowed_offerings().await {
+        tracing::info!(count = borrowed.len(), "Migrating borrowed offerings from legacy file");
+        for b in borrowed {
+            offerings.push(garden_common::UnifiedOffering::from_borrowed_offering(b));
+        }
+    }
+
+    // Save unified format if we have any offerings (complete migration)
+    if !offerings.is_empty() {
+        if let Err(e) = save_unified_offerings(&offerings).await {
+            tracing::warn!(error = ?e, "Failed to save migrated unified offerings");
+        } else {
+            tracing::info!(count = offerings.len(), "Migration complete - saved unified offerings");
+            // Archive legacy files
+            archive_legacy_files().await;
+        }
+    }
+
+    Ok(offerings)
+}
+
+/// Save unified offerings to disk (atomic write)
+pub async fn save_unified_offerings(offerings: &[garden_common::UnifiedOffering]) -> Result<()> {
+    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let path = dir.join("moss-offerings.json");
+    tokio::fs::create_dir_all(&dir).await?;
+
+    atomic_write(path, &offerings).await?;
+    tracing::debug!(count = offerings.len(), "Saved unified offerings to disk");
+    Ok(())
+}
+
+/// Archive legacy files after successful migration
+async fn archive_legacy_files() {
+    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let legacy_files = [
+        "moss-registry.json",
+        "moss-adopted.json",
+        "moss-borrowed.json",
+    ];
+
+    for file in &legacy_files {
+        let src = dir.join(file);
+        let dst = dir.join(format!("{}.migrated", file));
+        if src.exists() {
+            if let Err(e) = tokio::fs::rename(&src, &dst).await {
+                tracing::warn!(file = %file, error = ?e, "Failed to archive legacy file");
+            } else {
+                tracing::debug!(file = %file, "Archived legacy file");
+            }
+        }
+    }
+}
+
 /// Load registry from disk
 ///
 /// Returns empty vec if file doesn't exist.

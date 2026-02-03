@@ -71,7 +71,7 @@ pub use connection::{
 };
 pub use service_discovery::{
     ServiceSearchCriteria, FoundService, StoneRef, ServiceDiscoveryResponse,
-    find_services, find_local_services, list_all_local_services,
+    find_services, find_local_services, list_all_local_services, get_offering_port,
 };
 // Re-export TopologyEntry from common (now shared type)
 pub use garden_common::TopologyEntry;
@@ -88,7 +88,7 @@ pub use storage_cache::{
 pub use sub_capability::{
     discover_sub_capabilities, refresh_all_sub_capabilities,
 };
-pub use capabilities::{CapabilityExecutor, ExecutorContext};
+pub use capabilities::{CapabilityExecutor, ExecutorContext, CapabilityMutationResult};
 pub use events::{DomainEvent, OfferingEvent, StorageEvent, StoneEvent};
 pub use infrastructure::{
     InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,

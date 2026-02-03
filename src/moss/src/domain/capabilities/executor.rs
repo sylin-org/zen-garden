@@ -1,6 +1,6 @@
 //! Capability executor implementation
 //!
-//! Executes manifest-defined commands to discover capabilities.
+//! Executes manifest-defined commands to discover, add, and remove capabilities.
 
 use anyhow::{Context, Result, bail};
 use garden_common::{
@@ -8,8 +8,9 @@ use garden_common::{
 };
 use garden_common::manifests::{
     CapabilityManifest, CapabilityTypeConfig, ListOperationConfig, ModeCommands, OutputFormat,
-    FieldMappings,
+    FieldMappings, AddOperationConfig, RemoveOperationConfig,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -28,7 +29,21 @@ pub struct ExecutorContext {
     pub port: u16,
 }
 
-/// Capability executor - runs manifest commands to discover capabilities
+/// Result of an add/remove operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityMutationResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The capability name that was operated on
+    pub capability: String,
+    /// The operation performed
+    pub operation: String,
+}
+
+/// Capability executor - runs manifest commands to discover, add, and remove capabilities
 pub struct CapabilityExecutor;
 
 impl CapabilityExecutor {
@@ -86,6 +101,245 @@ impl CapabilityExecutor {
         }
 
         Ok(collections)
+    }
+
+    /// Add a capability to an offering
+    ///
+    /// # Arguments
+    /// * `service` - The service to add capability to
+    /// * `manifest` - The capability manifest
+    /// * `mode` - The offering mode
+    /// * `cap_type` - The capability type (e.g., "model")
+    /// * `capability_name` - The name of the capability to add (e.g., "llama2:7b")
+    pub async fn add_capability(
+        &self,
+        service: &ServiceInfo,
+        manifest: &CapabilityManifest,
+        mode: OfferingMode,
+        cap_type: &str,
+        capability_name: &str,
+    ) -> Result<CapabilityMutationResult> {
+        // Validate capability name
+        self.validate_capability_name(capability_name)?;
+
+        // Find the capability type config
+        let cap_config = manifest
+            .get_capability_type(cap_type)
+            .with_context(|| format!("Unknown capability type: {}", cap_type))?;
+
+        // Check if add is available
+        let add_config = cap_config
+            .add
+            .as_ref()
+            .with_context(|| format!("Add operation not configured for type: {}", cap_type))?;
+
+        if !add_config.available {
+            let reason = add_config.reason.as_deref().unwrap_or("Operation not available");
+            return Ok(CapabilityMutationResult {
+                success: false,
+                error: Some(reason.to_string()),
+                capability: capability_name.to_string(),
+                operation: "add".to_string(),
+            });
+        }
+
+        let commands = add_config
+            .commands
+            .as_ref()
+            .with_context(|| "No commands defined for add operation")?;
+
+        // Build context
+        let context = ExecutorContext {
+            mode,
+            container_name: Some(format!("zen-offering-{}", service.name)),
+            port: service.ports.native,
+        };
+
+        // Get and template command
+        let command = self.get_command(commands, &context)?;
+        let templated = self.template_command_with_item(&command, &context, capability_name)?;
+
+        tracing::info!(
+            service = %service.name,
+            cap_type = %cap_type,
+            capability = %capability_name,
+            command = %templated,
+            "Executing capability add command"
+        );
+
+        // Execute the command
+        match self.execute_command(&templated, add_config.timeout_secs, &context).await {
+            Ok(_output) => {
+                tracing::info!(
+                    service = %service.name,
+                    capability = %capability_name,
+                    "Successfully added capability"
+                );
+                Ok(CapabilityMutationResult {
+                    success: true,
+                    error: None,
+                    capability: capability_name.to_string(),
+                    operation: "add".to_string(),
+                })
+            }
+            Err(e) => {
+                tracing::warn!(
+                    service = %service.name,
+                    capability = %capability_name,
+                    error = ?e,
+                    "Failed to add capability"
+                );
+                Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some(e.to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "add".to_string(),
+                })
+            }
+        }
+    }
+
+    /// Remove a capability from an offering
+    ///
+    /// # Arguments
+    /// * `service` - The service to remove capability from
+    /// * `manifest` - The capability manifest
+    /// * `mode` - The offering mode
+    /// * `cap_type` - The capability type (e.g., "model")
+    /// * `capability_name` - The name of the capability to remove
+    pub async fn remove_capability(
+        &self,
+        service: &ServiceInfo,
+        manifest: &CapabilityManifest,
+        mode: OfferingMode,
+        cap_type: &str,
+        capability_name: &str,
+    ) -> Result<CapabilityMutationResult> {
+        // Validate capability name
+        self.validate_capability_name(capability_name)?;
+
+        // Find the capability type config
+        let cap_config = manifest
+            .get_capability_type(cap_type)
+            .with_context(|| format!("Unknown capability type: {}", cap_type))?;
+
+        // Check if remove is available
+        let remove_config = cap_config
+            .remove
+            .as_ref()
+            .with_context(|| format!("Remove operation not configured for type: {}", cap_type))?;
+
+        if !remove_config.available {
+            let reason = remove_config.reason.as_deref().unwrap_or("Operation not available");
+            return Ok(CapabilityMutationResult {
+                success: false,
+                error: Some(reason.to_string()),
+                capability: capability_name.to_string(),
+                operation: "remove".to_string(),
+            });
+        }
+
+        let commands = remove_config
+            .commands
+            .as_ref()
+            .with_context(|| "No commands defined for remove operation")?;
+
+        // Build context
+        let context = ExecutorContext {
+            mode,
+            container_name: Some(format!("zen-offering-{}", service.name)),
+            port: service.ports.native,
+        };
+
+        // Get and template command
+        let command = self.get_command(commands, &context)?;
+        let templated = self.template_command_with_item(&command, &context, capability_name)?;
+
+        tracing::info!(
+            service = %service.name,
+            cap_type = %cap_type,
+            capability = %capability_name,
+            command = %templated,
+            "Executing capability remove command"
+        );
+
+        // Execute the command
+        match self.execute_command(&templated, remove_config.timeout_secs, &context).await {
+            Ok(_output) => {
+                tracing::info!(
+                    service = %service.name,
+                    capability = %capability_name,
+                    "Successfully removed capability"
+                );
+                Ok(CapabilityMutationResult {
+                    success: true,
+                    error: None,
+                    capability: capability_name.to_string(),
+                    operation: "remove".to_string(),
+                })
+            }
+            Err(e) => {
+                tracing::warn!(
+                    service = %service.name,
+                    capability = %capability_name,
+                    error = ?e,
+                    "Failed to remove capability"
+                );
+                Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some(e.to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "remove".to_string(),
+                })
+            }
+        }
+    }
+
+    /// Validate capability name to prevent command injection
+    fn validate_capability_name(&self, name: &str) -> Result<()> {
+        // Max length
+        if name.len() > 128 {
+            bail!("Capability name too long (max 128 characters)");
+        }
+
+        // Valid characters: alphanumeric, underscore, colon, dot, dash, forward slash
+        let valid = name.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '.' || c == '-' || c == '/'
+        });
+
+        if !valid {
+            bail!("Invalid capability name. Allowed characters: a-z, A-Z, 0-9, _, :, ., -, /");
+        }
+
+        // Must not be empty
+        if name.is_empty() {
+            bail!("Capability name cannot be empty");
+        }
+
+        Ok(())
+    }
+
+    /// Template command with context variables and item placeholder
+    fn template_command_with_item(
+        &self,
+        command: &str,
+        context: &ExecutorContext,
+        item: &str,
+    ) -> Result<String> {
+        let mut result = self.template_command(command, context)?;
+
+        // Replace {{item}} placeholder with the capability name
+        result = result.replace("{{item}}", item);
+
+        // Verify no unresolved placeholders
+        if result.contains("{{") {
+            let start = result.find("{{").unwrap();
+            let end = result[start..].find("}}").map(|i| start + i + 2).unwrap_or(result.len());
+            let placeholder = &result[start..end];
+            bail!("Unresolved placeholder in command: {}", placeholder);
+        }
+
+        Ok(result)
     }
 
     /// List capabilities for a single capability type

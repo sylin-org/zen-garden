@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use garden_common::{HardwareCapabilities, ServiceHealthStatus, ServiceStatus};
+use garden_common::{HardwareCapabilities, ServiceHealthStatus};
 use garden_common::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
 use crate::domain::topology::{TopologyCache, upsert_from_chirp, mark_stone_offline};
@@ -265,25 +265,20 @@ pub fn start_hardware_detection(
 
 /// Start registry loading and container adoption
 ///
-/// Loads persisted registry state and adopts any existing zen-offering containers.
+/// Reconciles persisted offerings state with actual Docker state on startup.
 pub fn start_registry_loader(state: AppState) {
     tokio::spawn(async move {
-        // Load persisted registry state (best-effort)
-        match infra::load_registry().await {
-            Ok(mut loaded) => {
-                // Reconcile: if the container no longer exists, mark it offline
-                for svc in loaded.iter_mut() {
-                    if !state.docker.zen_container_exists(&svc.name).await.unwrap_or(false) {
-                        svc.status = ServiceStatus::Stopped;
-                        svc.health = ServiceHealthStatus::Offline;
-                    }
+        // Reconcile existing offerings: if the container no longer exists, mark it offline
+        {
+            let mut offerings = state.offerings.write().await;
+            for offering in offerings.iter_mut().filter(|o| o.is_managed()) {
+                if !state.docker.zen_container_exists(&offering.name).await.unwrap_or(false) {
+                    offering.status = garden_common::OfferingStatus::Stopped;
+                    offering.health = ServiceHealthStatus::Offline;
                 }
-                *state.registry.write().await = loaded;
-            }
-            Err(e) => {
-                tracing::warn!(error = ?e, "Failed to load persisted moss registry; starting empty");
             }
         }
+        let _ = state.persist_offerings().await;
 
         // Backfill missing guidance for services that were installed before guidance caching
         let backfilled = backfill_missing_guidance(&state).await;
@@ -356,7 +351,18 @@ pub fn start_auto_adoption(
     console: &ConsolePrinter,
 ) {
     let adoption_config = config.adoption();
+    start_auto_adoption_with_config(state, adoption_config, console);
+}
 
+/// Start auto-adoption task with explicit AdoptionConfig
+///
+/// Use this variant when no MossConfig file is available - it will use
+/// deployment profile detection to determine if adoption should be enabled.
+pub fn start_auto_adoption_with_config(
+    state: AppState,
+    adoption_config: infra::AdoptionConfig,
+    console: &ConsolePrinter,
+) {
     if adoption_config.is_enabled() {
         tracing::info!("Auto-adoption enabled, starting adoption background task");
         console.emit(ConsoleEvent::new(

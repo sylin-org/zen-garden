@@ -10,12 +10,12 @@ use axum::{
 };
 use garden_common::{
     api_utils::ApiErrorResponse,
-    CapabilityCollection, OfferingMode, ServiceInfo, ServiceStatus, Ports,
+    CapabilityCollection, OfferingMode, ServiceInfo, ServiceStatus, Ports, UnifiedOffering,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::api::responses::ApiResponse;
-use crate::domain::CapabilityExecutor;
+use crate::domain::{CapabilityExecutor, get_offering_port};
 use crate::infra::manifests::get_capability_manifest;
 use crate::{error_response, AppState};
 
@@ -72,53 +72,20 @@ pub async fn list_offering_capabilities_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
 ) -> Result<Json<ApiResponse<CapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // Try to find in managed registry first
-    let (service, mode) = {
-        let registry = state.registry.read().await;
-        if let Some(svc) = registry
+    // Find the offering in unified registry
+    let (offering, mode) = {
+        let offerings = state.offerings.read().await;
+        let found = offerings
             .iter()
-            .find(|s| s.offering.to_lowercase() == offering_name.to_lowercase())
-            .cloned()
-        {
-            let mode = determine_offering_mode(&state, &svc.name).await;
-            (svc, mode)
-        } else {
-            drop(registry);
+            .find(|o| o.offering.to_lowercase() == offering_name.to_lowercase())
+            .cloned();
 
-            // Not in managed registry, check adopted offerings
-            let adopted = state.adopted_offerings.read().await;
-            if let Some(adopted_svc) = adopted
-                .iter()
-                .find(|a| a.offering.to_lowercase() == offering_name.to_lowercase())
-            {
-                // Convert AdoptedOfferingInfo to ServiceInfo for capability executor
-                // Use location.port, falling back to default port from manifest
-                let port = if adopted_svc.location.port > 0 {
-                    adopted_svc.location.port
-                } else {
-                    // Get default port from manifest if available
-                    get_default_port_for_offering(&adopted_svc.offering)
-                };
-
-                let service = ServiceInfo {
-                    offering_id: String::new(),
-                    name: adopted_svc.name.clone(),
-                    offering: adopted_svc.offering.clone(),
-                    version: adopted_svc.version.clone().unwrap_or_default(),
-                    status: ServiceStatus::Running,
-                    health: adopted_svc.health.clone(),
-                    ports: Ports {
-                        native: port,
-                        agnostic: None,
-                    },
-                    resources: None,
-                    job_id: None,
-                    sub_capabilities: Vec::new(),
-                    guidance: None,
-                };
-                (service, OfferingMode::Adopted)
-            } else {
-                drop(adopted);
+        match found {
+            Some(o) => {
+                let mode = o.mode();
+                (o, mode)
+            }
+            None => {
                 return Err(error_response(
                     StatusCode::NOT_FOUND,
                     "OFFERING_NOT_FOUND",
@@ -128,6 +95,9 @@ pub async fn list_offering_capabilities_v1(
             }
         }
     };
+
+    // Convert to ServiceInfo for the capability executor (which still uses ServiceInfo)
+    let service = offering_to_service_info(&offering, &state).await;
 
     // Get capability manifest for this offering
     let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
@@ -153,17 +123,20 @@ pub async fn list_offering_capabilities_v1(
             )
         })?;
 
-    // Update service sub_capabilities in registry (lightweight format)
+    // Update offering sub_capabilities in registry (lightweight format)
     if !capabilities.is_empty() {
-        let mut registry = state.registry.write().await;
-        if let Some(svc) = registry.iter_mut().find(|s| s.name == service.name) {
-            svc.sub_capabilities = capabilities
-                .iter()
-                .map(|c| c.to_sub_capability())
-                .collect();
+        let sub_caps: Vec<_> = capabilities.iter().map(|c| c.to_sub_capability()).collect();
+
+        // Update in unified registry
+        {
+            let mut offerings = state.offerings.write().await;
+            if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering.offering_id) {
+                o.sub_capabilities = sub_caps;
+            }
         }
-        drop(registry);
-        let _ = state.persist_registry().await;
+        if let Err(e) = state.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist offerings after capability discovery");
+        }
     }
 
     Ok(Json(ApiResponse {
@@ -176,40 +149,293 @@ pub async fn list_offering_capabilities_v1(
     }))
 }
 
-/// Determine the offering mode for a service
-///
-/// Checks adopted registry first, then assumes managed.
-async fn determine_offering_mode(state: &AppState, service_name: &str) -> OfferingMode {
-    // Check if in adopted offerings
-    let adopted = state.adopted_offerings.read().await;
-    if adopted.iter().any(|a| a.name == service_name) {
-        return OfferingMode::Adopted;
-    }
-    drop(adopted);
 
-    // Check if in borrowed offerings
-    let borrowed = state.borrowed_offerings.read().await;
-    if borrowed.iter().any(|b| b.name == service_name) {
-        return OfferingMode::Borrowed;
-    }
-    drop(borrowed);
+/// Request body for adding a capability
+#[derive(Debug, Deserialize)]
+pub struct AddCapabilityRequest {
+    /// Capability name (e.g., "llama2:7b" for Ollama models)
+    pub name: String,
 
-    // Default to managed
-    OfferingMode::Managed
+    /// Capability type (optional, defaults to first capability type in manifest)
+    #[serde(rename = "type")]
+    pub cap_type: Option<String>,
 }
 
-/// Get default port for well-known offerings
+/// Response for capability mutations (add/remove)
+#[derive(Debug, Serialize)]
+pub struct CapabilityMutationResponse {
+    /// Whether the operation succeeded
+    pub success: bool,
+
+    /// The capability name
+    pub capability: String,
+
+    /// The operation performed
+    pub operation: String,
+
+    /// Error message if failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// POST /api/v1/stone/offerings/:name/capabilities
 ///
-/// Used when adopted offerings don't have an explicit port set.
-fn get_default_port_for_offering(offering: &str) -> u16 {
-    match offering.to_lowercase().as_str() {
-        "ollama" => 11434,
-        "postgresql" | "postgres" => 5432,
-        "redis" => 6379,
-        "mongodb" | "mongo" => 27017,
-        "mysql" | "mariadb" => 3306,
-        "elasticsearch" => 9200,
-        "opensearch" => 9200,
-        _ => 0,
+/// Add a capability to an offering (e.g., pull a model for Ollama).
+///
+/// # Path Parameters
+/// - `name`: Offering name (e.g., "ollama")
+///
+/// # Request Body
+/// ```json
+/// {
+///   "name": "llama2:7b",
+///   "type": "model"  // optional
+/// }
+/// ```
+///
+/// # Response
+/// ```json
+/// {
+///   "data": {
+///     "success": true,
+///     "capability": "llama2:7b",
+///     "operation": "add"
+///   }
+/// }
+/// ```
+pub async fn add_offering_capability_v1(
+    State(state): State<AppState>,
+    Path(offering_name): Path<String>,
+    Json(request): Json<AddCapabilityRequest>,
+) -> Result<Json<ApiResponse<CapabilityMutationResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    // Find the service (managed or adopted)
+    let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
+
+    // Get capability manifest
+    let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "NO_CAPABILITY_MANIFEST",
+            format!("No capability manifest found for offering '{}'.", service.offering),
+            None,
+        )
+    })?;
+
+    // Determine capability type
+    let cap_type = request.cap_type.as_deref().unwrap_or_else(|| {
+        manifest.capabilities.first()
+            .map(|c| c.cap_type.as_str())
+            .unwrap_or("model")
+    });
+
+    // Find the capability definition
+    let cap_def = manifest.capabilities.iter()
+        .find(|c| c.cap_type == cap_type)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "UNKNOWN_CAPABILITY_TYPE",
+                format!("Capability type '{}' not found in manifest for '{}'.", cap_type, service.offering),
+                None,
+            )
+        })?;
+
+    // Check if add operation is available
+    if cap_def.add.as_ref().map(|a| !a.available).unwrap_or(true) {
+        return Err(error_response(
+            StatusCode::NOT_IMPLEMENTED,
+            "ADD_NOT_SUPPORTED",
+            format!("Adding capabilities of type '{}' is not supported for '{}'.", cap_type, service.offering),
+            None,
+        ));
+    }
+
+    // Execute add operation
+    let executor = CapabilityExecutor::new();
+    let result = executor
+        .add_capability(&service, &manifest, mode, cap_type, &request.name)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ADD_FAILED",
+                format!("Failed to add capability: {}", e),
+                None,
+            )
+        })?;
+
+    Ok(Json(ApiResponse {
+        data: CapabilityMutationResponse {
+            success: result.success,
+            capability: result.capability,
+            operation: result.operation,
+            error: result.error,
+        },
+        suggestions: None,
+    }))
+}
+
+/// DELETE /api/v1/stone/offerings/:name/capabilities/:capability
+///
+/// Remove a capability from an offering (e.g., delete a model from Ollama).
+///
+/// # Path Parameters
+/// - `name`: Offering name (e.g., "ollama")
+/// - `capability`: Capability name to remove (e.g., "llama2:7b")
+///
+/// # Query Parameters
+/// - `type`: Capability type (optional, defaults to first type in manifest)
+///
+/// # Response
+/// ```json
+/// {
+///   "data": {
+///     "success": true,
+///     "capability": "llama2:7b",
+///     "operation": "remove"
+///   }
+/// }
+/// ```
+pub async fn remove_offering_capability_v1(
+    State(state): State<AppState>,
+    Path((offering_name, capability_name)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<RemoveCapabilityQuery>,
+) -> Result<Json<ApiResponse<CapabilityMutationResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    // Find the service (managed or adopted)
+    let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
+
+    // Get capability manifest
+    let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "NO_CAPABILITY_MANIFEST",
+            format!("No capability manifest found for offering '{}'.", service.offering),
+            None,
+        )
+    })?;
+
+    // Determine capability type
+    let cap_type = query.cap_type.as_deref().unwrap_or_else(|| {
+        manifest.capabilities.first()
+            .map(|c| c.cap_type.as_str())
+            .unwrap_or("model")
+    });
+
+    // Find the capability definition
+    let cap_def = manifest.capabilities.iter()
+        .find(|c| c.cap_type == cap_type)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "UNKNOWN_CAPABILITY_TYPE",
+                format!("Capability type '{}' not found in manifest for '{}'.", cap_type, service.offering),
+                None,
+            )
+        })?;
+
+    // Check if remove operation is available
+    if cap_def.remove.as_ref().map(|r| !r.available).unwrap_or(true) {
+        return Err(error_response(
+            StatusCode::NOT_IMPLEMENTED,
+            "REMOVE_NOT_SUPPORTED",
+            format!("Removing capabilities of type '{}' is not supported for '{}'.", cap_type, service.offering),
+            None,
+        ));
+    }
+
+    // Execute remove operation
+    let executor = CapabilityExecutor::new();
+    let result = executor
+        .remove_capability(&service, &manifest, mode, cap_type, &capability_name)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "REMOVE_FAILED",
+                format!("Failed to remove capability: {}", e),
+                None,
+            )
+        })?;
+
+    Ok(Json(ApiResponse {
+        data: CapabilityMutationResponse {
+            success: result.success,
+            capability: result.capability,
+            operation: result.operation,
+            error: result.error,
+        },
+        suggestions: None,
+    }))
+}
+
+/// Query parameters for remove capability endpoint
+#[derive(Debug, Deserialize)]
+pub struct RemoveCapabilityQuery {
+    /// Capability type (optional)
+    #[serde(rename = "type")]
+    pub cap_type: Option<String>,
+}
+
+/// Convert UnifiedOffering to ServiceInfo for capability executor compatibility
+async fn offering_to_service_info(offering: &UnifiedOffering, state: &AppState) -> ServiceInfo {
+    // Use location port, falling back to manifest default
+    let port = if offering.location.port > 0 {
+        offering.location.port
+    } else {
+        get_offering_port(&offering.offering, state).await
+    };
+
+    ServiceInfo {
+        offering_id: offering.offering_id.clone(),
+        name: offering.name.clone(),
+        offering: offering.offering.clone(),
+        version: offering.version.clone(),
+        status: match offering.status {
+            garden_common::OfferingStatus::Running => ServiceStatus::Running,
+            garden_common::OfferingStatus::Stopped => ServiceStatus::Stopped,
+            garden_common::OfferingStatus::Installing => ServiceStatus::Installing,
+            garden_common::OfferingStatus::Degraded => ServiceStatus::Degraded,
+            garden_common::OfferingStatus::Maintenance => ServiceStatus::Maintenance,
+            garden_common::OfferingStatus::Unknown => ServiceStatus::Unknown,
+        },
+        health: offering.health.clone(),
+        ports: Ports {
+            native: port,
+            agnostic: offering.location.agnostic_port,
+        },
+        resources: offering.managed_data().and_then(|m| m.resources.clone()),
+        job_id: offering.managed_data().and_then(|m| m.job_id.clone()),
+        sub_capabilities: offering.sub_capabilities.clone(),
+        guidance: offering.managed_data().and_then(|m| m.guidance.clone()),
+    }
+}
+
+/// Helper to find a service (managed or adopted) for capability operations
+async fn find_service_for_capability(
+    state: &AppState,
+    offering_name: &str,
+) -> Result<(ServiceInfo, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
+    // Find in unified registry
+    let offerings = state.offerings.read().await;
+    let found = offerings
+        .iter()
+        .find(|o| o.offering.to_lowercase() == offering_name.to_lowercase())
+        .cloned();
+    drop(offerings);
+
+    match found {
+        Some(offering) => {
+            let mode = offering.mode();
+            let service = offering_to_service_info(&offering, state).await;
+            Ok((service, mode))
+        }
+        None => {
+            Err(error_response(
+                StatusCode::NOT_FOUND,
+                "OFFERING_NOT_FOUND",
+                format!("Offering '{}' is not running on this stone.", offering_name),
+                None,
+            ))
+        }
     }
 }

@@ -5,6 +5,7 @@
 //! - Switches to 5-minute intervals after stability is established
 //! - Detects services configured for adopted mode
 //! - Adopts stable detected services automatically
+//! - Validates health of already-adopted offerings (marks unhealthy/healthy)
 //! - Respects stability thresholds and exclusion rules
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
@@ -12,7 +13,7 @@
 use crate::AppState;
 use crate::infra::config::AdoptionConfig;
 use crate::domain::DetectionOrchestrator;
-use garden_common::{AdoptedOfferingInfo, ServiceLocation, ServiceHealthStatus, OfferingMode};
+use garden_common::{ServiceHealthStatus, OfferingMode};
 
 /// Background auto-adoption loop
 ///
@@ -79,6 +80,61 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
             "Running auto-adoption scan"
         );
 
+        // Track if we need to persist changes
+        let mut state_changed = false;
+
+        // Phase 1: Validate health of already-adopted offerings
+        {
+            let mut offerings = state.offerings.write().await;
+            for offering in offerings.iter_mut().filter(|o| o.is_adopted()) {
+                // Find the manifest for this adopted offering
+                let manifest = state.manifest_registry.get_offering(&offering.offering);
+                if manifest.is_none() {
+                    continue; // Manifest not found, skip validation
+                }
+                let manifest = manifest.unwrap();
+
+                // Run detection to check if still available
+                match orchestrator.detect(manifest).await {
+                    Ok(result) if result.detected => {
+                        // Offering is available
+                        if offering.health != ServiceHealthStatus::Healthy {
+                            tracing::info!(
+                                offering = %offering.offering,
+                                "Adopted offering came back online, marking healthy"
+                            );
+                            offering.health = ServiceHealthStatus::Healthy;
+                            state_changed = true;
+
+                            state.console.emit(garden_common::console::ConsoleEvent::new(
+                                garden_common::console::EventCategory::Services,
+                                garden_common::console::EventStatus::Healthy,
+                                format!("{} is back online", offering.offering),
+                            ));
+                        }
+                    }
+                    Ok(_) | Err(_) => {
+                        // Offering not detected - mark unhealthy (but don't remove)
+                        if offering.health == ServiceHealthStatus::Healthy {
+                            tracing::warn!(
+                                offering = %offering.offering,
+                                "Adopted offering not responding, marking offline"
+                            );
+                            offering.health = ServiceHealthStatus::Offline;
+                            state_changed = true;
+
+                            state.console.emit(garden_common::console::ConsoleEvent::new(
+                                garden_common::console::EventCategory::Services,
+                                garden_common::console::EventStatus::Disconnected,
+                                format!("{} is offline", offering.offering),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: Discover and adopt new offerings
         for manifest in adoptable_manifests {
             // Check exclusion list
             if config.is_excluded(&manifest.name) {
@@ -88,9 +144,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
 
             // Check if already adopted
             {
-                let adopted = state.adopted_offerings.read().await;
-                if adopted.iter().any(|a| a.offering == manifest.name) {
-                    continue; // Already adopted
+                let offerings = state.offerings.read().await;
+                if offerings.iter().any(|o| o.offering == manifest.name && o.is_adopted()) {
+                    continue; // Already adopted (handled in Phase 1)
                 }
             }
 
@@ -110,38 +166,42 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         _ => garden_common::AdoptedControlLevel::Monitor, // Default safe
                     };
 
-                    // Create adopted offering info
-                    // TODO: Extract actual location from detection result
-                    let location = ServiceLocation {
+                    // Create unified offering for adopted service
+                    let location = garden_common::OfferingLocation {
                         host: "localhost".to_string(),
                         port: manifest.default_host_port(),
                         protocol: manifest.category.clone(),
+                        agnostic_port: None,
                     };
 
                     // Get control config from adopted mode
                     let control = manifest.get_control_config();
 
-                    let adopted_info = AdoptedOfferingInfo {
+                    let adopted_offering = garden_common::UnifiedOffering {
+                        offering_id: garden_common::utils::ids::generate_guidv7(),
                         name: format!("{}@adopted", manifest.name),
                         offering: manifest.name.clone(),
-                        mode: OfferingMode::Adopted,
-                        location,
-                        control_level,
+                        version: result.version.unwrap_or_else(|| "unknown".to_string()),
+                        status: garden_common::OfferingStatus::Running,
                         health: ServiceHealthStatus::Healthy,
-                        detected_at: chrono::Utc::now().to_rfc3339(),
-                        version: result.version,
-                        start_command: control.and_then(|c| c.start_command.clone()),
-                        stop_command: control.and_then(|c| c.stop_command.clone()),
-                        restart_command: control.and_then(|c| c.restart_command.clone()),
-                        health_check_url: control.and_then(|c| c.health_check_url.clone()),
-                        container_name: None,
+                        sub_capabilities: Vec::new(), // Populated by capabilities discovery task
+                        location,
+                        mode_data: garden_common::OfferingModeData::Adopted(garden_common::AdoptedData {
+                            control_level,
+                            start_command: control.as_ref().and_then(|c| c.start_command.clone()),
+                            stop_command: control.as_ref().and_then(|c| c.stop_command.clone()),
+                            restart_command: control.as_ref().and_then(|c| c.restart_command.clone()),
+                            health_check_url: control.as_ref().and_then(|c| c.health_check_url.clone()),
+                            container_name: None,
+                            detected_at: chrono::Utc::now(),
+                        }),
+                        registered_at: chrono::Utc::now(),
+                        updated_at: None,
                     };
 
-                    // Add to adopted registry
-                    {
-                        let mut adopted = state.adopted_offerings.write().await;
-                        adopted.push(adopted_info.clone());
-                    }
+                    // Add to unified offerings registry
+                    state.upsert_offering(adopted_offering, true).await;
+                    state_changed = true;
 
                     // Emit console event
                     state.console.emit(garden_common::console::ConsoleEvent::new(
@@ -149,8 +209,6 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         garden_common::console::EventStatus::Healthy,
                         format!("Auto-adopted {}", manifest.name),
                     ));
-
-                    // TODO: Persist adopted offerings registry to disk
                 }
                 Ok(result) if result.detected && !result.stable => {
                     tracing::debug!(
@@ -174,6 +232,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         "Detection failed for offering"
                     );
                 }
+            }
+        }
+
+        // Persist changes if anything changed
+        if state_changed {
+            if let Err(e) = state.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist offerings");
             }
         }
 

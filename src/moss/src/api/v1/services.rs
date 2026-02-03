@@ -12,8 +12,69 @@ use crate::{error_response, AppState};
 use garden_common::{
     api_utils::{ApiErrorResponse, sanitize_query, sanitize_name, sanitize_tag, is_suspicious},
     utils::ids::generate_guidv7,
-    Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus,
+    ManagedData, OfferingLocation, OfferingModeData, OfferingStatus,
+    Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus, UnifiedOffering,
 };
+
+/// Convert UnifiedOffering to ServiceInfo for API responses
+fn offering_to_service_info(o: &UnifiedOffering) -> ServiceInfo {
+    ServiceInfo {
+        offering_id: o.offering_id.clone(),
+        name: o.name.clone(),
+        offering: o.offering.clone(),
+        version: o.version.clone(),
+        status: match o.status {
+            OfferingStatus::Running => ServiceStatus::Running,
+            OfferingStatus::Stopped => ServiceStatus::Stopped,
+            OfferingStatus::Installing => ServiceStatus::Installing,
+            OfferingStatus::Degraded => ServiceStatus::Degraded,
+            OfferingStatus::Maintenance => ServiceStatus::Maintenance,
+            OfferingStatus::Unknown => ServiceStatus::Unknown,
+        },
+        health: o.health.clone(),
+        ports: Ports {
+            native: o.location.port,
+            agnostic: o.location.agnostic_port,
+        },
+        resources: o.managed_data().and_then(|m| m.resources.clone()),
+        job_id: o.managed_data().and_then(|m| m.job_id.clone()),
+        sub_capabilities: o.sub_capabilities.clone(),
+        guidance: o.managed_data().and_then(|m| m.guidance.clone()),
+    }
+}
+
+/// Convert ServiceInfo to UnifiedOffering (managed mode)
+fn service_info_to_offering(info: ServiceInfo) -> UnifiedOffering {
+    UnifiedOffering {
+        offering_id: info.offering_id,
+        name: info.name,
+        offering: info.offering,
+        version: info.version,
+        status: match info.status {
+            ServiceStatus::Running => OfferingStatus::Running,
+            ServiceStatus::Stopped => OfferingStatus::Stopped,
+            ServiceStatus::Installing => OfferingStatus::Installing,
+            ServiceStatus::Degraded => OfferingStatus::Degraded,
+            ServiceStatus::Maintenance => OfferingStatus::Maintenance,
+            ServiceStatus::Unknown => OfferingStatus::Unknown,
+        },
+        health: info.health,
+        sub_capabilities: info.sub_capabilities,
+        location: OfferingLocation {
+            host: "localhost".to_string(),
+            port: info.ports.native,
+            protocol: "http".to_string(),
+            agnostic_port: info.ports.agnostic,
+        },
+        mode_data: OfferingModeData::Managed(ManagedData {
+            resources: info.resources,
+            job_id: info.job_id,
+            guidance: info.guidance,
+        }),
+        registered_at: chrono::Utc::now(),
+        updated_at: None,
+    }
+}
 
 /// Query parameters for GET /api/v1/services
 ///
@@ -169,11 +230,11 @@ pub async fn get_service_v1(
         "get_service_v1: handler invoked for /api/v1/services/:service"
     );
 
-    let registry = state.registry.read().await;
-    let service_info = registry
+    let offerings = state.offerings.read().await;
+    let service_info = offerings
         .iter()
-        .find(|s| s.name == service)
-        .cloned()
+        .find(|o| o.name == service && o.is_managed())
+        .map(offering_to_service_info)
         .ok_or_else(|| {
             tracing::warn!(
                 service = %service,
@@ -186,7 +247,7 @@ pub async fn get_service_v1(
                 None,
             )
         })?;
-    drop(registry);
+    drop(offerings);
 
     let ctx = SuggestionContext::from_headers(&headers, "get_service");
     let suggestions = generate_suggestions(&ctx);
@@ -213,16 +274,15 @@ pub async fn create_service_v1(
         .unwrap_or(false)
     {
         let in_registry = {
-            let reg = state.registry.read().await;
-            reg.iter().any(|s| s.name == offering)
+            let offerings = state.offerings.read().await;
+            offerings.iter().any(|o| o.name == offering)
         };
 
         if !in_registry {
             if let Ok(Some(info)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
-                let mut reg = state.registry.write().await;
-                reg.push(info);
-                drop(reg);
-                let _ = state.persist_registry().await;
+                let unified = UnifiedOffering::from_service_info(info);
+                state.upsert_offering(unified, true).await;
+                let _ = state.persist_offerings().await;
 
                 let ctx = SuggestionContext::from_headers(&headers, "create_service");
                 let suggestions = generate_suggestions(&ctx);
@@ -271,10 +331,10 @@ pub async fn create_service_v1(
     }
 
     // Check if already running/maintenance
-    let registry = state.registry.read().await;
-    if let Some(existing) = registry.iter().find(|svc| svc.name == offering) {
-        if existing.status == ServiceStatus::Maintenance {
-            drop(registry);
+    let offerings = state.offerings.read().await;
+    if let Some(existing) = offerings.iter().find(|o| o.name == offering && o.is_managed()) {
+        if existing.status == OfferingStatus::Maintenance {
+            drop(offerings);
             let ctx = SuggestionContext::from_headers(&headers, "create_service");
             let suggestions = generate_suggestions(&ctx);
             return Ok(Json(ApiResponse {
@@ -288,7 +348,7 @@ pub async fn create_service_v1(
             }));
         }
     }
-    drop(registry);
+    drop(offerings);
 
     // Create job
     let job_id = uuid::Uuid::now_v7().to_string();
@@ -308,32 +368,32 @@ pub async fn create_service_v1(
     // This ensures `rake list` shows the service as planting
     {
         let native_port = compiled.default_host_port();
-        let installing_info = ServiceInfo {
+        let installing_offering = UnifiedOffering {
             offering_id: generate_guidv7(),
             name: offering.clone(),
             offering: offering.clone(),
             version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
-            status: ServiceStatus::Installing,
+            status: OfferingStatus::Installing,
             health: ServiceHealthStatus::Offline,
-            ports: Ports {
-                native: native_port,
-                agnostic: None,
-            },
-            resources: None,
-            job_id: Some(job_id.clone()),
             sub_capabilities: Vec::new(),
-            guidance: None, // Guidance is added when installation completes
+            location: OfferingLocation {
+                host: "localhost".to_string(),
+                port: native_port,
+                protocol: "http".to_string(),
+                agnostic_port: None,
+            },
+            mode_data: OfferingModeData::Managed(ManagedData {
+                resources: None,
+                job_id: Some(job_id.clone()),
+                guidance: None, // Guidance is added when installation completes
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: None,
         };
 
-        let mut registry = state.registry.write().await;
-        // Replace if exists (shouldn't happen, but be safe)
-        if let Some(existing) = registry.iter_mut().find(|svc| svc.name == offering) {
-            *existing = installing_info;
-        } else {
-            registry.push(installing_info);
-        }
+        state.upsert_offering(installing_offering, true).await;
     }
-    let _ = state.persist_registry().await;
+    let _ = state.persist_offerings().await;
 
     // Spawn async installation task
     let state_clone = state.clone();
@@ -363,22 +423,19 @@ pub async fn rest_service_v1(
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let mut registry = state.registry.write().await;
-
-    let service_info = registry
-        .iter_mut()
-        .find(|s| s.name == service)
-        .ok_or_else(|| {
-            error_response(
+    // Find the offering
+    let offering_id = {
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == service && o.is_managed())
+            .map(|o| o.offering_id.clone())
+            .ok_or_else(|| error_response(
                 StatusCode::NOT_FOUND,
                 "SERVICE_NOT_FOUND",
                 format!("Service '{}' not found", service),
                 None,
-            )
-        })?;
-
-    // Capture info for event before mutation
-    let offering_id = service_info.offering_id.clone();
+            ))?
+    };
 
     // Stop the Docker container
     if let Err(e) = state.docker.stop_service(&service, Some(&state.console)).await {
@@ -391,11 +448,16 @@ pub async fn rest_service_v1(
         ));
     }
 
-    service_info.status = ServiceStatus::Stopped;
-    drop(registry);
+    // Update status
+    {
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+            o.status = OfferingStatus::Stopped;
+        }
+    }
 
-    if let Err(e) = state.persist_registry().await {
-        tracing::warn!(error = ?e, "Failed to persist registry after rest");
+    if let Err(e) = state.persist_offerings().await {
+        tracing::warn!(error = ?e, "Failed to persist offerings after rest");
     }
 
     // Emit offering lifecycle event
@@ -425,22 +487,19 @@ pub async fn wake_service_v1(
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let mut registry = state.registry.write().await;
-
-    let service_info = registry
-        .iter_mut()
-        .find(|s| s.name == service)
-        .ok_or_else(|| {
-            error_response(
+    // Find the offering
+    let offering_id = {
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == service && o.is_managed())
+            .map(|o| o.offering_id.clone())
+            .ok_or_else(|| error_response(
                 StatusCode::NOT_FOUND,
                 "SERVICE_NOT_FOUND",
                 format!("Service '{}' not found", service),
                 None,
-            )
-        })?;
-
-    // Capture info for event before mutation
-    let offering_id = service_info.offering_id.clone();
+            ))?
+    };
 
     // Start the Docker container
     if let Err(e) = state.docker.start_service(&service, Some(&state.console)).await {
@@ -453,11 +512,16 @@ pub async fn wake_service_v1(
         ));
     }
 
-    service_info.status = ServiceStatus::Running;
-    drop(registry);
+    // Update status
+    {
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+            o.status = OfferingStatus::Running;
+        }
+    }
 
-    if let Err(e) = state.persist_registry().await {
-        tracing::warn!(error = ?e, "Failed to persist registry after wake");
+    if let Err(e) = state.persist_offerings().await {
+        tracing::warn!(error = ?e, "Failed to persist offerings after wake");
     }
 
     // Emit offering lifecycle event
@@ -488,41 +552,44 @@ pub async fn nourish_service_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let service_name = service.clone();
-    let mut registry = state.registry.write().await;
 
-    let svc = registry
-        .iter_mut()
-        .find(|s| s.name == service_name)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service_name),
-                None,
-            )
-        })?;
+    // Find and validate the service
+    let (offering_id, offering, old_version) = {
+        let mut offerings = state.offerings.write().await;
+        let o = offerings
+            .iter_mut()
+            .find(|o| o.name == service_name && o.is_managed())
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service_name),
+                    None,
+                )
+            })?;
 
-    if svc.status == ServiceStatus::Maintenance {
-        let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
-        let suggestions = generate_suggestions(&ctx);
-        return Ok(Json(ApiResponse {
-            data: ServiceActionResponse {
-                service: service_name,
-                action: "nourish".to_string(),
-                status: "maintenance".to_string(),
-                message: "Service under maintenance, retry later".to_string(),
-            },
-            suggestions,
-        }));
-    }
+        if o.status == OfferingStatus::Maintenance {
+            let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
+            let suggestions = generate_suggestions(&ctx);
+            return Ok(Json(ApiResponse {
+                data: ServiceActionResponse {
+                    service: service_name,
+                    action: "nourish".to_string(),
+                    status: "maintenance".to_string(),
+                    message: "Service under maintenance, retry later".to_string(),
+                },
+                suggestions,
+            }));
+        }
 
-    // Capture info for event before mutation
-    let offering_id = svc.offering_id.clone();
-    let old_version = svc.version.clone();
+        // Capture info for event before mutation
+        let id = o.offering_id.clone();
+        let old_ver = o.version.clone();
+        let off = o.offering.clone();
 
-    svc.status = ServiceStatus::Maintenance;
-    let offering = svc.offering.clone();
-    drop(registry);
+        o.status = OfferingStatus::Maintenance;
+        (id, off, old_ver)
+    };
 
     // Load template for upgrade
     let entry = state.manifest_registry.sw.get(&offering).ok_or_else(|| {
@@ -538,9 +605,9 @@ pub async fn nourish_service_v1(
         let state_clone = state.clone();
         let service_clone = service_name.clone();
         tokio::spawn(async move {
-            let mut registry = state_clone.registry.write().await;
-            if let Some(svc) = registry.iter_mut().find(|s| s.name == service_clone) {
-                svc.status = ServiceStatus::Running;
+            let mut offerings = state_clone.offerings.write().await;
+            if let Some(o) = offerings.iter_mut().find(|o| o.name == service_clone && o.is_managed()) {
+                o.status = OfferingStatus::Running;
             }
         });
         error_response(
@@ -565,9 +632,9 @@ pub async fn nourish_service_v1(
         .await
     {
         tracing::error!(error = ?e, service = %service_name, "Docker upgrade failed");
-        let mut registry = state.registry.write().await;
-        if let Some(svc) = registry.iter_mut().find(|s| s.name == service_name) {
-            svc.status = ServiceStatus::Running;
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name && o.is_managed()) {
+            o.status = OfferingStatus::Running;
         }
         return Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -580,16 +647,16 @@ pub async fn nourish_service_v1(
     let new_version = template.image.split(':').next_back().unwrap_or("latest").to_string();
     let new_image = template.image.clone();
 
-    let mut registry = state.registry.write().await;
-    if let Some(svc) = registry.iter_mut().find(|s| s.name == service_name) {
-        svc.status = ServiceStatus::Running;
-        svc.version = new_version.clone();
+    {
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name && o.is_managed()) {
+            o.status = OfferingStatus::Running;
+            o.version = new_version.clone();
+        }
     }
 
-    drop(registry);
-
-    if let Err(e) = state.persist_registry().await {
-        tracing::warn!(error = ?e, "Failed to persist registry after nourish");
+    if let Err(e) = state.persist_offerings().await {
+        tracing::warn!(error = ?e, "Failed to persist offerings after nourish");
     }
 
     // Emit offering lifecycle event (old_image reconstructed from old_version)
@@ -624,22 +691,22 @@ pub async fn delete_service_v1(
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let mut registry = state.registry.write().await;
-
-    let pos = registry
-        .iter()
-        .position(|svc| svc.name == service)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service),
-                None,
-            )
-        })?;
-
-    // Capture info for event before removal
-    let offering_id = registry[pos].offering_id.clone();
+    // Find and remove the service from registry
+    let offering_id = {
+        let offerings = state.offerings.read().await;
+        let o = offerings
+            .iter()
+            .find(|o| o.name == service && o.is_managed())
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service),
+                    None,
+                )
+            })?;
+        o.offering_id.clone()
+    };
 
     // Remove container first (preserves volumes by default)
     if let Err(e) = state.docker.remove_service(&service, Some(&state.console)).await {
@@ -649,11 +716,10 @@ pub async fn delete_service_v1(
     }
 
     // Then remove from registry
-    registry.remove(pos);
-    drop(registry);
+    state.remove_offering(&offering_id, true).await;
 
-    if let Err(e) = state.persist_registry().await {
-        tracing::warn!(error = ?e, "Failed to persist registry after delete");
+    if let Err(e) = state.persist_offerings().await {
+        tracing::warn!(error = ?e, "Failed to persist offerings after delete");
     }
 
     // Emit offering lifecycle event (removed = soft delete, volumes preserved)
@@ -720,22 +786,20 @@ pub async fn destroy_service_v1(
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let mut registry = state.registry.write().await;
-
-    let pos = registry
-        .iter()
-        .position(|svc| svc.name == service)
-        .ok_or_else(|| {
-            error_response(
+    // Find the service
+    let offering_id = {
+        let offerings = state.offerings.read().await;
+        let o = offerings
+            .iter()
+            .find(|o| o.name == service && o.is_managed())
+            .ok_or_else(|| error_response(
                 StatusCode::NOT_FOUND,
                 "SERVICE_NOT_FOUND",
                 format!("Service '{}' not found", service),
                 None,
-            )
-        })?;
-
-    // Capture info for event before removal
-    let offering_id = registry[pos].offering_id.clone();
+            ))?;
+        o.offering_id.clone()
+    };
 
     // Hard delete: destroy Docker container first
     if let Err(e) = state.docker.remove_service(&service, Some(&state.console)).await {
@@ -749,11 +813,10 @@ pub async fn destroy_service_v1(
     }
 
     // Then remove from registry
-    registry.remove(pos);
-    drop(registry);
+    state.remove_offering(&offering_id, true).await;
 
-    if let Err(e) = state.persist_registry().await {
-        tracing::warn!(error = ?e, "Failed to persist registry after destroy");
+    if let Err(e) = state.persist_offerings().await {
+        tracing::warn!(error = ?e, "Failed to persist offerings after destroy");
     }
 
     // Emit offering lifecycle event (destroyed = hard delete)
@@ -1002,12 +1065,12 @@ pub async fn discover_service_capabilities_v1(
     State(state): State<AppState>,
     Path(service_name): Path<String>,
 ) -> Result<Json<ApiResponse<Vec<garden_common::SubCapability>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // Find the service
+    // Find the service and convert to ServiceInfo for discovery
     let service = {
-        let registry = state.registry.read().await;
-        registry.iter()
-            .find(|s| s.name == service_name)
-            .cloned()
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == service_name && o.is_managed())
+            .map(offering_to_service_info)
             .ok_or_else(|| error_response(
                 StatusCode::NOT_FOUND,
                 "SERVICE_NOT_FOUND",
@@ -1025,14 +1088,14 @@ pub async fn discover_service_capabilities_v1(
             None,
         ))?;
 
-    // Update the service in registry with discovered capabilities
+    // Update the offering in registry with discovered capabilities
     if !capabilities.is_empty() {
-        let mut registry = state.registry.write().await;
-        if let Some(svc) = registry.iter_mut().find(|s| s.name == service_name) {
-            svc.sub_capabilities = capabilities.clone();
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name && o.is_managed()) {
+            o.sub_capabilities = capabilities.clone();
         }
-        drop(registry);
-        let _ = state.persist_registry().await;
+        drop(offerings);
+        let _ = state.persist_offerings().await;
     }
 
     Ok(Json(ApiResponse {
@@ -1047,16 +1110,27 @@ pub async fn discover_service_capabilities_v1(
 pub async fn refresh_all_capabilities_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
-    let mut services = state.registry.read().await.clone();
+    // Get managed offerings and convert to ServiceInfo for discovery
+    let mut services: Vec<ServiceInfo> = {
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .filter(|o| o.is_managed())
+            .map(offering_to_service_info)
+            .collect()
+    };
 
     let updated = crate::domain::refresh_all_sub_capabilities(&mut services, &state.docker).await;
 
-    // Persist updated capabilities
+    // Persist updated capabilities back to unified offerings
     if updated > 0 {
-        let mut registry = state.registry.write().await;
-        *registry = services;
-        drop(registry);
-        let _ = state.persist_registry().await;
+        let mut offerings = state.offerings.write().await;
+        for svc in &services {
+            if let Some(o) = offerings.iter_mut().find(|o| o.name == svc.name && o.is_managed()) {
+                o.sub_capabilities = svc.sub_capabilities.clone();
+            }
+        }
+        drop(offerings);
+        let _ = state.persist_offerings().await;
     }
 
     Ok((

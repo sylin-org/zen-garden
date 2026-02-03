@@ -93,29 +93,17 @@ pub async fn stream_stone_presence(
 
 /// Generate presence snapshot from current state
 async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
-    let registry = state.registry.read().await;
+    let offerings_guard = state.offerings.read().await;
 
-    // Map managed offerings (containers)
-    let mut offerings: Vec<OfferingState> = registry
+    // Map all offerings (managed + adopted + borrowed)
+    let offerings: Vec<OfferingState> = offerings_guard
         .iter()
-        .map(|svc| OfferingState {
-            name: svc.name.clone(),
-            status: format!("{:?}", svc.status).to_lowercase(),
-            health: format!("{:?}", svc.health).to_lowercase(),
+        .map(|o| OfferingState {
+            name: o.name.clone(),
+            status: format!("{:?}", o.status).to_lowercase(),
+            health: format!("{:?}", o.health).to_lowercase(),
         })
         .collect();
-
-    // Include adopted offerings
-    {
-        let adopted = state.adopted_offerings.read().await;
-        for adopted_info in adopted.iter() {
-            offerings.push(OfferingState {
-                name: adopted_info.offering.clone(),
-                status: "running".to_string(), // Adopted offerings that passed detection are running
-                health: format!("{:?}", adopted_info.health).to_lowercase(),
-            });
-        }
-    }
 
     // Compute stone state
     let uptime = state.start_time.elapsed().as_secs();

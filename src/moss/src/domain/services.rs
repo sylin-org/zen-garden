@@ -7,17 +7,17 @@ use std::time::Duration;
 
 /// Get count of running services on local stone
 ///
-/// Fast, zero-latency check of local service registry.
+/// Fast, zero-latency check of local offerings registry.
 pub async fn get_local_service_count(
     state: &crate::AppState,
 ) -> Result<usize> {
-    let registry = state.registry.read().await;
-    
-    // Count services that are in running state
-    let count = registry.iter()
-        .filter(|svc| svc.status == garden_common::ServiceStatus::Running)
+    let offerings = state.offerings.read().await;
+
+    // Count offerings that are in running state
+    let count = offerings.iter()
+        .filter(|o| o.status == garden_common::OfferingStatus::Running)
         .count();
-    
+
     Ok(count)
 }
 

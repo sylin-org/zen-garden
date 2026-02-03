@@ -162,6 +162,18 @@ impl AdoptionConfig {
     }
 }
 
+impl Default for AdoptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: None, // Will use deployment profile detection
+            default_control_level: None,
+            exclude: Vec::new(),
+            detection_cache_ttl_secs: None,
+            stability_threshold: None,
+        }
+    }
+}
+
 // ============================================================================
 // Network Configuration
 // ============================================================================

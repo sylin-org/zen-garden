@@ -11,7 +11,7 @@ use crate::domain::connection::{self, ResolvedConnection};
 use crate::domain::{topology, TopologyEntry};
 use crate::AppState;
 use garden_common::manifests::get_category_registry;
-use garden_common::ServiceStatus;
+use garden_common::{OfferingStatus, ServiceStatus};
 
 /// Search criteria for service discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,37 +233,37 @@ pub struct ServiceDiscoveryResponse {
 
 /// Find services matching criteria on local stone
 ///
-/// Zero-latency local search using registry and offerings index.
+/// Zero-latency local search using offerings and offerings index.
 pub async fn find_local_services(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
-    let registry = state.registry.read().await;
+    let offerings = state.offerings.read().await;
     let offerings_index = state.offerings_index.read().await;
 
     let mut results = Vec::new();
 
-    for service in registry.iter() {
-        // Skip non-running services
-        if service.status != ServiceStatus::Running {
+    for offering in offerings.iter() {
+        // Skip non-running offerings
+        if offering.status != OfferingStatus::Running {
             continue;
         }
 
         // Get offering metadata (category, tags)
         let (category, tags, connection_template) = offerings_index
             .as_ref()
-            .and_then(|idx| idx.offerings.iter().find(|o| o.name == service.offering))
+            .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
             .map(|o| (o.category.clone(), o.tags.clone(), None::<String>)) // TODO: Add connection_template to CompiledOffering
-            .unwrap_or_else(|| (service.offering.clone(), vec![], None));
+            .unwrap_or_else(|| (offering.offering.clone(), vec![], None));
 
         // Check if matches criteria
-        if !matches_criteria(criteria, &service.name, &service.offering, &category, &tags, &service.sub_capabilities) {
+        if !matches_criteria(criteria, &offering.name, &offering.offering, &category, &tags, &offering.sub_capabilities) {
             continue;
         }
 
         // Resolve connection
-        let protocol = connection::infer_protocol(&service.offering, &category, state).await;
-        let port = service.ports.native;
+        let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
+        let port = offering.location.port;
 
         let conn = connection::resolve_connection(
             &state.stone_name,
@@ -274,19 +274,19 @@ pub async fn find_local_services(
         );
 
         results.push(FoundService {
-            offering_id: service.offering_id.clone(),
-            name: service.name.clone(),
-            offering: service.offering.clone(),
+            offering_id: offering.offering_id.clone(),
+            name: offering.name.clone(),
+            offering: offering.offering.clone(),
             category,
             tags,
-            status: format!("{:?}", service.status),
+            status: format!("{}", offering.status),
             stone: StoneRef {
                 id: state.stone_id.clone(),
                 name: state.stone_name.clone(),
                 endpoint: format!("http://127.0.0.1:{}", state.api_port),
             },
             connection: conn,
-            sub_capabilities: service.sub_capabilities.clone(),
+            sub_capabilities: offering.sub_capabilities.clone(),
         });
     }
 
@@ -295,25 +295,25 @@ pub async fn find_local_services(
 
 /// List all local services (regardless of criteria) for the unified /api/v1/services endpoint
 ///
-/// Returns all services from registry with full connection info.
-/// Includes both running and non-running services.
+/// Returns all offerings from unified registry with full connection info.
+/// Includes both running and non-running offerings.
 pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryResponse {
-    let registry = state.registry.read().await;
+    let offerings = state.offerings.read().await;
     let offerings_index = state.offerings_index.read().await;
 
     let mut services = Vec::new();
 
-    for service in registry.iter() {
+    for offering in offerings.iter() {
         // Get offering metadata (category, tags)
         let (category, tags, connection_template) = offerings_index
             .as_ref()
-            .and_then(|idx| idx.offerings.iter().find(|o| o.name == service.offering))
+            .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
             .map(|o| (o.category.clone(), o.tags.clone(), None::<String>))
-            .unwrap_or_else(|| (service.offering.clone(), vec![], None));
+            .unwrap_or_else(|| (offering.offering.clone(), vec![], None));
 
         // Resolve connection
-        let protocol = connection::infer_protocol(&service.offering, &category, state).await;
-        let port = service.ports.native;
+        let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
+        let port = offering.location.port;
 
         let conn = connection::resolve_connection(
             &state.stone_name,
@@ -324,19 +324,19 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
         );
 
         services.push(FoundService {
-            offering_id: service.offering_id.clone(),
-            name: service.name.clone(),
-            offering: service.offering.clone(),
+            offering_id: offering.offering_id.clone(),
+            name: offering.name.clone(),
+            offering: offering.offering.clone(),
             category,
             tags,
-            status: format!("{:?}", service.status),
+            status: format!("{}", offering.status),
             stone: StoneRef {
                 id: state.stone_id.clone(),
                 name: state.stone_name.clone(),
                 endpoint: format!("http://127.0.0.1:{}", state.api_port),
             },
             connection: conn,
-            sub_capabilities: service.sub_capabilities.clone(),
+            sub_capabilities: offering.sub_capabilities.clone(),
         });
     }
 
@@ -466,7 +466,7 @@ async fn find_services_in_topology_cache(
 ///
 /// Looks up the offering and returns the default port.
 /// Returns 8080 as fallback if not found.
-async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
+pub async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
     if let Some(offering_def) = state.manifest_registry.get_offering(offering) {
         let port = offering_def.default_host_port();
         if port != 8080 { // 8080 is the generic default

@@ -528,12 +528,12 @@ async fn execute_updates_background(
 
     // Restore stone health based on service state
     let health_status = {
-        let registry = state.registry.read().await;
-        let has_degraded = registry.iter().any(|s| matches!(
-            s.status,
-            garden_common::ServiceStatus::Degraded
+        let offerings = state.offerings.read().await;
+        let has_degraded = offerings.iter().any(|o| matches!(
+            o.status,
+            garden_common::OfferingStatus::Degraded
         ));
-        
+
         if has_degraded {
             garden_common::constants::STONE_DEGRADED.to_string()
         } else {
@@ -576,9 +576,9 @@ async fn execute_offering_update(
 ) -> anyhow::Result<()> {
     // Mark service as updating in registry
     {
-        let mut registry = state.registry.write().await;
-        if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
-            svc.status = garden_common::ServiceStatus::Installing;  // Reuse for now
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.name == name && o.is_managed()) {
+            o.status = garden_common::OfferingStatus::Installing;  // Reuse for now
             // TODO V2: Use SERVICE_UPDATING constant when fully wired
         }
     }
@@ -639,9 +639,9 @@ async fn execute_offering_update(
     
     // Mark service as running again
     {
-        let mut registry = state.registry.write().await;
-        if let Some(svc) = registry.iter_mut().find(|s| s.name == name) {
-            svc.status = garden_common::ServiceStatus::Running;
+        let mut offerings = state.offerings.write().await;
+        if let Some(o) = offerings.iter_mut().find(|o| o.name == name && o.is_managed()) {
+            o.status = garden_common::OfferingStatus::Running;
         }
     }
     
@@ -732,14 +732,15 @@ async fn check_offering_updates(
     use garden_common::infra::registry_client::{query_image_tags, find_newer_version, get_image_digest, RegistryConfig};
     use crate::domain::constraints::check_constraints;
 
-    let registry = state.registry.read().await;
+    let offerings = state.offerings.read().await;
     let config = RegistryConfig::default();
-    
+
     let mut results = Vec::new();
 
-    for service in registry.iter() {
+    // Only check managed offerings (Docker containers) for updates
+    for offering in offerings.iter().filter(|o| o.is_managed()) {
         // Get the template image reference (e.g., "redis:latest")
-        let template_image = match state.docker.get_service_image(&service.name).await {
+        let template_image = match state.docker.get_service_image(&offering.name).await {
             Ok(img) => img,
             Err(_) => continue,
         };
@@ -748,7 +749,7 @@ async fn check_offering_updates(
         let available_tags = match query_image_tags(&template_image, &config).await {
             Ok(tags) => tags,
             Err(e) => {
-                tracing::warn!(service = %service.name, error = ?e, "Failed to query registry");
+                tracing::warn!(offering = %offering.name, error = ?e, "Failed to query registry");
                 continue;
             }
         };
@@ -765,7 +766,7 @@ async fn check_offering_updates(
             let current_digest = match get_image_digest(&template_image, &config).await {
                 Ok(digest) => digest,
                 Err(e) => {
-                    tracing::warn!(service = %service.name, error = ?e, "Failed to get digest for latest tag");
+                    tracing::warn!(offering = %offering.name, error = ?e, "Failed to get digest for latest tag");
                     continue;
                 }
             };
@@ -799,7 +800,7 @@ async fn check_offering_updates(
             let current_digest = match get_image_digest(&current_image, &config).await {
                 Ok(digest) => digest,
                 Err(e) => {
-                    tracing::warn!(service = %service.name, current_tag, error = ?e, "Failed to get digest for current tag");
+                    tracing::warn!(offering = %offering.name, current_tag, error = ?e, "Failed to get digest for current tag");
                     continue;
                 }
             };
@@ -807,7 +808,7 @@ async fn check_offering_updates(
             let newer_digest = match get_image_digest(&newer_image, &config).await {
                 Ok(digest) => digest,
                 Err(e) => {
-                    tracing::warn!(service = %service.name, newer_tag, error = ?e, "Failed to get digest for newer tag");
+                    tracing::warn!(offering = %offering.name, newer_tag, error = ?e, "Failed to get digest for newer tag");
                     continue;
                 }
             };
@@ -816,14 +817,14 @@ async fn check_offering_updates(
             // This handles rolling tags (e.g., "1.6" pointing to "1.6.40")
             if current_digest != newer_digest {
                 let update = Update::Offering {
-                    name: service.name.clone(),
+                    name: offering.name.clone(),
                     current: current_tag.to_string(),
                     available: newer_tag.clone(),
                     age_days: None, // TODO: Calculate from registry metadata
                 };
 
                 // Check constraints (example: MongoDB 5.0+ requires AVX)
-                let requirements = get_offering_requirements(&service.name);
+                let requirements = get_offering_requirements(&offering.name);
                 
                 match check_constraints(&requirements, capabilities) {
                     Ok(()) => results.push(Ok(update)),

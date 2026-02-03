@@ -127,9 +127,10 @@
 
         /* List Items */
         .list { display: flex; flex-direction: column; gap: 0.75rem; }
-        .item { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 1rem; padding: 1rem 1.25rem; }
+        .item { display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center; gap: 1rem; padding: 1rem 1.25rem; }
         .item-name { font-weight: 500; }
         .item-meta { font-family: ui-monospace, monospace; font-size: 0.75rem; color: var(--stone-600); }
+        .item-caps { font-size: 0.75rem; color: var(--stone-400); font-style: italic; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; font-family: ui-monospace, monospace; text-transform: uppercase; }
         .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-sage); box-shadow: 0 0 8px var(--accent-sage); animation: pulse 2.5s infinite; }
         .dot.stopped { background: var(--accent-muted); box-shadow: none; animation: none; }
@@ -810,6 +811,7 @@
         offeringsList.innerHTML = offerings.map(o => `
             <div class="card item">
                 <span class="item-name">${o.name}</span>
+                <span class="item-caps">${o.capabilities || ''}</span>
                 <span class="item-meta">${o.container || ''}</span>
                 <span class="item-meta">:${o.port}</span>
                 <div class="status">

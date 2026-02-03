@@ -36,7 +36,7 @@ impl MossStateProvider {
         fields.insert("health".to_string(), json!(health));
 
         // Offering count
-        let offerings_count = self.state.registry.read().await.len();
+        let offerings_count = self.state.offerings.read().await.len();
         fields.insert("offerings".to_string(), json!(offerings_count));
 
         fields

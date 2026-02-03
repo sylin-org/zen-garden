@@ -2,7 +2,7 @@
 //!
 //! Continuous monitoring loop that:
 //! - Polls Docker container health every 30 seconds
-//! - Updates service registry with current status/health
+//! - Updates offerings registry with current status/health
 //! - Adopts unregistered zen-offering containers (self-heal)
 //! - Updates resource metrics (CPU, memory)
 //!
@@ -10,7 +10,7 @@
 
 use crate::AppState;
 use crate::domain::adopt_offering_container;
-use garden_common::{ServiceHealthStatus, ServiceStatus};
+use garden_common::{OfferingStatus, ServiceHealthStatus};
 
 /// Background health monitoring loop
 ///
@@ -50,79 +50,88 @@ pub async fn health_monitor_task(state: AppState) {
             tracing::debug!(reaped = reaped, "Reaped terminated Companion processes");
         }
 
-        let registry_snapshot = { state.registry.read().await.clone() };
+        // Get snapshot of managed offerings to check
+        let managed_snapshot: Vec<(String, String, OfferingStatus, ServiceHealthStatus)> = {
+            let offerings = state.offerings.read().await;
+            offerings
+                .iter()
+                .filter(|o| o.is_managed())
+                .map(|o| (o.offering_id.clone(), o.name.clone(), o.status.clone(), o.health.clone()))
+                .collect()
+        };
 
-        for service in registry_snapshot {
-            // Check container status
-            let (status, health) = match state.docker.get_service_status(&service.name).await {
-                Ok(status) => {
+        let mut state_changed = false;
+
+        for (offering_id, name, old_status, old_health) in managed_snapshot {
+            // Check container status (convert ServiceStatus → OfferingStatus)
+            let (new_status, new_health) = match state.docker.get_service_status(&name).await {
+                Ok(service_status) => {
                     let health = state
                         .docker
-                        .get_service_health(&service.name)
+                        .get_service_health(&name)
                         .await
                         .unwrap_or(ServiceHealthStatus::Offline);
-                    (status, health)
+                    (OfferingStatus::from(service_status), health)
                 }
                 Err(e) => {
                     tracing::warn!(
-                        service = %service.name,
+                        offering = %name,
                         error = ?e,
-                        "Failed to get service status, marking as offline"
+                        "Failed to get offering status, marking as offline"
                     );
-                    (ServiceStatus::Stopped, ServiceHealthStatus::Offline)
+                    (OfferingStatus::Stopped, ServiceHealthStatus::Offline)
                 }
             };
 
-            // Update registry if status or health changed
-            if status != service.status || health != service.health {
-                let mut reg = state.registry.write().await;
-                if let Some(svc) = reg.iter_mut().find(|s| s.name == service.name) {
+            // Update offerings if status or health changed
+            if new_status != old_status || new_health != old_health {
+                let mut offerings = state.offerings.write().await;
+                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
                     tracing::info!(
-                        service = %service.name,
-                        old_status = ?service.status,
-                        new_status = ?status,
-                        old_health = ?service.health,
-                        new_health = ?health,
-                        "Service state changed"
+                        offering = %name,
+                        old_status = ?old_status,
+                        new_status = ?new_status,
+                        old_health = ?old_health,
+                        new_health = ?new_health,
+                        "Offering state changed"
                     );
-                    svc.status = status;
-                    svc.health = health;
+                    offering.status = new_status;
+                    offering.health = new_health;
+                    state_changed = true;
                 }
             }
 
             // Update container resource metrics
-            if let Ok(resources) = state.docker.get_container_stats(&service.name).await {
-                let mut reg = state.registry.write().await;
-                if let Some(svc) = reg.iter_mut().find(|s| s.name == service.name) {
-                    svc.resources = Some(resources);
+            if let Ok(resources) = state.docker.get_container_stats(&name).await {
+                let mut offerings = state.offerings.write().await;
+                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                    if let Some(ref mut managed) = offering.managed_data_mut() {
+                        managed.resources = Some(resources);
+                    }
                 }
             }
         }
 
-        // Check for containers not in registry (external changes)
+        // Check for containers not in offerings (external changes)
         // This provides self-heal: if someone manually starts a zen-offering container,
-        // moss will adopt it into the registry
+        // moss will adopt it into the offerings registry
         match state.docker.list_zen_containers().await {
             Ok(container_names) => {
-                let mut adopted_any = false;
-
                 for container_name in &container_names {
-                    // Check if already in registry (acquire read lock briefly)
+                    // Check if already in offerings (acquire read lock briefly)
                     let exists = {
-                        let reg = state.registry.read().await;
-                        reg.iter().any(|s| s.name == *container_name)
+                        let offerings = state.offerings.read().await;
+                        offerings.iter().any(|o| o.name == *container_name)
                     };
 
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
                         match adopt_offering_container(&state.docker, &state.manifest_registry, container_name, &state.stone_name).await {
                             Ok(Some(info)) => {
-                                // Double-check before adding (prevent race condition)
-                                let mut reg = state.registry.write().await;
-                                if !reg.iter().any(|s| s.name == info.name) {
-                                    reg.push(info);
-                                    adopted_any = true;
-                                }
+                                // Convert to UnifiedOffering and upsert
+                                let unified = garden_common::UnifiedOffering::from_service_info(info);
+                                state.upsert_offering(unified, true).await;
+                                state_changed = true;
                             }
                             Ok(None) => {
                                 tracing::warn!(container = %container_name, "No matching template for container; leaving unregistered");
@@ -133,14 +142,15 @@ pub async fn health_monitor_task(state: AppState) {
                         }
                     }
                 }
-
-                if adopted_any {
-                    let _ = state.persist_registry().await;
-                }
             }
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to list zen containers");
             }
+        }
+
+        // Persist if we made changes (upsert_offering already persists, but manual changes need explicit persist)
+        if state_changed {
+            let _ = state.persist_offerings().await;
         }
     }
 }

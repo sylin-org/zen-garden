@@ -61,7 +61,7 @@ detection:
         # This pattern ONLY matches when service is running (no "Warning:")
         expected_pattern: "^ollama version is"
         expected_exit_code: 0
-      stability_threshold: 2  # Require 2 consecutive successes
+      stability_threshold: 1  # Require 2 consecutive successes
       cache_ttl_secs: 60      # Short cache (service can restart)
 
     # Rule 3: HTTP probe (additional confirmation service is responding)
@@ -70,7 +70,7 @@ detection:
         url: http://localhost:11434/api/tags
         expected_status: 200
         timeout_ms: 2000
-      stability_threshold: 2
+      stability_threshold: 1
       cache_ttl_secs: 60
 
   linux:
@@ -89,7 +89,7 @@ detection:
         command: ollama --version
         expected_pattern: "^ollama version is"
         expected_exit_code: 0
-      stability_threshold: 2
+      stability_threshold: 1
       cache_ttl_secs: 60
 
     # Rule 3: HTTP probe
@@ -98,7 +98,7 @@ detection:
         url: http://localhost:11434/api/tags
         expected_status: 200
         timeout_ms: 2000
-      stability_threshold: 2
+      stability_threshold: 1
       cache_ttl_secs: 60
 
   macos:
@@ -117,7 +117,7 @@ detection:
         command: ollama --version
         expected_pattern: "^ollama version is"
         expected_exit_code: 0
-      stability_threshold: 2
+      stability_threshold: 1
       cache_ttl_secs: 60
 
     # Rule 3: HTTP probe
@@ -126,7 +126,7 @@ detection:
         url: http://localhost:11434/api/tags
         expected_status: 200
         timeout_ms: 2000
-      stability_threshold: 2
+      stability_threshold: 1
       cache_ttl_secs: 60
 
 # Control configuration (defines what Moss can do)

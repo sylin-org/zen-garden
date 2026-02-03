@@ -2,6 +2,14 @@
 
 Sub-capabilities are runtime-discovered features within offerings. For example, Ollama exposes its downloaded models, PostgreSQL might expose installed extensions, and Redis could expose loaded modules.
 
+## Current Status
+
+| Operation | Status | CLI | API |
+|-----------|--------|-----|-----|
+| **List** | Implemented | `rake capabilities <offering>` | `GET .../capabilities` |
+| **Add** | Planned | `rake capabilities add <offering> <name>` | `POST .../capabilities` |
+| **Remove** | Planned | `rake capabilities remove <offering> <name>` | `DELETE .../capabilities/:name` |
+
 ## Quick Start
 
 ```bash
@@ -122,6 +130,44 @@ curl -s http://localhost:7185/api/v1/stone/offerings/ollama/capabilities
 }
 ```
 
+### Add Capability (Planned)
+
+> **Coming Soon**: Add capability support is planned for a future release.
+
+**Endpoint**: `POST /api/v1/stone/offerings/:name/capabilities`
+
+**CLI**:
+```bash
+# Pull/install a capability
+rake capabilities add ollama llama2:7b
+rake capabilities add postgresql pgvector
+```
+
+**API**:
+```bash
+curl -X POST http://localhost:7185/api/v1/stone/offerings/ollama/capabilities \
+  -H "Content-Type: application/json" \
+  -d '{"name": "llama2:7b"}'
+```
+
+### Remove Capability (Planned)
+
+> **Coming Soon**: Remove capability support is planned for a future release.
+
+**Endpoint**: `DELETE /api/v1/stone/offerings/:name/capabilities/:capability`
+
+**CLI**:
+```bash
+# Remove/uninstall a capability
+rake capabilities remove ollama llama2:7b
+rake capabilities remove postgresql pgvector
+```
+
+**API**:
+```bash
+curl -X DELETE http://localhost:7185/api/v1/stone/offerings/ollama/capabilities/llama2:7b
+```
+
 ### Related Endpoints
 
 | Endpoint | Description |
@@ -194,6 +240,7 @@ capabilities:
       plural: models
     mutability: hot  # Can change at runtime
 
+    # List operation (implemented)
     list:
       commands:
         managed:
@@ -217,6 +264,25 @@ capabilities:
 
       timeout_secs: 30
       cache_ttl_secs: 300
+
+    # Add operation (planned)
+    # add:
+    #   commands:
+    #     managed:
+    #       linux: "docker exec {{container_name}} ollama pull {{name}}"
+    #     adopted:
+    #       linux: "ollama pull {{name}}"
+    #       windows: "ollama pull {{name}}"
+    #   timeout_secs: 600  # Model downloads can take time
+
+    # Remove operation (planned)
+    # remove:
+    #   commands:
+    #     managed:
+    #       linux: "docker exec {{container_name}} ollama rm {{name}}"
+    #     adopted:
+    #       linux: "ollama rm {{name}}"
+    #       windows: "ollama rm {{name}}"
 ```
 
 ### Template Variables

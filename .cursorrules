@@ -1,61 +1,32 @@
-﻿# Zen Garden AI Assistant Rules
+﻿# Zen Garden - Cursor Rules
 
-## 🎯 MANDATORY: Always Read First
+## Agnostic Context (Primary)
 
-Before writing ANY code, you MUST read and follow:
+**Bootstrap from**: `.agentic/CONTEXT.md`
 
-**📖 [docs/CAPABILITIES-DIRECTORY.md](docs/CAPABILITIES-DIRECTORY.md)**
+This directory contains tool-agnostic rules shared across all AI assistants.
 
-This document contains:
-- Existing utilities (don't reinvent wheels!)
-- Core architectural conventions
-- Shared contracts/models requirements
-- Standard patterns and best practices
+## Domain-Specific Rules (Load as needed)
 
-## 🚨 Critical Rules
+- API development: `.agentic/rules/api-handlers.md`
+- Docker operations: `.agentic/rules/docker-ops.md`
+- Networking/P2P: `.agentic/rules/networking.md`
+- Companions: `.agentic/rules/companions.md`
 
-1. **DRY Principle**: Check CAPABILITIES-DIRECTORY.md for existing utilities before creating new ones
-2. **Shared Models**: Moss and Rake MUST share contracts/models via `garden_common` - NO bespoke structures unless explicitly approved
-3. **Platform Paths**: Use `garden_common::constants::paths::*` functions, never hardcode paths
-4. **Error Handling**: Domain uses `anyhow::Result`, API converts to HTTP status codes
-5. **Domain/Infra Separation**: Domain never imports infra - use traits
-6. **Async**: Always `tokio::fs` for file I/O, never blocking `std::fs`
+## Full Reference
 
-## 📋 Before Every Code Change
+**Detailed documentation**: `docs/ARCHITECTURE-REFERENCE.md`
 
-- [ ] Read relevant sections of CAPABILITIES-DIRECTORY.md
-- [ ] Check if utility/pattern already exists
-- [ ] Verify you're using shared types from `garden_common`
-- [ ] Follow existing architectural patterns
-- [ ] Use platform-aware path functions
+---
 
-## 🎨 Code Style
+## Quick Rules
 
-- Rust 2021 edition idioms
-- Use `?` for error propagation with `.context()`
-- Prefer `tracing::*` over `println!` in production code
-- Keep functions focused and testable
-
-## 📦 Module Organization
-
-```
-src/
-├── common/       # Shared types, utils, constants
-├── moss/         # Stone daemon (server)
-│   ├── domain/   # Pure business logic
-│   ├── infra/    # External integrations
-│   └── api/      # HTTP handlers
-├── rake/         # CLI tool (client)
-└── lantern/      # Service registry
-```
-
-## ⚠️ Never
-
-- Create duplicate utilities that exist in `common/src/utils.rs`
-- Define API types separately in moss and rake - use `garden_common`
-- Hardcode paths - always use path functions
-- Use unwrap() in production code
-- Import infra modules into domain code
+1. **DRY**: Check `.agentic/CONTEXT.md` for existing utilities first
+2. **Shared Models**: Moss and Rake share types via `garden_common`
+3. **Platform Paths**: Use `garden_common::constants::paths::*`
+4. **Error Handling**: Domain uses `anyhow::Result`, API converts to HTTP
+5. **Domain/Infra**: Domain never imports infra - use traits
+6. **Async**: Always `tokio::fs`, never blocking `std::fs`
 
 ---
 

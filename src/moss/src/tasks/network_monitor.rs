@@ -84,7 +84,8 @@ pub struct NetworkMonitor {
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
     /// Subsystem readiness flag (set when valid LAN IP detected)
-    network_ready: Arc<AtomicBool>,
+    /// Stored for potential future `is_ready()` method; actual updates happen in spawned task.
+    _network_ready: Arc<AtomicBool>,
 }
 
 impl NetworkMonitor {
@@ -106,7 +107,7 @@ impl NetworkMonitor {
         let monitor = Self {
             current_ip: current_ip.clone(),
             tx: tx.clone(),
-            network_ready: network_ready.clone(),
+            _network_ready: network_ready.clone(),
         };
 
         // Log initial state

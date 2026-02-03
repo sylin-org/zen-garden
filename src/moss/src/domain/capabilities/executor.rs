@@ -8,7 +8,7 @@ use garden_common::{
 };
 use garden_common::manifests::{
     CapabilityManifest, CapabilityTypeConfig, ListOperationConfig, ModeCommands, OutputFormat,
-    FieldMappings, AddOperationConfig, RemoveOperationConfig,
+    FieldMappings,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

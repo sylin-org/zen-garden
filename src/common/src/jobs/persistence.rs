@@ -8,34 +8,23 @@ use std::path::PathBuf;
 
 /// JSON-based job persistence
 ///
-/// Stores all jobs in a single JSON file: /var/lib/zen-garden/jobs.json
+/// Stores all jobs in a single JSON file: {data_dir}/jobs.json
 /// Uses atomic writes to prevent corruption on crashes.
 pub struct JsonJobPersistence {
     storage: JsonStorage<HashMap<String, Job>>,
 }
 
 impl JsonJobPersistence {
-    /// Create a new JSON job persistence instance
-    ///
-    /// Default path: /var/lib/zen-garden/jobs.json
+    /// Create a new JSON job persistence instance with a custom file path
     pub fn new(file_path: PathBuf) -> Self {
         Self {
             storage: JsonStorage::new(file_path),
         }
     }
 
-    /// Create with default path
-    #[cfg(target_os = "linux")]
+    /// Create with default path (uses data_dir())
     pub fn default() -> Self {
-        Self::new(PathBuf::from("/var/lib/zen-garden/jobs.json"))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn default() -> Self {
-        use std::env;
-        let programdata = env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".into());
-        let path = PathBuf::from(programdata).join("zen-garden").join("jobs.json");
-        Self::new(path)
+        Self::new(PathBuf::from(crate::constants::paths::jobs_file()))
     }
 
     /// Load all jobs from storage

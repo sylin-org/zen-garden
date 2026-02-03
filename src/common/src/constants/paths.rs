@@ -43,6 +43,21 @@ pub fn harvest_dir() -> String {
     })
 }
 
+/// Get container volumes directory
+/// Used for Docker volume mounts (data stored per-offering)
+pub fn volumes_dir() -> String {
+    std::env::var("GARDEN_VOLUMES_DIR").unwrap_or_else(|_| {
+        format!("{}/volumes", data_dir())
+    })
+}
+
+/// Get jobs persistence file path
+pub fn jobs_file() -> String {
+    std::env::var("GARDEN_JOBS_FILE").unwrap_or_else(|_| {
+        format!("{}/jobs.json", data_dir())
+    })
+}
+
 /// Get stored offerings directory (portable backups)
 pub fn stored_dir() -> String {
     std::env::var("GARDEN_STORED_DIR").unwrap_or_else(|_| {

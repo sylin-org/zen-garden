@@ -461,12 +461,11 @@ impl Offering {
                 let parts: Vec<&str> = v.split(':').collect();
                 if parts.len() >= 2 {
                     let host_path = if parts[0].starts_with('/') || parts[0].contains('\\') {
+                        // Absolute path specified in manifest - use as-is
                         parts[0].to_string()
                     } else {
-                        #[cfg(target_os = "windows")]
-                        let base = "C:\\ProgramData\\ZenGarden\\volumes";
-                        #[cfg(not(target_os = "windows"))]
-                        let base = "/var/lib/zen-garden/volumes";
+                        // Relative volume name - resolve to volumes_dir()
+                        let base = crate::constants::paths::volumes_dir();
                         format!("{}/{}", base, parts[0])
                     };
                     Some((host_path, parts[1].to_string()))

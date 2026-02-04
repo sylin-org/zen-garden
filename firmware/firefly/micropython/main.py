@@ -59,6 +59,24 @@ needs_refresh = False  # Flag set by timer
 # Animation queue: (type, args) or None for idle
 pending_animation = None
 
+# Use UART directly for unbuffered output
+from machine import UART
+_uart = UART(0, 115200)
+
+
+def respond(msg):
+    """Send response immediately via UART write (unbuffered).
+
+    Using UART.write() directly ensures bytes are sent immediately
+    to the hardware TX buffer. The small delay ensures the hardware
+    TX FIFO is flushed before we return.
+    """
+    _uart.write(msg + "\n")
+    # Brief delay to ensure hardware UART TX buffer flushes
+    # ESP8266 UART at 115200 baud: ~0.1ms per byte, 3 bytes = 0.3ms
+    # Add 1ms margin to be safe
+    time.sleep_ms(2)
+
 
 def timer_callback(t):
     """Timer callback - just sets refresh flag."""
@@ -78,7 +96,7 @@ def init_display():
         refresh_timer.init(period=200, mode=Timer.PERIODIC, callback=timer_callback)
         return True
     except Exception as e:
-        print(f"ERR,display_init:{e}")
+        respond(f"ERR,display_init:{e}")
         return False
 
 
@@ -111,24 +129,24 @@ def parse_command(line):
     try:
         if cmd == "I":
             # Device info
-            print(display.device_info())
+            respond(display.device_info())
 
         elif cmd == "C":
             # Clear display
             display.clear()
-            print("OK")
+            respond("OK")
 
         elif cmd == "S":
             # Set stone name
             display.set_stone_name(args)
             display.draw_status_screen()
-            print("OK")
+            respond("OK")
 
         elif cmd == "H":
             # Set health state
             display.set_health(args.lower())
             display.draw_status_screen()
-            print("OK")
+            respond("OK")
 
         elif cmd == "M":
             # Update metrics: cpu,mem,uptime (timer handles refresh)
@@ -137,7 +155,7 @@ def parse_command(line):
             mem = int(metric_parts[1]) if len(metric_parts) > 1 else None
             uptime = metric_parts[2] if len(metric_parts) > 2 else None
             display.update_metrics(cpu=cpu, mem=mem, uptime=uptime)
-            print("OK")
+            respond("OK")
 
         elif cmd == "T":
             # Draw text: x,y,text
@@ -148,14 +166,14 @@ def parse_command(line):
                 text = text_parts[2]
                 display.text(text, x, y)
                 display.show()
-                print("OK")
+                respond("OK")
             else:
-                print("ERR,invalid_args")
+                respond("ERR,invalid_args")
 
         elif cmd == "R":
             # Refresh status screen
             display.draw_status_screen()
-            print("OK")
+            respond("OK")
 
         elif cmd == "B":
             # Set brightness (contrast)
@@ -163,13 +181,13 @@ def parse_command(line):
             # Map 0-100 to 0-255
             contrast_byte = int(contrast * 255 / 100)
             display.oled.contrast(contrast_byte)
-            print("OK")
+            respond("OK")
 
         elif cmd == "FILL":
             # Fill display (for testing)
             value = int(args) if args else 1
             display.fill(value)
-            print("OK")
+            respond("OK")
 
         elif cmd == "RECT":
             # Draw rectangle: x,y,w,h,fill
@@ -185,9 +203,9 @@ def parse_command(line):
                 else:
                     display.draw_rect(x, y, w, h)
                 display.show()
-                print("OK")
+                respond("OK")
             else:
-                print("ERR,invalid_args")
+                respond("ERR,invalid_args")
 
         elif cmd == "BAR":
             # Draw progress bar: x,y,w,h,percent
@@ -200,9 +218,9 @@ def parse_command(line):
                 percent = int(bar_parts[4])
                 display.draw_progress_bar(x, y, w, h, percent)
                 display.show()
-                print("OK")
+                respond("OK")
             else:
-                print("ERR,invalid_args")
+                respond("ERR,invalid_args")
 
         # ==================== ANIMATION COMMANDS ====================
         # Animations are queued and run by the timer callback
@@ -213,7 +231,7 @@ def parse_command(line):
             line1 = wipe_parts[0] if len(wipe_parts) > 0 else ""
             line2 = wipe_parts[1] if len(wipe_parts) > 1 else ""
             pending_animation = ("wipe-in", (line1, line2))
-            print("OK")
+            respond("OK")
 
         elif cmd == "WIPE-OUT":
             # Wipe right→left transition
@@ -221,35 +239,35 @@ def parse_command(line):
             line1 = wipe_parts[0] if len(wipe_parts) > 0 else ""
             line2 = wipe_parts[1] if len(wipe_parts) > 1 else ""
             pending_animation = ("wipe-out", (line1, line2))
-            print("OK")
+            respond("OK")
 
         elif cmd == "BLINK":
             # Blink blue zone
             count = int(args) if args else 3
             pending_animation = ("blink", count)
-            print("OK")
+            respond("OK")
 
         elif cmd == "PULSE":
             # Pulse brightness
             count = int(args) if args else 3
             pending_animation = ("pulse", count)
-            print("OK")
+            respond("OK")
 
         else:
-            print(f"ERR,unknown_cmd:{cmd}")
+            respond(f"ERR,unknown_cmd:{cmd}")
 
     except Exception as e:
-        print(f"ERR,{e}")
+        respond(f"ERR,{e}")
 
 
 def main():
     """Main loop - initialize and process commands."""
     global needs_refresh, pending_animation
 
-    print("Firefly OLED starting...")
+    respond("Firefly OLED starting...")
 
     if not init_display():
-        print("ERR,failed_to_init_display")
+        respond("ERR,failed_to_init_display")
         return
 
     # Show initial status screen
@@ -257,7 +275,7 @@ def main():
     display.set_health("resting")
     display.draw_status_screen()
 
-    print("OK,ready")
+    respond("OK,ready")
 
     # Setup poll for non-blocking stdin
     poll = select.poll()
@@ -288,10 +306,10 @@ def main():
                 time.sleep_ms(10)  # Small sleep to avoid busy loop
 
         except KeyboardInterrupt:
-            print("OK,interrupted")
+            respond("OK,interrupted")
             break
         except Exception as e:
-            print(f"ERR,{e}")
+            respond(f"ERR,{e}")
 
 
 # Auto-run on boot

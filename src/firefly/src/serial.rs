@@ -9,7 +9,7 @@
 
 use anyhow::{Context, Result};
 use serialport::SerialPort;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -71,9 +71,23 @@ impl FireflySerial {
     /// Open serial connection to Firefly device
     pub fn new(port_name: &str, device_type: FireflyDeviceType) -> Result<Self> {
         let port = serialport::new(port_name, 115200)
-            .timeout(Duration::from_millis(1000))
+            .timeout(Duration::from_millis(2000)) // Longer timeout for ESP8266 boot
             .open()
             .with_context(|| format!("Failed to open serial port {}", port_name))?;
+
+        // For ESP8266: Opening the port toggles DTR which resets the device.
+        // We need to wait for it to boot and print "OK,ready" before sending commands.
+        if device_type == FireflyDeviceType::Esp8266Oled {
+            tracing::debug!("Waiting for ESP8266 to boot...");
+
+            // Wait longer for ESP8266 to boot (MicroPython takes ~1-2s)
+            std::thread::sleep(Duration::from_millis(2000));
+
+            // Clear any boot garbage from input buffer
+            let _ = port.clear(serialport::ClearBuffer::Input);
+
+            tracing::debug!("ESP8266 boot wait complete, buffer cleared");
+        }
 
         Ok(Self {
             port: Mutex::new(port),
@@ -98,22 +112,32 @@ impl FireflySerial {
             .context("Failed to write command")?;
         port.flush().context("Failed to flush")?;
 
-        // Read response (with timeout)
-        let mut reader = BufReader::new(port.try_clone()?);
-        let mut response = String::new();
+        // Read response byte-by-byte until newline (avoids BufReader buffering issues)
+        let mut response = Vec::with_capacity(256);
+        let mut buf = [0u8; 1];
 
-        match reader.read_line(&mut response) {
-            Ok(_) => {
-                let response = response.trim().to_string();
-                tracing::trace!(command = %command, response = %response, "Serial command");
-                Ok(response)
+        loop {
+            match port.read(&mut buf) {
+                Ok(1) => {
+                    if buf[0] == b'\n' {
+                        break;
+                    }
+                    if buf[0] != b'\r' {
+                        response.push(buf[0]);
+                    }
+                }
+                Ok(_) => continue, // 0 bytes read, retry
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    tracing::warn!(command = %command, "Command timed out");
+                    return Err(anyhow::anyhow!("Command timed out"));
+                }
+                Err(e) => return Err(anyhow::anyhow!("Read error: {}", e)),
             }
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                tracing::warn!(command = %command, "Command timed out");
-                Err(anyhow::anyhow!("Command timed out"))
-            }
-            Err(e) => Err(anyhow::anyhow!("Read error: {}", e)),
         }
+
+        let response = String::from_utf8_lossy(&response).trim().to_string();
+        tracing::trace!(command = %command, response = %response, "Serial command");
+        Ok(response)
     }
 
     /// Get device type
@@ -192,24 +216,48 @@ impl FireflySerial {
         self.send_command("R")
     }
 
-    /// Wipe-in animation (OLED only)
+    /// Wipe-in animation (OLED only) - fire-and-forget since animation takes time
     pub fn oled_wipe_in(&self, line1: &str, line2: &str) -> Result<String> {
-        self.send_command(&format!("WIPE-IN,{},{}", line1, line2))
+        // Wipe animations take ~400ms, so don't wait for response
+        self.send_command_no_wait(&format!("WIPE-IN,{},{}", line1, line2))
     }
 
-    /// Wipe-out animation (OLED only)
+    /// Wipe-out animation (OLED only) - fire-and-forget since animation takes time
     pub fn oled_wipe_out(&self, line1: &str, line2: &str) -> Result<String> {
-        self.send_command(&format!("WIPE-OUT,{},{}", line1, line2))
+        // Wipe animations take ~400ms, so don't wait for response
+        self.send_command_no_wait(&format!("WIPE-OUT,{},{}", line1, line2))
     }
 
-    /// Blink animation (OLED only)
+    /// Blink animation (OLED only) - fire-and-forget since animation takes time
     pub fn oled_blink(&self, count: u8) -> Result<String> {
-        self.send_command(&format!("BLINK,{}", count))
+        // Blink animations take ~300ms per blink, so don't wait for response
+        self.send_command_no_wait(&format!("BLINK,{}", count))
     }
 
-    /// Pulse animation (OLED only)
+    /// Pulse animation (OLED only) - fire-and-forget since animation takes time
     pub fn oled_pulse(&self, count: u8) -> Result<String> {
-        self.send_command(&format!("PULSE,{}", count))
+        // Pulse animations take ~500ms per pulse, so don't wait for response
+        self.send_command_no_wait(&format!("PULSE,{}", count))
+    }
+
+    /// Send command without waiting for response (for long-running animations)
+    fn send_command_no_wait(&self, command: &str) -> Result<String> {
+        let mut port = self
+            .port
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+
+        // Clear any pending input
+        let _ = port.clear(serialport::ClearBuffer::Input);
+
+        // Send command with newline
+        let cmd_bytes = format!("{}\n", command);
+        port.write_all(cmd_bytes.as_bytes())
+            .context("Failed to write command")?;
+        port.flush().context("Failed to flush")?;
+
+        tracing::trace!(command = %command, "Serial command (no wait)");
+        Ok("OK".to_string())
     }
 }
 
@@ -248,8 +296,17 @@ impl FireflyConnection {
 
         let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
 
-        // Verify device responds
-        let response = serial.send_command("I")?;
+        // Verify device responds - retry once for ESP8266 which may need more boot time
+        let response = match serial.send_command("I") {
+            Ok(resp) => resp,
+            Err(e) if detected.device_type == FireflyDeviceType::Esp8266Oled => {
+                tracing::debug!(error = %e, "First info command failed, retrying after delay");
+                std::thread::sleep(Duration::from_millis(500));
+                serial.send_command("I")?
+            }
+            Err(e) => return Err(e),
+        };
+
         if !response.starts_with("OK") {
             return Err(anyhow::anyhow!(
                 "Device did not respond correctly: {}",
@@ -370,7 +427,8 @@ pub fn detect_device_type(port_name: &str) -> Result<FireflyDeviceType> {
     let ports = serialport::available_ports()?;
 
     for port in &ports {
-        if port.port_name == port_name {
+        // Case-insensitive comparison for Windows (COM3 vs com3)
+        if port.port_name.eq_ignore_ascii_case(port_name) {
             if let serialport::SerialPortType::UsbPort(info) = &port.port_type {
                 return Ok(FireflyDeviceType::from_vid(info.vid));
             }
@@ -384,26 +442,38 @@ pub fn detect_device_type(port_name: &str) -> Result<FireflyDeviceType> {
 pub fn find_firefly_device() -> Result<DetectedDevice> {
     let ports = serialport::available_ports()?;
 
+    tracing::debug!(port_count = ports.len(), "Scanning for Firefly devices");
+
     // Priority: RP2040 first, then ESP8266
     let mut candidates: Vec<DetectedDevice> = Vec::new();
 
     for port in &ports {
-        if let serialport::SerialPortType::UsbPort(info) = &port.port_type {
-            let device_type = FireflyDeviceType::from_vid(info.vid);
-            if device_type != FireflyDeviceType::Unknown {
+        match &port.port_type {
+            serialport::SerialPortType::UsbPort(info) => {
+                let device_type = FireflyDeviceType::from_vid(info.vid);
                 tracing::debug!(
                     port = %port.port_name,
                     vid = format!("{:04x}", info.vid),
                     pid = format!("{:04x}", info.pid),
                     device_type = %device_type,
-                    "Found Firefly device"
+                    product = info.product.as_deref().unwrap_or("unknown"),
+                    "Found USB serial port"
                 );
-                candidates.push(DetectedDevice {
-                    port_name: port.port_name.clone(),
-                    device_type,
-                    vid: info.vid,
-                    pid: info.pid,
-                });
+                if device_type != FireflyDeviceType::Unknown {
+                    candidates.push(DetectedDevice {
+                        port_name: port.port_name.clone(),
+                        device_type,
+                        vid: info.vid,
+                        pid: info.pid,
+                    });
+                }
+            }
+            other => {
+                tracing::trace!(
+                    port = %port.port_name,
+                    port_type = ?other,
+                    "Skipping non-USB port"
+                );
             }
         }
     }

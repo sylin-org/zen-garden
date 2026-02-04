@@ -227,8 +227,9 @@ async fn main() -> Result<()> {
                         // Clear display on reconnect for clean slate
                         let _ = conn_for_retry.with_device(|serial| serial.clear());
                     }
-                    Err(_) => {
-                        // Silent retry - don't spam logs
+                    Err(e) => {
+                        // Log at debug level to help diagnose issues without spamming
+                        tracing::debug!(error = %e, "Firefly device not found, will retry");
                     }
                 }
             }

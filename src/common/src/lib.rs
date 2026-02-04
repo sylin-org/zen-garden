@@ -30,6 +30,7 @@ pub mod offerings;
 pub mod api_manifest;
 pub mod storage;
 pub mod templates;
+pub mod notifications;
 
 // Re-export commonly used items
 pub use types::*;
@@ -70,6 +71,17 @@ pub use constants::{
 // Re-export SSE event level constants
 pub use constants::{
     SSE_LEVEL_INFO, SSE_LEVEL_WARN, SSE_LEVEL_ERROR, SSE_LEVEL_DEBUG,
+};
+
+// Re-export notification types and constants
+pub use notifications::{
+    NotificationTag, NotificationRegistry,
+    TAG_OPPORTUNITY, TAG_ATTENTION,
+    NOTIF_SOURCE_CANDIDATES, NOTIF_SOURCE_ORPHAN_CONTAINERS,
+    NOTIF_SOURCE_COMPANION_NEW, NOTIF_SOURCE_NOURISHMENT,
+    NOTIF_SOURCE_OFFERINGS_DEGRADED, NOTIF_SOURCE_ADOPTED_OFFLINE,
+    NOTIF_SOURCE_COMPANION_CRASHED, NOTIF_SOURCE_STORAGE_OFFLINE,
+    NOTIF_SOURCE_SYSTEM_CRITICAL,
 };
 
 // Compatibility aliases for old code (to be removed during Phase 3 refactoring)

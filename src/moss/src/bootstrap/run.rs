@@ -15,7 +15,6 @@ use crate::{
     NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
     // Bootstrap functions
     load_preinstall_manifest,
-    run_first_boot_initialization,
     router,
     bind_server, run_server, ServerConfig,
     connect_docker, init_capabilities, DockerConfig,
@@ -25,6 +24,8 @@ use crate::{
     // Infrastructure
     infra,
 };
+#[cfg(target_os = "linux")]
+use crate::run_first_boot_initialization;
 use garden_common::console;
 use super::config::DaemonConfig;
 use std::collections::HashMap;
@@ -167,10 +168,26 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     .await;
     tracing::info!("UDP listener started (infrastructure handlers wired)");
 
-    // Phase 1.5: First-boot initialization (Linux only)
-    // Windows/dev environments don't need hostname/hosts/avahi setup
-    if cfg!(target_os = "linux") && console::is_first_run() {
+    // Phase 1.5: First-boot initialization
+    // Linux: Uses flag file, sets hostname/hosts/avahi
+    // Windows: Uses hardware-id cache existence, sets DNS hostname via registry
+    #[cfg(target_os = "linux")]
+    if console::is_first_run() {
         start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let is_first_run = infra::is_first_run_windows();
+        if is_first_run {
+            start_windows_first_boot_task(&stone_name, port);
+        } else {
+            // Phase 1.6: Windows DNS hostname maintenance (runs every boot)
+            // Ensures DNS hostname matches configured stone_name.
+            // Handles case where first boot ran without admin rights (DNS failed),
+            // then subsequent boot runs with admin rights (DNS should be retried).
+            start_windows_dns_maintenance_task(&stone_name);
+        }
     }
 
     // Phase 2: Network monitoring
@@ -775,6 +792,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
 ///
 /// Waits for filesystem to become writable, then runs initialization.
 /// Exits process after completion so systemd restarts with new config.
+#[cfg(target_os = "linux")]
 fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
     tracing::info!("First run detected on Linux, spawning background initialization task");
     tracing::info!("First boot detected - will initialize console after Docker connection");
@@ -934,4 +952,169 @@ async fn start_preinstall_handler(state: &AppState) {
     });
 
     tracing::info!("Pre-install job started: {} (check /api/jobs/{})", job_id, job_id);
+}
+
+/// Start first-boot initialization task (Windows)
+///
+/// Sets DNS hostname to match the configured stone_name.
+/// Note: Name generation happens via generate_unique_name_windows() if config
+/// doesn't have a stone_name set.
+/// This task handles DNS setup which may require elevation.
+#[cfg(target_os = "windows")]
+fn start_windows_first_boot_task(stone_name: &str, _port: u16) {
+    tracing::info!("First run detected on Windows, setting up DNS hostname");
+
+    let configured_name = stone_name.to_string();
+
+    tokio::spawn(async move {
+        // Set DNS hostname (not NetBIOS) via registry
+        // Note: Requires elevation - will warn gracefully if running without admin rights
+        if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+            tracing::warn!(
+                error = ?e,
+                name = %configured_name,
+                "Failed to set Windows DNS hostname (requires elevation). \
+                 Stone will work but won't be discoverable by DNS name until manually set."
+            );
+        } else {
+            tracing::info!(
+                name = %configured_name,
+                "Windows DNS hostname set (reboot required for full effect)"
+            );
+        }
+
+        tracing::info!(
+            stone_name = %configured_name,
+            "Windows first-boot complete."
+        );
+    });
+}
+
+/// Windows DNS hostname maintenance task
+///
+/// Runs on every boot to ensure DNS hostname matches the configured stone_name.
+/// This handles the case where first boot ran without admin rights (DNS failed),
+/// and subsequent boot runs with admin rights (DNS should be retried).
+///
+/// Key invariant: We NEVER pick a new name here - only ensure DNS matches config.
+#[cfg(target_os = "windows")]
+fn start_windows_dns_maintenance_task(stone_name: &str) {
+    let configured_name = stone_name.to_string();
+
+    tokio::spawn(async move {
+        // Give network time to settle
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Get current DNS hostname
+        let current_hostname = get_windows_dns_hostname().await;
+
+        match &current_hostname {
+            Some(hostname) if hostname.eq_ignore_ascii_case(&configured_name) => {
+                // DNS hostname already matches config - nothing to do
+                tracing::debug!(
+                    configured = %configured_name,
+                    current = %hostname,
+                    "DNS hostname matches configuration"
+                );
+            }
+            Some(hostname) => {
+                // DNS hostname differs from config - attempt to fix
+                tracing::info!(
+                    configured = %configured_name,
+                    current = %hostname,
+                    "DNS hostname mismatch detected, attempting to fix"
+                );
+
+                if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+                    tracing::warn!(
+                        error = ?e,
+                        configured = %configured_name,
+                        "Failed to set DNS hostname (may require elevation). \
+                         Stone will work but DNS discovery may not work correctly."
+                    );
+                } else {
+                    tracing::info!(
+                        name = %configured_name,
+                        "DNS hostname updated to match configuration (reboot required for full effect)"
+                    );
+                }
+            }
+            None => {
+                // Couldn't read current hostname - try to set anyway
+                tracing::debug!("Could not read current DNS hostname, attempting to set");
+
+                if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+                    tracing::debug!(
+                        error = ?e,
+                        "Failed to set DNS hostname (may require elevation)"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Get current Windows DNS hostname from registry
+#[cfg(target_os = "windows")]
+async fn get_windows_dns_hostname() -> Option<String> {
+    let output = tokio::process::Command::new("reg")
+        .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters", "/v", "Hostname"])
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("Hostname") && line.contains("REG_SZ") {
+            // Line format: "    Hostname    REG_SZ    value"
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(hostname) = parts.last() {
+                return Some(hostname.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Set Windows DNS hostname without changing NetBIOS name
+///
+/// Writes to registry keys that control DNS hostname.
+/// Requires elevation. Requires reboot to take full effect.
+#[cfg(target_os = "windows")]
+async fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    // Use reg.exe to set DNS hostname (more reliable than winreg crate)
+    let tcpip_path = r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
+
+    // Set Hostname
+    let output = tokio::process::Command::new("reg")
+        .args(["add", tcpip_path, "/v", "Hostname", "/t", "REG_SZ", "/d", name, "/f"])
+        .output()
+        .await
+        .context("Failed to execute reg.exe for Hostname")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!(error = %stderr, "Failed to set Hostname registry key");
+    }
+
+    // Set NV Hostname (non-volatile, persists across boots)
+    let output = tokio::process::Command::new("reg")
+        .args(["add", tcpip_path, "/v", "NV Hostname", "/t", "REG_SZ", "/d", name, "/f"])
+        .output()
+        .await
+        .context("Failed to execute reg.exe for NV Hostname")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!(error = %stderr, "Failed to set NV Hostname registry key");
+    }
+
+    tracing::info!(name = %name, "Set Windows DNS hostname (reboot required)");
+    Ok(())
 }

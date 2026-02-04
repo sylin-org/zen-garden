@@ -92,8 +92,14 @@ impl DaemonConfig {
 
 /// Resolve stone name with priority chain
 ///
-/// Priority: explicit CLI flag (--stone-name) > config file > system hostname > STONE_NAME env > default
+/// Priority: explicit CLI flag (--stone-name) > config file > cached name > system hostname > STONE_NAME env > default
+///
+/// The cached stone name (from data_dir/stone-name) provides reliable persistence
+/// on Windows where config file reading may fail. On Linux, hostname is typically
+/// set correctly so this is less critical.
 async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::Result<String> {
+    use crate::infra::load_cached_stone_name;
+
     let env_stone_name = std::env::var(garden_common::ENV_STONE_NAME).ok();
 
     // CLI flag only counts if it wasn't set via env var
@@ -102,6 +108,9 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
     } else {
         None
     };
+
+    // Check cached stone name (reliable on Windows)
+    let cached_stone_name = load_cached_stone_name();
 
     let system_hostname = console::get_hostname().await.ok();
 
@@ -118,6 +127,7 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
 
     let stone_name = explicit_cli_stone_name
         .or_else(|| config.as_ref().and_then(|c| c.stone_name.clone()))
+        .or_else(|| cached_stone_name)
         .or_else(|| system_hostname)
         .or_else(|| env_stone_name)
         .unwrap_or_else(|| garden_common::DEFAULT_STONE_NAME.to_string());
@@ -159,4 +169,86 @@ pub fn init_tracing(config: &DaemonConfig) {
         config_loaded = config.file_config.is_some(),
         "Moss daemon starting with merged configuration (priority: CLI > Env > Config > Defaults)"
     );
+}
+
+/// Ensure Windows has a stone_name in config before loading
+///
+/// Called synchronously in main.rs BEFORE config loading on Windows.
+/// This handles the race condition where async first-boot would generate a name
+/// too late (after config loading used the default).
+///
+/// Logic:
+/// 1. If stone-name cache exists → use cached name (authoritative)
+/// 2. If hardware-id file exists → not first boot → do nothing
+/// 3. If config already has stone_name → cache it and return
+/// 4. Otherwise → generate name, save to cache AND config
+#[cfg(target_os = "windows")]
+pub async fn ensure_windows_stone_name_config() {
+    use std::path::PathBuf;
+    use crate::infra::{load_cached_stone_name, save_stone_name_cache};
+
+    // Check if we have a cached stone name (authoritative source)
+    if let Some(cached_name) = load_cached_stone_name() {
+        eprintln!("[stone-name] Using cached name: {}", cached_name);
+        return;
+    }
+
+    // Check if this is first boot (hardware-id file doesn't exist)
+    let data_dir = PathBuf::from(garden_common::constants::paths::data_dir());
+    let hardware_id_path = data_dir.join("hardware-id");
+
+    if hardware_id_path.exists() {
+        // Not first boot but no cached name - check config and cache it
+        if let Some(config) = MossConfig::load() {
+            if let Some(name) = config.stone_name {
+                eprintln!("[stone-name] Caching name from config: {}", name);
+                if let Err(e) = save_stone_name_cache(&name).await {
+                    eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
+                }
+                return;
+            }
+        }
+        // No name in config either - this is a problem, but don't generate new name
+        eprintln!("[stone-name] Warning: No cached name and no config name found");
+        return;
+    }
+
+    // Check if config already has a stone_name
+    if let Some(config) = MossConfig::load() {
+        if let Some(name) = config.stone_name {
+            // Config has a name - cache it
+            eprintln!("[stone-name] Caching existing config name: {}", name);
+            if let Err(e) = save_stone_name_cache(&name).await {
+                eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
+            }
+            return;
+        }
+    }
+
+    // First boot and no stone_name anywhere - generate one now
+    eprintln!("[first-boot] Generating stone name for Windows...");
+
+    let new_name = match console::generate_unique_name_windows().await {
+        Ok(name) => name,
+        Err(e) => {
+            eprintln!("[first-boot] Failed to generate stone name: {}", e);
+            return;
+        }
+    };
+
+    eprintln!("[first-boot] Generated name: {}", new_name);
+
+    // Save to cache (authoritative source)
+    if let Err(e) = save_stone_name_cache(&new_name).await {
+        eprintln!("[first-boot] Failed to cache stone name: {}", e);
+    } else {
+        eprintln!("[first-boot] Cached stone name");
+    }
+
+    // Also write to config file (creates if needed)
+    if let Err(e) = console::update_moss_config(&new_name).await {
+        eprintln!("[first-boot] Failed to save config: {}", e);
+    } else {
+        eprintln!("[first-boot] Saved stone name to config");
+    }
 }

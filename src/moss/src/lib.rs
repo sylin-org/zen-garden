@@ -75,6 +75,8 @@ pub use bootstrap::{
     // Main orchestration
     run_daemon,
 };
+#[cfg(target_os = "windows")]
+pub use bootstrap::ensure_windows_stone_name_config;
 
 // Re-export CLI utilities
 pub use cli::{Cli, Commands, parse as parse_cli, version_string};

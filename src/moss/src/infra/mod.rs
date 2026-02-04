@@ -55,6 +55,9 @@ pub use service::{install_windows_service, finalize_service_update, cleanup_afte
 pub use filesystem::FileSystem;
 pub use hardware::{detect_hardware, load_cached_capabilities, save_capabilities_cache, create_skeleton};
 pub use hardware_id::{generate_hardware_id, load_cached_hardware_id, save_hardware_id_cache};
+pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
+#[cfg(target_os = "windows")]
+pub use hardware_id::is_first_run_windows;
 pub use manifests::{
     ManifestRegistry,
     Offering, OfferingRegistry, OfferingMetadata,

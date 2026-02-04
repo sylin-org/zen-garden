@@ -10,6 +10,8 @@ use garden_moss::infra::kill_existing_moss_processes_graceful;
 use garden_moss::Commands;
 #[cfg(target_os = "windows")]
 use garden_moss::infra::{install_windows_service, finalize_service_update, cleanup_after_service_update, cleanup_updater_process};
+#[cfg(target_os = "windows")]
+use garden_moss::ensure_windows_stone_name_config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -41,6 +43,11 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("Warning: Failed to cleanup updater: {}", e);
         }
     }
+
+    // Windows first-boot: ensure stone_name exists in config BEFORE loading
+    // This avoids race condition where async first-boot generates name too late
+    #[cfg(target_os = "windows")]
+    ensure_windows_stone_name_config().await;
 
     // Load and merge configuration (CLI > Env > File > Defaults)
     let config = DaemonConfig::from_cli(&cli).await?;

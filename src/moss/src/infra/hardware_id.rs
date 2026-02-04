@@ -401,6 +401,54 @@ pub async fn save_hardware_id_cache(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check if this is the first run on Windows by checking hardware-id cache existence
+///
+/// Returns true if hardware-id cache does NOT exist (first boot).
+/// This is used for Windows first-boot detection instead of a separate flag file.
+#[cfg(target_os = "windows")]
+pub fn is_first_run_windows() -> bool {
+    let path = hardware_id_cache_path();
+    !path.exists()
+}
+
+/// Get path where stone name is cached
+///
+/// This provides a reliable persistence mechanism for the generated stone name,
+/// independent of the config file. Particularly important on Windows where
+/// the config file might not be read correctly on subsequent boots.
+fn stone_name_cache_path() -> PathBuf {
+    PathBuf::from(garden_common::constants::paths::data_dir()).join("stone-name")
+}
+
+/// Load cached stone name if it exists
+///
+/// This is the authoritative source for the stone name on Windows.
+/// Falls back to None if file doesn't exist or is empty.
+pub fn load_cached_stone_name() -> Option<String> {
+    let path = stone_name_cache_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let name = content.trim();
+        if !name.is_empty() {
+            tracing::debug!(path = ?path, name = %name, "Loaded cached stone name");
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Save stone name to cache
+///
+/// Called after generating a new stone name on first boot.
+/// This ensures the name persists even if config file has issues.
+pub async fn save_stone_name_cache(name: &str) -> Result<()> {
+    let path = stone_name_cache_path();
+    let dir = path.parent().context("Invalid cache path")?;
+    tokio::fs::create_dir_all(dir).await?;
+    tokio::fs::write(&path, name).await?;
+    tracing::info!(path = ?path, name = %name, "Cached stone name");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

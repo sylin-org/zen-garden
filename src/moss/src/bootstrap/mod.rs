@@ -19,6 +19,8 @@ pub mod server;
 pub mod startup;
 
 pub use config::{DaemonConfig, init_tracing};
+#[cfg(target_os = "windows")]
+pub use config::ensure_windows_stone_name_config;
 pub use first_boot::run_first_boot_initialization;
 pub use preinstall::{load_preinstall_manifest, PreInstallManifest};
 pub use run::run as run_daemon;

@@ -1173,9 +1173,9 @@ dependencies = [
  "chrono",
  "colored",
  "futures",
- "if-addrs",
  "local-ip-address",
  "mdns-sd",
+ "network-interface",
  "once_cell",
  "rand 0.8.5",
  "regex",
@@ -2407,6 +2407,18 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "network-interface"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ddcb8865ad3d9950f22f42ffa0ef0aecbfbf191867b3122413602b0a360b2a6"
+dependencies = [
+ "cc",
+ "libc",
+ "thiserror 2.0.17",
+ "winapi",
 ]
 
 [[package]]

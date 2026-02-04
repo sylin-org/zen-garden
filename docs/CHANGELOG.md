@@ -2,6 +2,38 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-04
+- **Fixed P2P discovery selecting wrong network interface** - Hyper-V/WSL virtual adapters were being selected over physical LAN
+  - Root cause: IP-range blocklisting (`192.168.224.x`) was incomplete and brittle
+  - Solution: MAC OUI-based detection using IEEE-assigned vendor prefixes
+  - Switched from `if-addrs` to `network-interface` crate (provides MAC addresses)
+  - Known virtual OUIs: Hyper-V (`00:15:5D`), VMware (`00:50:56`), VirtualBox (`08:00:27`), Docker (`02:42`), QEMU/KVM (`52:54:00`), Xen (`00:16:3E`)
+  - Detection hierarchy: MAC OUI (primary) → interface name patterns (secondary) → Docker 172.17.x.x (tertiary)
+  - Decision: [COMM-0003](decisions/COMM-0003-virtual-adapter-detection.md)
+- **Fixed push2all.ps1 interface selection** - Added filtering for Hyper-V (`192.168.224+`), WSL, Docker Desktop ranges
+  - Added priority tiers: `192.168.0-15.x` (priority 1) over higher subnets
+- **Restored Windows-specific stone naming theme** - Platform-aware name generation
+  - Linux: Nature theme (64×64 = 4,096 names): `stone-golden-summit`, `stone-crystal-forest`
+  - Windows: Stained glass/clarity theme (64×64 = 4,096 names): `stone-pellucid-clarity`, `stone-crystalline-prism`
+  - Windows theme evokes cathedral windows, light, transparency, and sacred spaces
+  - Shared `generate_unique_name_from_dictionary()` helper for both platforms
+- **Restored Windows first-boot DNS hostname setup** - Accidentally removed in commit 313e269
+  - First-boot detection uses hardware-id cache existence (not flag file like Linux)
+  - `ensure_windows_stone_name_config()` generates name synchronously before config loading
+  - `set_windows_dns_hostname()` writes to registry (requires elevation)
+  - DNS maintenance task runs on subsequent boots to retry failed DNS setup
+  - Zero changes to Linux first-boot behavior
+- **Fixed Windows chirping NetBIOS name instead of stone name**
+  - Added `stone-name` cache file (`{data_dir}/stone-name`) for reliable persistence
+  - `resolve_stone_name()` now checks cache before falling back to system hostname
+  - Priority chain: CLI > config > **cached name** > system hostname > env > default
+  - Prevents fallback to NetBIOS name (COMPUTERNAME) when config file has issues
+- **Fixed Windows self-update port binding failure**
+  - Root cause: Socket stayed in TIME_WAIT state after old process exited
+  - Solution: Use `SO_REUSEADDR` when binding HTTP server socket
+  - Allows new Moss instance to bind to port even if previous connection is in TIME_WAIT
+  - Uses `socket2` crate for cross-platform socket options
+
 ## 2026-02-02
 - **Unified Offering Model (Greenfield Refactor)** - merged dual-collection manifest system into single `Offering` struct
   - `SwEntry` + `OfferingManifest` → unified `Offering` with mode-as-configuration

@@ -99,16 +99,38 @@ function Get-LanBindAddress {
 
         $first = [int]$octets[0]
         $second = [int]$octets[1]
+        $third = [int]$octets[2]
 
-        # Skip loopback, link-local, Docker/WSL ranges
+        # Skip loopback and link-local
         if ($first -eq 127 -or $first -eq 169) { continue }
+
+        # Skip Docker Desktop ranges (172.17.x.x, 172.24-31.x.x)
         if ($first -eq 172 -and ($second -eq 17 -or $second -ge 24)) { continue }
 
+        # Skip virtual adapter ranges in 192.168.x.x:
+        # - 192.168.224.x: Hyper-V Default Switch (NAT)
+        # - 192.168.240.x: WSL NAT
+        # - 192.168.48.x, 192.168.64.x: Docker Desktop
+        if ($first -eq 192 -and $second -eq 168) {
+            if ($third -ge 48 -and $third -le 64) { continue }   # Docker Desktop
+            if ($third -ge 224) { continue }                      # Hyper-V, WSL (224-255)
+        }
+
+        # Prioritize typical LAN ranges (lower third octet = more likely physical LAN)
         $priority = switch ($first) {
-            192 { if ($second -eq 168) { 1 } else { 4 } }
+            192 {
+                if ($second -eq 168) {
+                    # 192.168.0-15 = priority 1 (typical home/office)
+                    # 192.168.16-47 = priority 2
+                    # 192.168.65-223 = priority 3
+                    if ($third -le 15) { 1 }
+                    elseif ($third -le 47) { 2 }
+                    else { 3 }
+                } else { 5 }
+            }
             10 { 2 }
-            172 { if ($second -ge 16 -and $second -le 23) { 3 } else { 4 } }
-            default { 4 }
+            172 { if ($second -ge 16 -and $second -le 23) { 3 } else { 5 } }
+            default { 5 }
         }
 
         $candidates += [PSCustomObject]@{ Priority = $priority; IP = $ip }

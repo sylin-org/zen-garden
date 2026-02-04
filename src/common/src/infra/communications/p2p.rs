@@ -66,10 +66,11 @@
 //! ## References
 //! - [COMM-0001](../../../../docs/decisions/COMM-0001-p2p-transport-singleton.md)
 //! - [COMM-0002](../../../../docs/decisions/COMM-0002-p2p-pipeline-spec.md)
+//! - [COMM-0003](../../../../docs/decisions/COMM-0003-virtual-adapter-detection.md)
 //! - [discovery-transport.md](../../../../docs/discovery-transport.md)
 
 use anyhow::{Context, Result};
-use if_addrs::get_if_addrs;
+use network_interface::{NetworkInterface as NI, NetworkInterfaceConfig};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -167,30 +168,93 @@ impl NetworkInterface {
     }
 }
 
-/// Check if interface name or address suggests a virtual Companion
-fn is_virtual_interface(name: &str, ip: &Ipv4Addr) -> bool {
+/// Known virtual adapter MAC OUI prefixes (first 3 bytes)
+/// These are IEEE-assigned and stable across versions.
+const VIRTUAL_MAC_OUIS: &[[u8; 3]] = &[
+    [0x00, 0x15, 0x5D], // Microsoft Hyper-V
+    [0x00, 0x50, 0x56], // VMware (VMs)
+    [0x00, 0x0C, 0x29], // VMware (VMs alternate)
+    [0x00, 0x05, 0x69], // VMware (legacy)
+    [0x08, 0x00, 0x27], // VirtualBox
+    [0x00, 0x1C, 0x42], // Parallels
+    [0x52, 0x54, 0x00], // QEMU/KVM
+    [0x00, 0x16, 0x3E], // Xen
+    [0x00, 0x03, 0xFF], // Microsoft Virtual PC
+];
+
+/// Check if a MAC address indicates a virtual adapter
+fn is_virtual_mac(mac: &str) -> bool {
+    // Parse MAC address (formats: "00:15:5D:xx:xx:xx" or "00-15-5D-xx-xx-xx")
+    let bytes: Vec<u8> = mac
+        .split([':', '-'])
+        .filter_map(|s| u8::from_str_radix(s, 16).ok())
+        .collect();
+
+    if bytes.len() < 3 {
+        return false;
+    }
+
+    // Check known virtual OUIs
+    let oui = [bytes[0], bytes[1], bytes[2]];
+    if VIRTUAL_MAC_OUIS.contains(&oui) {
+        return true;
+    }
+
+    // Docker containers use locally-administered addresses starting with 02:42
+    if bytes[0] == 0x02 && bytes[1] == 0x42 {
+        return true;
+    }
+
+    // Locally administered bit (bit 1 of first octet) is often used by virtual adapters
+    // But this alone isn't enough - many legitimate adapters use it too.
+    // Only flag if it's also in a suspicious range pattern.
+    // Windows Hyper-V often uses 00:15:5D (covered above) or sets first octet to 0x12
+    if bytes[0] == 0x12 {
+        return true;
+    }
+
+    false
+}
+
+/// Check if interface name suggests a virtual adapter (fallback heuristic)
+fn is_virtual_interface_name(name: &str) -> bool {
     let name_lower = name.to_lowercase();
 
-    // Virtual Companion name patterns
     let virtual_patterns = [
-        "veth",      // Linux virtual Ethernet
-        "virbr",     // libvirt bridge
-        "docker",    // Docker bridge
-        "br-",       // Linux bridge
-        "vmnet",     // VMware
-        "vboxnet",   // VirtualBox
-        "hyperv",    // Hyper-V
-        "wsl",       // WSL Companion
+        "veth",           // Linux virtual Ethernet
+        "virbr",          // libvirt bridge
+        "docker",         // Docker bridge
+        "br-",            // Linux bridge
+        "vmnet",          // VMware host-only
+        "vboxnet",        // VirtualBox host-only
+        "vethernet",      // Windows Hyper-V
+        "default switch", // Hyper-V Default Switch
+        "wsl",            // WSL adapter
+        "hyperv",         // Hyper-V explicit
+        "loopback",       // Loopback pseudo-adapter
     ];
 
-    for pattern in &virtual_patterns {
-        if name_lower.contains(pattern) {
+    virtual_patterns.iter().any(|p| name_lower.contains(p))
+}
+
+/// Check if interface is virtual using MAC OUI + name heuristics
+fn is_virtual_interface(name: &str, mac: Option<&str>, ip: &Ipv4Addr) -> bool {
+    // Primary: MAC OUI detection (most reliable)
+    if let Some(mac_addr) = mac {
+        if is_virtual_mac(mac_addr) {
             return true;
         }
     }
 
-    // Docker default bridge network
-    if ip.octets()[..2] == [172, 17] {
+    // Secondary: Name pattern matching (fallback)
+    if is_virtual_interface_name(name) {
+        return true;
+    }
+
+    // Tertiary: Docker default bridge IP range (172.17.x.x) as last resort
+    // This is the only IP-based check we keep - it's stable for Docker
+    let octets = ip.octets();
+    if octets[0] == 172 && octets[1] == 17 {
         return true;
     }
 
@@ -199,59 +263,72 @@ fn is_virtual_interface(name: &str, ip: &Ipv4Addr) -> bool {
 
 /// Enumerate eligible network interfaces for discovery
 fn enumerate_eligible_interfaces() -> Vec<NetworkInterface> {
-    let Ok(interfaces) = get_if_addrs() else {
-        tracing::warn!("Failed to enumerate network interfaces");
-        return Vec::new();
+    let interfaces = match NI::show() {
+        Ok(ifaces) => ifaces,
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to enumerate network interfaces");
+            return Vec::new();
+        }
     };
 
     let mut eligible = Vec::new();
 
     for iface in interfaces {
-        // Only IPv4
-        let if_addrs::IfAddr::V4(ref v4_addr) = iface.addr else {
-            continue;
-        };
+        // Extract IPv4 addresses from the interface
+        for addr in &iface.addr {
+            let network_interface::Addr::V4(v4_addr) = addr else {
+                continue;
+            };
 
-        let ipv4 = v4_addr.ip;
+            let ipv4 = v4_addr.ip;
 
-        // Skip loopback
-        if ipv4.is_loopback() {
-            continue;
-        }
+            // Skip loopback
+            if ipv4.is_loopback() {
+                continue;
+            }
 
-        // Skip link-local (169.254.x.x)
-        if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
-            continue;
-        }
+            // Skip link-local (169.254.x.x)
+            if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+                continue;
+            }
 
-        // Skip virtual Companions
-        if is_virtual_interface(&iface.name, &ipv4) {
-            tracing::debug!(
+            // Skip virtual adapters (using MAC OUI + name heuristics)
+            if is_virtual_interface(&iface.name, iface.mac_addr.as_deref(), &ipv4) {
+                tracing::debug!(
+                    interface = %iface.name,
+                    ip = %ipv4,
+                    mac = ?iface.mac_addr,
+                    "Skipping virtual interface"
+                );
+                continue;
+            }
+
+            // Extract netmask
+            let netmask = v4_addr.netmask;
+
+            // Compute broadcast address
+            let temp_iface = NetworkInterface {
+                name: iface.name.clone(),
+                ip: ipv4,
+                netmask,
+                broadcast: None,
+            };
+            let broadcast = temp_iface.compute_broadcast();
+
+            tracing::trace!(
                 interface = %iface.name,
                 ip = %ipv4,
-                "Skipping virtual interface"
+                mac = ?iface.mac_addr,
+                "Found eligible interface"
             );
-            continue;
+
+            eligible.push(NetworkInterface {
+                name: iface.name.clone(),
+                ip: ipv4,
+                netmask,
+                broadcast,
+            });
         }
-
-        // Extract netmask from V4 address
-        let netmask = Some(v4_addr.netmask);
-
-        // Compute broadcast address
-        let temp_iface = NetworkInterface {
-            name: iface.name.clone(),
-            ip: ipv4,
-            netmask,
-            broadcast: None,
-        };
-        let broadcast = temp_iface.compute_broadcast();
-
-        eligible.push(NetworkInterface {
-            name: iface.name,
-            ip: ipv4,
-            netmask,
-            broadcast,
-        });
     }
 
     if eligible.is_empty() {
@@ -1180,18 +1257,51 @@ mod tests {
     }
 
     #[test]
-    fn test_is_virtual_interface() {
-        assert!(is_virtual_interface("veth0", &Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(is_virtual_interface("docker0", &Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(is_virtual_interface("vmnet1", &Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(is_virtual_interface(
-            "eth0",
-            &Ipv4Addr::new(172, 17, 0, 1)
-        )); // Docker bridge
-        assert!(!is_virtual_interface(
-            "eth0",
-            &Ipv4Addr::new(192, 168, 1, 1)
-        ));
+    fn test_is_virtual_interface_by_name() {
+        // Name-based detection (secondary)
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        assert!(is_virtual_interface("veth0", None, &ip));
+        assert!(is_virtual_interface("docker0", None, &ip));
+        assert!(is_virtual_interface("vmnet1", None, &ip));
+        assert!(is_virtual_interface("vEthernet (Default Switch)", None, &ip));
+        assert!(!is_virtual_interface("eth0", None, &ip));
+        assert!(!is_virtual_interface("Ethernet", None, &ip));
+    }
+
+    #[test]
+    fn test_is_virtual_interface_by_mac() {
+        // MAC OUI-based detection (primary)
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+
+        // Hyper-V (00:15:5D)
+        assert!(is_virtual_interface("Ethernet", Some("00:15:5D:01:02:03"), &ip));
+        assert!(is_virtual_interface("Ethernet", Some("00-15-5D-01-02-03"), &ip));
+
+        // VMware (00:50:56)
+        assert!(is_virtual_interface("eth0", Some("00:50:56:AB:CD:EF"), &ip));
+
+        // VirtualBox (08:00:27)
+        assert!(is_virtual_interface("enp0s3", Some("08:00:27:12:34:56"), &ip));
+
+        // Docker (02:42)
+        assert!(is_virtual_interface("eth0", Some("02:42:AC:11:00:02"), &ip));
+
+        // QEMU/KVM (52:54:00)
+        assert!(is_virtual_interface("eth0", Some("52:54:00:12:34:56"), &ip));
+
+        // Physical NIC (Intel)
+        assert!(!is_virtual_interface("eth0", Some("A4:83:E7:12:34:56"), &ip));
+
+        // Physical NIC (Realtek)
+        assert!(!is_virtual_interface("Ethernet", Some("00:E0:4C:68:00:01"), &ip));
+    }
+
+    #[test]
+    fn test_is_virtual_interface_by_ip() {
+        // IP-based detection (tertiary - Docker bridge only)
+        assert!(is_virtual_interface("eth0", None, &Ipv4Addr::new(172, 17, 0, 1)));
+        assert!(!is_virtual_interface("eth0", None, &Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(!is_virtual_interface("eth0", None, &Ipv4Addr::new(10, 0, 0, 1)));
     }
 
     #[test]

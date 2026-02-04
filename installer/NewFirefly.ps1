@@ -1,37 +1,30 @@
-﻿<#
+<#
 .SYNOPSIS
-    Installs and tests Firefly firmware on a Waveshare RP2040-Matrix device.
+    Installs and tests Firefly firmware on supported devices.
 
 .DESCRIPTION
-    A fully automated, low-cognitive-load installer for Zen Garden Firefly:
+    Device-agnostic installer for Zen Garden Firefly visual indicators.
 
-    - Detects device state automatically (connected, bootloader, CircuitPython)
-    - Downloads and flashes CircuitPython if needed
-    - Installs Firefly firmware and libraries
-    - Tests serial communication to verify everything works
-    - Provides clear guidance when user action is needed
+    Supported devices:
+    - Waveshare RP2040-Matrix: 5x5 RGB LED matrix (CircuitPython)
+    - ESP8266 NodeMCU + OLED: 128x64 SSD1306 display (MicroPython)
+
+    Auto-detects connected hardware and applies appropriate firmware.
 
 .PARAMETER Force
     Skip confirmation prompts.
 
-.PARAMETER UpdateOnly
-    Only update firmware, skip CircuitPython flash even if in bootloader mode.
-
 .EXAMPLE
     .\NewFirefly.ps1
-    # Fully automated - detects state and does the right thing
 
 .NOTES
-    Requires: Windows 10/11, Internet connection
-    Hardware: Waveshare RP2040-Matrix (or compatible RP2040 + WS2812)
+    Requires: Windows 10/11, Python (for ESP8266), Internet connection
     Author: Zen Garden Team
-    License: Apache 2.0
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$Force,
-    [switch]$UpdateOnly
+    [switch]$Force  # Skip confirmation prompts
 )
 
 Set-StrictMode -Version Latest
@@ -39,799 +32,578 @@ $ErrorActionPreference = "Stop"
 
 #region Configuration
 $script:Config = @{
-    # CircuitPython settings
-    # Note: RP2040-Matrix has no dedicated build, but generic Pico build works fine
-    CircuitPythonVersion    = "10.0.3"
-    CircuitPythonUrl        = "https://downloads.circuitpython.org/bin/raspberry_pi_pico/en_US/adafruit-circuitpython-raspberry_pi_pico-en_US-10.0.3.uf2"
+    CacheDir      = (Join-Path $env:USERPROFILE ".zen-garden\firefly-cache")
+    FirmwareDir   = (Join-Path $PSScriptRoot "..\firmware\firefly")
+    SerialTimeout = 3000
+    BoxWidth      = 56
 
-    # Library bundle (must match CircuitPython major version)
-    LibraryBundleUrl        = "https://github.com/adafruit/Adafruit_CircuitPython_Bundle/releases/download/20260129/adafruit-circuitpython-bundle-10.x-mpy-20260129.zip"
+    RP2040 = @{
+        CircuitPythonUrl  = "https://downloads.circuitpython.org/bin/raspberry_pi_pico/en_US/adafruit-circuitpython-raspberry_pi_pico-en_US-10.0.3.uf2"
+        LibraryBundleUrl  = "https://github.com/adafruit/Adafruit_CircuitPython_Bundle/releases/download/20260129/adafruit-circuitpython-bundle-10.x-mpy-20260129.zip"
+        FirmwareFile      = "circuitpython\code.py"
+    }
 
-    # Local paths
-    CacheDir                = (Join-Path $env:USERPROFILE ".zen-garden\firefly-cache")
-    FirmwareDir             = (Join-Path $PSScriptRoot "..\firmware\firefly\circuitpython")
-
-    # Drive names
-    BootloaderDriveName     = "RPI-RP2"
-    CircuitPyDriveName      = "CIRCUITPY"
-
-    # Timeouts
-    DriveWaitTimeoutSeconds = 60
-    SerialTimeoutMs         = 3000
-
-    # UI
-    BoxWidth                = 56
+    ESP8266 = @{
+        MicroPythonUrl = "https://micropython.org/resources/firmware/ESP8266_GENERIC-20251209-v1.27.0.bin"
+        I2C_SCL        = 12  # D6
+        I2C_SDA        = 14  # D5
+        # Resources to upload: @{Local="path"; Remote="filename"}
+        # Using .mpy bytecode for smaller footprint (compiled with mpy-cross)
+        Resources      = @(
+            @{Local="micropython\boot.py"; Remote="boot.py"}
+            @{Local="micropython\firefly_oled.mpy"; Remote="firefly_oled.mpy"}
+            @{Local="micropython\main.py"; Remote="main.py"}
+            @{Local="etc\esp8266\profont_10.mpy"; Remote="profont_10.mpy"}
+        )
+    }
 }
 #endregion
 
 #region UI Helpers
 function Write-Banner {
     Write-Host ""
-    Write-Host "  ╔════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║   Zen Garden Firefly Installer                         ║" -ForegroundColor Cyan
-    Write-Host "  ║   LED status indicator for your Stones                 ║" -ForegroundColor Cyan
-    Write-Host "  ╚════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  ========================================================" -ForegroundColor Cyan
+    Write-Host "     Zen Garden Firefly Installer                         " -ForegroundColor Cyan
+    Write-Host "     Visual status indicators for your Stones             " -ForegroundColor Cyan
+    Write-Host "  ========================================================" -ForegroundColor Cyan
     Write-Host ""
 }
 
 function Write-Panel {
-    param(
-        [string]$Title = '',
-        [string[]]$Lines = @(),
-        [string]$Color = 'Cyan'
-    )
-
-    $width = $script:Config.BoxWidth
-    Write-Host "  ┌$('─' * $width)┐" -ForegroundColor $Color
-
+    param([string]$Title = '', [string[]]$Lines = @(), [string]$Color = 'Cyan')
+    $w = $script:Config.BoxWidth
+    Write-Host "  +$('-' * $w)+" -ForegroundColor $Color
     if ($Title) {
-        $titlePadded = " $Title ".PadRight($width)
-        Write-Host "  │$($titlePadded.Substring(0, $width))│" -ForegroundColor $Color
-        Write-Host "  ├$('─' * $width)┤" -ForegroundColor $Color
+        $t = " $Title ".PadRight($w)
+        Write-Host "  |$($t.Substring(0, $w))|" -ForegroundColor $Color
+        Write-Host "  +$('-' * $w)+" -ForegroundColor $Color
     }
-
     foreach ($line in $Lines) {
-        $linePadded = " $line".PadRight($width)
-        Write-Host "  │$($linePadded.Substring(0, $width))│" -ForegroundColor $Color
+        $l = " $line".PadRight($w)
+        Write-Host "  |$($l.Substring(0, $w))|" -ForegroundColor $Color
     }
-
-    Write-Host "  └$('─' * $width)┘" -ForegroundColor $Color
+    Write-Host "  +$('-' * $w)+" -ForegroundColor $Color
     Write-Host ""
 }
 
 function Write-Step {
-    param(
-        [string]$Message,
-        [string]$Status = "..."
-    )
-
-    $symbols = @{
-        "..."  = @{ Symbol = "[*]"; Color = "Cyan" }
-        "OK"   = @{ Symbol = "[+]"; Color = "Green" }
-        "FAIL" = @{ Symbol = "[x]"; Color = "Red" }
-        "WARN" = @{ Symbol = "[!]"; Color = "Yellow" }
-        "WAIT" = @{ Symbol = "[~]"; Color = "Magenta" }
-        "TEST" = @{ Symbol = "[?]"; Color = "Blue" }
+    param([string]$Message, [string]$Status = "...")
+    $sym = @{
+        "..."  = @{ S = "[*]"; C = "Cyan" }
+        "OK"   = @{ S = "[+]"; C = "Green" }
+        "FAIL" = @{ S = "[x]"; C = "Red" }
+        "WARN" = @{ S = "[!]"; C = "Yellow" }
+        "WAIT" = @{ S = "[~]"; C = "Magenta" }
+        "TEST" = @{ S = "[?]"; C = "Blue" }
     }
-
-    $s = $symbols[$Status]
-    if (-not $s) { $s = $symbols["..."] }
-
-    Write-Host "  $($s.Symbol) " -ForegroundColor $s.Color -NoNewline
+    $s = $sym[$Status]
+    if (-not $s) { $s = $sym["..."] }
+    Write-Host "  $($s.S) " -ForegroundColor $s.C -NoNewline
     Write-Host $Message
 }
 
-function Write-Progress-Inline {
-    param([string]$Message)
-    Write-Host "`r      $Message                              " -NoNewline
-}
-#endregion
-
-#region Device Detection
-function Get-BootloaderDrive {
-    $drives = Get-Volume -ErrorAction SilentlyContinue | Where-Object {
-        $_.FileSystemLabel -eq $script:Config.BootloaderDriveName
-    }
-    if ($drives) {
-        return "$($drives[0].DriveLetter):"
-    }
-    return $null
-}
-
-function Get-CircuitPyDrive {
-    $drives = Get-Volume -ErrorAction SilentlyContinue | Where-Object {
-        $_.FileSystemLabel -eq $script:Config.CircuitPyDriveName
-    }
-    if ($drives) {
-        return "$($drives[0].DriveLetter):"
-    }
-    return $null
-}
-
-function Get-FireflySerialPort {
-    <#
-    .SYNOPSIS
-        Finds COM port for CircuitPython/RP2040 device.
-    #>
-    try {
-        # Method 1: Look for USB Serial Device
-        $ports = Get-WmiObject Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -and $_.Name -match "COM\d+" -and
-            ($_.Name -match "USB Serial" -or $_.Name -match "CircuitPython" -or
-             $_.Name -match "RP2" -or $_.Name -match "Board CDC")
-        }
-
-        if ($ports) {
-            $port = if ($ports -is [array]) { $ports[0] } else { $ports }
-            if ($port.Name -match "(COM\d+)") {
-                return $matches[1]
-            }
-        }
-
-        # Method 2: Check Win32_SerialPort for USB Serial Device
-        $serialPorts = Get-WmiObject Win32_SerialPort -ErrorAction SilentlyContinue | Where-Object {
-            $_.Description -match "USB Serial"
-        }
-        if ($serialPorts) {
-            $port = if ($serialPorts -is [array]) { $serialPorts[0] } else { $serialPorts }
-            return $port.DeviceID
-        }
-    }
-    catch {
-        # Ignore detection errors
-    }
-    return $null
-}
-
-function Get-DeviceState {
-    <#
-    .SYNOPSIS
-        Determines the current state of the Firefly device.
-    .OUTPUTS
-        Hashtable with: State, ComPort, CircuitPyDrive, BootloaderDrive
-    #>
-    $state = @{
-        State           = "NOT_CONNECTED"
-        ComPort         = $null
-        CircuitPyDrive  = $null
-        BootloaderDrive = $null
-        FirmwareVersion = $null
-    }
-
-    # Check for serial port first (device running)
-    $state.ComPort = Get-FireflySerialPort
-
-    # Check for CIRCUITPY drive
-    $state.CircuitPyDrive = Get-CircuitPyDrive
-
-    # Check for bootloader drive
-    $state.BootloaderDrive = Get-BootloaderDrive
-
-    # Determine state
-    if ($state.ComPort) {
-        $state.State = "SERIAL_AVAILABLE"
-    }
-    elseif ($state.CircuitPyDrive) {
-        $state.State = "CIRCUITPY_MOUNTED"
-    }
-    elseif ($state.BootloaderDrive) {
-        $state.State = "BOOTLOADER_MODE"
-    }
-    else {
-        $state.State = "NOT_CONNECTED"
-    }
-
-    return $state
-}
-
-function Wait-ForState {
-    param(
-        [string]$TargetState,
-        [int]$TimeoutSeconds = 30,
-        [string]$WaitMessage = "Waiting..."
-    )
-
-    $elapsed = 0
-    while ($elapsed -lt $TimeoutSeconds) {
-        $state = Get-DeviceState
-
-        if ($state.State -eq $TargetState) {
-            Write-Host ""
-            return $state
-        }
-
-        # Also accept more advanced states
-        $stateOrder = @("NOT_CONNECTED", "BOOTLOADER_MODE", "CIRCUITPY_MOUNTED", "SERIAL_AVAILABLE")
-        $targetIdx = [array]::IndexOf($stateOrder, $TargetState)
-        $currentIdx = [array]::IndexOf($stateOrder, $state.State)
-
-        if ($currentIdx -ge $targetIdx -and $targetIdx -ge 0) {
-            Write-Host ""
-            return $state
-        }
-
-        Write-Progress-Inline "$WaitMessage ($elapsed/$TimeoutSeconds sec)"
-        Start-Sleep -Seconds 1
-        $elapsed++
-    }
-
-    Write-Host ""
-    return $null
-}
-#endregion
-
-#region Serial Communication
-function Test-SerialConnection {
-    param([string]$ComPort)
-
-    <#
-    .SYNOPSIS
-        Tests serial communication with Firefly firmware.
-    .OUTPUTS
-        Hashtable with: Success, Response, IsFirefly
-    #>
-
-    $result = @{
-        Success   = $false
-        Response  = $null
-        IsFirefly = $false
-        Error     = $null
-    }
-
-    try {
-        $port = New-Object System.IO.Ports.SerialPort $ComPort, 115200
-        $port.ReadTimeout = $script:Config.SerialTimeoutMs
-        $port.WriteTimeout = $script:Config.SerialTimeoutMs
-        $port.NewLine = "`r`n"
-        $port.DtrEnable = $true
-
-        $port.Open()
-        Start-Sleep -Milliseconds 500  # Let device settle
-
-        # Clear any pending data
-        $port.DiscardInBuffer()
-        $port.DiscardOutBuffer()
-
-        # Send info command
-        $port.WriteLine("I")
-        Start-Sleep -Milliseconds 300
-
-        # Read response
-        $response = ""
-        while ($port.BytesToRead -gt 0) {
-            $response += $port.ReadExisting()
-            Start-Sleep -Milliseconds 50
-        }
-
-        $port.Close()
-
-        $result.Response = $response.Trim()
-        $result.Success = $true
-
-        # Check if it's Firefly firmware
-        if ($response -match "firefly" -or $response -match "OK,firefly") {
-            $result.IsFirefly = $true
-        }
-    }
-    catch {
-        $result.Error = $_.Exception.Message
-        try { $port.Close() } catch {}
-    }
-
-    return $result
-}
-
-function Send-SerialCommand {
-    param(
-        [string]$ComPort,
-        [string]$Command
-    )
-
-    try {
-        $port = New-Object System.IO.Ports.SerialPort $ComPort, 115200
-        $port.ReadTimeout = $script:Config.SerialTimeoutMs
-        $port.WriteTimeout = $script:Config.SerialTimeoutMs
-        $port.DtrEnable = $true
-
-        $port.Open()
-        Start-Sleep -Milliseconds 200
-        $port.DiscardInBuffer()
-
-        $port.WriteLine($Command)
-        Start-Sleep -Milliseconds 200
-
-        $response = ""
-        while ($port.BytesToRead -gt 0) {
-            $response += $port.ReadExisting()
-            Start-Sleep -Milliseconds 50
-        }
-
-        $port.Close()
-        return $response.Trim()
-    }
-    catch {
-        try { $port.Close() } catch {}
-        return $null
-    }
-}
-
-function Test-FireflyVisual {
-    param([string]$ComPort)
-
-    <#
-    .SYNOPSIS
-        Runs a visual test sequence on the Firefly LEDs.
-    #>
-
-    Write-Step "Running LED test sequence..." "TEST"
-
-    $tests = @(
-        @{ Cmd = "C"; Desc = "Clear"; Delay = 200 }
-        @{ Cmd = "F,255,0,0"; Desc = "Red"; Delay = 600 }
-        @{ Cmd = "F,0,255,0"; Desc = "Green"; Delay = 600 }
-        @{ Cmd = "F,0,0,255"; Desc = "Blue"; Delay = 600 }
-        @{ Cmd = "A,rainbow"; Desc = "Rainbow"; Delay = 2000 }
-        @{ Cmd = "T,healthy"; Desc = "Healthy"; Delay = 1000 }
-        @{ Cmd = "C"; Desc = "Clear"; Delay = 200 }
-    )
-
-    $allPassed = $true
-    foreach ($test in $tests) {
-        $response = Send-SerialCommand -ComPort $ComPort -Command $test.Cmd
-        $passed = ($response -match "OK")
-
-        if (-not $passed) {
-            $allPassed = $false
-        }
-
-        Start-Sleep -Milliseconds $test.Delay
-    }
-
-    return $allPassed
-}
-#endregion
-
-#region Installation Functions
-function Initialize-CacheDir {
+function Initialize-Cache {
     if (-not (Test-Path $script:Config.CacheDir)) {
         New-Item -ItemType Directory -Path $script:Config.CacheDir -Force | Out-Null
     }
 }
+#endregion
 
-function Get-CircuitPythonUf2 {
-    Initialize-CacheDir
+#region Device Detection
+function Get-ConnectedDevices {
+    $devices = @()
 
-    $uf2FileName = "circuitpython-rp2040-$($script:Config.CircuitPythonVersion).uf2"
-    $uf2Path = Join-Path $script:Config.CacheDir $uf2FileName
+    $ports = Get-WmiObject Win32_PnPEntity -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -and $_.Name -match 'COM\d+' }
 
-    if ((Test-Path $uf2Path) -and (Get-Item $uf2Path).Length -gt 500KB) {
+    foreach ($p in $ports) {
+        $com = if ($p.Name -match '(COM\d+)') { $matches[1] } else { $null }
+        $type = $null
+        $vendorId = $null
+        $productId = $null
+
+        if ($p.DeviceID -match 'VID_([0-9A-F]{4})') { $vendorId = $matches[1] }
+        if ($p.DeviceID -match 'PID_([0-9A-F]{4})') { $productId = $matches[1] }
+
+        if ($vendorId -eq "2E8A" -or $vendorId -eq "239A") { $type = "RP2040" }
+        elseif ($vendorId -eq "1A86" -and $productId -eq "7523") { $type = "ESP8266" }
+        elseif ($p.Name -match 'RP2|CircuitPython|Board CDC') { $type = "RP2040" }
+        elseif ($p.Name -match 'CH340|CH34') { $type = "ESP8266" }
+
+        if ($type -and $com) {
+            $devices += @{ Type = $type; ComPort = $com; Name = $p.Name; VID = $vendorId; PID = $productId }
+        }
+    }
+
+    $boot = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq "RPI-RP2" }
+    if ($boot) {
+        $devices += @{ Type = "RP2040"; BootloaderDrive = "$($boot.DriveLetter):"; Name = "RP2040 Bootloader" }
+    }
+
+    $cpy = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq "CIRCUITPY" }
+    if ($cpy) {
+        $existing = $devices | Where-Object { $_.Type -eq "RP2040" } | Select-Object -First 1
+        if ($existing) { $existing.CircuitPyDrive = "$($cpy.DriveLetter):" }
+        else { $devices += @{ Type = "RP2040"; CircuitPyDrive = "$($cpy.DriveLetter):"; Name = "CircuitPython Device" } }
+    }
+
+    return $devices
+}
+#endregion
+
+#region RP2040 Handler
+function Get-RP2040Runtime {
+    Initialize-Cache
+    $path = Join-Path $script:Config.CacheDir "circuitpython-rp2040.uf2"
+    if ((Test-Path $path) -and (Get-Item $path).Length -gt 500KB) {
         Write-Step "CircuitPython found in cache" "OK"
-        return $uf2Path
+        return $path
     }
-
-    Write-Step "Downloading CircuitPython $($script:Config.CircuitPythonVersion)..." "..."
-
-    try {
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $script:Config.CircuitPythonUrl -OutFile $uf2Path -UseBasicParsing
-        $ProgressPreference = 'Continue'
-
-        $sizeMB = [math]::Round((Get-Item $uf2Path).Length / 1MB, 2)
-        Write-Step "Downloaded CircuitPython ($sizeMB MB)" "OK"
-        return $uf2Path
-    }
-    catch {
-        Write-Step "Download failed: $_" "FAIL"
-        throw
-    }
+    Write-Step "Downloading CircuitPython..." "..."
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $script:Config.RP2040.CircuitPythonUrl -OutFile $path -UseBasicParsing
+    Write-Step "CircuitPython downloaded" "OK"
+    return $path
 }
 
-function Get-NeoPixelLibrary {
-    Initialize-CacheDir
-
-    $libPath = Join-Path $script:Config.CacheDir "neopixel.mpy"
-
-    if (Test-Path $libPath) {
+function Get-RP2040Library {
+    Initialize-Cache
+    $path = Join-Path $script:Config.CacheDir "neopixel.mpy"
+    if (Test-Path $path) {
         Write-Step "NeoPixel library found in cache" "OK"
-        return $libPath
+        return $path
     }
-
     Write-Step "Downloading library bundle..." "..."
+    $zip = Join-Path $script:Config.CacheDir "bundle.zip"
+    $extract = Join-Path $script:Config.CacheDir "bundle-extract"
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $script:Config.RP2040.LibraryBundleUrl -OutFile $zip -UseBasicParsing
+    if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+    Expand-Archive -Path $zip -DestinationPath $extract -Force
+    $neopixel = Get-ChildItem -Path $extract -Filter "neopixel.mpy" -Recurse |
+        Where-Object { $_.DirectoryName -like "*\lib" } | Select-Object -First 1
+    Copy-Item $neopixel.FullName $path -Force
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Step "NeoPixel library ready" "OK"
+    return $path
+}
 
-    $bundleZip = Join-Path $script:Config.CacheDir "bundle.zip"
-    $bundleExtract = Join-Path $script:Config.CacheDir "bundle-extract"
+function Install-RP2040Runtime {
+    param([string]$Drive)
+    $uf2 = Get-RP2040Runtime
+    Write-Step "Flashing CircuitPython to $Drive..." "..."
+    Copy-Item $uf2 "$Drive\" -Force
+    Write-Step "CircuitPython flashed" "OK"
+}
 
+function Install-RP2040Firmware {
+    param([string]$Drive)
+    $lib = Get-RP2040Library
+    $libDir = Join-Path $Drive "lib"
+    if (-not (Test-Path $libDir)) { New-Item -ItemType Directory -Path $libDir -Force | Out-Null }
+    Copy-Item $lib "$libDir\" -Force
+    Write-Step "NeoPixel library installed" "OK"
+
+    $fw = Join-Path $script:Config.FirmwareDir $script:Config.RP2040.FirmwareFile
+    Copy-Item $fw "$Drive\code.py" -Force
+    Write-Step "Firefly firmware installed" "OK"
+}
+
+function Test-RP2040Connection {
+    param([string]$Port)
+    $serial = $null
     try {
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $script:Config.LibraryBundleUrl -OutFile $bundleZip -UseBasicParsing
-        $ProgressPreference = 'Continue'
-
-        if (Test-Path $bundleExtract) {
-            Remove-Item $bundleExtract -Recurse -Force
+        $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
+        $serial.ReadTimeout = $script:Config.SerialTimeout
+        $serial.DtrEnable = $true
+        $serial.Open()
+        Start-Sleep -Milliseconds 500
+        $serial.DiscardInBuffer()
+        $serial.WriteLine("I")
+        Start-Sleep -Milliseconds 300
+        $response = ""
+        while ($serial.BytesToRead -gt 0) {
+            $response += $serial.ReadExisting()
+            Start-Sleep -Milliseconds 50
         }
-
-        Expand-Archive -Path $bundleZip -DestinationPath $bundleExtract -Force
-
-        $neopixelFile = Get-ChildItem -Path $bundleExtract -Filter "neopixel.mpy" -Recurse |
-            Where-Object { $_.DirectoryName -like "*\lib" } |
-            Select-Object -First 1
-
-        if (-not $neopixelFile) {
-            throw "neopixel.mpy not found in bundle"
-        }
-
-        Copy-Item $neopixelFile.FullName $libPath -Force
-
-        Remove-Item $bundleZip -Force -ErrorAction SilentlyContinue
-        Remove-Item $bundleExtract -Recurse -Force -ErrorAction SilentlyContinue
-
-        Write-Step "NeoPixel library ready" "OK"
-        return $libPath
-    }
-    catch {
-        Write-Step "Library download failed: $_" "FAIL"
-        throw
+        $serial.Close()
+        return @{ Success = $true; IsFirefly = ($response -match "firefly"); Response = $response }
+    } catch {
+        if ($serial) { try { $serial.Close() } catch {} }
+        return @{ Success = $false; Error = $_.Exception.Message }
     }
 }
 
-function Install-CircuitPython {
-    param([string]$BootloaderDrive)
+function Invoke-RP2040VisualTest {
+    param([string]$Port)
+    Write-Step "Running LED test sequence..." "TEST"
+    $cmds = @("C", "F,255,0,0", "F,0,255,0", "F,0,0,255", "A,rainbow", "T,healthy", "C")
+    $delays = @(200, 600, 600, 600, 2000, 1000, 200)
+    for ($i = 0; $i -lt $cmds.Count; $i++) {
+        $serial = $null
+        try {
+            $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
+            $serial.DtrEnable = $true
+            $serial.Open()
+            $serial.WriteLine($cmds[$i])
+            Start-Sleep -Milliseconds $delays[$i]
+            $serial.Close()
+        } catch {
+            if ($serial) { try { $serial.Close() } catch {} }
+        }
+    }
+    Write-Step "LED test complete" "OK"
+}
 
-    $uf2Path = Get-CircuitPythonUf2
+function Invoke-RP2040Handler {
+    param($Device)
+    Write-Step "Handling RP2040-Matrix..." "..."
 
-    Write-Step "Flashing CircuitPython to $BootloaderDrive..." "..."
+    if ($Device["BootloaderDrive"]) {
+        Write-Step "Bootloader mode at $($Device['BootloaderDrive'])" "OK"
+        Install-RP2040Runtime -Drive $Device["BootloaderDrive"]
+        Write-Step "Waiting for CircuitPython..." "WAIT"
+        Start-Sleep -Seconds 3
+        for ($i = 0; $i -lt 30; $i++) {
+            $drv = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq "CIRCUITPY" }
+            if ($drv) { $Device["CircuitPyDrive"] = "$($drv.DriveLetter):"; break }
+            Start-Sleep -Seconds 1
+        }
+    }
+
+    if ($Device["CircuitPyDrive"]) {
+        Write-Step "CircuitPython at $($Device['CircuitPyDrive'])" "OK"
+        Install-RP2040Firmware -Drive $Device["CircuitPyDrive"]
+        Start-Sleep -Seconds 3
+    }
+
+    if ($Device["ComPort"]) {
+        $test = Test-RP2040Connection -Port $Device["ComPort"]
+        if ($test.Success -and $test.IsFirefly) {
+            Write-Step "Firefly responding!" "OK"
+            Invoke-RP2040VisualTest -Port $Device["ComPort"]
+            Write-Panel -Title "RP2040-Matrix Firefly Ready!" -Color "Green" -Lines @(
+                "Installation complete."
+                ""
+                "Device: Waveshare RP2040-Matrix"
+                "Port: $($Device['ComPort'])"
+                ""
+                "Commands: F,r,g,b / A,rainbow / T,healthy / C"
+            )
+        } elseif ($test.Success) {
+            Write-Step "Device responds but not Firefly firmware" "WARN"
+        } else {
+            Write-Step "Communication failed" "WARN"
+        }
+    }
+}
+#endregion
+
+#region ESP8266 Handler
+function Get-ESP8266Runtime {
+    Initialize-Cache
+    $path = Join-Path $script:Config.CacheDir "micropython-esp8266.bin"
+    if ((Test-Path $path) -and (Get-Item $path).Length -gt 500KB) {
+        Write-Step "MicroPython found in cache" "OK"
+        return $path
+    }
+    Write-Step "Downloading MicroPython..." "..."
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $script:Config.ESP8266.MicroPythonUrl -OutFile $path -UseBasicParsing
+    Write-Step "MicroPython downloaded" "OK"
+    return $path
+}
+
+function Test-ESP8266Esptool {
+    try {
+        $r = & python -m esptool version 2>&1
+        return $r -match "esptool"
+    } catch { return $false }
+}
+
+function Install-ESP8266Esptool {
+    Write-Step "Installing esptool..." "..."
+    & pip install esptool --user --quiet 2>&1 | Out-Null
+    Write-Step "esptool installed" "OK"
+}
+
+function Install-ESP8266Runtime {
+    param([string]$Port)
+    if (-not (Test-ESP8266Esptool)) { Install-ESP8266Esptool }
+    $bin = Get-ESP8266Runtime
+    Write-Step "Erasing flash..." "..."
+    & python -m esptool --port $Port erase_flash 2>&1 | Out-Null
+    Write-Step "Flashing MicroPython..." "..."
+    & python -m esptool --port $Port --baud 460800 write_flash --flash_size=detect 0 $bin 2>&1 | Out-Null
+    Write-Step "MicroPython flashed" "OK"
+}
+
+function Send-ESP8266File {
+    param([string]$Port, [string]$LocalPath, [string]$RemoteName)
+
+    if (-not (Test-Path $LocalPath)) { return $false }
+
+    $serial = $null
+    $chunkSize = 512  # Send in chunks to avoid buffer overflow
 
     try {
-        Copy-Item $uf2Path "$BootloaderDrive\" -Force
-        Write-Step "CircuitPython flashed - device rebooting..." "OK"
-        return $true
-    }
-    catch {
-        Write-Step "Flash failed: $_" "FAIL"
+        $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
+        $serial.ReadTimeout = 10000
+        $serial.WriteTimeout = 5000
+        $serial.Open()
+
+        # Interrupt any running code
+        $serial.Write([char]3)
+        $serial.Write([char]3)
+        Start-Sleep -Milliseconds 300
+        $serial.DiscardInBuffer()
+
+        # Open file for writing in binary mode
+        $serial.Write("f=open('$RemoteName','wb')`r`n")
+        Start-Sleep -Milliseconds 200
+        $serial.DiscardInBuffer()
+
+        # Read file as raw bytes (works for both text and binary .mpy files)
+        $bytes = [System.IO.File]::ReadAllBytes($LocalPath)
+        $b64 = [Convert]::ToBase64String($bytes)
+
+        $serial.Write("import ubinascii`r`n")
+        Start-Sleep -Milliseconds 100
+
+        # Write chunks
+        for ($i = 0; $i -lt $b64.Length; $i += $chunkSize) {
+            $chunk = $b64.Substring($i, [Math]::Min($chunkSize, $b64.Length - $i))
+            $serial.Write("f.write(ubinascii.a2b_base64('$chunk'))`r`n")
+            Start-Sleep -Milliseconds 150
+            # Drain buffer to prevent overflow
+            while ($serial.BytesToRead -gt 0) { $null = $serial.ReadByte() }
+        }
+
+        # Close file and verify
+        $serial.Write("f.close()`r`n")
+        Start-Sleep -Milliseconds 200
+        $serial.Write("import os; print('SIZE:', os.stat('$RemoteName')[6])`r`n")
+        Start-Sleep -Milliseconds 300
+
+        $resp = ''
+        while ($serial.BytesToRead -gt 0) {
+            $resp += [char]$serial.ReadByte()
+        }
+
+        $serial.Close()
+        return ($resp -match 'SIZE:')
+    } catch {
+        if ($serial) { try { $serial.Close() } catch {} }
         return $false
     }
 }
 
-function Install-Firmware {
-    param([string]$CircuitPyDrive)
+function Install-ESP8266Resources {
+    param([string]$Port)
 
-    # Create lib directory
-    $libDir = Join-Path $CircuitPyDrive "lib"
-    if (-not (Test-Path $libDir)) {
-        New-Item -ItemType Directory -Path $libDir -Force | Out-Null
+    $resources = $script:Config.ESP8266.Resources
+    if (-not $resources) { return }
+
+    foreach ($res in $resources) {
+        $localPath = Join-Path $script:Config.FirmwareDir $res.Local
+        $remoteName = $res.Remote
+
+        if (Test-Path $localPath) {
+            Write-Step "Uploading $remoteName..." "..."
+            $ok = Send-ESP8266File -Port $Port -LocalPath $localPath -RemoteName $remoteName
+            if ($ok) {
+                Write-Step "$remoteName uploaded" "OK"
+            } else {
+                Write-Step "$remoteName failed" "WARN"
+            }
+        } else {
+            Write-Step "$remoteName not found" "WARN"
+        }
+    }
+}
+
+function Test-ESP8266Connection {
+    param([string]$Port)
+    $serial = $null
+    try {
+        $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
+        $serial.ReadTimeout = $script:Config.SerialTimeout
+        $serial.DtrEnable = $false
+        $serial.Open()
+        Start-Sleep -Milliseconds 500
+        $serial.Write([char]3)
+        Start-Sleep -Milliseconds 300
+        $serial.DiscardInBuffer()
+        $serial.Write("`r`n")
+        Start-Sleep -Milliseconds 300
+        $response = ""
+        while ($serial.BytesToRead -gt 0) {
+            $response += $serial.ReadExisting()
+            Start-Sleep -Milliseconds 50
+        }
+        $serial.Close()
+        return @{
+            Success = $true
+            IsMicroPython = ($response -match ">>>")
+            IsFirefly = ($response -match "firefly")
+            Response = $response
+        }
+    } catch {
+        if ($serial) { try { $serial.Close() } catch {} }
+        return @{ Success = $false; Error = $_.Exception.Message }
+    }
+}
+
+function Invoke-ESP8266VisualTest {
+    param([string]$Port)
+    Write-Step "Testing OLED display..." "TEST"
+    $serial = $null
+    try {
+        $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
+        $serial.ReadTimeout = 3000
+        $serial.Open()
+        $serial.DtrEnable = $true
+        Start-Sleep -Milliseconds 100
+        $serial.DtrEnable = $false
+        Start-Sleep -Milliseconds 2000
+        $serial.Write([char]3)
+        Start-Sleep -Milliseconds 500
+        $serial.DiscardInBuffer()
+
+        # Enter paste mode (Ctrl+E)
+        $serial.Write([char]5)
+        Start-Sleep -Milliseconds 200
+
+        # Multi-line script with custom font
+        $script = "from machine import Pin, SoftI2C`n"
+        $script += "import ssd1306`n"
+        $script += "import profont_10 as font`n"
+        $script += "i2c = SoftI2C(scl=Pin(12), sda=Pin(14), freq=400000)`n"
+        $script += "oled = ssd1306.SSD1306_I2C(128, 64, i2c)`n"
+        $script += "oled.fill(0)`n"
+        $script += "font.draw(oled, 'ZEN GARDEN', 14, 3)`n"
+        $script += "font.draw(oled, 'FIREFLY', 38, 28)`n"
+        $script += "font.draw(oled, 'Ready!', 42, 50)`n"
+        $script += "oled.show()`n"
+
+        $serial.Write($script)
+        Start-Sleep -Milliseconds 100
+        $serial.Write([char]4)  # Ctrl+D executes paste
+        Start-Sleep -Milliseconds 1500
+
+        $serial.Close()
+        Write-Step "OLED test complete" "OK"
+    } catch {
+        if ($serial) { try { $serial.Close() } catch {} }
+        Write-Step "OLED test failed" "WARN"
+    }
+}
+
+function Invoke-ESP8266Handler {
+    param($Device)
+    Write-Step "Handling ESP8266-OLED..." "..."
+
+    $port = $Device["ComPort"]
+    if (-not $port) {
+        Write-Step "No COM port found" "FAIL"
+        return
     }
 
-    # Install NeoPixel library
-    $neopixelPath = Get-NeoPixelLibrary
-    Copy-Item $neopixelPath "$libDir\" -Force
-    Write-Step "NeoPixel library installed" "OK"
+    # Always do a clean install: erase flash + re-flash MicroPython + upload resources
+    # This ensures no stale files and consistent behavior
+    Write-Step "Erasing and flashing MicroPython..." "..."
+    Install-ESP8266Runtime -Port $port
+    Write-Step "Waiting for reboot..." "WAIT"
+    Start-Sleep -Seconds 3
 
-    # Install firmware
-    $firmwarePath = Join-Path $script:Config.FirmwareDir "code.py"
-    if (-not (Test-Path $firmwarePath)) {
-        throw "Firmware not found at $firmwarePath"
+    Install-ESP8266Resources -Port $port
+    Invoke-ESP8266VisualTest -Port $port
+
+    # Final reset to let main.py auto-start (visual test leaves device in REPL)
+    # Use soft reset (Ctrl+D) which is more reliable than DTR on some boards
+    Write-Step "Starting main.py..." "..."
+    $serial = $null
+    try {
+        $serial = New-Object System.IO.Ports.SerialPort $port, 115200
+        $serial.ReadTimeout = 5000
+        $serial.Open()
+        # Ctrl+C to ensure we're at REPL prompt
+        $serial.Write([char]3)
+        Start-Sleep -Milliseconds 300
+        # Ctrl+D for soft reset - runs boot.py + main.py
+        $serial.Write([char]4)
+        # Wait for main.py to start
+        Start-Sleep -Seconds 5
+        $serial.DiscardInBuffer()
+        $serial.Close()
+    } catch {
+        if ($serial) { try { $serial.Close() } catch {} }
     }
 
-    Copy-Item $firmwarePath "$CircuitPyDrive\code.py" -Force
-    Write-Step "Firefly firmware installed" "OK"
-
-    return $true
+    Write-Panel -Title "ESP8266-OLED Firefly Ready!" -Color "Green" -Lines @(
+        "Installation complete."
+        ""
+        "Device: NodeMCU ESP8266 + OLED"
+        "Port: $port"
+        "Display: SSD1306 128x64 I2C"
+        ""
+        "Firefly firmware is running!"
+    )
 }
 #endregion
 
-#region Main Flow
-function Show-NotConnected {
-    Write-Panel -Title "Device Not Detected" -Color "Yellow" -Lines @(
-        "No Firefly device found.",
-        "",
-        "To connect your RP2040-Matrix:",
-        "",
-        "  1. Hold the BOOT button on the device",
-        "  2. While holding, plug in the USB-C cable",
-        "  3. Release the BOOT button",
-        "",
-        "A drive named 'RPI-RP2' will appear."
-    )
-}
+#region Main
+function Invoke-DeviceHandler {
+    param($Device)
 
-function Show-Success {
-    param([string]$ComPort)
-
-    Write-Host ""
-    Write-Panel -Title "Firefly Ready!" -Color "Green" -Lines @(
-        "Installation complete and verified.",
-        "",
-        "Serial Port: $ComPort",
-        "Baud Rate:   115200",
-        "",
-        "Test commands (via PuTTY or serial terminal):",
-        "  F,0,255,0    - All LEDs green",
-        "  F,255,0,0    - All LEDs red",
-        "  A,rainbow    - Rainbow animation",
-        "  T,healthy    - Status: healthy",
-        "  T,error      - Status: error (blinks)",
-        "  C            - Clear all LEDs"
-    )
+    switch ($Device["Type"]) {
+        "RP2040"  { Invoke-RP2040Handler -Device $Device }
+        "ESP8266" { Invoke-ESP8266Handler -Device $Device }
+        default   { Write-Step "Unknown device type: $($Device['Type'])" "FAIL" }
+    }
 }
 
 function Main {
     Write-Banner
 
-    # Get initial device state
-    Write-Step "Detecting device state..." "..."
-    $state = Get-DeviceState
+    Write-Step "Scanning for devices..." "..."
+    $devices = @(Get-ConnectedDevices)
 
-    switch ($state.State) {
-        "SERIAL_AVAILABLE" {
-            Write-Step "Found device on $($state.ComPort)" "OK"
-
-            # Test if Firefly firmware is running
-            Write-Step "Testing serial communication..." "TEST"
-            $testResult = Test-SerialConnection -ComPort $state.ComPort
-
-            if ($testResult.Success -and $testResult.IsFirefly) {
-                Write-Step "Firefly firmware responding!" "OK"
-
-                # Offer update or test
-                Write-Panel -Title "Firefly Already Installed" -Color "Green" -Lines @(
-                    "Device is working with Firefly firmware.",
-                    "",
-                    "Options:",
-                    "  [T] Run LED test sequence",
-                    "  [U] Update firmware to latest",
-                    "  [Q] Quit (everything is fine!)"
-                )
-
-                Write-Host "  Choice [T/U/Q]: " -NoNewline -ForegroundColor Yellow
-                $choice = Read-Host
-
-                switch ($choice.ToLower()) {
-                    "t" {
-                        Write-Host ""
-                        $testPassed = Test-FireflyVisual -ComPort $state.ComPort
-                        if ($testPassed) {
-                            Write-Step "LED test completed successfully!" "OK"
-                        }
-                        else {
-                            Write-Step "Some tests may have had issues" "WARN"
-                        }
-                        Show-Success -ComPort $state.ComPort
-                    }
-                    "u" {
-                        Write-Host ""
-                        # Need CIRCUITPY drive for update
-                        if ($state.CircuitPyDrive) {
-                            Install-Firmware -CircuitPyDrive $state.CircuitPyDrive
-                            Write-Step "Firmware updated!" "OK"
-                            Start-Sleep -Seconds 2
-
-                            # Re-test
-                            $newState = Get-DeviceState
-                            if ($newState.ComPort) {
-                                Test-FireflyVisual -ComPort $newState.ComPort
-                            }
-                            Show-Success -ComPort $state.ComPort
-                        }
-                        else {
-                            Write-Step "CIRCUITPY drive not found - unplug and replug device" "WARN"
-                        }
-                    }
-                    default {
-                        Write-Step "Firefly is working - no changes made" "OK"
-                        Show-Success -ComPort $state.ComPort
-                    }
-                }
-                return
-            }
-            elseif ($testResult.Success) {
-                Write-Step "Device responds but not running Firefly firmware" "WARN"
-                $responsePreview = if ($testResult.Response.Length -gt 60) {
-                    $testResult.Response.Substring(0, 60) + "..."
-                } else {
-                    $testResult.Response
-                }
-                Write-Host "       Response: $responsePreview" -ForegroundColor Gray
-
-                # Try to install firmware if CircuitPython is available
-                if ($state.CircuitPyDrive) {
-                    Write-Host ""
-                    Write-Step "Installing Firefly firmware..." "..."
-                    Install-Firmware -CircuitPyDrive $state.CircuitPyDrive
-
-                    Write-Step "Waiting for device to restart..." "WAIT"
-                    Start-Sleep -Seconds 3
-
-                    $newState = Wait-ForState -TargetState "SERIAL_AVAILABLE" -TimeoutSeconds 15 -WaitMessage "Waiting for serial"
-                    if ($newState -and $newState.ComPort) {
-                        Test-FireflyVisual -ComPort $newState.ComPort
-                        Show-Success -ComPort $newState.ComPort
-                    }
-                }
-                else {
-                    # Device has factory/other firmware, needs CircuitPython
-                    Write-Host ""
-                    Write-Panel -Title "CircuitPython Required" -Color "Yellow" -Lines @(
-                        "This device has factory firmware, not CircuitPython.",
-                        "We need to flash CircuitPython first.",
-                        "",
-                        "Please enter bootloader mode:",
-                        "",
-                        "  1. UNPLUG the device",
-                        "  2. HOLD the BOOT button",
-                        "  3. While holding, PLUG IN USB",
-                        "  4. RELEASE the button",
-                        "",
-                        "A drive named 'RPI-RP2' will appear."
-                    )
-
-                    Write-Step "Waiting for bootloader mode..." "WAIT"
-                    $newState = Wait-ForState -TargetState "BOOTLOADER_MODE" -TimeoutSeconds 60 -WaitMessage "Unplug, hold BOOT, plug in"
-
-                    if ($newState -and $newState.BootloaderDrive) {
-                        Write-Host ""
-                        Write-Step "Bootloader detected at $($newState.BootloaderDrive)" "OK"
-
-                        # Flash CircuitPython
-                        if (-not (Install-CircuitPython -BootloaderDrive $newState.BootloaderDrive)) {
-                            return
-                        }
-
-                        # Wait for CIRCUITPY
-                        Write-Step "Waiting for CircuitPython to boot..." "WAIT"
-                        Start-Sleep -Seconds 2
-
-                        $cpState = Wait-ForState -TargetState "CIRCUITPY_MOUNTED" -TimeoutSeconds 30 -WaitMessage "Waiting for CIRCUITPY"
-
-                        if ($cpState -and $cpState.CircuitPyDrive) {
-                            Write-Step "CircuitPython ready at $($cpState.CircuitPyDrive)" "OK"
-                            Write-Host ""
-                            Install-Firmware -CircuitPyDrive $cpState.CircuitPyDrive
-
-                            Write-Step "Waiting for device..." "WAIT"
-                            Start-Sleep -Seconds 3
-
-                            $finalState = Wait-ForState -TargetState "SERIAL_AVAILABLE" -TimeoutSeconds 20 -WaitMessage "Waiting for serial"
-                            if ($finalState -and $finalState.ComPort) {
-                                Write-Step "Device ready on $($finalState.ComPort)" "OK"
-                                Write-Host ""
-                                Test-FireflyVisual -ComPort $finalState.ComPort
-                                Show-Success -ComPort $finalState.ComPort
-                            }
-                        }
-                    }
-                    else {
-                        Write-Host ""
-                        Write-Step "Timeout waiting for bootloader" "FAIL"
-                        Write-Host "       Try again: unplug, hold BOOT, plug in USB" -ForegroundColor Yellow
-                    }
-                }
-                return
-            }
-            else {
-                Write-Step "Serial port found but communication failed" "WARN"
-                Write-Host "       Error: $($testResult.Error)" -ForegroundColor Gray
-            }
-        }
-
-        "CIRCUITPY_MOUNTED" {
-            Write-Step "Found CircuitPython drive at $($state.CircuitPyDrive)" "OK"
-
-            # Install firmware
-            Write-Host ""
-            Install-Firmware -CircuitPyDrive $state.CircuitPyDrive
-
-            Write-Step "Waiting for device..." "WAIT"
-            Start-Sleep -Seconds 3
-
-            $newState = Wait-ForState -TargetState "SERIAL_AVAILABLE" -TimeoutSeconds 20 -WaitMessage "Waiting for serial"
-
-            if ($newState -and $newState.ComPort) {
-                Write-Step "Device ready on $($newState.ComPort)" "OK"
-
-                # Test it
-                Write-Host ""
-                $testPassed = Test-FireflyVisual -ComPort $newState.ComPort
-
-                if ($testPassed) {
-                    Write-Step "All tests passed!" "OK"
-                }
-
-                Show-Success -ComPort $newState.ComPort
-            }
-            else {
-                Write-Step "Device not responding on serial" "WARN"
-                Write-Host "       Firmware installed but serial test skipped." -ForegroundColor Gray
-                Write-Host "       Try unplugging and replugging the device." -ForegroundColor Gray
-            }
-            return
-        }
-
-        "BOOTLOADER_MODE" {
-            Write-Step "Found device in bootloader mode at $($state.BootloaderDrive)" "OK"
-
-            Write-Host ""
-
-            # Flash CircuitPython
-            if (-not (Install-CircuitPython -BootloaderDrive $state.BootloaderDrive)) {
-                return
-            }
-
-            # Wait for CIRCUITPY
-            Write-Step "Waiting for CircuitPython to boot..." "WAIT"
-            Start-Sleep -Seconds 2
-
-            $newState = Wait-ForState -TargetState "CIRCUITPY_MOUNTED" -TimeoutSeconds 30 -WaitMessage "Waiting for CIRCUITPY"
-
-            if (-not $newState -or -not $newState.CircuitPyDrive) {
-                Write-Step "Timeout waiting for CIRCUITPY drive" "FAIL"
-                Write-Host "       Try unplugging and replugging the device." -ForegroundColor Yellow
-                return
-            }
-
-            Write-Step "CircuitPython ready at $($newState.CircuitPyDrive)" "OK"
-
-            # Install firmware
-            Write-Host ""
-            Install-Firmware -CircuitPyDrive $newState.CircuitPyDrive
-
-            # Wait for serial
-            Write-Step "Waiting for device to initialize..." "WAIT"
-            Start-Sleep -Seconds 3
-
-            $finalState = Wait-ForState -TargetState "SERIAL_AVAILABLE" -TimeoutSeconds 20 -WaitMessage "Waiting for serial"
-
-            if ($finalState -and $finalState.ComPort) {
-                Write-Step "Device ready on $($finalState.ComPort)" "OK"
-
-                Write-Host ""
-                $testPassed = Test-FireflyVisual -ComPort $finalState.ComPort
-
-                if ($testPassed) {
-                    Write-Step "All tests passed!" "OK"
-                }
-
-                Show-Success -ComPort $finalState.ComPort
-            }
-            else {
-                Write-Step "Serial port not detected" "WARN"
-                Write-Host "       Firmware installed. Try unplugging and replugging." -ForegroundColor Yellow
-            }
-            return
-        }
-
-        "NOT_CONNECTED" {
-            Show-NotConnected
-
-            Write-Step "Waiting for device..." "WAIT"
-            $newState = Wait-ForState -TargetState "BOOTLOADER_MODE" -TimeoutSeconds $script:Config.DriveWaitTimeoutSeconds -WaitMessage "Connect device (hold BOOT + plug USB)"
-
-            if (-not $newState) {
-                Write-Host ""
-                Write-Step "No device detected" "FAIL"
-                Write-Host ""
-                Write-Host "  Troubleshooting:" -ForegroundColor Yellow
-                Write-Host "    - Make sure you hold BOOT while plugging in USB" -ForegroundColor Gray
-                Write-Host "    - Try a different USB cable (some are charge-only)" -ForegroundColor Gray
-                Write-Host "    - Try a different USB port" -ForegroundColor Gray
-                Write-Host ""
-                return
-            }
-
-            # Recurse with new state
-            Write-Host ""
-            Main
-            return
-        }
+    if ($devices.Count -eq 0 -or $null -eq $devices[0]) {
+        Write-Step "No devices found" "WARN"
+        Write-Panel -Title "No Device Detected" -Color "Yellow" -Lines @(
+            "Supported devices:"
+            ""
+            "1. RP2040-Matrix: Hold BOOT + plug USB"
+            "2. ESP8266-OLED: Just plug in USB"
+        )
+        return
     }
+
+    # Filter to only valid devices with a Type
+    $validDevices = @($devices | Where-Object { $_["Type"] })
+
+    if ($validDevices.Count -eq 0) {
+        Write-Step "No supported devices found" "WARN"
+        return
+    }
+
+    Write-Step "Found $($validDevices.Count) device(s):" "OK"
+    foreach ($d in $validDevices) {
+        $info = if ($d["ComPort"]) { $d["ComPort"] } else { $d["BootloaderDrive"] }
+        Write-Host "       - $($d['Type']): $info" -ForegroundColor Gray
+    }
+    Write-Host ""
+
+    $device = $validDevices[0]
+    Invoke-DeviceHandler -Device $device
 }
 
-# Entry point
 try {
     Main
-}
-catch {
+} catch {
     Write-Host ""
-    Write-Step "Error: $_" "FAIL"
-    Write-Host "       $($_.ScriptStackTrace)" -ForegroundColor DarkGray
+    Write-Step ("Error: " + $_.Exception.Message) "FAIL"
 }
 #endregion

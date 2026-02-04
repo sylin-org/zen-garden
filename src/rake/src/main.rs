@@ -927,6 +927,21 @@ enum Commands {
         normative: bool,
     },
 
+    /// Open stone portrait in browser
+    #[command(
+        long_about = "Open the stone's portrait page in the default web browser.\n\n\
+        Works on Windows, macOS, and Linux with graphical environment.\n\n\
+        Examples:\n  \
+        garden-rake launch                          # Open tended stone's portrait\n  \
+        garden-rake launch at stone-01              # Open specific stone's portrait\n  \
+        garden-rake launch --at http://192.168.1.100:7185  # Open by endpoint"
+    )]
+    Launch {
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
     /// Display Moss HTTP API reference
     #[command(
         long_about = "Query and display Moss HTTP API documentation.\n\n\
@@ -1372,6 +1387,10 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
         }
         "stir" => {
             args.push("stir".to_string());
+            args.extend(parsed.args.clone());
+        }
+        "launch" => {
+            args.push("launch".to_string());
             args.extend(parsed.args.clone());
         }
 
@@ -2041,6 +2060,13 @@ async fn async_main() -> anyhow::Result<()> {
 
         Commands::BrowseCommands { name, category, zen, normative } => {
             let cmd = commands::local::BrowseCommand::new(name, category, zen, normative);
+            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
+        }
+
+        Commands::Launch { at } => {
+            // Resolve endpoint first, then launch browser
+            let endpoint = dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
+            let cmd = commands::local::LaunchCommand::new(Some(endpoint));
             dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
         }
 

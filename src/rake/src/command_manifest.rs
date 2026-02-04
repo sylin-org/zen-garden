@@ -35,6 +35,7 @@ pub mod cmd {
     pub const REMOVE: &str = "remove";
     pub const UPROOT: &str = "uproot";
     pub const NOURISH: &str = "nourish";
+    pub const UPGRADE: &str = "upgrade";
 
     // Adoption
     pub const ADOPT: &str = "adopt";
@@ -71,6 +72,8 @@ pub mod cmd {
 
     // Local/Meta commands (not requiring stone)
     pub const BROWSE: &str = "browse";
+    pub const LAUNCH: &str = "launch";
+    pub const COMMANDS: &str = "commands";
 
     // Stone admin (power management)
     pub const ROUSE: &str = "rouse";
@@ -638,6 +641,107 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["offer", "reconcile"],
+    });
+
+    manifest.add(CommandDef {
+        name: cmd::UPGRADE,
+        zen_name: "upgrade",
+        normative_name: Some("services upgrade"),
+        category: CommandCategory::Lifecycle,
+        description: "Upgrade a service to latest image",
+        long_description: "Upgrade a service container to the latest available image.\n\n\
+            This pulls the latest image and recreates the container with the same configuration.\n\
+            Use --all to upgrade all services on the stone.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "service",
+                zen_syntax: "[service]",
+                normative_syntax: None,
+                description: "Service name to upgrade (required unless --all)",
+                required: false,
+            },
+            CommandParam {
+                name: "all",
+                zen_syntax: "--all",
+                normative_syntax: None,
+                description: "Upgrade all services",
+                required: false,
+            },
+            CommandParam {
+                name: "at",
+                zen_syntax: "at <stone>",
+                normative_syntax: Some("--at <stone>"),
+                description: "Target stone (omit to use tended stone)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Upgrade specific service",
+                zen_syntax: Some("garden-rake upgrade mongodb"),
+                normative_syntax: Some("garden-rake services upgrade mongodb"),
+            },
+            CommandExample {
+                description: "Upgrade all services",
+                zen_syntax: Some("garden-rake upgrade --all"),
+                normative_syntax: Some("garden-rake services upgrade --all"),
+            },
+        ],
+        see_also: vec!["nourish", "offer", "rest"],
+    });
+
+    manifest.add(CommandDef {
+        name: cmd::CAPABILITIES,
+        zen_name: "capabilities",
+        normative_name: Some("services capabilities"),
+        category: CommandCategory::Lifecycle,
+        description: "Manage offering capabilities (models, extensions)",
+        long_description: "Manage capabilities for an offering such as AI models or database extensions.\n\n\
+            For AI offerings like Ollama, this manages available models.\n\
+            For databases, this could manage extensions or plugins.",
+        remote_capable: true,
+        params: vec![
+            CommandParam {
+                name: "offering",
+                zen_syntax: "<offering>",
+                normative_syntax: None,
+                description: "Offering name to manage capabilities for",
+                required: true,
+            },
+            CommandParam {
+                name: "action",
+                zen_syntax: "[add|remove] <name>",
+                normative_syntax: None,
+                description: "Action: add or remove capability",
+                required: false,
+            },
+            CommandParam {
+                name: "at",
+                zen_syntax: "at <stone>",
+                normative_syntax: Some("--at <stone>"),
+                description: "Target stone (omit to use tended stone)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "List capabilities for ollama",
+                zen_syntax: Some("garden-rake capabilities ollama"),
+                normative_syntax: Some("garden-rake services capabilities ollama"),
+            },
+            CommandExample {
+                description: "Add a model to ollama",
+                zen_syntax: Some("garden-rake capabilities add ollama llama3"),
+                normative_syntax: Some("garden-rake services capabilities add ollama llama3"),
+            },
+            CommandExample {
+                description: "Remove a model",
+                zen_syntax: Some("garden-rake capabilities remove ollama phi"),
+                normative_syntax: Some("garden-rake services capabilities remove ollama phi"),
+            },
+        ],
+        see_also: vec!["offer", "status"],
     });
 
     // === ADOPTION COMMANDS ===
@@ -2349,6 +2453,118 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["hey", "observe"],
     });
 
+    // === LOCAL UTILITY COMMANDS ===
+
+    manifest.add(CommandDef {
+        name: cmd::LAUNCH,
+        zen_name: "launch",
+        normative_name: None,
+        category: CommandCategory::System,
+        description: "Open stone portrait in browser",
+        long_description: "Open the stone's portrait page in the default web browser.\n\n\
+            Works on Windows, macOS, and Linux with graphical environment.\n\
+            If no stone is specified, opens the tended stone's portrait.",
+        remote_capable: false,
+        params: vec![
+            CommandParam {
+                name: "at",
+                zen_syntax: "at <stone>",
+                normative_syntax: Some("--at <stone>"),
+                description: "Stone to open portrait for (omit to use tended stone)",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Open tended stone's portrait",
+                zen_syntax: Some("garden-rake launch"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Open specific stone's portrait",
+                zen_syntax: Some("garden-rake launch at stone-01"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Open by endpoint",
+                zen_syntax: Some("garden-rake launch --at http://192.168.1.100:7185"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["observe", "status", "tend"],
+    });
+
+    manifest.add(CommandDef {
+        name: cmd::COMMANDS,
+        zen_name: "commands",
+        normative_name: None,
+        category: CommandCategory::System,
+        description: "Browse command directory",
+        long_description: "Browse the command directory with descriptions, examples, and syntax.\n\n\
+            This is a meta-command that displays information about available commands.\n\
+            Filter by category or view detailed help for specific commands.\n\n\
+            Categories:\n\
+            - discovery: Commands for exploring the garden and finding services\n\
+            - lifecycle: Commands for managing service state\n\
+            - management: Commands for garden administration\n\
+            - system: Commands for stone and system operations\n\
+            - pond: Commands for distributed operations",
+        remote_capable: false,
+        params: vec![
+            CommandParam {
+                name: "name",
+                zen_syntax: "[command-name]",
+                normative_syntax: None,
+                description: "Specific command to show detailed help for",
+                required: false,
+            },
+            CommandParam {
+                name: "category",
+                zen_syntax: "--category <name>",
+                normative_syntax: None,
+                description: "Filter by category (discovery, lifecycle, management, system, pond)",
+                required: false,
+            },
+            CommandParam {
+                name: "zen",
+                zen_syntax: "--zen",
+                normative_syntax: None,
+                description: "Show only zen syntax",
+                required: false,
+            },
+            CommandParam {
+                name: "normative",
+                zen_syntax: "--normative",
+                normative_syntax: None,
+                description: "Show only normative syntax",
+                required: false,
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Show all commands by category",
+                zen_syntax: Some("garden-rake commands"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Show detailed help for a command",
+                zen_syntax: Some("garden-rake commands take-root"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Filter by category",
+                zen_syntax: Some("garden-rake commands --category system"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Show zen syntax only",
+                zen_syntax: Some("garden-rake commands --zen"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["api", "launch"],
+    });
+
     manifest
 });
 
@@ -2358,9 +2574,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
 pub fn validate_manifest() {
     let expected_commands = vec![
         // Discovery
-        "observe", "watch", "list", "status", "find", "presence",
+        "observe", "watch", "list", "status", "find", "presence", "config",
         // Lifecycle
-        "offer", "rest", "wake", "remove", "uproot", "nourish",
+        "offer", "rest", "wake", "remove", "uproot", "nourish", "upgrade", "capabilities",
         // Adoption
         "adopt", "release", "locate", "adopted", "borrowed", "borrow", "return",
         // Management
@@ -2381,6 +2597,8 @@ pub fn validate_manifest() {
         "prepare", "release-seed-bank", "seed-banks", "store",
         // Nurturing
         "restore", "nurturing",
+        // Local utility
+        "launch", "commands",
     ];
 
     for cmd_name in expected_commands {

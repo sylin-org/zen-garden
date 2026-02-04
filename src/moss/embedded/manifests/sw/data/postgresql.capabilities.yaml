@@ -1,0 +1,68 @@
+# PostgreSQL Capabilities Manifest
+# Defines how to discover, add, and remove PostgreSQL extensions
+
+version: "1"
+offering: postgresql
+
+capabilities:
+  - type: extension
+    display:
+      singular: extension
+      plural: extensions
+    mutability: hot
+
+    list:
+      # Commands to list installed extensions
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} psql -U postgres -t -A -c \"SELECT json_agg(json_build_object('name', extname, 'version', extversion, 'schema', nspname)) FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE extname != 'plpgsql'\""
+          windows: "docker exec {{container_name}} psql -U postgres -t -A -c \"SELECT json_agg(json_build_object('name', extname, 'version', extversion, 'schema', nspname)) FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE extname != 'plpgsql'\""
+          macos: "docker exec {{container_name}} psql -U postgres -t -A -c \"SELECT json_agg(json_build_object('name', extname, 'version', extversion, 'schema', nspname)) FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE extname != 'plpgsql'\""
+        adopted:
+          linux: "psql -U postgres -h localhost -p {{port}} -t -A -c \"SELECT json_agg(json_build_object('name', extname, 'version', extversion, 'schema', nspname)) FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE extname != 'plpgsql'\""
+          windows: "psql -U postgres -h localhost -p {{port}} -t -A -c \"SELECT json_agg(json_build_object('name', extname, 'version', extversion, 'schema', nspname)) FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE extname != 'plpgsql'\""
+          macos: "psql -U postgres -h localhost -p {{port}} -t -A -c \"SELECT json_agg(json_build_object('name', extname, 'version', extversion, 'schema', nspname)) FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE extname != 'plpgsql'\""
+
+      # Transform PostgreSQL's JSON response to normalized format
+      transform:
+        items_path: "."
+        fields:
+          name: ".name"
+          metadata:
+            version: ".version"
+            schema: ".schema"
+
+      output: json
+      timeout_secs: 10
+
+    # Add extension (CREATE EXTENSION)
+    add:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} psql -U postgres -c \"CREATE EXTENSION IF NOT EXISTS \\\"{{item}}\\\"\""
+          windows: "docker exec {{container_name}} psql -U postgres -c \"CREATE EXTENSION IF NOT EXISTS \\\"{{item}}\\\"\""
+          macos: "docker exec {{container_name}} psql -U postgres -c \"CREATE EXTENSION IF NOT EXISTS \\\"{{item}}\\\"\""
+        adopted:
+          linux: "psql -U postgres -h localhost -p {{port}} -c \"CREATE EXTENSION IF NOT EXISTS \\\"{{item}}\\\"\""
+          windows: "psql -U postgres -h localhost -p {{port}} -c \"CREATE EXTENSION IF NOT EXISTS \\\"{{item}}\\\"\""
+          macos: "psql -U postgres -h localhost -p {{port}} -c \"CREATE EXTENSION IF NOT EXISTS \\\"{{item}}\\\"\""
+      timeout_secs: 60
+
+    # Remove extension (DROP EXTENSION)
+    remove:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} psql -U postgres -c \"DROP EXTENSION IF EXISTS \\\"{{item}}\\\" CASCADE\""
+          windows: "docker exec {{container_name}} psql -U postgres -c \"DROP EXTENSION IF EXISTS \\\"{{item}}\\\" CASCADE\""
+          macos: "docker exec {{container_name}} psql -U postgres -c \"DROP EXTENSION IF EXISTS \\\"{{item}}\\\" CASCADE\""
+        adopted:
+          linux: "psql -U postgres -h localhost -p {{port}} -c \"DROP EXTENSION IF EXISTS \\\"{{item}}\\\" CASCADE\""
+          windows: "psql -U postgres -h localhost -p {{port}} -c \"DROP EXTENSION IF EXISTS \\\"{{item}}\\\" CASCADE\""
+          macos: "psql -U postgres -h localhost -p {{port}} -c \"DROP EXTENSION IF EXISTS \\\"{{item}}\\\" CASCADE\""
+      timeout_secs: 60
+
+    # Summary for rake list display
+    summary:
+      format: "{{count}} ext."

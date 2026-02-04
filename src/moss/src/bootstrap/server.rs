@@ -31,11 +31,42 @@ impl Default for ServerConfig {
 }
 
 /// Bind to the specified address with user-friendly error messages
+///
+/// Uses SO_REUSEADDR to allow rebinding to a port in TIME_WAIT state.
+/// This is critical for Windows self-update where the old process exits
+/// but the socket remains in TIME_WAIT for up to 2 minutes.
 pub async fn bind(port: u16, console: &ConsolePrinter) -> anyhow::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
 
-    match TcpListener::bind(addr).await {
-        Ok(listener) => Ok(listener),
+    // Create socket with SO_REUSEADDR to allow rebinding during TIME_WAIT
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| anyhow::anyhow!("Failed to create socket: {}", e))?;
+
+    // Set SO_REUSEADDR - critical for Windows self-update
+    socket.set_reuse_address(true)
+        .map_err(|e| anyhow::anyhow!("Failed to set SO_REUSEADDR: {}", e))?;
+
+    // Set non-blocking before converting to tokio
+    socket.set_nonblocking(true)
+        .map_err(|e| anyhow::anyhow!("Failed to set non-blocking: {}", e))?;
+
+    // Bind the socket
+    match socket.bind(&addr.into()) {
+        Ok(()) => {
+            // Listen with backlog
+            socket.listen(128)
+                .map_err(|e| anyhow::anyhow!("Failed to listen: {}", e))?;
+
+            // Convert to tokio TcpListener
+            let std_listener: std::net::TcpListener = socket.into();
+            let listener = TcpListener::from_std(std_listener)
+                .map_err(|e| anyhow::anyhow!("Failed to convert to tokio listener: {}", e))?;
+
+            tracing::debug!(port = port, "Bound with SO_REUSEADDR");
+            Ok(listener)
+        }
         Err(e) => {
             let error_msg = if e.kind() == std::io::ErrorKind::AddrInUse {
                 format!(

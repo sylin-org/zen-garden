@@ -180,6 +180,7 @@ mod tests {
             status: garden_common::StoneStatus::Online,
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
+            tags: vec![],
         };
 
         let entry2 = entry1.clone();
@@ -204,6 +205,7 @@ mod tests {
             status: garden_common::StoneStatus::Online,
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
+            tags: vec![],
         };
 
         let hash1 = calculate_state_hash(&entry);
@@ -228,6 +230,7 @@ mod tests {
             status: garden_common::StoneStatus::Online,
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
+            tags: vec![],
         };
 
         let hash1 = calculate_state_hash(&entry);

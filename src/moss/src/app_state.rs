@@ -9,6 +9,7 @@
 //! - Hardware capabilities cache
 //! - Console printer
 //! - mDNS handle for resolution announcements
+//! - Notification registry for cross-stone awareness tags
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
@@ -17,10 +18,10 @@ use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent};
 use crate::mdns::MdnsHandle;
 use garden_common::console::ConsolePrinter;
-use garden_common::storage::SeedBankInfo;
+use garden_common::storage::{SeedBankInfo, StorageDetectedInfo};
 use garden_common::NetworkMetrics;
 use crate::tasks::NetworkMonitor;
-use garden_common::{HardwareCapabilities, StoneResources};
+use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -164,8 +165,22 @@ pub struct AppState {
     /// Background task: storage_monitor (events) + health_monitor (disk usage refresh)
     pub seed_bank_cache: Arc<RwLock<Vec<SeedBankInfo>>>,
 
+    /// Cached candidate devices (empty USB drives ready for preparation)
+    /// Background task: storage_monitor (USB events) + periodic refresh
+    /// Linux-only; always empty on other platforms
+    pub candidates_cache: Arc<RwLock<Vec<StorageDetectedInfo>>>,
+
     /// Cached network metrics (updated every 5s by health_monitor task)
     pub network_metrics_cache: Arc<RwLock<Option<NetworkMetrics>>>,
+
+    // === Notification Registry ===
+    // Subsystems register their state (opportunity/attention) here.
+    // Tags are compiled and included in topology chirps for cross-stone awareness.
+
+    /// Notification registry for cross-stone awareness tags
+    /// Background tasks set/clear notifications, chirp task compiles to tags.
+    /// See: garden_common::notifications for source keys and tag types.
+    pub notifications: Arc<NotificationRegistry>,
 
     /// Subsystem readiness state
     pub subsystems: SubSystems,
@@ -231,18 +246,23 @@ impl AppState {
         crate::infra::save_offerings(&offerings).await
     }
 
-    /// Sync self_entry services from offerings
+    /// Sync self_entry services and tags from offerings and notifications
     ///
     /// Converts Offering → TopologyServiceEntry and updates self_entry.
+    /// Also compiles notification tags for cross-stone awareness.
     /// Optionally triggers immediate chirp announcement (if network is ready).
     /// Called after any offerings modification.
     pub async fn sync_self_services(&self, auto_chirp: bool) {
         let offerings = self.offerings.read().await;
         let topology_services = garden_common::TopologyServiceEntry::from_offerings(&offerings);
 
+        // Compile notification tags for cross-stone awareness
+        let tags = self.notifications.compile();
+
         {
             let mut entry = self.self_entry.write().await;
             entry.services = topology_services;
+            entry.tags = tags;
             entry.last_seen = chrono::Utc::now();
         }
 

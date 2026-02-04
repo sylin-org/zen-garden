@@ -20,6 +20,10 @@ use crate::infra::storage::SeedBankRegistry;
 use garden_common::metrics::system::{get_fast_metrics, get_storage_metrics, get_network_metrics};
 use garden_common::constants::timeouts::{metrics_fast_interval, metrics_disk_interval};
 use garden_common::storage::SeedBankInfo;
+#[cfg(target_os = "linux")]
+use garden_common::storage::StorageDetectedInfo;
+#[cfg(target_os = "linux")]
+use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
 /// Run system metrics collector with dual intervals
 ///
@@ -80,6 +84,31 @@ pub async fn run_metrics_collector(state: AppState) {
         }
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to load initial seed bank registry");
+        }
+    }
+
+    // Collect initial candidates (USB devices eligible for preparation)
+    // Linux-only; other platforms always have empty candidates
+    #[cfg(target_os = "linux")]
+    {
+        match scan_candidates().await {
+            Ok(candidates) => {
+                let count = candidates.len();
+                let mut cache = state.candidates_cache.write().await;
+                *cache = candidates;
+                // Update notification registry for cross-stone awareness
+                state.notifications.set_if(
+                    NOTIF_SOURCE_CANDIDATES,
+                    NotificationTag::Opportunity,
+                    count > 0,
+                );
+                if count > 0 {
+                    tracing::info!(count, "Initial candidate devices detected");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to scan initial candidates");
+            }
         }
     }
     
@@ -150,7 +179,43 @@ pub async fn run_metrics_collector(state: AppState) {
                         }
                     }
                 }
+
+                // Refresh candidates cache (Linux-only)
+                // Candidates change on USB insert/remove, detected by storage_monitor via udev.
+                // This periodic refresh catches any missed events and ensures consistency.
+                #[cfg(target_os = "linux")]
+                {
+                    match scan_candidates().await {
+                        Ok(candidates) => {
+                            let mut cache = state.candidates_cache.write().await;
+                            let prev_count = cache.len();
+                            let new_count = candidates.len();
+                            *cache = candidates;
+                            // Update notification registry for cross-stone awareness
+                            state.notifications.set_if(
+                                NOTIF_SOURCE_CANDIDATES,
+                                NotificationTag::Opportunity,
+                                new_count > 0,
+                            );
+                            if new_count != prev_count {
+                                tracing::debug!(prev = prev_count, new = new_count, "Candidates cache updated");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = ?e, "Failed to refresh candidates cache");
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+/// Scan for candidate devices (Linux-only)
+#[cfg(target_os = "linux")]
+async fn scan_candidates() -> anyhow::Result<Vec<StorageDetectedInfo>> {
+    use crate::infra::storage::list_usb_partitions;
+    tokio::task::spawn_blocking(|| list_usb_partitions())
+        .await
+        .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))?
 }

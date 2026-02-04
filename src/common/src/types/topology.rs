@@ -35,4 +35,9 @@ pub struct TopologyEntry {
     pub status: StoneStatus,
     pub discovered_at: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
+    /// Notification tags for cross-stone awareness (opportunity, attention)
+    /// Compiled from NotificationRegistry - indicates stone has something noteworthy.
+    /// See: garden_common::notifications for tag constants.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }

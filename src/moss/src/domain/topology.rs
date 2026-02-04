@@ -240,6 +240,7 @@ mod tests {
             status: StoneStatus::Online,
             discovered_at: Utc::now(),
             last_seen: Utc::now(),
+            tags: vec![],
         }
     }
 
@@ -257,6 +258,7 @@ mod tests {
             status: StoneStatus::Online,
             discovered_at: Utc::now(),
             last_seen: Utc::now(),
+            tags: vec![],
         }
     }
 

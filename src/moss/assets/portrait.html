@@ -14,6 +14,8 @@
             --vellum-border: rgba(255, 255, 255, 0.6);
             --accent-sage: #84a59d;
             --accent-clay: #d4a373;
+            --accent-hopeful: #c4b060;
+            --accent-hopeful-glow: rgba(196, 176, 96, 0.2);
             --accent-muted: #a8a29e;
             --glass-blur: blur(14px);
             --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
@@ -28,6 +30,8 @@
                 --stone-400: #78716c;
                 --vellum-white: rgba(40, 40, 40, 0.6);
                 --vellum-border: rgba(255, 255, 255, 0.1);
+                --accent-hopeful: #d4c170;
+                --accent-hopeful-glow: rgba(212, 193, 112, 0.15);
             }
         }
 
@@ -135,6 +139,63 @@
         .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-sage); box-shadow: 0 0 8px var(--accent-sage); animation: pulse 2.5s infinite; }
         .dot.stopped { background: var(--accent-muted); box-shadow: none; animation: none; }
         .dot.degraded { background: var(--accent-clay); box-shadow: 0 0 8px var(--accent-clay); }
+        .dot.hopeful { background: var(--accent-hopeful); box-shadow: 0 0 8px var(--accent-hopeful-glow); }
+
+        /* Expandable Items */
+        .item-expandable { display: flex; flex-direction: column; padding: 0; cursor: pointer; }
+        .item-expandable:hover { transform: none; }
+        .item-header { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; min-height: 44px; width: 100%; box-sizing: border-box; }
+        .item-header:focus { outline: 2px solid var(--accent-sage); outline-offset: -2px; }
+        .item-chevron { font-size: 0.6rem; color: var(--stone-400); transition: transform 0.2s ease; flex-shrink: 0; }
+        .item-chevron.open { transform: rotate(90deg); }
+        .item-info { display: flex; align-items: center; gap: 1rem; flex: 1; min-width: 0; }
+        .item-actions-inline { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+
+        /* Expanded Panel (inline accordion) */
+        .item-panel { display: none; padding: 1rem 1.25rem; border-top: 1px solid var(--vellum-border); background: rgba(0, 0, 0, 0.02); width: 100%; box-sizing: border-box; }
+        .item-panel.open { display: block; }
+        @media (prefers-color-scheme: dark) { .item-panel { background: rgba(255, 255, 255, 0.02); } }
+        .panel-description { font-size: 0.85rem; color: var(--stone-600); margin-bottom: 1rem; }
+        .panel-details { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; font-size: 0.8rem; margin-bottom: 1rem; }
+        .panel-details dt { color: var(--stone-400); }
+        .panel-details dd { color: var(--stone-600); font-family: ui-monospace, monospace; margin: 0; }
+        .panel-actions { display: flex; align-items: center; gap: 0.75rem; }
+        .panel-hint { flex: 1; font-size: 0.75rem; color: var(--accent-clay); font-family: ui-monospace, monospace; }
+        .action-buttons { display: flex; gap: 0.5rem; margin-left: auto; }
+
+        /* Action Buttons */
+        .action-btn {
+            background: transparent; border: 1px solid var(--vellum-border); border-radius: 2px;
+            padding: 0.4rem 0.75rem; min-height: 44px; min-width: 44px;
+            font-size: 0.7rem; cursor: pointer; color: var(--stone-600);
+            text-transform: uppercase; letter-spacing: 0.03em; font-family: ui-monospace, monospace;
+            transition: all 0.2s ease;
+        }
+        .action-btn:hover:not(:disabled) { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .action-btn.confirming { border-color: var(--accent-clay); }
+        .action-btn.loading { position: relative; color: transparent; }
+        .action-btn.loading::after { content: ''; position: absolute; width: 12px; height: 12px; border: 2px solid var(--stone-400); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        /* Panel Error Area */
+        .panel-error {
+            margin-top: 1rem; padding: 0.75rem 1rem;
+            background: var(--accent-clay); color: white; border-radius: 3px;
+            display: flex; align-items: center; gap: 0.75rem; cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .panel-error::before { content: '✕'; opacity: 0.7; }
+        .panel-error:hover { opacity: 0.9; }
+
+        /* Hopeful State (candidates, opportunities) */
+        .item.hopeful { border-color: var(--accent-hopeful); box-shadow: 0 0 12px var(--accent-hopeful-glow); }
+        .item.hopeful .status { color: var(--accent-hopeful); }
+        .hopeful-icon { color: var(--accent-hopeful); margin-right: 0.25rem; }
+
+        /* Attention State (degraded, errors) */
+        .item.attention { border-style: dashed; border-color: var(--accent-clay); }
+        .attention-icon { color: var(--accent-clay); margin-right: 0.25rem; }
 
         /* Horizon */
         .horizon-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; cursor: pointer; background: transparent; border: none; width: 100%; text-align: left; font: inherit; color: inherit; }
@@ -150,6 +211,7 @@
         .horizon-name { font-size: 0.9rem; text-decoration: none; color: var(--stone-900); }
         .horizon-spacer { flex-grow: 1; }
         .horizon-hints { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); }
+        .horizon-tags { display: inline-flex; gap: 0.25rem; margin-left: 0.5rem; font-size: 0.8rem; }
         .horizon-status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; font-family: ui-monospace, monospace; text-transform: uppercase; color: var(--stone-600); }
         .tend-btn { background: transparent; border: 1px solid var(--vellum-border); border-radius: 2px; padding: 0.15rem 0.4rem; font-size: 0.6rem; cursor: pointer; color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.03em; font-family: ui-monospace, monospace; }
         .tend-btn:hover { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
@@ -278,7 +340,6 @@
                 <h1 class="name" id="name">Loading...</h1>
                 <div class="meta">
                     <a class="endpoint" id="endpoint" href="#"></a>
-                    <button class="tend-btn" id="header-tend-btn" onclick="copyTendCommand(this, window.currentStoneName)" title="Copy tend command">Tend</button>
                 </div>
                 <div class="hardware-model" id="hardware-model"></div>
             </div>
@@ -286,6 +347,7 @@
                 <div class="glance-row"><span id="stone-uptime">—</span><span class="glance-icon" title="uptime (stone)" aria-hidden="true">🪨</span></div>
                 <div class="glance-row"><span id="moss-uptime">—</span><span class="glance-icon" title="uptime (moss)" aria-hidden="true">🌿</span></div>
                 <div class="glance-row"><span>offerings</span><span class="glance-dots" id="offerings-glance" role="status"></span></div>
+                <div class="glance-row"><button class="tend-btn" id="header-tend-btn" onclick="copyTendCommand(this, window.currentStoneName)" title="Copy tend command">Tend</button></div>
             </div>
         </header>
 
@@ -394,6 +456,26 @@
     let horizonOpen = false;
     let netMax = 0.1; // Shared max for network gauges (adaptive, with decay)
     window.currentStoneName = ''; // Current stone name for header tend button
+
+    // Expandable panel state (accordion - one open per section)
+    const expandedPanels = {
+        offerings: localStorage.getItem('expandedOffering') || null,
+        seedbanks: localStorage.getItem('expandedSeedbank') || null,
+        companions: localStorage.getItem('expandedCompanion') || null,
+    };
+
+    // Confirmation state: { entityId: { action, timestamp } }
+    const pendingConfirmations = new Map();
+
+    // Error state: { entityId: errorMessage }
+    const panelErrors = new Map();
+
+    // Cached data for re-rendering
+    let cachedData = null;
+
+    // Detect touch device for hint text
+    const isTouchDevice = matchMedia('(pointer: coarse)').matches;
+    const confirmHintPrefix = isTouchDevice ? 'Tap again' : 'Again';
 
     // Connection state tracking
     let lastSuccessfulFetch = Date.now();
@@ -719,7 +801,149 @@
         });
     }
 
+    // Toggle expandable panel (accordion behavior)
+    function togglePanel(section, entityId, event) {
+        // Prevent toggle if clicking on action buttons
+        if (event && event.target.closest('.action-btn, .tend-btn, .item-actions-inline')) {
+            return;
+        }
+
+        const currentlyExpanded = expandedPanels[section];
+        if (currentlyExpanded === entityId) {
+            // Close current panel
+            expandedPanels[section] = null;
+            localStorage.removeItem('expanded' + section.charAt(0).toUpperCase() + section.slice(1));
+        } else {
+            // Open new panel (closes others in section via accordion)
+            expandedPanels[section] = entityId;
+            localStorage.setItem('expanded' + section.charAt(0).toUpperCase() + section.slice(1), entityId);
+        }
+        // Clear any pending confirmations when panel changes
+        pendingConfirmations.delete(currentlyExpanded);
+        renderFromCache();
+    }
+
+    // Handle action button click (two-tap confirmation)
+    function handleAction(section, entityId, action, endpoint, btn) {
+        const key = `${entityId}-${action}`;
+        const pending = pendingConfirmations.get(key);
+        const now = Date.now();
+        const bodyAttr = btn.dataset.body;
+        const body = bodyAttr ? JSON.parse(bodyAttr) : null;
+
+        if (pending && now - pending.timestamp > 2000) {
+            // Second tap after 2s delay — execute
+            executeAction(section, entityId, action, endpoint, btn, body);
+            pendingConfirmations.delete(key);
+        } else {
+            // First tap — enter confirmation mode
+            pendingConfirmations.set(key, { action, timestamp: now });
+            btn.disabled = true;
+            btn.classList.add('confirming');
+            renderFromCache(); // Update hint text
+
+            setTimeout(() => {
+                btn.disabled = false;
+                renderFromCache();
+            }, 2000);
+        }
+    }
+
+    // Execute action API call
+    async function executeAction(section, entityId, action, endpoint, btn, body) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        panelErrors.delete(entityId);
+        renderFromCache();
+
+        try {
+            const fetchOptions = { method: 'POST' };
+            if (body) {
+                fetchOptions.headers = { 'Content-Type': 'application/json' };
+                fetchOptions.body = JSON.stringify(body);
+            }
+            const res = await fetch(endpoint, fetchOptions);
+            if (!res.ok) {
+                const error = await res.json().catch(() => ({ message: 'Request failed' }));
+                throw new Error(error.message || `HTTP ${res.status}`);
+            }
+            // Success - UI will update via next refresh or SSE
+            btn.classList.remove('loading');
+        } catch (e) {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+            panelErrors.set(entityId, e.message);
+            renderFromCache();
+        }
+    }
+
+    // Dismiss error on tap
+    function dismissError(entityId) {
+        panelErrors.delete(entityId);
+        renderFromCache();
+    }
+
+    // Render from cached data
+    function renderFromCache() {
+        if (cachedData) render(cachedData);
+    }
+
+    // Render expandable item
+    function renderExpandableItem(section, entity, config) {
+        const isExpanded = expandedPanels[section] === entity.id;
+        const stateClass = config.state || '';
+        const icon = config.icon || '';
+
+        const confirmKey = `${entity.id}-${config.primaryAction?.action}`;
+        const pending = pendingConfirmations.get(confirmKey);
+        const showHint = pending && (Date.now() - pending.timestamp <= 5000);
+        const hintText = showHint ? `${confirmHintPrefix} to ${config.primaryAction?.hint}` : '';
+
+        const errorMsg = panelErrors.get(entity.id);
+
+        return `
+            <div class="card item item-expandable ${stateClass}" data-id="${entity.id}">
+                <div class="item-header" onclick="togglePanel('${section}', '${entity.id}', event)" tabindex="0" role="button" aria-expanded="${isExpanded}">
+                    <span class="item-chevron ${isExpanded ? 'open' : ''}" aria-hidden="true">▶</span>
+                    <div class="item-info">
+                        ${icon ? `<span class="${icon.class}">${icon.char}</span>` : ''}
+                        <span class="item-name">${entity.name}</span>
+                        ${config.meta ? config.meta.map(m => `<span class="item-meta">${m}</span>`).join('') : ''}
+                    </div>
+                    <div class="status">
+                        <div class="dot ${config.dotClass || ''}"></div>
+                        <span>${config.statusText}</span>
+                    </div>
+                    ${config.inlineAction ? `<div class="item-actions-inline">${config.inlineAction}</div>` : ''}
+                </div>
+                <div class="item-panel ${isExpanded ? 'open' : ''}" aria-hidden="${!isExpanded}">
+                    ${config.description ? `<p class="panel-description">${config.description}</p>` : ''}
+                    ${config.details ? `<dl class="panel-details">${config.details.map(d => `<dt>${d.label}</dt><dd>${d.value}</dd>`).join('')}</dl>` : ''}
+                    ${config.actions && config.actions.length > 0 ? `
+                        <div class="panel-actions">
+                            <span class="panel-hint">${hintText}</span>
+                            <div class="action-buttons">
+                                ${config.actions.map(a => {
+                                    const bodyAttr = a.body ? JSON.stringify(a.body).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;') : '';
+                                    return `
+                                    <button class="action-btn ${pending?.action === a.action ? 'confirming' : ''}"
+                                            data-body="${bodyAttr}"
+                                            onclick="handleAction('${section}', '${entity.id}', '${a.action}', '${a.endpoint}', this)"
+                                            ${a.disabled ? 'disabled' : ''}>
+                                        ${a.label}
+                                    </button>
+                                `}).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    ${errorMsg ? `<div class="panel-error" onclick="dismissError('${entity.id}')">${escapeHtml(errorMsg)}</div>` : ''}
+                </div>
+            </div>
+        `;
+    }
+
     function render(data) {
+        cachedData = data; // Cache for re-rendering
         // Identity
         if (data.identity) {
             const id = data.identity;
@@ -792,7 +1016,7 @@
 
         // Offerings
         const offerings = data.offerings || [];
-        
+
         // At-a-glance offerings summary
         const running = offerings.filter(o => o.status === 'running' && o.health !== 'degraded').length;
         const stopped = offerings.filter(o => o.status === 'stopped').length;
@@ -806,51 +1030,124 @@
         const glanceEl = $('offerings-glance');
         glanceEl.innerHTML = glanceDots;
         glanceEl.setAttribute('aria-label', 'offerings: ' + ariaStatus.join(', '));
-        
+
         const offeringsList = $('offerings-list');
-        offeringsList.innerHTML = offerings.map(o => `
-            <div class="card item">
-                <span class="item-name">${o.name}</span>
-                <span class="item-caps">${o.capabilities || ''}</span>
-                <span class="item-meta">${o.container || ''}</span>
-                <span class="item-meta">:${o.port}</span>
-                <div class="status">
-                    <div class="dot ${o.status === 'stopped' ? 'stopped' : ''} ${o.health === 'degraded' ? 'degraded' : ''}"></div>
-                    <span>${o.health || o.status}</span>
-                </div>
-            </div>`).join('');
+        offeringsList.innerHTML = offerings.map(o => {
+            const isStopped = o.status === 'stopped';
+            const isDegraded = o.health === 'degraded';
+            const dotClass = isStopped ? 'stopped' : (isDegraded ? 'degraded' : '');
+
+            // Actions depend on state
+            const actions = isStopped
+                ? [{ label: 'Wake', action: 'wake', endpoint: `/api/v1/stone/services/${o.name}/wake`, hint: 'wake' }]
+                : [
+                    { label: 'Rest', action: 'rest', endpoint: `/api/v1/stone/services/${o.name}/rest`, hint: 'put to rest' },
+                    { label: 'Restart', action: 'restart', endpoint: `/api/v1/stone/services/${o.name}/restart`, hint: 'restart' }
+                ];
+
+            return renderExpandableItem('offerings', { id: o.name, name: o.name }, {
+                state: isDegraded ? 'attention' : '',
+                icon: isDegraded ? { class: 'attention-icon', char: '⚠' } : null,
+                meta: [o.container || o.name, `:${o.port}`],
+                dotClass,
+                statusText: o.health || o.status,
+                description: o.capabilities ? `Capabilities: ${o.capabilities}` : '',
+                details: [
+                    { label: 'Container', value: o.container || '—' },
+                    { label: 'Port', value: o.port },
+                    { label: 'Status', value: o.status },
+                    { label: 'Health', value: o.health }
+                ],
+                actions,
+                primaryAction: actions[0]
+            });
+        }).join('');
         $('offerings-empty').classList.toggle('hidden', offerings.length > 0);
         offeringsList.classList.toggle('hidden', offerings.length === 0);
 
-        // Seed Banks
+        // Seed Banks + Candidates
         const seedBanks = data.seed_banks || [];
-        $('seedbanks-section').classList.toggle('hidden', seedBanks.length === 0);
-        $('seedbanks-list').innerHTML = seedBanks.map(sb => `
-            <div class="card item">
-                <span class="item-name">${sb.name}</span>
-                <span class="item-meta">${sb.used_gb.toFixed(1)} / ${sb.capacity_gb.toFixed(0)} GB</span>
-                <span class="item-meta">${sb.filesystem} · ${sb.roaming ? 'roaming' : sb.visibility}</span>
-                <div class="status">
-                    <div class="dot ${sb.online ? '' : 'stopped'}"></div>
-                    <span>${sb.online ? 'online' : 'offline'}</span>
-                </div>
-            </div>
-        `).join('');
+        const candidates = data.candidates || [];
+        const hasSeedBanksOrCandidates = seedBanks.length > 0 || candidates.length > 0;
+        $('seedbanks-section').classList.toggle('hidden', !hasSeedBanksOrCandidates);
+
+        // Render seed banks
+        const seedBankHtml = seedBanks.map(sb => {
+            const actions = sb.online
+                ? [{ label: 'Release', action: 'release', endpoint: `/api/v1/stone/storage/${encodeURIComponent(sb.name)}/release`, hint: 'release' }]
+                : [];
+
+            return renderExpandableItem('seedbanks', { id: sb.name, name: sb.name }, {
+                state: !sb.online ? 'attention' : '',
+                meta: [`${sb.used_gb.toFixed(1)} / ${sb.capacity_gb.toFixed(0)} GB`, `${sb.filesystem} · ${sb.roaming ? 'roaming' : sb.visibility}`],
+                dotClass: sb.online ? '' : 'stopped',
+                statusText: sb.online ? 'online' : 'offline',
+                description: sb.roaming ? 'Roaming seed bank (originated from another stone)' : '',
+                details: [
+                    { label: 'Filesystem', value: sb.filesystem },
+                    { label: 'Used', value: `${sb.used_gb.toFixed(1)} GB` },
+                    { label: 'Capacity', value: `${sb.capacity_gb.toFixed(0)} GB` },
+                    { label: 'Visibility', value: sb.visibility }
+                ],
+                actions,
+                primaryAction: actions[0]
+            });
+        }).join('');
+
+        // Render candidates (hopeful state)
+        const candidateHtml = candidates.map(c => {
+            const displayName = c.label || c.device.split('/').pop();
+            const canPrepare = c.state === 'empty' || c.state === 'unformatted';
+
+            const actions = canPrepare
+                ? [{ label: 'Prepare', action: 'prepare', endpoint: `/api/v1/stone/storage/prepare`, body: { device: c.device, random_name: true }, hint: 'prepare as seed bank' }]
+                : [];
+
+            return renderExpandableItem('seedbanks', { id: c.device, name: displayName }, {
+                state: 'hopeful',
+                icon: { class: 'hopeful-icon', char: '✦' },
+                meta: [`${c.capacity_gb.toFixed(0)} GB`, c.state],
+                dotClass: 'hopeful',
+                statusText: 'NEW',
+                description: canPrepare
+                    ? 'A new device is ready to join your garden as a seed bank.'
+                    : 'This device contains data and cannot be prepared automatically.',
+                details: [
+                    { label: 'Device', value: c.device },
+                    { label: 'Capacity', value: `${c.capacity_gb.toFixed(0)} GB` },
+                    { label: 'State', value: c.state },
+                    c.mount_path ? { label: 'Mount', value: c.mount_path } : null
+                ].filter(Boolean),
+                actions,
+                primaryAction: actions[0]
+            });
+        }).join('');
+
+        $('seedbanks-list').innerHTML = candidateHtml + seedBankHtml;
 
         // Companions
         const companions = data.companions || [];
         $('companions-section').classList.toggle('hidden', companions.length === 0);
-        $('companions-list').innerHTML = companions.map(c => `
-            <div class="card item">
-                <span class="item-name">${c.id}</span>
-                <span class="item-meta">${c.description || ''}</span>
-                <span class="item-meta">${c.port ? ':' + c.port : ''}</span>
-                <div class="status">
-                    <div class="dot ${c.status !== 'running' ? 'stopped' : ''}"></div>
-                    <span>${c.status}</span>
-                </div>
-            </div>
-        `).join('');
+        $('companions-list').innerHTML = companions.map(c => {
+            const isRunning = c.status === 'running';
+            const actions = isRunning
+                ? [{ label: 'Down', action: 'down', endpoint: `/api/v1/stone/companions/${c.id}/down`, hint: 'stop' }]
+                : [{ label: 'Up', action: 'up', endpoint: `/api/v1/stone/companions/${c.id}/up`, hint: 'start' }];
+
+            return renderExpandableItem('companions', { id: c.id, name: c.id }, {
+                meta: [c.description || '', c.port ? `:${c.port}` : ''].filter(Boolean),
+                dotClass: isRunning ? '' : 'stopped',
+                statusText: c.status,
+                description: c.description,
+                details: [
+                    { label: 'Name', value: c.name },
+                    { label: 'Port', value: c.port || '—' },
+                    { label: 'Status', value: c.status }
+                ],
+                actions,
+                primaryAction: actions[0]
+            });
+        }).join('');
 
         // Horizon
         const horizon = data.horizon || { count: 0, stones: [] };
@@ -876,10 +1173,20 @@
             // Health status dot class (default to pulsing, only stop for offline/unknown)
             const healthDot = s.health === 'degraded' ? 'degraded' : (['offline', 'unknown'].includes(s.health) ? 'stopped' : '');
 
+            // Notification tags (opportunity = ✦, attention = ⚠)
+            const tags = s.tags || [];
+            const hasOpportunity = tags.includes('opportunity');
+            const hasAttention = tags.includes('attention');
+            const tagIcons = [
+                hasOpportunity ? '<span class="hopeful-icon" title="Has opportunity">✦</span>' : '',
+                hasAttention ? '<span class="attention-icon" title="Needs attention">⚠</span>' : ''
+            ].filter(Boolean).join('');
+
             return `
             <div class="horizon-stone" role="listitem">
                 <div class="horizon-color" style="background-color:${s.color || 'var(--accent-sage)'}" aria-hidden="true"></div>
                 <a class="horizon-name" href="${s.endpoint}">${s.name}</a>
+                ${tagIcons ? `<span class="horizon-tags">${tagIcons}</span>` : ''}
                 <button class="tend-btn" onclick="copyTendCommand(this, '${s.name}')" title="Copy tend command">Tend</button>
                 <div class="horizon-spacer"></div>
                 ${hwStr ? `<span class="horizon-hints" style="font-style:italic">${hwStr}</span>` : ''}

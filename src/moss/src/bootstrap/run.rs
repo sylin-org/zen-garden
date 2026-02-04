@@ -58,6 +58,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         status: garden_common::StoneStatus::Online,
         discovered_at: chrono::Utc::now(),
         last_seen: chrono::Utc::now(),
+        tags: Vec::new(), // Compiled from NotificationRegistry
     }));
     tracing::debug!("Self topology entry initialized (health=starting)");
 
@@ -359,7 +360,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         infrastructure_handlers: infrastructure_handlers.clone(),
         // Cached metrics - populated by background tasks, read-only for endpoints
         seed_bank_cache: Arc::new(RwLock::new(Vec::new())),
+        candidates_cache: Arc::new(RwLock::new(Vec::new())),
         network_metrics_cache: Arc::new(RwLock::new(None)),
+        // Notification registry - subsystems set/clear, chirp compiles to tags
+        notifications: Arc::new(garden_common::NotificationRegistry::new()),
         // Subsystem readiness (network_ready managed by NetworkMonitor)
         subsystems: subsystems.clone(),
     };
@@ -553,6 +557,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                                 status: garden_common::StoneStatus::Online,
                                 discovered_at: chrono::Utc::now(),
                                 last_seen: chrono::Utc::now(),
+                                tags: vec![], // mDNS doesn't provide tags
                             };
                             crate::domain::topology::upsert_from_chirp(
                                 &topology_cache_for_mdns,
@@ -622,6 +627,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                 status: garden_common::StoneStatus::Online,
                 discovered_at: chrono::Utc::now(),
                 last_seen: chrono::Utc::now(),
+                tags: vec![], // Will be populated by later chirps
             };
             crate::domain::topology::upsert_from_chirp(
                 &state.topology_cache,

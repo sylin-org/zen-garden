@@ -124,6 +124,23 @@ pub struct PortraitSeedBank {
     pub online: bool,
 }
 
+/// Candidate device entry (USB drive ready for preparation)
+#[derive(Debug, Clone, Serialize)]
+pub struct PortraitCandidate {
+    /// Device path (e.g., "/dev/sdb1")
+    pub device: String,
+    /// Device label if available (e.g., "SANDISK_32GB")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Capacity in GB
+    pub capacity_gb: f32,
+    /// Device state (e.g., "empty", "unformatted")
+    pub state: String,
+    /// Mount path if mounted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_path: Option<String>,
+}
+
 /// Horizon stone entry
 #[derive(Debug, Clone, Serialize)]
 pub struct HorizonStone {
@@ -145,6 +162,10 @@ pub struct HorizonStone {
     /// Hardware model (e.g., "Wyse 5070")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Notification tags for cross-stone awareness (opportunity, attention)
+    /// Empty if stone has nothing noteworthy.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// Horizon section
@@ -161,6 +182,8 @@ pub struct PortraitResponse {
     pub foundation: PortraitFoundation,
     pub offerings: Vec<PortraitOffering>,
     pub seed_banks: Vec<PortraitSeedBank>,
+    /// Candidate devices ready for seed bank preparation (hopeful state)
+    pub candidates: Vec<PortraitCandidate>,
     pub companions: Vec<PortraitCompanion>,
     pub horizon: PortraitHorizon,
 }
@@ -389,6 +412,21 @@ pub async fn get_portrait_data(
         }).collect()
     };
 
+    // === Candidates (hopeful state - devices ready to become seed banks) ===
+    // NOTE: Read from cache - populated by metrics_collector task + storage events
+    let candidates = {
+        let cached = state.candidates_cache.read().await;
+        cached.iter().map(|c| {
+            PortraitCandidate {
+                device: c.device.clone(),
+                label: c.label.clone(),
+                capacity_gb: c.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                state: format!("{:?}", c.state).to_lowercase(),
+                mount_path: c.mount_path.clone(),
+            }
+        }).collect()
+    };
+
     // === Companions (adapters) ===
     let companions = {
         let adapters = state.companion_registry.list().await;
@@ -431,6 +469,7 @@ pub async fn get_portrait_data(
                     service_count,
                     manufacturer,
                     model,
+                    tags: entry.tags.clone(),
                 }
             })
             .collect();
@@ -446,6 +485,7 @@ pub async fn get_portrait_data(
         foundation,
         offerings,
         seed_banks,
+        candidates,
         companions,
         horizon,
     }))

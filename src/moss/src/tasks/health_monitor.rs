@@ -10,7 +10,7 @@
 
 use crate::AppState;
 use crate::domain::adopt_offering_container;
-use garden_common::{OfferingStatus, ServiceHealthStatus};
+use garden_common::{NotificationTag, OfferingStatus, ServiceHealthStatus, NOTIF_SOURCE_OFFERINGS_DEGRADED};
 
 /// Background health monitoring loop
 ///
@@ -110,6 +110,23 @@ pub async fn health_monitor_task(state: AppState) {
                     }
                 }
             }
+        }
+
+        // Update notification registry based on current offering health
+        // Set "attention" tag if any offering is degraded or offline
+        {
+            let offerings = state.offerings.read().await;
+            let has_degraded = offerings.iter().any(|o| {
+                matches!(
+                    o.health,
+                    ServiceHealthStatus::Degraded | ServiceHealthStatus::Offline
+                )
+            });
+            state.notifications.set_if(
+                NOTIF_SOURCE_OFFERINGS_DEGRADED,
+                NotificationTag::Attention,
+                has_degraded,
+            );
         }
 
         // Check for containers not in offerings (external changes)

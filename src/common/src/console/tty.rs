@@ -85,6 +85,66 @@ pub fn tty_write(text: &str) -> Result<()> {
     Ok(())
 }
 
+// ================================================================================================
+// RIBBON INFRASTRUCTURE
+// ================================================================================================
+
+/// Standard divider for ribbons (52 chars)
+pub const RIBBON_DIVIDER: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+
+/// ASCII art line prefixes for cat (waking/sleeping share line 1)
+pub mod ribbon_art {
+    /// Cat head line: `    _|\_/|    ` (14 chars)
+    pub const CAT_HEAD: &str = "    _|\\_/|    ";
+    /// Cat body waking: `  c(>(^-^)    ` (14 chars)
+    pub const CAT_WAKING: &str = "  c(>(^-^)    ";
+    /// Cat body sleeping: `  c(-(-.-)    ` (14 chars)
+    pub const CAT_SLEEPING: &str = "  c(-(-.-)    ";
+
+    /// USB drive line 1: `    ┌──┐      ` (14 chars)
+    pub const USB_TOP: &str = "    ┌──┐      ";
+    /// USB drive line 2 (active): `    │▓▓│      ` (14 chars)
+    pub const USB_BODY_ACTIVE: &str = "    │▓▓│      ";
+    /// USB drive line 2 (empty): `    │  │      ` (14 chars)
+    pub const USB_BODY_EMPTY: &str = "    │  │      ";
+    /// USB drive line 3 (with connector): `    └┬─┘      ` (14 chars)
+    pub const USB_BOTTOM_CONN: &str = "    └┬─┘      ";
+    /// USB drive line 3 (no connector): `    └──┘      ` (14 chars)
+    pub const USB_BOTTOM: &str = "    └──┘      ";
+}
+
+/// Print a ribbon with pre-formatted lines
+///
+/// Wraps content lines with standard dividers and spacing.
+/// Caller is responsible for including any ASCII art in the lines.
+///
+/// # Example
+/// ```ignore
+/// use crate::console::tty::{print_ribbon, ribbon_art::*};
+///
+/// print_ribbon(&[
+///     &format!("{}ZZZzzz    Uptime: {}", CAT_HEAD, uptime),
+///     &format!("{}          This stone rests...", CAT_SLEEPING),
+/// ])?;
+/// ```
+pub fn print_ribbon(lines: &[&str]) -> Result<()> {
+    tty_write("")?;
+    tty_write(RIBBON_DIVIDER)?;
+
+    for line in lines {
+        tty_write(line)?;
+    }
+
+    tty_write(RIBBON_DIVIDER)?;
+    tty_write("")?;
+
+    Ok(())
+}
+
+// ================================================================================================
+// FIRST-BOOT DISPLAY HELPERS
+// ================================================================================================
+
 /// Display a header with box frame
 /// Example:
 /// ╔══════════════════════════════════════╗
@@ -149,44 +209,128 @@ pub async fn mark_first_run_complete() -> Result<()> {
 }
 
 /// Generate a unique stone name with collision detection
-/// 
+///
 /// Uses adjective-noun pattern with mDNS collision checking (10 attempts).
 /// Falls back to hex suffix if all attempts collide.
+///
+/// Platform-aware: Linux uses nature theme, Windows uses stained glass/clarity theme.
 pub async fn generate_unique_name() -> Result<String> {
+    #[cfg(target_os = "windows")]
+    {
+        generate_unique_name_windows().await
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        generate_unique_name_linux().await
+    }
+}
+
+/// Generate a unique stone name for Linux machines
+///
+/// Uses a "zen garden / nature" theme with landscapes and natural formations.
+/// 64 adjectives × 64 nouns = 4,096 combinations
+pub async fn generate_unique_name_linux() -> Result<String> {
     const ADJECTIVES: &[&str] = &[
-        "azure", "bronze", "coral", "crimson", "emerald", "golden", "indigo",
-        "jade", "lunar", "marble", "obsidian", "pearl", "quartz", "ruby",
-        "silver", "topaz", "turquoise", "violet", "amber", "crystal"
+        // Precious materials (16)
+        "amber", "azure", "bronze", "coral", "crimson", "crystal", "emerald", "golden",
+        "indigo", "jade", "marble", "obsidian", "pearl", "quartz", "ruby", "silver",
+        // Gemstone & mineral (16)
+        "topaz", "turquoise", "violet", "onyx", "opal", "garnet", "sapphire", "copper",
+        "ivory", "ebony", "platinum", "cobalt", "ochre", "slate", "granite", "basalt",
+        // Natural qualities (16)
+        "lunar", "solar", "stellar", "misty", "mossy", "frosty", "dusky", "verdant",
+        "tranquil", "serene", "gentle", "silent", "ancient", "hidden", "sacred", "eternal",
+        // Atmospheric (16)
+        "wispy", "shimmering", "glowing", "sunlit", "moonlit", "shadowed", "dappled", "veiled",
+        "halcyon", "placid", "limpid", "pristine", "radiant", "luminous", "muted", "hushed"
     ];
-    
+
     const NOUNS: &[&str] = &[
-        "meadow", "summit", "river", "forest", "canyon", "valley", "harbor",
-        "glacier", "prairie", "desert", "delta", "ridge", "plateau", "grove",
-        "basin", "stream", "cliff", "shore", "peak", "dune"
+        // Landforms (16)
+        "meadow", "summit", "canyon", "valley", "ridge", "plateau", "basin", "cliff",
+        "peak", "dune", "bluff", "mesa", "butte", "hollow", "knoll", "crag",
+        // Water features (16)
+        "river", "harbor", "glacier", "delta", "stream", "shore", "brook", "lagoon",
+        "spring", "cascade", "rapids", "estuary", "inlet", "cove", "fjord", "atoll",
+        // Vegetation zones (16)
+        "forest", "prairie", "desert", "grove", "thicket", "copse", "glade", "heath",
+        "fen", "moor", "marsh", "swamp", "taiga", "tundra", "steppe", "savanna",
+        // Natural spaces (16)
+        "clearing", "alcove", "grotto", "cavern", "ravine", "gorge", "chasm", "vale",
+        "dell", "glen", "pass", "garden", "terrace", "oasis", "refuge", "haven"
     ];
-    
+
+    generate_unique_name_from_dictionary(ADJECTIVES, NOUNS).await
+}
+
+/// Generate a unique stone name for Windows machines
+///
+/// Uses a "stained glass / clarity / architectural" theme that plays on the
+/// Windows name while staying zen-calm. Evokes cathedral windows, light,
+/// transparency, and sacred spaces.
+/// 64 adjectives × 64 nouns = 4,096 combinations
+pub async fn generate_unique_name_windows() -> Result<String> {
+    const ADJECTIVES: &[&str] = &[
+        // Clarity & Transparency (16)
+        "clear", "lucid", "pellucid", "crystalline", "vitreous", "translucent", "limpid", "pristine",
+        "pure", "unclouded", "polished", "refined", "flawless", "seamless", "diaphanous", "gossamer",
+        // Stillness & Calm (16)
+        "smooth", "still", "calm", "placid", "serene", "tranquil", "hushed", "muted",
+        "gentle", "soft", "quiet", "silent", "peaceful", "restful", "composed", "poised",
+        // Stained Glass Colors (16)
+        "azure", "vermillion", "cobalt", "amber", "violet", "emerald", "crimson", "sapphire",
+        "ochre", "sienna", "cerulean", "scarlet", "indigo", "teal", "magenta", "gilded",
+        // Architectural & Ornate (16)
+        "frosted", "stained", "arched", "latticed", "beveled", "etched", "leaded", "mullioned",
+        "prismatic", "opalescent", "iridescent", "lustrous", "radiant", "burnished", "vaulted", "tracery"
+    ];
+
+    const NOUNS: &[&str] = &[
+        // Clarity & Stillness (16)
+        "clarity", "purity", "stillness", "essence", "reflection", "surface", "depth", "mirror",
+        "pool", "spring", "fountain", "stream", "ripple", "whisper", "breath", "pause",
+        // Sacred Spaces (16)
+        "chapel", "sanctuary", "cloister", "nave", "alcove", "niche", "grotto", "shrine",
+        "vestry", "chancel", "transept", "apse", "atrium", "portico", "ambulatory", "clerestory",
+        // Glass & Light Elements (16)
+        "shard", "fragment", "tessera", "facet", "jewel", "gem", "pane", "sill",
+        "aperture", "vista", "portal", "threshold", "prism", "lens", "spectrum", "refraction",
+        // Light Phenomena (16)
+        "gleam", "glow", "aurora", "dawn", "radiance", "lucidity", "brilliance", "luminance",
+        "glimmer", "shimmer", "sparkle", "luster", "halo", "corona", "nimbus", "iridescence"
+    ];
+
+    generate_unique_name_from_dictionary(ADJECTIVES, NOUNS).await
+}
+
+/// Generate unique name from provided dictionaries
+///
+/// Shared implementation for platform-specific name generators.
+/// Tries 10 random combinations with mDNS collision checking.
+async fn generate_unique_name_from_dictionary(adjectives: &[&str], nouns: &[&str]) -> Result<String> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
     // Use StdRng which is Send-safe for background tasks
     let mut rng = rand::rngs::StdRng::from_entropy();
-    
+
     // Try 10 random combinations
     for attempt in 1..=10 {
-        let adjective = ADJECTIVES.choose(&mut rng).unwrap();
-        let noun = NOUNS.choose(&mut rng).unwrap();
+        let adjective = adjectives.choose(&mut rng).unwrap();
+        let noun = nouns.choose(&mut rng).unwrap();
         let candidate = format!("stone-{}-{}", adjective, noun);
-        
+
         display_wait(&format!("Checking availability: {} (attempt {}/10)", candidate, attempt))?;
-        
+
         // Check mDNS collision
         if !check_mdns_collision(&candidate).await {
             display_success(&format!("Name available: {}", candidate))?;
             return Ok(candidate);
         }
-        
+
         display_wait(&format!("Name collision detected: {}", candidate))?;
     }
-    
+
     // All attempts failed, use hex suffix
     let hex_suffix = format!("{:04x}", rand::random::<u16>());
     let fallback = format!("stone-{}", hex_suffix);
@@ -531,24 +675,14 @@ pub struct BootBannerInfo {
 /// Shows stone identity with a waking cat and time-aware greeting.
 /// Called once after bootstrap completes successfully.
 pub fn print_boot_banner(info: &BootBannerInfo) -> Result<()> {
-    
-    
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    let greeting = time_greeting();
+    use ribbon_art::{CAT_HEAD, CAT_WAKING};
+
     let symbol = boot_symbol();
 
-    // Waking cat with dynamic symbol and stone name
-    let cat_line1 = format!("    _|\\_/|    {:9} Stone: {}", symbol, info.stone_name);
-    let cat_line2 = format!("  c(>(^-^)              This stone awakens... {}!", greeting);
-
-    tty_write("")?;
-    tty_write(divider)?;
-    tty_write(&cat_line1)?;
-    tty_write(&cat_line2)?;
-    tty_write(divider)?;
-    tty_write("")?;
-
-    Ok(())
+    print_ribbon(&[
+        &format!("{}{:9} Stone: {}", CAT_HEAD, symbol, info.stone_name),
+        &format!("{}          This stone awakens!", CAT_WAKING),
+    ])
 }
 
 /// Shutdown banner info
@@ -561,23 +695,16 @@ pub struct ShutdownBannerInfo {
 ///
 /// Shows graceful shutdown status with uptime and a sleepy cat.
 pub fn print_shutdown_banner(info: &ShutdownBannerInfo) -> Result<()> {
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    use ribbon_art::{CAT_HEAD, CAT_SLEEPING};
+
     let uptime_secs = info.start_time.elapsed().as_secs();
     let uptime_str = crate::utils::format_uptime(uptime_secs);
-    let greeting = time_greeting();
+    let _greeting = time_greeting(); // Reserved for future use
 
-    // Cat ASCII art with aligned right-side text starting at column 20
-    let cat_line1 = format!("    _|\\_/|    ZZZzzz    Uptime: {}", uptime_str);
-    let cat_line2 = format!("  c(-(-.-)              This stone rests... {}", greeting);
-
-    tty_write("")?;
-    tty_write(divider)?;
-    tty_write(&cat_line1)?;
-    tty_write(&cat_line2)?;
-    tty_write(divider)?;
-    tty_write("")?;
-
-    Ok(())
+    print_ribbon(&[
+        &format!("{}ZZZzzz    Uptime: {}", CAT_HEAD, uptime_str),
+        &format!("{}          This stone rests...", CAT_SLEEPING),
+    ])
 }
 
 /// Try to print boot banner to TTY1 (Linux only, no-op elsewhere)
@@ -652,113 +779,82 @@ fn boot_symbol() -> &'static str {
 // ============================================================================
 
 /// Print seed bank detection ribbon to TTY1
-/// 
+///
 /// Displays a visual notification when a USB storage device is detected.
 /// Matches the visual style of existing boot/shutdown ribbons.
 pub fn print_storage_detected_ribbon(info: &crate::storage::StorageDetectedInfo) -> Result<()> {
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    
+    use ribbon_art::{USB_TOP, USB_BODY_ACTIVE, USB_BOTTOM_CONN};
+
     let label = info.label.as_deref().unwrap_or("USB Storage");
     let capacity = crate::utils::format_bytes(info.capacity_bytes);
-    
-    // USB icon with storage info
-    let line1 = format!("    ┌──┐      🌱          Device: {} ({})", label, capacity);
-    let line2 = "    │▓▓│                  A new seed bank awaits...";
-    let line3 = "    └┬─┘";
-    let line4 = "     │        Prepare:    garden-rake prepare seed-bank";
-    
-    tty_write("")?;
-    tty_write(divider)?;
-    tty_write(&line1)?;
-    tty_write(line2)?;
-    tty_write(line3)?;
-    tty_write(line4)?;
-    tty_write(divider)?;
-    tty_write("")?;
-    
-    Ok(())
+
+    print_ribbon(&[
+        &format!("{}🌱          Device: {} ({})", USB_TOP, label, capacity),
+        &format!("{}            A new seed bank awaits...", USB_BODY_ACTIVE),
+        &format!("{}Prepare:    garden-rake prepare seed-bank", USB_BOTTOM_CONN),
+    ])
 }
 
 /// Print seed bank detection ribbon for multiple devices
 pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo]) -> Result<()> {
+    use ribbon_art::{USB_TOP, USB_BODY_ACTIVE, USB_BOTTOM_CONN};
+
     if devices.is_empty() {
         return Ok(());
     }
-    
+
     if devices.len() == 1 {
         return print_storage_detected_ribbon(&devices[0]);
     }
-    
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    
-    // Header
-    let line1 = format!("    ┌──┐      🌱          {} devices await preparation", devices.len());
-    let line2 = "    │▓▓│                  ";
-    let line3 = "    └┬─┘";
-    
+
+    // Multi-device ribbon needs custom structure for device list
     tty_write("")?;
-    tty_write(divider)?;
-    tty_write(&line1)?;
-    tty_write(line2)?;
-    tty_write(line3)?;
-    
+    tty_write(RIBBON_DIVIDER)?;
+
+    // Header with USB art
+    tty_write(&format!("{}🌱          {} devices await preparation", USB_TOP, devices.len()))?;
+    tty_write(USB_BODY_ACTIVE)?;
+    tty_write(USB_BOTTOM_CONN)?;
+
     // List each device
-    for (i, dev) in devices.iter().enumerate() {
+    for dev in devices.iter() {
         let label = dev.label.as_deref().unwrap_or("USB Storage");
         let capacity = crate::utils::format_bytes(dev.capacity_bytes);
         let mount = dev.mount_path.as_deref().unwrap_or(&dev.device);
-        let prefix = if i == devices.len() - 1 { "     │" } else { "     │" };
-        tty_write(&format!("{}                    {} ({}) at {}", prefix, label, capacity, mount))?;
+        tty_write(&format!("     │                    {} ({}) at {}", label, capacity, mount))?;
     }
-    
-    // Footer with command hint using first device label
+
+    // Footer with command hint
     let first_label = devices[0].label.as_deref().unwrap_or(&devices[0].device);
     tty_write("     │")?;
     tty_write(&format!("     │        Prepare:    garden-rake prepare seed-bank {}", first_label))?;
-    tty_write(divider)?;
+
+    tty_write(RIBBON_DIVIDER)?;
     tty_write("")?;
-    
+
     Ok(())
 }
 
 /// Print seed bank prepared confirmation ribbon
 pub fn print_storage_prepared_ribbon(name: &str, mount_path: &str) -> Result<()> {
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    
-    let line1 = format!("    ┌──┐      ✓           Seed bank ready: {}", name);
-    let line2 = format!("    │▓▓│                  Mounted at: {}", mount_path);
-    let line3 = "    └┬─┘";
-    let line4 = "     │        Release:    garden-rake release seed-bank";
-    
-    tty_write("")?;
-    tty_write(divider)?;
-    tty_write(&line1)?;
-    tty_write(&line2)?;
-    tty_write(line3)?;
-    tty_write(line4)?;
-    tty_write(divider)?;
-    tty_write("")?;
-    
-    Ok(())
+    use ribbon_art::{USB_TOP, USB_BODY_ACTIVE, USB_BOTTOM_CONN};
+
+    print_ribbon(&[
+        &format!("{}✓           Seed bank ready: {}", USB_TOP, name),
+        &format!("{}            Mounted at: {}", USB_BODY_ACTIVE, mount_path),
+        &format!("{}Release:    garden-rake release seed-bank", USB_BOTTOM_CONN),
+    ])
 }
 
 /// Print seed bank released confirmation
 pub fn print_storage_released_ribbon(name: &str) -> Result<()> {
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    use ribbon_art::{USB_TOP, USB_BODY_EMPTY, USB_BOTTOM};
 
-    let line1 = format!("    ┌──┐      ↓           Seed bank released: {}", name);
-    let line2 = "    │  │                  Safe to remove device";
-    let line3 = "    └──┘";
-
-    tty_write("")?;
-    tty_write(divider)?;
-    tty_write(&line1)?;
-    tty_write(line2)?;
-    tty_write(line3)?;
-    tty_write(divider)?;
-    tty_write("")?;
-
-    Ok(())
+    print_ribbon(&[
+        &format!("{}↓           Seed bank released: {}", USB_TOP, name),
+        &format!("{}            Safe to remove device", USB_BODY_EMPTY),
+        USB_BOTTOM,
+    ])
 }
 
 // ============================================================================

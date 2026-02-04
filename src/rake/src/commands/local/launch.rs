@@ -1,6 +1,6 @@
-//! Launch command - open stone portrait in browser
+//! Launch command - open stone UI in browser
 //!
-//! Opens the stone's portrait page in the default web browser.
+//! Opens the stone's web interface in the default web browser.
 //! Works on Windows, macOS, and Linux with graphical environment.
 
 use crate::command_manifest::cmd;
@@ -8,7 +8,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use async_trait::async_trait;
 
-/// Launch stone portrait in browser
+/// Launch stone UI in browser
 pub struct LaunchCommand {
     /// Optional stone endpoint override
     pub endpoint: Option<String>,
@@ -33,17 +33,17 @@ impl Command for LaunchCommand {
             anyhow::bail!("No stone endpoint available. Use --at to specify a stone or tend a stone first.");
         };
 
-        // Construct the portrait URL
-        let portrait_url = format!("{}/portrait", endpoint.trim_end_matches('/'));
+        // Construct the URL (base endpoint, portrait is the default page)
+        let url = endpoint.trim_end_matches('/').to_string();
 
         // Open in default browser
-        match open::that(&portrait_url) {
+        match open::that(&url) {
             Ok(()) => {
-                println!("Opening {} in browser...", portrait_url);
+                println!("Opening {} in browser...", url);
                 Ok(())
             }
             Err(e) => {
-                anyhow::bail!("Failed to open browser: {}. URL: {}", e, portrait_url);
+                anyhow::bail!("Failed to open browser: {}. URL: {}", e, url);
             }
         }
     }

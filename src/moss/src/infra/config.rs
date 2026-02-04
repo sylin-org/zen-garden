@@ -75,6 +75,11 @@ pub struct MossConfig {
     pub network: Option<NetworkConfig>,
 }
 
+/// Scan schedule phase: (interval_secs, duration_secs)
+/// - interval_secs: how often to scan during this phase
+/// - duration_secs: how long this phase lasts (-1 = forever)
+pub type ScanSchedulePhase = (u64, i64);
+
 /// Adoption configuration for auto-detection and management
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct AdoptionConfig {
@@ -97,6 +102,11 @@ pub struct AdoptionConfig {
     /// Stability threshold - consecutive successes before adoption (default: 2)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub stability_threshold: Option<u8>,
+
+    /// Scan schedule: list of (interval_secs, duration_secs) phases
+    /// Default: [[10, 600], [30, -1]] = 10s for 10min, then 30s forever
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scan_schedule: Option<Vec<ScanSchedulePhase>>,
 }
 
 impl AdoptionConfig {
@@ -160,6 +170,35 @@ impl AdoptionConfig {
         }
         false
     }
+
+    /// Get the scan schedule (default: 10s for 10min, then 30s forever)
+    pub fn scan_schedule(&self) -> Vec<ScanSchedulePhase> {
+        self.scan_schedule.clone().unwrap_or_else(|| vec![
+            (10, 600),   // 10 second intervals for first 10 minutes
+            (30, -1),    // 30 second intervals forever after
+        ])
+    }
+
+    /// Get the current scan interval based on elapsed time since start
+    pub fn current_scan_interval(&self, elapsed_secs: u64) -> u64 {
+        let schedule = self.scan_schedule();
+        let mut accumulated_duration: u64 = 0;
+
+        for (interval, duration) in schedule {
+            if duration < 0 {
+                // -1 means forever, this is the final phase
+                return interval;
+            }
+            let phase_duration = duration as u64;
+            if elapsed_secs < accumulated_duration + phase_duration {
+                return interval;
+            }
+            accumulated_duration += phase_duration;
+        }
+
+        // Fallback to 30 seconds if schedule is empty
+        30
+    }
 }
 
 impl Default for AdoptionConfig {
@@ -170,6 +209,7 @@ impl Default for AdoptionConfig {
             exclude: Vec::new(),
             detection_cache_ttl_secs: None,
             stability_threshold: None,
+            scan_schedule: None, // Will use default: [[10, 600], [30, -1]]
         }
     }
 }
@@ -392,13 +432,7 @@ impl MossConfig {
 
     /// Get adoption configuration (with defaults)
     pub fn adoption(&self) -> AdoptionConfig {
-        self.adoption.clone().unwrap_or_else(|| AdoptionConfig {
-            enabled: None, // Will use deployment profile detection
-            default_control_level: None,
-            exclude: Vec::new(),
-            detection_cache_ttl_secs: None,
-            stability_threshold: None,
-        })
+        self.adoption.clone().unwrap_or_default()
     }
 
     /// Get network configuration

@@ -1,8 +1,8 @@
 //! Auto-adoption background task
 //!
 //! Continuous adoption loop that:
-//! - Scans immediately on startup, then at 30-second intervals for fast initial detection
-//! - Switches to 5-minute intervals after stability is established
+//! - Scans immediately on startup with aggressive intervals for fast detection
+//! - Gradually transitions to longer intervals as system stabilizes
 //! - Detects services configured for adopted mode
 //! - Adopts stable detected services automatically
 //! - Validates health of already-adopted offerings (marks unhealthy/healthy)
@@ -14,19 +14,24 @@ use crate::AppState;
 use crate::infra::config::AdoptionConfig;
 use crate::domain::DetectionOrchestrator;
 use garden_common::{ServiceHealthStatus, OfferingMode};
+use std::time::Instant;
 
 /// Background auto-adoption loop
 ///
 /// This task should be spawned with tokio::spawn() at daemon startup.
-/// Uses fast initial detection (30s intervals) then switches to normal (5min).
+/// Uses configurable tiered intervals that start aggressive and gradually relax.
 ///
 /// # Non-Blocking
 /// This function never returns - it's designed to run in the background
 /// for the entire daemon lifetime. Spawn it and forget it.
 ///
-/// # Detection Strategy
-/// - First 6 scans: 30-second intervals (allows 2+ stability checks in ~2 minutes)
-/// - After that: 5-minute intervals for steady-state monitoring
+/// # Detection Strategy (configurable)
+/// Default schedule: `[[10, 600], [30, -1]]`
+/// - Phase 1: 10-second intervals for first 10 minutes
+/// - Phase 2: 30-second intervals forever after
+///
+/// Schedule format: `[(interval_secs, duration_secs), ...]`
+/// - `duration_secs = -1` means "forever" (final phase)
 ///
 /// # What It Does
 /// 1. Scans all manifests with adopted mode support
@@ -46,23 +51,24 @@ use garden_common::{ServiceHealthStatus, OfferingMode};
 /// // Task runs forever in background
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
-    // Fast initial detection: 30 seconds for first 6 scans, then 5 minutes
-    const FAST_INTERVAL_SECS: u64 = 30;
-    const NORMAL_INTERVAL_SECS: u64 = 300;
-    const FAST_SCAN_COUNT: u32 = 6;
-
     // Keep orchestrator persistent across scans to maintain stability tracking
     let orchestrator = DetectionOrchestrator::new(state.docker.clone());
 
+    // Track elapsed time for schedule phases
+    let start_time = Instant::now();
     let mut scan_count: u32 = 0;
 
+    // Log the schedule being used
+    let schedule = config.scan_schedule();
+    tracing::info!(
+        schedule = ?schedule,
+        "Auto-adoption task starting with scan schedule"
+    );
+
     loop {
-        // Use fast interval for initial scans, then switch to normal
-        let interval_secs = if scan_count < FAST_SCAN_COUNT {
-            FAST_INTERVAL_SECS
-        } else {
-            NORMAL_INTERVAL_SECS
-        };
+        // Get current interval based on elapsed time
+        let elapsed_secs = start_time.elapsed().as_secs();
+        let interval_secs = config.current_scan_interval(elapsed_secs);
 
         // First scan runs immediately (no sleep), subsequent scans wait
         if scan_count > 0 {
@@ -72,11 +78,11 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
 
         // Get manifests that support adopted mode
         let adoptable_manifests = state.manifest_registry.offerings_by_mode(&OfferingMode::Adopted);
-        let mode = if scan_count <= FAST_SCAN_COUNT { "fast" } else { "normal" };
         tracing::info!(
             count = adoptable_manifests.len(),
             scan = scan_count,
-            mode = mode,
+            elapsed_secs = elapsed_secs,
+            interval_secs = interval_secs,
             "Running auto-adoption scan"
         );
 

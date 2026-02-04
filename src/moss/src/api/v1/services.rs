@@ -1045,19 +1045,44 @@ pub async fn discover_service_capabilities_v1(
             ))?
     };
 
-    // Discover sub-capabilities
-    let capabilities = crate::domain::discover_sub_capabilities(&service, &state.docker).await
+    // Get capability manifest for this offering
+    let cap_manifest = crate::infra::manifests::get_capability_manifest(&service.offering)
+        .ok_or_else(|| error_response(
+            StatusCode::NOT_FOUND,
+            "NO_CAPABILITY_MANIFEST",
+            format!("No capability manifest found for '{}'", service.offering),
+            None,
+        ))?;
+
+    // Determine offering mode
+    let mode = {
+        let offerings = state.offerings.read().await;
+        offerings.iter()
+            .find(|o| o.name == service_name)
+            .map(|o| o.mode_data.mode())
+            .unwrap_or(garden_common::OfferingMode::Managed)
+    };
+
+    // Discover capabilities using manifest-based executor
+    let executor = crate::domain::CapabilityExecutor::new();
+    let collections = executor.list_capabilities(&service, cap_manifest, mode).await
         .map_err(|e| error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "DISCOVERY_FAILED",
-            format!("Failed to discover sub-capabilities: {}", e),
+            format!("Failed to discover capabilities: {}", e),
             None,
         ))?;
+
+    // Convert to SubCapability format
+    let capabilities: Vec<garden_common::SubCapability> = collections
+        .iter()
+        .map(|c| c.to_sub_capability())
+        .collect();
 
     // Update the offering in registry with discovered capabilities
     if !capabilities.is_empty() {
         let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name && o.is_managed()) {
+        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name) {
             o.sub_capabilities = capabilities.clone();
         }
         drop(offerings);
@@ -1076,23 +1101,65 @@ pub async fn discover_service_capabilities_v1(
 pub async fn refresh_all_capabilities_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
-    // Get managed offerings and convert to ServiceInfo for discovery
-    let mut services: Vec<ServiceInfo> = {
+    let executor = crate::domain::CapabilityExecutor::new();
+    let mut updated = 0;
+
+    // Get offerings snapshot
+    let offerings_snapshot: Vec<(String, String, garden_common::OfferingMode, ServiceInfo)> = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .filter(|o| o.is_managed())
-            .map(offering_to_service_info)
+            .filter(|o| o.status == OfferingStatus::Running)
+            .map(|o| (
+                o.name.clone(),
+                o.offering.clone(),
+                o.mode_data.mode(),
+                offering_to_service_info(o),
+            ))
             .collect()
     };
 
-    let updated = crate::domain::refresh_all_sub_capabilities(&mut services, &state.docker).await;
+    // Discover capabilities for each offering that has a manifest
+    let mut updates: Vec<(String, Vec<garden_common::SubCapability>)> = Vec::new();
 
-    // Persist updated capabilities back to unified offerings
-    if updated > 0 {
+    for (name, offering, mode, service) in offerings_snapshot {
+        // Check if there's a capability manifest for this offering
+        let cap_manifest = match crate::infra::manifests::get_capability_manifest(&offering) {
+            Some(m) => m,
+            None => continue, // No capability manifest, skip
+        };
+
+        // Discover capabilities
+        match executor.list_capabilities(&service, cap_manifest, mode).await {
+            Ok(collections) if !collections.is_empty() => {
+                let sub_caps: Vec<garden_common::SubCapability> = collections
+                    .iter()
+                    .map(|c| c.to_sub_capability())
+                    .collect();
+                tracing::debug!(
+                    service = %name,
+                    capabilities = ?sub_caps.iter().map(|c| format!("{}:{}", c.cap_type, c.items.len())).collect::<Vec<_>>(),
+                    "Discovered capabilities"
+                );
+                updates.push((name, sub_caps));
+                updated += 1;
+            }
+            Ok(_) => {} // No capabilities found
+            Err(e) => {
+                tracing::warn!(
+                    service = %name,
+                    error = ?e,
+                    "Failed to discover capabilities"
+                );
+            }
+        }
+    }
+
+    // Persist updated capabilities
+    if !updates.is_empty() {
         let mut offerings = state.offerings.write().await;
-        for svc in &services {
-            if let Some(o) = offerings.iter_mut().find(|o| o.name == svc.name && o.is_managed()) {
-                o.sub_capabilities = svc.sub_capabilities.clone();
+        for (name, sub_caps) in updates {
+            if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
+                o.sub_capabilities = sub_caps;
             }
         }
         drop(offerings);

@@ -1431,7 +1431,25 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.push("seed-banks".to_string());
             args.extend(parsed.args.clone());
         }
-        
+
+        // === CAPABILITIES ===
+        "capabilities" => {
+            args.push("capabilities".to_string());
+            args.extend(parsed.args.clone());
+        }
+
+        // === LOCAL/META COMMANDS ===
+        "commands" => {
+            args.push("commands".to_string());
+            args.extend(parsed.args.clone());
+        }
+
+        // === LIFECYCLE (additional) ===
+        "upgrade" => {
+            args.push("upgrade".to_string());
+            args.extend(parsed.args.clone());
+        }
+
         _ => {
             return Err(anyhow::anyhow!("Unknown zen verb: {}", parsed.verb));
         }

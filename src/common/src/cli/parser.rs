@@ -116,7 +116,15 @@ fn is_zen_verb(verb: &str) -> bool {
         // Companions (zen)
         "hey" |
         // Nurturing (backup/restore)
-        "restore" | "nurturing"
+        "restore" | "nurturing" |
+        // Capabilities (zen)
+        "capabilities" |
+        // Storage (zen)
+        "prepare" | "seed-banks" |
+        // Local/Meta commands (zen)
+        "launch" | "commands" |
+        // Lifecycle (zen)
+        "upgrade"
     )
 }
 

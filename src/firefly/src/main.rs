@@ -1,5 +1,5 @@
 ﻿// Garden Firefly - Visual Status Indicator Companion
-// Controls Waveshare RP2040-Matrix 5x5 RGB LED for system status display
+// Supports: Waveshare RP2040-Matrix (5x5 RGB LED) and ESP8266-OLED (128x64 SSD1306)
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -20,7 +20,7 @@ mod serial;
 use animation::{start_animation, AnimationContext};
 use events::FireflyEventHandler;
 use handler::FireflyHandler;
-use serial::{find_firefly_port, FireflyConnection, FireflySerial};
+use serial::{detect_device_type, find_firefly_device, DetectedDevice, FireflyConnection, FireflyDeviceType, FireflySerial};
 use tokio::sync::RwLock;
 
 /// Build Firefly's command manifest
@@ -29,7 +29,7 @@ fn build_manifest() -> CommandManifest {
         "firefly",
         "Garden Firefly",
         env!("CARGO_PKG_VERSION"),
-        "Visual status indicator using Waveshare RP2040-Matrix 5x5 RGB LED",
+        "Visual status indicator (RP2040-Matrix 5x5 LED or ESP8266 OLED 128x64)",
     )
     .command(
         CommandDef::new("status", "Show status indicator")
@@ -205,17 +205,25 @@ async fn main() -> Result<()> {
         "Starting Garden Firefly"
     );
 
-    // Spawn background task to retry connection every 10 seconds
+    // Spawn background task to monitor connection and retry every 5 seconds
     let conn_for_retry = Arc::clone(&connection);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
             interval.tick().await;
 
-            if !conn_for_retry.is_connected() {
+            if conn_for_retry.is_connected() {
+                // Verify device is still responding with a quick info command
+                // This detects silent disconnections (device unplugged between commands)
+                if conn_for_retry.with_device(|serial| serial.info()).is_err() {
+                    // with_device already called disconnect() on error
+                    tracing::debug!("Health check failed, device marked disconnected");
+                }
+            } else {
+                // Try to reconnect
                 match conn_for_retry.try_connect() {
                     Ok(()) => {
-                        tracing::info!("Firefly device connected");
+                        tracing::info!("Firefly device reconnected");
                         // Clear display on reconnect for clean slate
                         let _ = conn_for_retry.with_device(|serial| serial.clear());
                     }
@@ -239,6 +247,7 @@ async fn main() -> Result<()> {
     let sse_config = SseClientConfig::new(&stone);
     let event_handler = Arc::new(FireflyEventHandler::new(
         Arc::clone(&animation_context),
+        Arc::clone(&connection),
         Arc::clone(&companion_state),
     ));
     let _sse_handle = SseClient::start(sse_config, event_handler);
@@ -320,14 +329,20 @@ fn list_ports() -> Result<()> {
                     .unwrap_or("Unknown");
                 let manufacturer = info.manufacturer.as_ref().map(|s| s.as_str()).unwrap_or("");
 
-                let is_rp2040 = info.vid == 0x2e8a; // Raspberry Pi VID
+                // Detect device type from VID
+                let device_type = FireflyDeviceType::from_vid(info.vid);
+                let device_tag = match device_type {
+                    FireflyDeviceType::Rp2040Matrix => " [RP2040-Matrix]",
+                    FireflyDeviceType::Esp8266Oled => " [ESP8266-OLED]",
+                    FireflyDeviceType::Unknown => "",
+                };
 
                 format!(
                     "USB {} {} {}{}",
                     vid_pid,
                     product,
                     manufacturer,
-                    if is_rp2040 { " [RP2040]" } else { "" }
+                    device_tag
                 )
             }
             serialport::SerialPortType::PciPort => "PCI".to_string(),
@@ -343,28 +358,50 @@ fn list_ports() -> Result<()> {
 
 /// Test mode: interactive serial communication
 async fn test_mode(port_override: Option<String>) -> Result<()> {
-    let port = match port_override {
-        Some(p) => p,
-        None => find_firefly_port()?,
+    let detected = match port_override {
+        Some(p) => {
+            let device_type = detect_device_type(&p).unwrap_or(FireflyDeviceType::Unknown);
+            DetectedDevice {
+                port_name: p,
+                device_type,
+                vid: 0,
+                pid: 0,
+            }
+        }
+        None => find_firefly_device()?,
     };
 
     println!("Firefly Test Mode");
-    println!("Port: {}", port);
+    println!("Port: {}", detected.port_name);
+    println!("Type: {}", detected.device_type);
     println!();
 
-    let serial = FireflySerial::new(&port)?;
+    let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
 
-    // Test sequence
-    let tests = [
-        ("I", "Get device info"),
-        ("C", "Clear display"),
-        ("F,255,0,0", "Fill red"),
-        ("F,0,255,0", "Fill green"),
-        ("F,0,0,255", "Fill blue"),
-        ("A,rainbow", "Rainbow animation"),
-        ("T,healthy", "Status: healthy"),
-        ("C", "Clear"),
-    ];
+    // Test sequence depends on device type
+    let tests: Vec<(&str, &str)> = match detected.device_type {
+        FireflyDeviceType::Esp8266Oled => vec![
+            ("I", "Get device info"),
+            ("C", "Clear display"),
+            ("S,STONE-TEST", "Set stone name"),
+            ("H,thriving", "Set health: thriving"),
+            ("M,42,65,1h", "Update metrics"),
+            ("WIPE-IN,ZEN GARDEN,TESTING", "Wipe-in animation"),
+            ("BLINK,2", "Blink animation"),
+            ("PULSE,2", "Pulse animation"),
+            ("R", "Refresh display"),
+        ],
+        FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => vec![
+            ("I", "Get device info"),
+            ("C", "Clear display"),
+            ("F,255,0,0", "Fill red"),
+            ("F,0,255,0", "Fill green"),
+            ("F,0,0,255", "Fill blue"),
+            ("A,rainbow", "Rainbow animation"),
+            ("T,healthy", "Status: healthy"),
+            ("C", "Clear"),
+        ],
+    };
 
     for (cmd, desc) in tests {
         println!("{}: {}", desc, cmd);
@@ -374,7 +411,7 @@ async fn test_mode(port_override: Option<String>) -> Result<()> {
             Err(e) => println!("  -> ERROR: {}", e),
         }
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
     }
 
     println!();
@@ -385,27 +422,51 @@ async fn test_mode(port_override: Option<String>) -> Result<()> {
 
 /// Probe device and show info
 fn probe_device(port_override: Option<String>) -> Result<()> {
-    let port = match port_override {
-        Some(p) => p,
-        None => find_firefly_port()?,
+    let detected = match port_override {
+        Some(p) => {
+            let device_type = detect_device_type(&p).unwrap_or(FireflyDeviceType::Unknown);
+            DetectedDevice {
+                port_name: p,
+                device_type,
+                vid: 0,
+                pid: 0,
+            }
+        }
+        None => find_firefly_device()?,
     };
 
-    println!("Probing Firefly device on {}", port);
+    println!("Probing Firefly device on {}", detected.port_name);
+    println!("Detected type: {}", detected.device_type);
+    println!();
 
-    let serial = FireflySerial::new(&port)?;
+    let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
 
     // Get info
     match serial.send_command("I") {
         Ok(response) => {
             println!("Device Info: {}", response);
 
-            // Parse response: OK,firefly-v0,rp2040-matrix,5x5
+            // Parse response based on device type
             let parts: Vec<&str> = response.split(',').collect();
-            if parts.len() >= 4 {
-                println!();
-                println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
-                println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
-                println!("  Matrix:   {}", parts.get(3).unwrap_or(&"unknown"));
+            match detected.device_type {
+                FireflyDeviceType::Esp8266Oled => {
+                    // OK,firefly-oled,esp8266,128x64,...
+                    if parts.len() >= 4 {
+                        println!();
+                        println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
+                        println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
+                        println!("  Display:  {}", parts.get(3).unwrap_or(&"unknown"));
+                    }
+                }
+                FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
+                    // OK,firefly-v0,rp2040-matrix,5x5
+                    if parts.len() >= 4 {
+                        println!();
+                        println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
+                        println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
+                        println!("  Matrix:   {}", parts.get(3).unwrap_or(&"unknown"));
+                    }
+                }
             }
         }
         Err(e) => {
@@ -414,7 +475,7 @@ fn probe_device(port_override: Option<String>) -> Result<()> {
         }
     }
 
-    // Get help
+    // Get help (optional, may not be supported)
     match serial.send_command("?") {
         Ok(response) => {
             println!("  Commands: {}", response.trim_start_matches("OK,"));

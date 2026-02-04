@@ -162,6 +162,16 @@ pub struct AnimationContext {
     pub brightness: u8,
     /// State directory for persistence
     state_dir: Option<std::path::PathBuf>,
+
+    // OLED-specific state (stored for metrics updates)
+    /// Stone name for OLED display
+    pub stone_name: Option<String>,
+    /// Uptime in seconds for OLED metrics
+    pub uptime_seconds: u64,
+    /// CPU percentage for OLED metrics
+    pub cpu_percent: u8,
+    /// Memory percentage for OLED metrics
+    pub memory_percent: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -202,6 +212,11 @@ impl AnimationContext {
             enabled: true,
             brightness,
             state_dir,
+            // OLED-specific state
+            stone_name: None,
+            uptime_seconds: 0,
+            cpu_percent: 0,
+            memory_percent: 0,
         }
     }
 

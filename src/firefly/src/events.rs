@@ -1,7 +1,8 @@
-﻿//! SSE event handler for Firefly
+//! SSE event handler for Firefly
 //!
 //! Subscribes to Moss presence stream and updates animation context.
-//! Events override the baseline animation temporarily.
+//! For RP2040 Matrix: Events override the baseline animation temporarily.
+//! For ESP8266 OLED: Events send direct display commands.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use crate::animation::{AnimationContext, Health, Override};
+use crate::serial::{FireflyConnection, FireflyDeviceType};
 
 /// Presence snapshot from Moss
 #[derive(Debug, Deserialize)]
@@ -23,11 +25,15 @@ struct PresenceSnapshot {
 #[derive(Debug, Deserialize)]
 struct StoneState {
     #[serde(default)]
+    name: String,
+    #[serde(default)]
     health: String,
     #[serde(default)]
     cpu_percent: f64,
     #[serde(default)]
     memory_percent: f64,
+    #[serde(default)]
+    uptime_seconds: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,15 +57,37 @@ struct TendedEvent {
     by: Option<String>,
 }
 
-/// Firefly event handler - updates animation context based on SSE events
+/// Format uptime seconds into human-readable string (e.g., "1h", "3d", "2m")
+fn format_uptime(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("{}s", seconds)
+    } else if seconds < 3600 {
+        format!("{}m", seconds / 60)
+    } else if seconds < 86400 {
+        format!("{}h", seconds / 3600)
+    } else {
+        format!("{}d", seconds / 86400)
+    }
+}
+
+/// Firefly event handler - updates animation context and sends OLED commands
 pub struct FireflyEventHandler {
     context: Arc<RwLock<AnimationContext>>,
+    connection: Arc<FireflyConnection>,
     state: Arc<CompanionState>,
 }
 
 impl FireflyEventHandler {
-    pub fn new(context: Arc<RwLock<AnimationContext>>, state: Arc<CompanionState>) -> Self {
-        Self { context, state }
+    pub fn new(
+        context: Arc<RwLock<AnimationContext>>,
+        connection: Arc<FireflyConnection>,
+        state: Arc<CompanionState>,
+    ) -> Self {
+        Self {
+            context,
+            connection,
+            state,
+        }
     }
 
     /// Map health string to Health enum
@@ -70,6 +98,64 @@ impl FireflyEventHandler {
             "wilting" => Health::Wilting,
             _ => Health::Thriving,
         }
+    }
+
+    /// Send OLED-specific commands for a snapshot
+    fn send_oled_snapshot(&self, snapshot: &PresenceSnapshot) {
+        let _ = self.connection.with_device(|serial| {
+            // Set stone name (uppercase in firmware)
+            serial.oled_stone_name(&snapshot.stone.name)?;
+
+            // Set health state
+            serial.oled_health(&snapshot.stone.health)?;
+
+            // Update metrics
+            let uptime = format_uptime(snapshot.stone.uptime_seconds);
+            serial.oled_metrics(
+                snapshot.stone.cpu_percent as u8,
+                snapshot.stone.memory_percent as u8,
+                &uptime,
+            )?;
+
+            Ok(())
+        });
+    }
+
+    /// Send OLED command for health change
+    fn send_oled_health(&self, health: &str) {
+        let _ = self.connection.with_device(|serial| serial.oled_health(health));
+    }
+
+    /// Send OLED command for metrics update
+    fn send_oled_metrics(&self, cpu: f64, memory: f64, uptime_secs: u64) {
+        let uptime = format_uptime(uptime_secs);
+        let _ = self.connection.with_device(|serial| {
+            serial.oled_metrics(cpu as u8, memory as u8, &uptime)
+        });
+    }
+
+    /// Send OLED wipe-in animation
+    fn send_oled_wipe_in(&self, line1: &str, line2: &str) {
+        let _ = self
+            .connection
+            .with_device(|serial| serial.oled_wipe_in(line1, line2));
+    }
+
+    /// Send OLED wipe-out animation
+    fn send_oled_wipe_out(&self, line1: &str, line2: &str) {
+        let _ = self
+            .connection
+            .with_device(|serial| serial.oled_wipe_out(line1, line2));
+    }
+
+    /// Send OLED blink animation
+    fn send_oled_blink(&self, count: u8) {
+        let _ = self.connection.with_device(|serial| serial.oled_blink(count));
+    }
+
+    /// Send OLED pulse animation
+    fn send_oled_pulse(&self, count: u8) {
+        let _ = self.connection.with_device(|serial| serial.oled_pulse(count));
     }
 }
 
@@ -91,8 +177,11 @@ impl EventHandler for FireflyEventHandler {
             return;
         }
 
+        let device_type = self.connection.device_type();
+
         tracing::debug!(
             event_type = %event.event_type,
+            device_type = %device_type,
             data_len = event.data.len(),
             "Received presence event"
         );
@@ -102,6 +191,7 @@ impl EventHandler for FireflyEventHandler {
             event_types::PRESENCE_SNAPSHOT => {
                 if let Ok(snapshot) = serde_json::from_str::<PresenceSnapshot>(&event.data) {
                     tracing::info!(
+                        stone = %snapshot.stone.name,
                         health = %snapshot.stone.health,
                         offerings = snapshot.offerings.len(),
                         cpu = %snapshot.stone.cpu_percent,
@@ -109,14 +199,30 @@ impl EventHandler for FireflyEventHandler {
                         "Received presence snapshot"
                     );
 
+                    // For OLED: Send display commands directly
+                    if device_type == FireflyDeviceType::Esp8266Oled {
+                        self.send_oled_snapshot(&snapshot);
+                    }
+
+                    // For Matrix: Update animation context
                     let mut ctx = self.context.write().await;
+
+                    // Store stone info for OLED updates
+                    ctx.stone_name = Some(snapshot.stone.name.clone());
+                    ctx.uptime_seconds = snapshot.stone.uptime_seconds;
 
                     // Update health
                     ctx.health = Self::parse_health(&snapshot.stone.health);
 
                     // Update load (average of CPU and memory)
-                    ctx.load = ((snapshot.stone.cpu_percent + snapshot.stone.memory_percent) / 200.0) as f32;
+                    ctx.load =
+                        ((snapshot.stone.cpu_percent + snapshot.stone.memory_percent) / 200.0)
+                            as f32;
                     ctx.load = ctx.load.clamp(0.0, 1.0);
+
+                    // Store CPU/memory for OLED
+                    ctx.cpu_percent = snapshot.stone.cpu_percent as u8;
+                    ctx.memory_percent = snapshot.stone.memory_percent as u8;
 
                     // Update offering count (affects activity level)
                     ctx.offering_count = snapshot.offerings.len();
@@ -125,37 +231,54 @@ impl EventHandler for FireflyEventHandler {
                     ctx.has_services = !snapshot.offerings.is_empty();
 
                     // Check for seed-bank (storage service)
-                    ctx.has_seed_bank = snapshot.offerings.iter().any(|s| {
-                        s.name.contains("seed-bank") || s.name.contains("storage")
-                    });
+                    ctx.has_seed_bank = snapshot
+                        .offerings
+                        .iter()
+                        .any(|s| s.name.contains("seed-bank") || s.name.contains("storage"));
 
-                    // Trigger health override if not thriving
-                    match ctx.health {
-                        Health::Withering => ctx.trigger_override(Override::HealthWarning),
-                        Health::Wilting => ctx.trigger_override(Override::HealthError),
-                        Health::Thriving => ctx.clear_override(),
+                    // Trigger health override if not thriving (Matrix only)
+                    if device_type == FireflyDeviceType::Rp2040Matrix {
+                        match ctx.health {
+                            Health::Withering => ctx.trigger_override(Override::HealthWarning),
+                            Health::Wilting => ctx.trigger_override(Override::HealthError),
+                            Health::Thriving => ctx.clear_override(),
+                        }
                     }
                 }
             }
 
-            // Service started - green bloom override
+            // Service started - green bloom override / wipe-in
             event_types::SERVICE_STARTED => {
                 if let Ok(evt) = serde_json::from_str::<ServiceEvent>(&event.data) {
                     tracing::info!(service = %evt.service, "Service started");
 
-                    let mut ctx = self.context.write().await;
-                    ctx.has_services = true;
-                    ctx.trigger_override(Override::ServiceStarted);
+                    match device_type {
+                        FireflyDeviceType::Esp8266Oled => {
+                            self.send_oled_wipe_in(&evt.service.to_uppercase(), "STARTED");
+                        }
+                        FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
+                            let mut ctx = self.context.write().await;
+                            ctx.has_services = true;
+                            ctx.trigger_override(Override::ServiceStarted);
+                        }
+                    }
                 }
             }
 
-            // Service stopped - brief dim override
+            // Service stopped - brief dim override / wipe-out
             event_types::SERVICE_STOPPED => {
                 if let Ok(evt) = serde_json::from_str::<ServiceEvent>(&event.data) {
                     tracing::info!(service = %evt.service, "Service stopped");
 
-                    let mut ctx = self.context.write().await;
-                    ctx.trigger_override(Override::ServiceStopped);
+                    match device_type {
+                        FireflyDeviceType::Esp8266Oled => {
+                            self.send_oled_wipe_out(&evt.service.to_uppercase(), "STOPPED");
+                        }
+                        FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
+                            let mut ctx = self.context.write().await;
+                            ctx.trigger_override(Override::ServiceStopped);
+                        }
+                    }
                 }
             }
 
@@ -168,19 +291,26 @@ impl EventHandler for FireflyEventHandler {
                 if let Ok(evt) = serde_json::from_str::<HealthEvent>(&event.data) {
                     tracing::info!(health = %evt.health, "Stone health changed");
 
+                    // For OLED: Send health command
+                    if device_type == FireflyDeviceType::Esp8266Oled {
+                        self.send_oled_health(&evt.health);
+                    }
+
                     let mut ctx = self.context.write().await;
                     ctx.health = Self::parse_health(&evt.health);
 
-                    // Trigger/clear override based on health
-                    match ctx.health {
-                        Health::Withering => ctx.trigger_override(Override::HealthWarning),
-                        Health::Wilting => ctx.trigger_override(Override::HealthError),
-                        Health::Thriving => ctx.clear_override(),
+                    // Trigger/clear override based on health (Matrix only)
+                    if device_type == FireflyDeviceType::Rp2040Matrix {
+                        match ctx.health {
+                            Health::Withering => ctx.trigger_override(Override::HealthWarning),
+                            Health::Wilting => ctx.trigger_override(Override::HealthError),
+                            Health::Thriving => ctx.clear_override(),
+                        }
                     }
                 }
             }
 
-            // Stone load updated - update tempo
+            // Stone load updated - update tempo / metrics
             event_types::STONE_LOAD_UPDATED => {
                 #[derive(Deserialize)]
                 struct LoadEvent {
@@ -190,19 +320,34 @@ impl EventHandler for FireflyEventHandler {
                     memory: f64,
                 }
                 if let Ok(evt) = serde_json::from_str::<LoadEvent>(&event.data) {
+                    // For OLED: Send metrics update
+                    if device_type == FireflyDeviceType::Esp8266Oled {
+                        let ctx = self.context.read().await;
+                        self.send_oled_metrics(evt.cpu, evt.memory, ctx.uptime_seconds);
+                    }
+
                     let mut ctx = self.context.write().await;
                     ctx.load = ((evt.cpu + evt.memory) / 200.0) as f32;
                     ctx.load = ctx.load.clamp(0.0, 1.0);
+                    ctx.cpu_percent = evt.cpu as u8;
+                    ctx.memory_percent = evt.memory as u8;
                 }
             }
 
-            // Stone tended - sparkle override
+            // Stone tended - sparkle override / pulse
             event_types::STONE_TENDED => {
                 if let Ok(_evt) = serde_json::from_str::<TendedEvent>(&event.data) {
                     tracing::info!("Stone tended - showing appreciation");
 
-                    let mut ctx = self.context.write().await;
-                    ctx.trigger_override(Override::Tended);
+                    match device_type {
+                        FireflyDeviceType::Esp8266Oled => {
+                            self.send_oled_wipe_in("ZEN GARDEN", "TENDING");
+                        }
+                        FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
+                            let mut ctx = self.context.write().await;
+                            ctx.trigger_override(Override::Tended);
+                        }
+                    }
                 }
             }
 
@@ -215,9 +360,16 @@ impl EventHandler for FireflyEventHandler {
                 if let Ok(evt) = serde_json::from_str::<StorageEvent>(&event.data) {
                     tracing::info!(name = %evt.name, "Seed bank detected");
 
-                    let mut ctx = self.context.write().await;
-                    ctx.has_seed_bank = true;
-                    ctx.trigger_override(Override::StorageDetected);
+                    match device_type {
+                        FireflyDeviceType::Esp8266Oled => {
+                            self.send_oled_wipe_in("SEED BANK", "CONNECTED");
+                        }
+                        FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
+                            let mut ctx = self.context.write().await;
+                            ctx.has_seed_bank = true;
+                            ctx.trigger_override(Override::StorageDetected);
+                        }
+                    }
                 }
             }
 
@@ -230,9 +382,16 @@ impl EventHandler for FireflyEventHandler {
                 if let Ok(evt) = serde_json::from_str::<StorageEvent>(&event.data) {
                     tracing::info!(name = %evt.name, "Seed bank removed");
 
-                    let mut ctx = self.context.write().await;
-                    ctx.has_seed_bank = false;
-                    ctx.trigger_override(Override::StorageRemoved);
+                    match device_type {
+                        FireflyDeviceType::Esp8266Oled => {
+                            self.send_oled_wipe_out("SEED BANK", "REMOVED");
+                        }
+                        FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
+                            let mut ctx = self.context.write().await;
+                            ctx.has_seed_bank = false;
+                            ctx.trigger_override(Override::StorageRemoved);
+                        }
+                    }
                 }
             }
 

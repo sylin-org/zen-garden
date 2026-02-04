@@ -56,7 +56,9 @@ impl FireflyDeviceType {
 pub struct DetectedDevice {
     pub port_name: String,
     pub device_type: FireflyDeviceType,
+    #[allow(dead_code)] // Stored for diagnostics/logging
     pub vid: u16,
+    #[allow(dead_code)] // Stored for diagnostics/logging
     pub pid: u16,
 }
 
@@ -212,6 +214,7 @@ impl FireflySerial {
     }
 
     /// Refresh OLED display
+    #[allow(dead_code)] // Protocol command for API completeness
     pub fn oled_refresh(&self) -> Result<String> {
         self.send_command("R")
     }
@@ -229,12 +232,14 @@ impl FireflySerial {
     }
 
     /// Blink animation (OLED only) - fire-and-forget since animation takes time
+    #[allow(dead_code)] // Protocol command for API completeness
     pub fn oled_blink(&self, count: u8) -> Result<String> {
         // Blink animations take ~300ms per blink, so don't wait for response
         self.send_command_no_wait(&format!("BLINK,{}", count))
     }
 
     /// Pulse animation (OLED only) - fire-and-forget since animation takes time
+    #[allow(dead_code)] // Protocol command for API completeness
     pub fn oled_pulse(&self, count: u8) -> Result<String> {
         // Pulse animations take ~500ms per pulse, so don't wait for response
         self.send_command_no_wait(&format!("PULSE,{}", count))
@@ -492,6 +497,7 @@ pub fn find_firefly_device() -> Result<DetectedDevice> {
 }
 
 /// Find RP2040-Matrix port automatically (legacy, prefer find_firefly_device)
+#[allow(dead_code)] // Legacy API, kept for backwards compatibility
 pub fn find_firefly_port() -> Result<String> {
     find_firefly_device().map(|d| d.port_name)
 }

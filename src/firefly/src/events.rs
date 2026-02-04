@@ -149,11 +149,13 @@ impl FireflyEventHandler {
     }
 
     /// Send OLED blink animation
+    #[allow(dead_code)] // API method for future use
     fn send_oled_blink(&self, count: u8) {
         let _ = self.connection.with_device(|serial| serial.oled_blink(count));
     }
 
     /// Send OLED pulse animation
+    #[allow(dead_code)] // API method for future use
     fn send_oled_pulse(&self, count: u8) {
         let _ = self.connection.with_device(|serial| serial.oled_pulse(count));
     }

@@ -56,13 +56,12 @@ const MAX_MAX_KEYS: usize = 1000;
 #[derive(Debug, Default, Deserialize)]
 pub struct SeedBankSelector {
     #[serde(rename = "seed-bank")]
-    seed_bank_dash: Option<String>,
     seed_bank: Option<String>,
 }
 
 impl SeedBankSelector {
     fn name(&self) -> Option<String> {
-        self.seed_bank_dash.clone().or_else(|| self.seed_bank.clone())
+        self.seed_bank.clone()
     }
 }
 
@@ -571,7 +570,6 @@ pub struct ListObjectsQuery {
     pub max_keys: Option<usize>,
     /// Optional seed bank selector
     #[serde(rename = "seed-bank")]
-    pub seed_bank_dash: Option<String>,
     pub seed_bank: Option<String>,
 }
 
@@ -591,7 +589,6 @@ pub async fn list_objects(
     }
 
     let selector = SeedBankSelector {
-        seed_bank_dash: query.seed_bank_dash.clone(),
         seed_bank: query.seed_bank.clone(),
     };
 

@@ -80,10 +80,20 @@ curl -X PUT \
   http://stone-01:7185/api/v1/storage/my-bucket/hello.txt
 ```
 
+Query-string selection (dash is the standard):
+
+```bash
+curl -X PUT \
+  -H "Content-Type: text/plain" \
+  --data "hello garden" \
+  "http://stone-01:7185/api/v1/storage/my-bucket/hello.txt?seed-bank=seed-swift-shore"
+```
+
 Notes:
 
 - `my-bucket` maps to `{seed_bank}/garden/storage/my-bucket`
 - `X-Seed-Bank` is optional; omit to use the default seed bank
+- `seed-bank` is the only supported query parameter for seed bank selection (header wins)
 
 ### 3.2 List objects in a bucket
 

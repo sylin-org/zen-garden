@@ -51,7 +51,6 @@ pub struct StorageListQuery {
     pub list: Option<bool>,
     /// Optional seed bank selector
     #[serde(rename = "seed-bank")]
-    pub seed_bank_dash: Option<String>,
     pub seed_bank: Option<String>,
 }
 
@@ -68,19 +67,6 @@ pub struct StorageListResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BucketListResponse {
     pub buckets: Vec<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct SeedBankSelector {
-    #[serde(rename = "seed-bank")]
-    seed_bank_dash: Option<String>,
-    seed_bank: Option<String>,
-}
-
-impl SeedBankSelector {
-    fn name(&self) -> Option<String> {
-        self.seed_bank_dash.clone().or_else(|| self.seed_bank.clone())
-    }
 }
 
 enum SeedBankRoute {
@@ -117,11 +103,7 @@ fn get_seed_bank_name(headers: &HeaderMap, query: &StorageListQuery) -> Option<S
             return Some(trimmed.to_string());
         }
     }
-    SeedBankSelector {
-        seed_bank_dash: query.seed_bank_dash.clone(),
-        seed_bank: query.seed_bank.clone(),
-    }
-    .name()
+    query.seed_bank.clone()
 }
 
 fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {

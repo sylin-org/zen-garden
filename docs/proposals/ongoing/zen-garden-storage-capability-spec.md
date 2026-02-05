@@ -33,6 +33,16 @@ When a dedicated storage offering (MinIO) is deployed, it becomes the preferred 
 
 ---
 
+## Alignment Note (2026-02-05)
+
+This proposal predates the seed-bank realignment. Apply these updates when reading:
+- `garden/storage/{bucket}/{key}` is the only S3/REST storage root (no `apps/`).
+- App scoping is client-side (SDKs default to `{app}/{bucket}`), not server-enforced.
+- S3 gateway lives at `/api/v1/storage/s3/*`.
+- REST storage surface is `/api/v1/storage/*` (non-S3).
+- Seed bank selection uses `X-Seed-Bank` or `seed-bank` (no `X-App-Name`).
+- Offering backups use `garden/memories`; `garden/offerings` is reserved for listing active services.
+
 ## Table of Contents
 
 1. [Design Philosophy](#design-philosophy)
@@ -578,7 +588,7 @@ TXT:
    - stone-02 has lower load
    - Select stone-02
 
-5. Return: http://stone-02.local:7180/api/v1/storage
+5. Return: http://stone-02.local:7180/api/v1/storage/s3
 ```
 
 ---
@@ -598,7 +608,7 @@ S3 protocol support grows as infrastructure grows:
 │    stone-01 announces protocols=[s3,storage] (direct)           │
 │    Single gateway. Basic. Works.                                │
 │                                                                 │
-│    zen-garden:s3// → http://stone-01:7185/api/v1/storage       │
+│    zen-garden:s3// → http://stone-01:7185/api/v1/storage/s3    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -680,35 +690,28 @@ Both use the same physical storage, different namespaces:
 
 ```
 /mnt/seed-bank/
-├── garden/                    # Cultivation namespace
-│   ├── index.yaml
-│   ├── offerings/             # Offering backups
-│   │   └── {offering_id}/
-│   │       └── {timestamp}/
-│   │           ├── manifest.yaml
-│   │           └── data.archive.gz
-│   └── stones/                # Stone identity backups
-│       └── {stone_id}/
-│           └── identity.yaml
-│
-└── apps/                      # S3 namespace
-    └── {app_name}/            # Per-app storage
-        ├── config.json
-        └── data/
-            └── ...
+└── garden/
+    ├── memories/              # Nurturing backups
+    │   ├── index.json
+    │   └── {offering_id}/
+    │       ├── offering.json
+    │       └── {harvest_id}.tar.gz
+    └── storage/               # S3/REST storage root
+        └── {bucket}/
+            └── {key}
 ```
 
 ### Namespace Isolation
 
-Apps can only access their own namespace:
+App scoping is **client-side only**. The server enforces path traversal protection
+and restricts access to `garden/storage` for storage operations.
 
 ```python
 storage = connect("zen-garden:s3//myapp")
 
-storage.put("config.json", data)     # → apps/myapp/config.json ✓
-storage.get("config.json")           # ← apps/myapp/config.json ✓
-storage.get("../garden/index.yaml")  # ✗ Error: path traversal denied
-storage.get("../otherapp/data")      # ✗ Error: wrong namespace
+storage.put("config.json", data)     # → garden/storage/myapp/config.json ✓
+storage.get("config.json")           # ← garden/storage/myapp/config.json ✓
+storage.get("../garden/memories")    # ✗ Error: path traversal denied
 ```
 
 ### Backup of App Data
@@ -743,7 +746,7 @@ garden-rake seed-bank add /mnt/usb --name seed-usb-01
 # App anywhere in garden
 storage = connect("zen-garden:s3//")
 storage.put("myapp/data.json", '{"key": "value"}')
-# → Written to /mnt/usb/apps/myapp/data.json
+# → Written to /mnt/usb/garden/storage/myapp/data.json
 ```
 
 ### Example 2: NAS with Multiple Gateways
@@ -798,7 +801,7 @@ enabled = true
 
 # App on stone-03's subnet
 storage = connect("zen-garden:s3//")
-# → http://stone-03:7185/api/v1/storage
+# → http://stone-03:7185/api/v1/storage/s3
 # → stone-03 forwards to stone-02
 # → stone-02 accesses NAS
 ```
@@ -824,9 +827,10 @@ storage = connect("zen-garden:s3//")                 # Any available
 
 ### S3 Gateway Endpoint
 
-Base URL: `http://{stone}:7185/api/v1/storage`
+S3 Base URL: `http://{stone}:7185/api/v1/storage/s3`  
+REST Base URL: `http://{stone}:7185/api/v1/storage`
 
-The storage API is served on the same port as all other Moss APIs (7185).
+The storage APIs are served on the same port as all other Moss APIs (7185).
 
 ### Operations
 
@@ -834,8 +838,8 @@ The storage API is served on the same port as all other Moss APIs (7185).
 
 ```http
 PUT /api/v1/storage/{path}
-X-App-Name: myapp
 Content-Type: application/octet-stream
+X-Seed-Bank: portable-backup   # optional
 
 {binary data}
 ```
@@ -851,7 +855,7 @@ X-Content-SHA256: sha256:...
 
 ```http
 GET /api/v1/storage/{path}
-X-App-Name: myapp
+X-Seed-Bank: portable-backup   # optional
 ```
 
 Response:
@@ -868,7 +872,7 @@ Content-Length: 1234
 
 ```http
 HEAD /api/v1/storage/{path}
-X-App-Name: myapp
+X-Seed-Bank: portable-backup   # optional
 ```
 
 Response:
@@ -884,7 +888,7 @@ Last-Modified: Wed, 28 Jan 2026 12:00:00 GMT
 
 ```http
 DELETE /api/v1/storage/{path}
-X-App-Name: myapp
+X-Seed-Bank: portable-backup   # optional
 ```
 
 Response:
@@ -895,8 +899,8 @@ Response:
 #### List Objects
 
 ```http
-GET /api/v1/storage/?prefix={prefix}&max-keys={n}&continuation-token={token}
-X-App-Name: myapp
+GET /api/v1/storage/{bucket}/?list=true&prefix={prefix}&max-keys={n}&marker={marker}
+X-Seed-Bank: portable-backup   # optional
 ```
 
 Response:
@@ -926,18 +930,7 @@ Content-Type: application/json
 
 {
   "error": "InvalidPath",
-  "message": "Path cannot contain .."
-}
-```
-
-```http
-403 Forbidden
-Content-Type: application/json
-
-{
-  "error": "AppNameRequired",
-  "message": "X-App-Name header required",
-  "hint": "Use SDK or set X-App-Name header"
+  "message": "Path contains invalid segments"
 }
 ```
 

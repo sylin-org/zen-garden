@@ -28,8 +28,9 @@ use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::storage::{
     DeviceState, PrepareSeedBankRequest,
     RenameSeedBankRequest, SeedBankInfo, SetVisibilityRequest,
-    StorageDetectedInfo,
+    StorageDetectedInfo, DEFAULT_SEED_BANK_NAME,
 };
+use garden_common::paths;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
@@ -92,6 +93,28 @@ pub struct StorageTypeInfo {
     pub endpoint: String,
 }
 
+/// Storage readiness overview for this stone
+#[derive(Debug, Serialize)]
+pub struct StorageHealth {
+    pub ready: bool,
+    pub bank_count: usize,
+    pub ready_count: usize,
+    pub banks: Vec<SeedBankHealth>,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SeedBankHealth {
+    pub id: String,
+    pub name: String,
+    pub device: String,
+    pub mount_path: String,
+    pub canonical: bool,
+    pub writable: bool,
+    pub ready: bool,
+    pub issues: Vec<String>,
+}
+
 /// Response for prepare endpoint (async job)
 #[derive(Debug, Serialize)]
 pub struct PrepareAcceptedResponse {
@@ -109,7 +132,7 @@ pub struct ReleaseResponse {
 }
 
 /// Object metadata response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ObjectMeta {
     pub key: String,
     pub size: u64,
@@ -189,7 +212,11 @@ pub async fn storage_overview_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let local_banks = registry.list();
+    let local_banks: Vec<&SeedBankInfo> = registry
+        .list()
+        .into_iter()
+        .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
+        .collect();
     let total_capacity: u64 = local_banks.iter().map(|b| b.capacity_bytes).sum();
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
     
@@ -233,6 +260,73 @@ pub async fn storage_overview_v1(
 }
 
 // ============================================================================
+// GET /api/v1/stone/storage/health - Storage Readiness
+// ============================================================================
+
+/// Get storage readiness for this stone (mounted + canonical + writable).
+pub async fn storage_health_v1(
+    State(_state): State<AppState>,
+) -> Result<Json<ApiResponse<StorageHealth>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let registry = SeedBankRegistry::scan().await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
+
+    let mut banks = Vec::new();
+
+    for bank in registry.list() {
+        let mut issues = Vec::new();
+
+        let canonical = validate_seed_bank_layout(&bank.mount_path).is_ok();
+        if !canonical {
+            issues.push("non-canonical layout".to_string());
+        }
+
+        let writable = match is_mount_readonly(&bank.mount_path).await {
+            Some(true) => {
+                issues.push("mount is read-only".to_string());
+                false
+            }
+            Some(false) => true,
+            None => {
+                issues.push("mount options unavailable".to_string());
+                false
+            }
+        };
+
+        let ready = canonical && writable;
+
+        banks.push(SeedBankHealth {
+            id: bank.id.clone(),
+            name: bank.name.clone(),
+            device: bank.device.clone(),
+            mount_path: bank.mount_path.clone(),
+            canonical,
+            writable,
+            ready,
+            issues,
+        });
+    }
+
+    let bank_count = banks.len();
+    let ready_count = banks.iter().filter(|b| b.ready).count();
+    let ready = ready_count > 0;
+
+    let mut issues = Vec::new();
+    if bank_count == 0 {
+        issues.push("no seed banks mounted".to_string());
+    } else if ready_count == 0 {
+        issues.push("no seed banks are ready".to_string());
+    }
+
+    Ok(Json(ApiResponse::new(StorageHealth {
+        ready,
+        bank_count,
+        ready_count,
+        banks,
+        issues,
+    })))
+}
+
+// ============================================================================
 // GET /api/v1/stone/storage/bank - List Banks
 // ============================================================================
 
@@ -243,7 +337,12 @@ pub async fn list_banks_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+    let banks: Vec<SeedBankInfo> = registry
+        .list()
+        .into_iter()
+        .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
+        .cloned()
+        .collect();
     Ok(Json(ApiResponse::new(banks)))
 }
 
@@ -261,6 +360,10 @@ pub async fn get_bank_v1(
     
     let bank = registry.get(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
+
+    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+        return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
+    }
     
     Ok(Json(ApiResponse::new(bank.clone())))
 }
@@ -440,18 +543,33 @@ pub async fn get_object_v1(
         None => return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id)),
     };
     
+    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+        return error_response_raw(StatusCode::CONFLICT, &msg);
+    }
+
     let store = ObjectStore::new(&bank.mount_path);
     
-    // Path format: app/bucket/key or just key (defaults to zen-garden/default)
-    let (app, bucket, key) = parse_object_path(&path);
+    // Path format: bucket/key (bucket required for object access)
+    let (bucket, key) = parse_object_path(&path);
+
+    if bucket.is_empty() {
+        return handle_bucket_listing(&store, &params).await;
+    }
+
+    if has_path_traversal(&bucket) {
+        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket contains invalid path segments");
+    }
+    if !key.is_empty() && has_path_traversal(&key) {
+        return error_response_raw(StatusCode::BAD_REQUEST, "Object key contains invalid path segments");
+    }
     
     // If path ends with /, treat as directory listing
     if path.ends_with('/') || key.is_empty() {
-        return handle_directory_listing(&store, &id, &app, &bucket, &key, &params).await;
+        return handle_directory_listing(&store, &id, &bucket, &key, &params).await;
     }
     
     // Otherwise, get object
-    match store.get_object(&app, &bucket, &key).await {
+    match store.get_object(&bucket, &key).await {
         Ok(Some((data, meta))) => {
             debug!(bank = %id, key = %key, size = data.len(), "GET object success");
             Response::builder()
@@ -471,7 +589,6 @@ pub async fn get_object_v1(
 async fn handle_directory_listing(
     store: &ObjectStore,
     bank_id: &str,
-    app: &str,
     bucket: &str,
     prefix: &str,
     params: &ListQueryParams,
@@ -479,7 +596,7 @@ async fn handle_directory_listing(
     let max_depth = params.parse_depth();
     let delimiter = if max_depth == Some(1) { Some("/") } else { None };
     
-    match store.list_objects(app, bucket, Some(prefix), delimiter, None, 1000).await {
+    match store.list_objects(bucket, Some(prefix), delimiter, None, 1000).await {
         Ok(result) => {
             let mut entries: Vec<DirectoryEntry> = Vec::new();
             
@@ -516,7 +633,7 @@ async fn handle_directory_listing(
             }
             
             let response = DirectoryListResponse {
-                path: format!("{}/{}/{}", app, bucket, prefix),
+                path: format!("{}/{}", bucket, prefix),
                 entries,
                 truncated: result.is_truncated,
             };
@@ -528,6 +645,41 @@ async fn handle_directory_listing(
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(json.into())
+                    .unwrap(),
+                Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            }
+        }
+        Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// Handle bucket listing at storage root
+async fn handle_bucket_listing(store: &ObjectStore, params: &ListQueryParams) -> Response {
+    if params.depth.is_some() {
+        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket listing does not support depth");
+    }
+
+    match store.list_buckets().await {
+        Ok(buckets) => {
+            let entries = buckets
+                .into_iter()
+                .map(|name| DirectoryEntry {
+                    name,
+                    entry_type: "dir".to_string(),
+                    size: None,
+                    modified: None,
+                })
+                .collect::<Vec<_>>();
+            let response = DirectoryListResponse {
+                path: "/".to_string(),
+                entries,
+                truncated: false,
+            };
+            match serde_json::to_string(&ApiResponse::new(response)) {
+                Ok(body) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(body.into())
                     .unwrap(),
                 Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
             }
@@ -554,17 +706,30 @@ pub async fn put_object_v1(
     let bank = registry.get(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
     
+    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+        return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
+    }
+
     let store = ObjectStore::new(&bank.mount_path);
     
-    // Path format: app/bucket/key or just key (defaults to zen-garden/default)
-    let (app, bucket, key) = parse_object_path(&path);
+    // Path format: bucket/key (bucket required for object access)
+    let (bucket, key) = parse_object_path(&path);
+    if bucket.is_empty() || key.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket and key are required"));
+    }
+    if has_path_traversal(&bucket) {
+        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket contains invalid path segments"));
+    }
+    if has_path_traversal(&key) {
+        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Object key contains invalid path segments"));
+    }
     
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream");
     
-    let result = store.put_object(&app, &bucket, &key, content_type, &body).await
+    let result = store.put_object(&bucket, &key, content_type, &body).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "PUT_FAILED", &e.to_string()))?;
     
     debug!(bank = %id, key = %key, size = body.len(), "PUT object success");
@@ -593,11 +758,24 @@ pub async fn delete_object_v1(
     let bank = registry.get(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
     
+    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+        return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
+    }
+
     let store = ObjectStore::new(&bank.mount_path);
     
-    let (app, bucket, key) = parse_object_path(&path);
+    let (bucket, key) = parse_object_path(&path);
+    if bucket.is_empty() || key.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket and key are required"));
+    }
+    if has_path_traversal(&bucket) {
+        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket contains invalid path segments"));
+    }
+    if has_path_traversal(&key) {
+        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Object key contains invalid path segments"));
+    }
     
-    store.delete_object(&app, &bucket, &key).await
+    store.delete_object(&bucket, &key).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &e.to_string()))?;
     
     debug!(bank = %id, key = %key, "DELETE object success");
@@ -623,11 +801,24 @@ pub async fn head_object_v1(
         None => return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id)),
     };
     
+    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+        return error_response_raw(StatusCode::CONFLICT, &msg);
+    }
+
     let store = ObjectStore::new(&bank.mount_path);
     
-    let (app, bucket, key) = parse_object_path(&path);
+    let (bucket, key) = parse_object_path(&path);
+    if bucket.is_empty() || key.is_empty() {
+        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket and key are required");
+    }
+    if has_path_traversal(&bucket) {
+        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket contains invalid path segments");
+    }
+    if has_path_traversal(&key) {
+        return error_response_raw(StatusCode::BAD_REQUEST, "Object key contains invalid path segments");
+    }
     
-    match store.head_object(&app, &bucket, &key).await {
+    match store.head_object(&bucket, &key).await {
         Ok(Some(meta)) => {
             Response::builder()
                 .status(StatusCode::OK)
@@ -647,19 +838,77 @@ pub async fn head_object_v1(
 // Helper: Parse object path
 // ============================================================================
 
-/// Parse object path into (app, bucket, key)
+/// Parse object path into (bucket, key)
 /// Supports formats:
-/// - `key` → ("zen-garden", "default", "key")
-/// - `bucket/key` → ("zen-garden", "bucket", "key")
-/// - `app/bucket/key` → ("app", "bucket", "key")
-fn parse_object_path(path: &str) -> (String, String, String) {
+/// - `bucket` → ("bucket", "")
+/// - `bucket/key` → ("bucket", "key")
+fn parse_object_path(path: &str) -> (String, String) {
     let path = path.trim_start_matches('/');
-    let parts: Vec<&str> = path.splitn(3, '/').collect();
-    
-    match parts.len() {
-        1 => ("zen-garden".to_string(), "default".to_string(), parts[0].to_string()),
-        2 => ("zen-garden".to_string(), parts[0].to_string(), parts[1].to_string()),
-        _ => (parts[0].to_string(), parts[1].to_string(), parts[2..].join("/")),
+    if path.is_empty() {
+        return (String::new(), String::new());
+    }
+    let mut parts = path.splitn(2, '/');
+    let bucket = parts.next().unwrap_or("").to_string();
+    let key = parts.next().unwrap_or("").to_string();
+    (bucket, key)
+}
+
+fn has_path_traversal(value: &str) -> bool {
+    if value.contains('\\') {
+        return true;
+    }
+    std::path::Path::new(value).components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    })
+}
+
+async fn is_mount_readonly(mount_path: &str) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        let mounts = tokio::fs::read_to_string("/proc/mounts").await.ok()?;
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 && parts[1] == mount_path {
+                let opts = parts[3];
+                let ro = opts.split(',').any(|o| o == "ro");
+                return Some(ro);
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = mount_path;
+        Some(false)
+    }
+}
+
+/// Validate that a seed bank uses the canonical layout.
+fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
+    let memories = std::path::Path::new(mount_path).join(paths::SEED_BANK_MEMORIES_DIR);
+    let storage = std::path::Path::new(mount_path).join(paths::SEED_BANK_STORAGE_DIR);
+
+    let mut missing = Vec::new();
+    if !memories.is_dir() {
+        missing.push(paths::SEED_BANK_MEMORIES_DIR);
+    }
+    if !storage.is_dir() {
+        missing.push(paths::SEED_BANK_STORAGE_DIR);
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Seed bank is non-canonical; missing {}. Re-prepare the seed bank.",
+            missing.join(" and ")
+        ))
     }
 }
 
@@ -727,13 +976,13 @@ pub async fn prepare_seed_bank_v1(
     // Determine seed bank name
     // - random_name: true → generate seed-{adj}-{noun}
     // - name provided → use it
-    // - neither → default to "seed-bank-zen-garden" (unnamed pool)
+    // - neither → default to the unnamed seed bank pool
     let name = if request.random_name {
         generate_seed_bank_name()
     } else if let Some(ref n) = request.name {
         n.clone()
     } else {
-        "seed-bank-zen-garden".to_string()
+        DEFAULT_SEED_BANK_NAME.to_string()
     };
     
     // Check for name collision (live scan)
@@ -894,6 +1143,14 @@ async fn run_prepare_job(
 
     tokio::fs::create_dir_all(zen_dir.join("journal")).await.context("Failed to create journal directory")?;
     tokio::fs::create_dir_all(zen_dir.join("blobs")).await.context("Failed to create blobs directory")?;
+
+    // Create canonical garden storage layout
+    tokio::fs::create_dir_all(mount_dir.join(paths::SEED_BANK_MEMORIES_DIR))
+        .await
+        .context("Failed to create garden/memories directory")?;
+    tokio::fs::create_dir_all(mount_dir.join(paths::SEED_BANK_STORAGE_DIR))
+        .await
+        .context("Failed to create garden/storage directory")?;
 
     // Sync filesystem to ensure all data is on device
     #[cfg(target_os = "linux")]

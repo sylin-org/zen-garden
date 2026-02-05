@@ -32,7 +32,7 @@ use axum::{
 use crate::api::responses::ApiResponse;
 use crate::domain::nurturing::{
     NurturingSlot, OfferingSlots, NurturingResult, NurturingIndex,
-    RemoteNurturingIndex, ReplicationResult,
+    RemoteNurturingIndex, ReplicationResult, build_memories_manifest,
 };
 use crate::infra::storage::SeedBankRegistry;
 use crate::tasks::{
@@ -327,11 +327,11 @@ pub async fn replicate_to_seed_bank(
     Json(request): Json<ReplicateRequest>,
 ) -> Result<Json<ApiResponse<ReplicationResult>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Look up the offering to get offering_id
-    let offering_id = {
+    let offering_entry = {
         let offerings = state.offerings.read().await;
         offerings.iter()
             .find(|o| o.name == offering || o.offering_id == offering)
-            .map(|o| o.offering_id.clone())
+            .cloned()
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
@@ -339,6 +339,7 @@ pub async fn replicate_to_seed_bank(
                 None,
             ))?
     };
+    let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
     let seed_bank = find_seed_bank(&request.seed_bank).await
@@ -355,12 +356,24 @@ pub async fn replicate_to_seed_bank(
         "Replicating nurturing snapshot to seed bank"
     );
 
+    let manifest = state
+        .manifest_registry
+        .get_offering(&offering_entry.offering)
+        .cloned();
+    let hydration_manifest = build_memories_manifest(
+        &offering_entry,
+        manifest,
+        &state.stone_id,
+        &state.stone_name,
+    );
+
     let result = state.nurturing_store.replicate_to_seed_bank(
         &offering_id,
         &seed_bank.mount_path,
         &seed_bank.id,
         &seed_bank.name,
         &state.stone_id,
+        Some(hydration_manifest),
     ).await
     .map_err(|e| crate::infra::error_response(
         StatusCode::INTERNAL_SERVER_ERROR,

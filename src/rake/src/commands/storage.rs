@@ -450,8 +450,21 @@ fn format_bytes(bytes: u64) -> String {
 // S3-Compatible Object Storage Commands
 // ============================================================================
 
-/// Default application name for object storage
+/// Default application name for logical namespacing
 const DEFAULT_APP_NAME: &str = "zen-garden";
+
+fn apply_app_prefix(bucket: &str, key: &str, app: &str) -> (String, String) {
+    let key = key.trim_start_matches('/');
+    (app.to_string(), format!("{}/{}", bucket, key))
+}
+
+fn apply_app_prefix_for_list(bucket: &str, prefix: Option<String>, app: &str) -> (String, Option<String>) {
+    let prefix = match prefix {
+        Some(p) => format!("{}/{}", bucket, p.trim_start_matches('/')),
+        None => format!("{}/", bucket),
+    };
+    (app.to_string(), Some(prefix))
+}
 
 // ============================================================================
 // Store Put Command
@@ -489,14 +502,14 @@ impl Command for StorePutCommand {
             .to_string();
         
         let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let url = format!("{}/api/v1/stone/storage/s3/{}/{}", 
+        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+        let url = format!("{}/api/v1/storage/s3/{}/{}", 
             endpoint.trim_end_matches('/'), 
-            self.bucket, 
-            self.key
+            bucket, 
+            key
         );
         
         let response = ctx.client.put(&url)
-            .header("X-App-Name", app)
             .header("Content-Type", &content_type)
             .body(data.clone())
             .send()
@@ -564,14 +577,14 @@ impl Command for StoreGetCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
         
         let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let url = format!("{}/api/v1/stone/storage/s3/{}/{}", 
+        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+        let url = format!("{}/api/v1/storage/s3/{}/{}", 
             endpoint.trim_end_matches('/'), 
-            self.bucket, 
-            self.key
+            bucket, 
+            key
         );
         
         let response = ctx.client.get(&url)
-            .header("X-App-Name", app)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch: {}", e))?;
@@ -693,9 +706,10 @@ impl Command for StoreListCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
         
         let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        
+        let (bucket, prefix) = apply_app_prefix_for_list(&self.bucket, self.prefix.clone(), app);
+
         let mut query_parts = Vec::new();
-        if let Some(ref prefix) = self.prefix {
+        if let Some(ref prefix) = prefix {
             query_parts.push(format!("prefix={}", urlencoding::encode(prefix)));
         }
         if let Some(ref delimiter) = self.delimiter {
@@ -708,14 +722,13 @@ impl Command for StoreListCommand {
             format!("?{}", query_parts.join("&"))
         };
         
-        let url = format!("{}/api/v1/stone/storage/s3/{}{}", 
+        let url = format!("{}/api/v1/storage/s3/{}{}", 
             endpoint.trim_end_matches('/'),
-            self.bucket,
+            bucket,
             query_string
         );
         
         let response = ctx.client.get(&url)
-            .header("X-App-Name", app)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to list: {}", e))?;
@@ -873,14 +886,14 @@ impl Command for StoreDeleteCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
         
         let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let url = format!("{}/api/v1/stone/storage/s3/{}/{}", 
+        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+        let url = format!("{}/api/v1/storage/s3/{}/{}", 
             endpoint.trim_end_matches('/'), 
-            self.bucket, 
-            self.key
+            bucket, 
+            key
         );
         
         let response = ctx.client.delete(&url)
-            .header("X-App-Name", app)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to delete: {}", e))?;
@@ -936,14 +949,14 @@ impl Command for StoreHeadCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
         
         let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let url = format!("{}/api/v1/stone/storage/s3/{}/{}", 
+        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+        let url = format!("{}/api/v1/storage/s3/{}/{}", 
             endpoint.trim_end_matches('/'), 
-            self.bucket, 
-            self.key
+            bucket, 
+            key
         );
         
         let response = ctx.client.head(&url)
-            .header("X-App-Name", app)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to head: {}", e))?;

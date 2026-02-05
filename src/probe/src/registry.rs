@@ -89,9 +89,12 @@ impl TestRegistry {
 
         // Storage tests (seed banks, beacon)
         self.register(crate::tests::storage::overview_test());
+        self.register(crate::tests::storage::health_test());
         self.register(crate::tests::storage::candidates_test());
         self.register(crate::tests::storage::beacon_visibility_test());
         self.register(crate::tests::storage::object_roundtrip_test());
+        self.register(crate::tests::storage::gateway_roundtrip_test());
+        self.register(crate::tests::storage::memories_index_test());
 
         // Nurturing tests (A/B backup slots, sub-capabilities, seed bank integration)
         self.register(crate::tests::nurturing::index_test());

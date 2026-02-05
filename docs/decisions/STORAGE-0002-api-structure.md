@@ -19,13 +19,13 @@ Structure the storage API with clear separation between native Moss endpoints an
 /api/v1/stone/storage/bank/:id/*path       DELETE → Delete object
 /api/v1/stone/storage/bank/:id/*path       HEAD   → Object metadata
 
-/api/v1/stone/storage/s3/:bucket/*key      → S3-compatible gateway (XML responses)
+/api/v1/storage/s3/:bucket/*key            → S3-compatible gateway (XML responses)
 ```
 
 ### Design Principles
 
 1. **Native Moss API** (`/bank/`) uses `ApiResponse<T>` JSON format consistently
-2. **S3 Gateway** (`/s3/`) is fully S3-spec compliant with XML responses and proper headers
+2. **S3 Gateway** (`/storage/s3/`) is fully S3-spec compliant with XML responses and proper headers
 3. **PUT idempotency** - PUT creates or updates; same result regardless of prior state
 4. **Bank abstraction** - Banks are storage backends; currently only "seed-bank" type exists, but structure allows `/cache/`, `/archive/` in future
 
@@ -33,21 +33,21 @@ Structure the storage API with clear separation between native Moss endpoints an
 
 S3 clients see standard bucket/key paths:
 ```
-PUT /api/v1/stone/storage/s3/myapp/config.json
+PUT /api/v1/storage/s3/myapp/config.json
 ```
 
 Internally maps to:
 ```
-{default-bank-mount}/apps/myapp/config.json
+{default-bank-mount}/garden/storage/myapp/config.json
 ```
 
 - Default bank: `seed-bank-zen-garden` (or first available)
-- Bucket = app namespace
-- No `X-App-Name` header required for S3 gateway (bucket IS the app)
+- Bucket = S3 bucket name
+- Optional `X-Seed-Bank` header or `seed-bank` query param selects a named seed bank
 
 ### Native API vs S3 Gateway
 
-| Aspect | Native (`/bank/`) | S3 (`/s3/`) |
+| Aspect | Native (`/bank/`) | S3 (`/storage/s3/`) |
 |--------|-------------------|-------------|
 | Response format | JSON ApiResponse | XML/raw bytes |
 | Bank selection | Explicit `:id` | Default bank |
@@ -56,9 +56,8 @@ Internally maps to:
 
 ### Migration
 
-Old endpoints → New endpoints:
-- `/api/v1/stone/storage` → `/api/v1/stone/storage/bank/`
-- `/api/v1/storage/*path` → `/api/v1/stone/storage/s3/:bucket/*key`
+Greenfield alignment: `/api/v1/stone/storage/s3/*` is removed.  
+Use `/api/v1/storage/s3/*` for the canonical S3 gateway.
 
 ## Consequences
 

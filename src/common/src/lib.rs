@@ -31,6 +31,7 @@ pub mod api_manifest;
 pub mod storage;
 pub mod templates;
 pub mod notifications;
+pub mod audit;
 
 // Re-export commonly used items
 pub use types::*;
@@ -40,6 +41,7 @@ pub use responses::*;
 pub use jobs::*;
 pub use client::{GardenHttpClient, GardenApiResponse};
 pub use cli_colors::{CliFormatter, AnsiColor, ColorSupport};
+pub use audit::{AuditAccessEntry, log_access};
 
 // Re-export health and vitality constants for easy access
 pub use constants::{
@@ -119,8 +121,13 @@ pub mod paths {
         linux_harvest_dir, linux_nurturing_index_dir, linux_nurturing_index_path,
         // Nurturing paths
         nurturing_index_dir, nurturing_index_path,
-        seed_bank_nurturing_dir, seed_bank_offering_dir, seed_bank_harvest_path,
-        NURTURING_SUBDIR, NURTURING_INDEX_FILE, SEED_BANK_APPS_DIR,
+        seed_bank_memories_dir, seed_bank_memories_index_path,
+        seed_bank_memory_offering_dir, seed_bank_memory_offering_manifest_path,
+        seed_bank_memory_harvest_path,
+        seed_bank_storage_dir,
+        NURTURING_SUBDIR, NURTURING_INDEX_FILE,
+        SEED_BANK_GARDEN_DIR, SEED_BANK_MEMORIES_DIR, SEED_BANK_STORAGE_DIR,
+        SEED_BANK_MEMORIES_INDEX_FILE, SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE,
+        AUDIT_LOG_FILE, audit_log_path,
     };
 }
-

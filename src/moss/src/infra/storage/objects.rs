@@ -1,7 +1,7 @@
 ﻿//! Object storage operations for seed banks
 //!
 //! Provides S3-compatible object storage operations on seed bank filesystems.
-//! Objects are stored under: {mount_path}/apps/{app_name}/{bucket}/{key}
+//! Objects are stored under: {mount_path}/garden/storage/{bucket}/{key}
 //!
 //! Design: This is the infrastructure layer - handles actual filesystem I/O.
 //! Business logic (path validation, quota enforcement) should be in domain layer.
@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
+use garden_common::paths;
 
 /// Metadata about a stored object
 #[derive(Debug, Clone)]
@@ -35,43 +36,39 @@ pub struct PutResult {
 
 /// Object store interface for a specific seed bank
 pub struct ObjectStore {
-    /// Mount path of the seed bank
-    mount_path: PathBuf,
+    /// Root path for storage objects (garden/storage)
+    root_path: PathBuf,
 }
 
 impl ObjectStore {
     /// Create a new object store for a seed bank mount
     pub fn new(mount_path: impl AsRef<Path>) -> Self {
+        let root_path = mount_path.as_ref().join(paths::SEED_BANK_STORAGE_DIR);
         Self {
-            mount_path: mount_path.as_ref().to_path_buf(),
+            root_path,
         }
     }
 
     /// Get the full filesystem path for an object
-    fn object_path(&self, app: &str, bucket: &str, key: &str) -> PathBuf {
-        // Structure: {mount}/apps/{app}/{bucket}/{key}
-        self.mount_path
-            .join("apps")
-            .join(app)
-            .join(bucket)
-            .join(key)
+    fn object_path(&self, bucket: &str, key: &str) -> PathBuf {
+        // Structure: {mount}/garden/storage/{bucket}/{key}
+        self.root_path.join(bucket).join(key)
     }
 
     /// Get the full filesystem path for a bucket
-    fn bucket_path(&self, app: &str, bucket: &str) -> PathBuf {
-        self.mount_path.join("apps").join(app).join(bucket)
+    fn bucket_path(&self, bucket: &str) -> PathBuf {
+        self.root_path.join(bucket)
     }
 
     /// PUT object - store data with streaming hash
     pub async fn put_object(
         &self,
-        app: &str,
         bucket: &str,
         key: &str,
         content_type: &str,
         data: &[u8],
     ) -> Result<PutResult> {
-        let path = self.object_path(app, bucket, key);
+        let path = self.object_path(bucket, key);
         
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
@@ -118,21 +115,14 @@ impl ObjectStore {
             .await
             .context("Failed to write metadata")?;
 
-        debug!(
-            app = %app,
-            bucket = %bucket,
-            key = %key,
-            size = data.len(),
-            etag = %etag,
-            "Object stored"
-        );
+        debug!(bucket = %bucket, key = %key, size = data.len(), etag = %etag, "Object stored");
 
         Ok(PutResult { etag })
     }
 
     /// GET object - retrieve data
-    pub async fn get_object(&self, app: &str, bucket: &str, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
-        let path = self.object_path(app, bucket, key);
+    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
+        let path = self.object_path(bucket, key);
         
         if !path.exists() {
             return Ok(None);
@@ -148,8 +138,8 @@ impl ObjectStore {
     }
 
     /// HEAD object - get metadata only
-    pub async fn head_object(&self, app: &str, bucket: &str, key: &str) -> Result<Option<ObjectMetadata>> {
-        let path = self.object_path(app, bucket, key);
+    pub async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<ObjectMetadata>> {
+        let path = self.object_path(bucket, key);
         
         if !path.exists() {
             return Ok(None);
@@ -159,8 +149,8 @@ impl ObjectStore {
     }
 
     /// DELETE object
-    pub async fn delete_object(&self, app: &str, bucket: &str, key: &str) -> Result<bool> {
-        let path = self.object_path(app, bucket, key);
+    pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<bool> {
+        let path = self.object_path(bucket, key);
         
         if !path.exists() {
             return Ok(false);
@@ -174,7 +164,7 @@ impl ObjectStore {
         let meta_path = self.meta_path(&path);
         let _ = tokio::fs::remove_file(&meta_path).await;
 
-        debug!(app = %app, bucket = %bucket, key = %key, "Object deleted");
+        debug!(bucket = %bucket, key = %key, "Object deleted");
 
         Ok(true)
     }
@@ -182,14 +172,13 @@ impl ObjectStore {
     /// LIST objects - list objects with optional prefix/delimiter
     pub async fn list_objects(
         &self,
-        app: &str,
         bucket: &str,
         prefix: Option<&str>,
         delimiter: Option<&str>,
         marker: Option<&str>,
         max_keys: usize,
     ) -> Result<ListResult> {
-        let bucket_path = self.bucket_path(app, bucket);
+        let bucket_path = self.bucket_path(bucket);
         
         if !bucket_path.exists() {
             return Ok(ListResult {
@@ -238,18 +227,18 @@ impl ObjectStore {
         })
     }
 
-    /// LIST buckets - list all buckets for an app
-    pub async fn list_buckets(&self, app: &str) -> Result<Vec<String>> {
-        let app_path = self.mount_path.join("apps").join(app);
+    /// LIST buckets - list all buckets at storage root
+    pub async fn list_buckets(&self) -> Result<Vec<String>> {
+        let root_dir = self.root_path.clone();
         
-        if !app_path.exists() {
+        if !root_dir.exists() {
             return Ok(Vec::new());
         }
         
         let mut buckets = Vec::new();
-        let mut entries = tokio::fs::read_dir(&app_path)
+        let mut entries = tokio::fs::read_dir(&root_dir)
             .await
-            .context("Failed to read app directory")?;
+            .context("Failed to read storage root directory")?;
         
         while let Ok(Some(entry)) = entries.next_entry().await {
             if entry.path().is_dir() {

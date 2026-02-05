@@ -14,7 +14,7 @@
 //!     volumes/
 //!
 //! On seed banks:
-//! {mount_path}/apps/garden/nurturing/
+//! {mount_path}/garden/memories/
 //!   index.json                           <- RemoteNurturingIndex
 //!   {offering_id}/
 //!     {harvest_id}.tar.gz                <- Compressed harvest archive
@@ -25,11 +25,12 @@ use crate::domain::nurturing::{
     RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
 };
 use crate::domain::harvest::HarvestManifest;
-use crate::infra::storage::ObjectStore;
 use crate::infra::{HarvestStore, create_harvest};
 use crate::docker::DockerManager;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use garden_common::paths;
+use garden_common::storage::MemoriesOfferingManifest;
 
 /// Store for nurturing A/B slots
 pub struct NurturingStore {
@@ -310,6 +311,7 @@ impl NurturingStore {
         seed_bank_id: &str,
         seed_bank_name: &str,
         stone_id: &str,
+        hydration_manifest: Option<MemoriesOfferingManifest>,
     ) -> Result<ReplicationResult> {
         // Get local slots for this offering
         let index = self.load_index().await?;
@@ -336,14 +338,23 @@ impl NurturingStore {
         let archive_data = self.create_harvest_archive(&harvest_path).await?;
         let size_bytes = archive_data.len() as u64;
 
-        // Store on seed bank using ObjectStore
-        let object_store = ObjectStore::new(seed_bank_mount);
-        let object_key = format!("{}/{}.tar.gz", offering_id, harvest_id);
+        // Store on seed bank under garden/memories
+        let offering_dir = paths::seed_bank_memory_offering_dir(seed_bank_mount, offering_id);
+        tokio::fs::create_dir_all(&offering_dir)
+            .await
+            .context("Failed to create memories offering directory")?;
 
-        object_store
-            .put_object("garden", "nurturing", &object_key, "application/gzip", &archive_data)
+        let object_key = format!("{}/{}.tar.gz", offering_id, harvest_id);
+        let archive_path = memories_object_path(seed_bank_mount, &object_key);
+        write_bytes_atomic(&archive_path, &archive_data)
             .await
             .context("Failed to store snapshot on seed bank")?;
+
+        // Store hydration manifest (offering definition + metadata)
+        if let Some(manifest) = hydration_manifest {
+            self.store_offering_manifest(seed_bank_mount, &manifest).await
+                .context("Failed to store offering manifest on seed bank")?;
+        }
 
         // Update remote index with retention enforcement
         let mut remote_index = self.load_remote_index(seed_bank_mount, seed_bank_id).await?;
@@ -362,7 +373,8 @@ impl NurturingStore {
 
         // Delete pruned snapshots (retention policy enforcement)
         for old_snapshot in &pruned {
-            if let Err(e) = object_store.delete_object("garden", "nurturing", &old_snapshot.object_key).await {
+            let old_path = memories_object_path(seed_bank_mount, &old_snapshot.object_key);
+            if let Err(e) = tokio::fs::remove_file(&old_path).await {
                 tracing::warn!(
                     harvest_id = %old_snapshot.harvest_id,
                     error = ?e,
@@ -457,12 +469,10 @@ impl NurturingStore {
         );
 
         // Download the archive
-        let object_store = ObjectStore::new(seed_bank_mount);
-        let (archive_data, _meta) = object_store
-            .get_object("garden", "nurturing", &snapshot.object_key)
+        let archive_path = memories_object_path(seed_bank_mount, &snapshot.object_key);
+        let archive_data = tokio::fs::read(&archive_path)
             .await
-            .context("Failed to read snapshot from seed bank")?
-            .ok_or_else(|| anyhow::anyhow!("Snapshot not found on seed bank"))?;
+            .context("Failed to read snapshot from seed bank")?;
 
         // Extract to local harvest store
         let harvest_path = self.harvest_store.harvest_path(&snapshot.harvest_id);
@@ -492,8 +502,8 @@ impl NurturingStore {
 
         if let Some(snapshot) = remote_index.remove(harvest_id) {
             // Delete the object
-            let object_store = ObjectStore::new(seed_bank_mount);
-            object_store.delete_object("garden", "nurturing", &snapshot.object_key).await?;
+            let archive_path = memories_object_path(seed_bank_mount, &snapshot.object_key);
+            let _ = tokio::fs::remove_file(&archive_path).await;
 
             // Save updated index
             self.save_remote_index(seed_bank_mount, &remote_index).await?;
@@ -511,27 +521,39 @@ impl NurturingStore {
 
     /// Load the remote nurturing index from a seed bank
     async fn load_remote_index(&self, seed_bank_mount: &str, seed_bank_id: &str) -> Result<RemoteNurturingIndex> {
-        let object_store = ObjectStore::new(seed_bank_mount);
-
-        match object_store.get_object("garden", "nurturing", "index.json").await? {
-            Some((data, _)) => {
-                let json = String::from_utf8(data).context("Invalid UTF-8 in remote index")?;
-                serde_json::from_str(&json).context("Failed to parse remote nurturing index")
-            }
-            None => Ok(RemoteNurturingIndex::new(seed_bank_id)),
+        let index_path = memories_index_path(seed_bank_mount);
+        if tokio::fs::metadata(&index_path).await.is_err() {
+            return Ok(RemoteNurturingIndex::new(seed_bank_id));
         }
+
+        let json = tokio::fs::read_to_string(&index_path)
+            .await
+            .context("Failed to read remote nurturing index")?;
+        serde_json::from_str(&json).context("Failed to parse remote nurturing index")
     }
 
     /// Save the remote nurturing index to a seed bank
     async fn save_remote_index(&self, seed_bank_mount: &str, index: &RemoteNurturingIndex) -> Result<()> {
-        let object_store = ObjectStore::new(seed_bank_mount);
         let json = serde_json::to_string_pretty(index).context("Failed to serialize remote index")?;
-
-        object_store
-            .put_object("garden", "nurturing", "index.json", "application/json", json.as_bytes())
+        let index_path = memories_index_path(seed_bank_mount);
+        write_string_atomic(&index_path, &json)
             .await
             .context("Failed to save remote nurturing index")?;
 
+        Ok(())
+    }
+
+    async fn store_offering_manifest(
+        &self,
+        seed_bank_mount: &str,
+        manifest: &MemoriesOfferingManifest,
+    ) -> Result<()> {
+        let json = serde_json::to_string_pretty(manifest)
+            .context("Failed to serialize offering manifest")?;
+        let path = paths::seed_bank_memory_offering_manifest_path(seed_bank_mount, &manifest.offering_id);
+        write_string_atomic(&path, &json)
+            .await
+            .context("Failed to write offering manifest")?;
         Ok(())
     }
 
@@ -571,6 +593,51 @@ impl NurturingStore {
 
         Ok(())
     }
+}
+
+// ========================================================================
+// Seed Bank Memories Helpers
+// ========================================================================
+
+fn memories_index_path(seed_bank_mount: &str) -> String {
+    paths::seed_bank_memories_index_path(seed_bank_mount)
+}
+
+fn memories_object_path(seed_bank_mount: &str, object_key: &str) -> PathBuf {
+    PathBuf::from(paths::seed_bank_memories_dir(seed_bank_mount)).join(object_key)
+}
+
+async fn write_bytes_atomic(path: &PathBuf, data: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("Failed to create parent directory")?;
+    }
+
+    let tmp_path = path.with_extension("tmp");
+    tokio::fs::write(&tmp_path, data)
+        .await
+        .context("Failed to write temp file")?;
+
+    // Best-effort sync
+    if let Ok(file) = std::fs::File::open(&tmp_path) {
+        let _ = file.sync_all();
+    }
+
+    #[cfg(windows)]
+    if path.exists() {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    tokio::fs::rename(&tmp_path, path)
+        .await
+        .context("Failed to rename temp file")?;
+
+    Ok(())
+}
+
+async fn write_string_atomic(path: &str, data: &str) -> Result<()> {
+    write_bytes_atomic(&PathBuf::from(path), data.as_bytes()).await
 }
 
 #[cfg(test)]

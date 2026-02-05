@@ -12,6 +12,7 @@
 //! (e.g., due to system interference or race conditions with udisks2).
 
 use anyhow::{Context, Result};
+use garden_common::constants::paths;
 use garden_common::storage::{SeedBankInfo, SeedBankManifest};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -60,6 +61,14 @@ pub struct SeedBankRegistry {
     banks: HashMap<String, SeedBankInfo>,
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+struct MountedSeedBank {
+    device: String,
+    mount_path: String,
+    manifest: SeedBankManifest,
+}
+
 impl SeedBankRegistry {
     /// Scan all mounted seed banks and build registry.
     ///
@@ -75,6 +84,13 @@ impl SeedBankRegistry {
         let mounts_dir = PathBuf::from(&data_dir).join("mounts");
         
         let mut registry = Self::default();
+
+        // Include any prepared seed banks mounted outside our mounts directory.
+        // This handles udisks/desktop auto-mounts and ensures zero-touch availability.
+        #[cfg(target_os = "linux")]
+        if let Err(e) = Self::append_external_mounts(&mut registry, &mounts_dir).await {
+            warn!(error = %e, "Failed to include external seed bank mounts");
+        }
         
         if !mounts_dir.exists() {
             return Ok(registry);
@@ -121,9 +137,18 @@ impl SeedBankRegistry {
                         continue;
                     }
 
+                    if let Err(e) = Self::ensure_seed_bank_layout(&mount_path).await {
+                        warn!(
+                            name = %manifest.name,
+                            mount_path = %mount_path,
+                            error = %e,
+                            "Failed to ensure seed bank layout"
+                        );
+                    }
+
                     // Get disk usage - also serves as liveness check
                     // If device was yanked, this will fail or return 0
-                    let (used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(&mount_path)
+                    let (_used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(&mount_path)
                         .map(|(used, avail)| (used, used + avail))
                         .unwrap_or((0, 0));
 
@@ -144,34 +169,10 @@ impl SeedBankRegistry {
                         continue;
                     }
 
-                    // Check if roaming (from different stone)
-                    // Use hostname as stone name (same as app_state initialization)
-                    let stone_name = hostname::get()
-                        .map(|h| h.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| "unknown".to_string());
-                    let roaming = manifest.origin_stone != stone_name;
-
-                    let info = SeedBankInfo {
-                        id: manifest.id,
-                        name: manifest.name.clone(),
-                        pool_id: manifest.pool_id,
-                        group: manifest.group.clone(),
-                        replica_id: manifest.replica_id,
-                        device,
-                        mount_path,
-                        capacity_bytes,
-                        used_bytes,
-                        visibility: manifest.visibility,
-                        btrfs: manifest.filesystem == "btrfs",
-                        origin_stone: manifest.origin_stone,
-                        created_at: manifest.created_at,
-                        last_sync: None,
-                        roaming,
-                        online: true, // Verified: device is mounted and manifest is readable
-                    };
-
-                    debug!(name = %info.name, device = %info.device, "Discovered seed bank");
-                    registry.banks.insert(manifest.name, info);
+                    if let Some(info) = Self::build_seed_bank_info(manifest, &mount_path, &device) {
+                        debug!(name = %info.name, device = %info.device, "Discovered seed bank");
+                        registry.banks.insert(info.name.clone(), info);
+                    }
                 }
                 Err(e) => {
                     let mount_path = path.to_string_lossy().to_string();
@@ -197,6 +198,85 @@ impl SeedBankRegistry {
         
         Ok(registry)
     }
+
+    /// Ensure the canonical garden layout exists on the seed bank.
+    async fn ensure_seed_bank_layout(mount_path: &str) -> Result<(), String> {
+        let memories = std::path::Path::new(mount_path).join(paths::SEED_BANK_MEMORIES_DIR);
+        let storage = std::path::Path::new(mount_path).join(paths::SEED_BANK_STORAGE_DIR);
+
+        let mut created = Vec::new();
+
+        if !memories.exists() {
+            tokio::fs::create_dir_all(&memories)
+                .await
+                .map_err(|e| format!("Failed to create {}: {}", paths::SEED_BANK_MEMORIES_DIR, e))?;
+            created.push(paths::SEED_BANK_MEMORIES_DIR);
+        }
+
+        if !storage.exists() {
+            tokio::fs::create_dir_all(&storage)
+                .await
+                .map_err(|e| format!("Failed to create {}: {}", paths::SEED_BANK_STORAGE_DIR, e))?;
+            created.push(paths::SEED_BANK_STORAGE_DIR);
+        }
+
+        if !created.is_empty() {
+            tracing::info!(
+                mount_path = %mount_path,
+                created = %created.join(", "),
+                "Seed bank layout auto-healed"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Build SeedBankInfo from a manifest + mount context.
+    fn build_seed_bank_info(
+        manifest: SeedBankManifest,
+        mount_path: &str,
+        device: &str,
+    ) -> Option<SeedBankInfo> {
+        let (used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(mount_path)
+            .map(|(used, avail)| (used, used + avail))
+            .unwrap_or((0, 0));
+
+        if capacity_bytes == 0 {
+            warn!(
+                name = %manifest.name,
+                device = %device,
+                mount_path = %mount_path,
+                "Skipping seed bank - mount appears stale (0 capacity)"
+            );
+            return None;
+        }
+
+        // Check if roaming (from different stone)
+        // Use hostname as stone name (same as app_state initialization)
+        let stone_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        let roaming = manifest.origin_stone != stone_name;
+
+        Some(SeedBankInfo {
+            id: manifest.id,
+            name: manifest.name.clone(),
+            pool_id: manifest.pool_id,
+            group: manifest.group.clone(),
+            replica_id: manifest.replica_id,
+            device: device.to_string(),
+            mount_path: mount_path.to_string(),
+            capacity_bytes,
+            used_bytes,
+            visibility: manifest.visibility,
+            btrfs: manifest.filesystem == "btrfs",
+            origin_stone: manifest.origin_stone,
+            created_at: manifest.created_at,
+            last_sync: None,
+            roaming,
+            online: true, // Verified: device is mounted and manifest is readable
+        })
+    }
     
     /// Read manifest from disk
     async fn read_manifest(path: &PathBuf) -> Result<SeedBankManifest> {
@@ -208,6 +288,103 @@ impl SeedBankRegistry {
             .context("Failed to parse manifest JSON")?;
         
         Ok(manifest)
+    }
+
+    /// List removable seed banks already mounted, regardless of mount location.
+    #[cfg(target_os = "linux")]
+    async fn list_mounted_seed_banks() -> Vec<MountedSeedBank> {
+        let mounts = match tokio::fs::read_to_string("/proc/mounts").await {
+            Ok(m) => m,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut results = Vec::new();
+
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue;
+            }
+
+            let device = parts[0];
+            let mount_path = parts[1];
+
+            if !device.starts_with("/dev/") {
+                continue;
+            }
+
+            if !DeviceAnalyzer::is_removable(device).unwrap_or(false) {
+                continue;
+            }
+
+            let manifest_path = PathBuf::from(mount_path).join(".zen-garden").join("manifest.json");
+            let content = match tokio::fs::read_to_string(&manifest_path).await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let manifest: SeedBankManifest = match serde_json::from_str(&content) {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!(
+                        device = %device,
+                        mount_path = %mount_path,
+                        error = %e,
+                        "Found manifest but failed to parse"
+                    );
+                    continue;
+                }
+            };
+
+            results.push(MountedSeedBank {
+                device: device.to_string(),
+                mount_path: mount_path.to_string(),
+                manifest,
+            });
+        }
+
+        results
+    }
+
+    /// Include externally mounted seed banks in the registry if they aren't under mounts/.
+    #[cfg(target_os = "linux")]
+    async fn append_external_mounts(
+        registry: &mut SeedBankRegistry,
+        mounts_dir: &PathBuf,
+    ) -> Result<()> {
+        let mounts_prefix = mounts_dir.to_string_lossy();
+        let mounted = Self::list_mounted_seed_banks().await;
+
+        for sb in mounted {
+            if sb.mount_path.starts_with(mounts_prefix.as_ref()) {
+                continue;
+            }
+
+            if registry.banks.contains_key(&sb.manifest.name) {
+                continue;
+            }
+
+            if let Err(e) = Self::ensure_seed_bank_layout(&sb.mount_path).await {
+                warn!(
+                    name = %sb.manifest.name,
+                    mount_path = %sb.mount_path,
+                    error = %e,
+                    "Failed to ensure seed bank layout (external mount)"
+                );
+            }
+
+            if let Some(info) = Self::build_seed_bank_info(sb.manifest, &sb.mount_path, &sb.device) {
+                warn!(
+                    name = %info.name,
+                    device = %info.device,
+                    mount_path = %info.mount_path,
+                    "Seed bank mounted outside canonical mounts directory"
+                );
+                registry.banks.insert(info.name.clone(), info);
+            }
+        }
+
+        Ok(())
     }
     
     /// Get device path for a mount point (from /proc/mounts)
@@ -500,6 +677,12 @@ impl SeedBankRegistry {
             return Ok(());
         }
 
+        // Rehome any mounted seed banks that are not using the canonical mount path.
+        // This handles udisks/desktop auto-mounts and ensures seed banks live under mounts/.
+        if let Err(e) = Self::rehome_mounted_seed_banks(tracker, event_bus, &mounts_dir, &data_dir).await {
+            warn!(error = %e, "Failed to rehome mounted seed banks");
+        }
+
         // Also track any already-mounted seed banks in our mounts directory
         Self::track_existing_mounts(tracker, &mounts_dir).await;
 
@@ -623,6 +806,160 @@ impl SeedBankRegistry {
                         error = %e,
                         "Failed to probe device for manifest"
                     );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rehome mounted seed banks to the canonical mounts directory.
+    #[cfg(target_os = "linux")]
+    async fn rehome_mounted_seed_banks(
+        tracker: Option<&MountTracker>,
+        event_bus: Option<&crate::infra::EventBus>,
+        mounts_dir: &PathBuf,
+        data_dir: &str,
+    ) -> Result<()> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        let mounts_prefix = mounts_dir.to_string_lossy();
+        let mounted = Self::list_mounted_seed_banks().await;
+
+        for sb in mounted {
+            if sb.mount_path.starts_with(mounts_prefix.as_ref()) {
+                continue;
+            }
+
+            if !DeviceAnalyzer::is_allowed_mount(&sb.mount_path) {
+                warn!(
+                    device = %sb.device,
+                    mount_path = %sb.mount_path,
+                    "Seed bank mounted at disallowed path; leaving in place"
+                );
+                continue;
+            }
+
+            let desired = sb.manifest.derive_mount_path(data_dir);
+            if desired == sb.mount_path {
+                continue;
+            }
+
+            // Ensure desired mount path exists
+            let mkdir = Command::new("sudo")
+                .args(["mkdir", "-p", &desired])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .await;
+            if let Ok(output) = mkdir {
+                if !output.status.success() {
+                    warn!(
+                        device = %sb.device,
+                        mount = %desired,
+                        error = %String::from_utf8_lossy(&output.stderr),
+                        "Failed to create mount directory for rehome"
+                    );
+                    continue;
+                }
+            }
+
+            // Unmount current path
+            let umount = Command::new("sudo")
+                .args(["umount", &sb.mount_path])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .await;
+
+            match umount {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => {
+                    warn!(
+                        device = %sb.device,
+                        mount = %sb.mount_path,
+                        error = %String::from_utf8_lossy(&output.stderr),
+                        "Failed to unmount seed bank for rehome"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    warn!(
+                        device = %sb.device,
+                        mount = %sb.mount_path,
+                        error = %e,
+                        "Failed to execute umount for rehome"
+                    );
+                    continue;
+                }
+            }
+
+            // Mount to canonical path
+            let mount = Command::new("sudo")
+                .args(["mount", &sb.device, &desired])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .await;
+
+            match mount {
+                Ok(output) if output.status.success() => {
+                    info!(
+                        device = %sb.device,
+                        from = %sb.mount_path,
+                        to = %desired,
+                        name = %sb.manifest.name,
+                        "Rehomed seed bank to canonical mount"
+                    );
+
+                    if let Some(t) = tracker {
+                        Self::track_mount(t, &sb.device, &desired, &sb.manifest.name).await;
+                    }
+
+                    if let Some(bus) = event_bus {
+                        let capacity_gb = DeviceAnalyzer::get_disk_usage(&desired)
+                            .map(|(used, avail)| (used + avail) / (1024 * 1024 * 1024))
+                            .unwrap_or(0);
+                        let storage_event = StorageEvent::seed_bank_detected(
+                            &sb.manifest.name,
+                            &sb.device,
+                            &desired,
+                            capacity_gb,
+                        );
+                        bus.emit(storage_event);
+                        info!(name = %sb.manifest.name, "Emitted storage.detected event after rehome");
+                    }
+                }
+                Ok(output) => {
+                    warn!(
+                        device = %sb.device,
+                        mount = %desired,
+                        error = %String::from_utf8_lossy(&output.stderr),
+                        "Failed to mount seed bank to canonical path; attempting rollback"
+                    );
+
+                    // Best-effort rollback
+                    let _ = Command::new("sudo")
+                        .args(["mount", &sb.device, &sb.mount_path])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .output()
+                        .await;
+                }
+                Err(e) => {
+                    warn!(
+                        device = %sb.device,
+                        mount = %desired,
+                        error = %e,
+                        "Failed to execute mount for rehome; attempting rollback"
+                    );
+                    let _ = Command::new("sudo")
+                        .args(["mount", &sb.device, &sb.mount_path])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .output()
+                        .await;
                 }
             }
         }

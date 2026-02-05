@@ -5,6 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use crate::OfferingMode;
+use crate::manifests::Offering as OfferingManifest;
+use crate::types::Offering;
 
 // ============================================================================
 // Device State Types
@@ -96,6 +99,9 @@ pub enum SeedBankVisibility {
     /// Visible but read-only (degraded state)
     ReadOnly,
 }
+
+/// Default seed bank name (unnamed pool)
+pub const DEFAULT_SEED_BANK_NAME: &str = "seed-bank-zen-garden";
 
 impl std::fmt::Display for SeedBankVisibility {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -274,6 +280,56 @@ pub struct MergeSeedBankRequest {
     /// Merge policy
     #[serde(default)]
     pub policy: MergePolicy,
+}
+
+// ============================================================================ 
+// Hydration Metadata
+// ============================================================================ 
+
+/// Offering manifest snapshot stored alongside memories for hydration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoriesOfferingManifest {
+    /// Offering ID (GUIDv7)
+    pub offering_id: String,
+    /// Instance name
+    pub offering_name: String,
+    /// Offering template name
+    pub offering: String,
+    /// Offering mode at time of capture
+    pub mode: OfferingMode,
+    /// Version string (if available)
+    pub version: String,
+    /// Stone ID that captured the manifest
+    pub source_stone_id: String,
+    /// Stone name that captured the manifest
+    pub source_stone_name: String,
+    /// Capture timestamp
+    pub captured_at: DateTime<Utc>,
+    /// Offering definition (manifest) if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<OfferingManifest>,
+}
+
+impl MemoriesOfferingManifest {
+    /// Build a hydration manifest from a runtime offering and optional definition.
+    pub fn from_offering(
+        offering: &Offering,
+        manifest: Option<OfferingManifest>,
+        stone_id: &str,
+        stone_name: &str,
+    ) -> Self {
+        Self {
+            offering_id: offering.offering_id.clone(),
+            offering_name: offering.name.clone(),
+            offering: offering.offering.clone(),
+            mode: offering.mode(),
+            version: offering.version.clone(),
+            source_stone_id: stone_id.to_string(),
+            source_stone_name: stone_name.to_string(),
+            captured_at: Utc::now(),
+            manifest,
+        }
+    }
 }
 
 // ============================================================================

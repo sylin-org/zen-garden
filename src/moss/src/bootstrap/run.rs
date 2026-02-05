@@ -738,6 +738,14 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
             }
         }
     }
+
+    // Phase 17.6: Seed bank resilience + storage cache hygiene
+    // Ensures hot-plugged prepared devices are auto-mounted and cache stays fresh.
+    #[cfg(target_os = "linux")]
+    {
+        crate::tasks::coordinator::start_seedbank_resilient_mount_system(state.clone());
+    }
+    crate::tasks::start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
     
     // Populate storage_cache with local seed banks (cross-platform)
     // This makes storage_cache the unified view for both local and remote storage

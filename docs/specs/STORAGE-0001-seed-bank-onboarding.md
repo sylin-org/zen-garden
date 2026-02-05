@@ -18,7 +18,7 @@ This specification defines the UX flow and technical implementation for onboardi
 
 | Type               | Naming                         | Receives Unnamed Requests | Receives Named Requests | Sync Participation                  |
 | ------------------ | ------------------------------ | ------------------------- | ----------------------- | ----------------------------------- |
-| **Unnamed**        | Default: `seed-bank-zengarden` | ✅ Primary pool           | ❌ No name to match     | ✅ Syncs with all unnamed           |
+| **Unnamed**        | Default: `seed-bank-zen-garden` | ✅ Primary pool           | ❌ No name to match     | ✅ Syncs with all unnamed           |
 | **Named + Open**   | User-specified                 | ✅ Fallback if no unnamed | ✅ If name matches      | ✅ Syncs with all open              |
 | **Named + Closed** | User-specified                 | ❌ Never                  | ✅ Only if name matches | ✅ Syncs only with same-name closed |
 
@@ -299,7 +299,7 @@ When multiple eligible devices are detected:
 ### 4.1 Koan Syntax (Human-Friendly)
 
 ```bash
-# Basic - uses first eligible device, default name (seed-bank-zengarden)
+# Basic - uses first eligible device, default name (seed-bank-zen-garden)
 garden-rake prepare seed-bank
 
 # Random generated name (seed-{adjective}-{noun})
@@ -356,7 +356,7 @@ prepare seed-bank [<device>] [named | as <name>] [at <stone>]
 
 # 'named' keyword → generate random seed-{adjective}-{noun}
 # 'as <name>' → use explicit name
-# neither → use default 'seed-bank-zengarden'
+# neither → use default 'seed-bank-zen-garden'
 ```
 
 ### 4.4 Normative Flags
@@ -407,6 +407,7 @@ All stone-local storage operations under `/api/v1/stone/storage/`:
 | Method | Endpoint                                  | Description                                |
 | ------ | ----------------------------------------- | ------------------------------------------ |
 | GET    | `/api/v1/stone/storage`                   | List all storage (seed banks + candidates) |
+| GET    | `/api/v1/stone/storage/health`            | Storage readiness (mounted + canonical + writable) |
 | GET    | `/api/v1/stone/storage/candidates`        | List eligible devices awaiting preparation |
 | POST   | `/api/v1/stone/storage/prepare`           | Prepare a device as seed bank              |
 | PATCH  | `/api/v1/stone/storage/{name}/visibility` | Change visibility (open/closed)            |
@@ -609,7 +610,7 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "old_name": "seed-bank-zengarden",
+  "old_name": "seed-bank-zen-garden",
   "new_name": "backup-vault",
   "pool_id": "01956a3e-7c00-7000-8000-000000000099"
 }
@@ -725,14 +726,14 @@ Object CRUD operations on seed bank contents:
 
 ```http
 # List immediate children (default depth=1)
-GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/
+GET /api/v1/stone/storage/bank/backup-vault/mybucket/
 
 # List 3 levels deep
-GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=3
+GET /api/v1/stone/storage/bank/backup-vault/mybucket/?depth=3
 
 # Full recursive listing
-GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=all
-GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=-1  # Unix convention
+GET /api/v1/stone/storage/bank/backup-vault/mybucket/?depth=all
+GET /api/v1/stone/storage/bank/backup-vault/mybucket/?depth=-1  # Unix convention
 ```
 
 **Depth Behavior:**
@@ -748,7 +749,7 @@ GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=-1  # Unix convent
 
 ```json
 {
-  "path": "apps/myapp/",
+  "path": "mybucket/",
   "entries": [
     {
       "name": "config.json",
@@ -781,43 +782,35 @@ Seed banks are mounted under `{data_dir}/mounts/`:
 
 ```
 {data_dir}/mounts/{name}/.zen-garden/
-├── manifest.yaml           # Seed bank metadata
+├── manifest.json           # Seed bank metadata
 ├── journal/                # Sync journal (GUIDv7-based)
 │   ├── head                # Current journal head pointer
 │   └── *.json              # Journal entry batches
-├── garden/                 # Cultivation namespace
-│   ├── index.yaml         # Backup index
-│   ├── offerings/         # Offering backups
-│   │   └── {offering_id}/
-│   │       └── {timestamp}/
-│   │           ├── manifest.yaml
-│   │           └── data.archive.gz
-│   └── stones/            # Stone identity backups
-│       └── {stone_id}/
-│           └── identity.yaml
-└── apps/                   # S3 namespace (app storage)
-    └── {app_name}/
-        └── ...
+└── garden/                 # Garden namespace
+    ├── memories/           # Nurturing backups
+    │   ├── index.json       # Remote nurturing index
+    │   └── {offering_id}/
+    │       ├── offering.json
+    │       └── {harvest_id}.tar.gz
+    └── storage/            # S3 storage root
+        └── {bucket}/
+            └── {key}
 ```
 
 ### 6.2 Manifest File
 
-```yaml
-# /mnt/usb/.zen-garden/manifest.yaml
-version: 1
-id: 01956a3e-7c00-7000-8000-000000000001 # GUIDv7 (immutable identity)
-pool_id: 01956a3e-7c00-7000-8000-000000000099 # Sync group identity
-name: portable-backup
-visibility: open # open | closed
-filesystem: btrfs # btrfs | ext4
-device_serial: "WD-WMC1T0123456" # For future cryptographic signing
-created_at: 2026-01-28T10:35:00Z
-created_by:
-  stone: stone-golden-delta
-  moss_version: 0.2.202601281035
-protocols:
-  - s3
-  - storage
+```json
+// /mnt/usb/.zen-garden/manifest.json
+{
+  "version": 2,
+  "id": "01956a3e-7c00-7000-8000-000000000001",
+  "pool_id": "01956a3e-7c00-7000-8000-000000000099",
+  "name": "portable-backup",
+  "visibility": "open",
+  "filesystem": "btrfs",
+  "created_at": "2026-01-28T10:35:00Z",
+  "origin_stone": "stone-golden-delta"
+}
 ```
 
 **Identity:**
@@ -883,7 +876,7 @@ This approach is preferred over fstab because:
 When a prepared seed bank is plugged into a different stone:
 
 1. Moss detects `.zen-garden/` directory → treats as `prepared` state
-2. Reads `manifest.yaml` to get identity (GUIDv7 `id`)
+2. Reads `manifest.json` to get identity (GUIDv7 `id`)
 3. Registers locally with original name
 4. Begins sync with other seed banks in same sync group
 
@@ -985,6 +978,7 @@ fn is_removable(device: &Path) -> Result<bool, StorageError> {
 ### Phase 3: API Endpoints
 
 - [ ] `GET /api/v1/stone/storage`
+- [ ] `GET /api/v1/stone/storage/health`
 - [ ] `GET /api/v1/stone/storage/candidates`
 - [ ] `POST /api/v1/stone/storage/prepare`
 - [ ] `PATCH /api/v1/stone/storage/{name}/visibility`
@@ -1071,7 +1065,7 @@ See [STORAGE-0003](../decisions/STORAGE-0003-beacon-protocol.md) for full protoc
   "timestamp": "2026-01-28T10:30:00.000Z",
   "origin_stone": "stone-golden-delta",
   "op": "put",
-  "path": "apps/myapp/config.json",
+  "path": "mybucket/config.json",
   "checksum": "sha256:abc123...",
   "size": 1024,
   "prev": "01956a3e-7bff-7000-8000-000000000000"

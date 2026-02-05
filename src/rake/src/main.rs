@@ -745,8 +745,8 @@ enum Commands {
         garden-rake store ls mydata --prefix logs/                # List with prefix\n  \
         garden-rake store rm mydata config.json                   # Delete object\n  \
         garden-rake store head mydata config.json                 # Show metadata\n\n\
-        Objects are stored in seed bank under apps/<app-name>/<bucket>/<key>.\n\
-        Use --app to specify application namespace (default: zen-garden)."
+        Objects are stored under garden/storage/{bucket}/{key}.\n\
+        Use --app to prefix keys as {app}/{bucket}/... (default: zen-garden)."
     )]
     Store {
         /// Operation: put, get, ls, rm, head

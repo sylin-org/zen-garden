@@ -185,6 +185,17 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             )
             .note("Long-running connection. Events broadcast every 30s + on service state change.")
     );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/storage/health", "stone")
+            .description("Stone seed-bank storage health (mount readiness, layout, and banks)")
+            .response_type("StorageHealth")
+            .example(
+                "Check storage health",
+                "curl http://stone-01:7185/api/v1/stone/storage/health",
+                r#"{"data": {"ready": true, "mount_path": "/garden/storage", "bank_count": 1}}"#
+            )
+    );
     
     // Garden Topology
     endpoints.push(
@@ -304,6 +315,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
                     "/api/v1/stone/info".into(),
                     "/api/v1/stone/companions".into(),
                     "/api/v1/stone/presence/stream".into(),
+                    "/api/v1/stone/storage/health".into(),
                 ],
             },
             garden_common::api_manifest::ApiCategory {

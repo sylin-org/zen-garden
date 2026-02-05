@@ -2144,7 +2144,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         description: "Object storage operations on seed banks",
         long_description: "S3-compatible object storage on seed banks.\n\n\
             Provides put, get, list (ls), delete (rm), and head operations for storing\n\
-            objects in seed bank buckets. Objects are organized under apps/<app-name>/<bucket>/<key>.",
+            objects in seed bank buckets. Objects are stored under garden/storage/{bucket}/{key}.\n\
+            Use --app to prefix keys as {app}/{bucket}/... (default: zen-garden).",
         remote_capable: true,
         params: vec![
             CommandParam {

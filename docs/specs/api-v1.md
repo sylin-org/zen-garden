@@ -346,39 +346,69 @@ GET /api/v1/resolve                        # Resolve connection string component
 **Philosophy:** Infrastructure-as-capability, protocol-based access
 
 ```http
-PUT    /api/v1/storage/{path}              # Put object
-GET    /api/v1/storage/{path}              # Get object
-HEAD   /api/v1/storage/{path}              # Head object (metadata)
-DELETE /api/v1/storage/{path}              # Delete object
-GET    /api/v1/storage/                    # List objects (with prefix, pagination)
+PUT    /api/v1/storage/s3/{bucket}/{key}   # Put object
+GET    /api/v1/storage/s3/{bucket}/{key}   # Get object
+HEAD   /api/v1/storage/s3/{bucket}/{key}   # Head object (metadata)
+DELETE /api/v1/storage/s3/{bucket}/{key}   # Delete object
+GET    /api/v1/storage/s3                  # List buckets
+GET    /api/v1/storage/s3/{bucket}         # List objects (with prefix, pagination)
 ```
 
 **Headers:**
-- `X-App-Name` (required): Application namespace for isolation
+- `X-Seed-Bank` (optional): Select a specific seed bank by name
 
-**PUT /api/v1/storage/config.json:**
+**PUT /api/v1/storage/s3/configs/app.json:**
 ```http
-PUT /api/v1/storage/config.json
-X-App-Name: myapp
+PUT /api/v1/storage/s3/configs/app.json
 Content-Type: application/json
 
 {"key": "value"}
 
 Response:
-201 Created
+200 OK
 ETag: "abc123..."
 ```
 
-**GET /api/v1/storage/?prefix=data/:**
-```json
-{
-  "contents": [
-    {"key": "data/file1.json", "size": 1234, "etag": "abc123"},
-    {"key": "data/file2.json", "size": 5678, "etag": "def456"}
-  ],
-  "is_truncated": false
-}
+**GET /api/v1/storage/s3/configs?prefix=data/:**
+```xml
+<ListBucketResult>...</ListBucketResult>
 ```
+
+---
+
+### Storage API (REST)
+
+**Target:** SDK-friendly storage access via seed banks  
+**Philosophy:** JSON responses + raw bytes, non-S3 surface
+
+```http
+GET    /api/v1/storage                    # List buckets (JSON)
+PUT    /api/v1/storage/{bucket}/{key}     # Put object (JSON response)
+GET    /api/v1/storage/{bucket}/{key}     # Get object (raw bytes)
+HEAD   /api/v1/storage/{bucket}/{key}     # Head object (metadata)
+DELETE /api/v1/storage/{bucket}/{key}     # Delete object
+GET    /api/v1/storage/{bucket}/?list=true&prefix=...&delimiter=/&marker=...&max-keys=...
+```
+
+**Headers:**
+- `X-Seed-Bank` (optional): Select a specific seed bank by name
+
+---
+
+### Memories API (Hydration)
+
+**Target:** Read-only access to nurturing backups for external orchestrators  
+**Philosophy:** Backups are portable, discoverable, and auditable
+
+```http
+GET /api/v1/memories                                # List all remote snapshots (index)
+GET /api/v1/memories/{offering_id}                  # List snapshots for offering
+GET /api/v1/memories/{offering_id}/manifest         # Hydration metadata (offering.json)
+GET /api/v1/memories/{offering_id}/{harvest_id}     # Download snapshot tar.gz
+```
+
+**Headers:**
+- `X-Seed-Bank` (optional): Select a specific seed bank by name
 
 ---
 
@@ -388,27 +418,25 @@ ETag: "abc123..."
 **Philosophy:** Adopt local/network storage as S3-capable seed banks
 
 ```http
-GET  /api/v1/stone/seed-banks              # List configured seed banks
-POST /api/v1/stone/seed-banks              # Add seed bank
-DELETE /api/v1/stone/seed-banks/{name}     # Remove seed bank
+GET    /api/v1/stone/storage                      # Overview (seed banks + candidates)
+GET    /api/v1/stone/storage/health               # Storage readiness (mounted + canonical + writable)
+GET    /api/v1/stone/storage/candidates           # List eligible devices
+POST   /api/v1/stone/storage/prepare              # Prepare a device as seed bank
+POST   /api/v1/stone/storage/release-all          # Safely unmount all seed banks
+GET    /api/v1/stone/storage/bank                 # List seed banks
+GET    /api/v1/stone/storage/bank/{id}            # Get seed bank details
+DELETE /api/v1/stone/storage/bank/{id}            # Remove seed bank (does not delete data)
+PATCH  /api/v1/stone/storage/bank/{id}/visibility # Change visibility (open/closed)
+PATCH  /api/v1/stone/storage/bank/{id}/rename     # Rename seed bank (pool rules apply)
+POST   /api/v1/stone/storage/bank/{id}/release    # Safely unmount seed bank
 ```
 
-**POST /api/v1/stone/seed-banks:**
-```json
-{
-  "path": "/mnt/usb",
-  "name": "seed-usb-01",
-  "announce_s3": true
-}
-
-Response:
-201 Created
-{
-  "name": "seed-usb-01",
-  "path": "/mnt/usb",
-  "status": "online",
-  "protocols": ["s3", "storage"]
-}
+**Object operations (stone-local, by seed bank id):**
+```http
+GET    /api/v1/stone/storage/bank/{id}/*path       # Get object
+PUT    /api/v1/stone/storage/bank/{id}/*path       # Put object
+DELETE /api/v1/stone/storage/bank/{id}/*path       # Delete object
+HEAD   /api/v1/stone/storage/bank/{id}/*path       # Object metadata
 ```
 
 ---

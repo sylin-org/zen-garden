@@ -8,6 +8,29 @@
 
 ---
 
+## Alignment Note (2026-02-05)
+
+This proposal predates the seed-bank realignment. Apply these updates when reading:
+- `garden/storage/{bucket}/{key}` is the only S3/REST storage root (no `apps/`).
+- App scoping is client-side (SDKs default to `{app}/{bucket}`), not server-enforced.
+- S3 gateway lives at `/api/v1/storage/s3/*`.
+- REST storage surface is `/api/v1/storage/*` (non-S3).
+- Seed bank selection uses `X-Seed-Bank` or `seed-bank` (no `X-App-Name`).
+- Offering backups use `garden/memories`; `garden/offerings` is reserved for listing active services.
+
+## Implementation Status (2026-02-05)
+
+**Implemented:**
+- `/api/v1/storage` (GET/PUT/DELETE/HEAD, list)
+- `/api/v1/storage/s3` (list buckets, list objects, PUT/GET/HEAD/DELETE)
+- `/api/v1/memories` (read-only access to backups, audited)
+- Seed bank selection via `X-Seed-Bank` / `seed-bank`
+- Canonical layout validation + path traversal protection
+
+**Planned (not implemented):**
+- Copy, multipart, and presign flows
+- Auth/authorization enforcement
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -58,126 +81,40 @@ http://stone-jade-lake.local:7180/api/v1/storage
 
 ## Connection Strings
 
-### Format
+### Formats
 
+**REST (storage API):**
 ```
-zen-garden:s3//{app-name}[@{seed-bank-name}]
+zen-garden:storage//{path}
+zen-garden:storage//{seed-bank}:{path}
 ```
 
-| Component | Required | Description |
-|-----------|----------|-------------|
-| `zen-garden:s3//` | Yes | Protocol identifier |
-| `{app-name}` | No | App namespace (derived from binary if omitted) |
-| `@{seed-bank-name}` | No | Specific seed bank (any available if omitted) |
+**S3 (gateway):**
+```
+zen-garden:s3//{bucket}
+zen-garden:s3//{bucket}@{seed-bank}
+```
+
+### Notes
+
+- `path` is `{bucket}/{key}` for the REST surface.
+- S3 buckets map directly to `garden/storage/{bucket}`.
+- App scoping is **client-side only**. SDKs may default to `{app}/{bucket}` when building paths,
+  but the server does not enforce per-app isolation.
 
 ### Examples
 
-| Connection String | App Name | Seed Bank | Path Prefix |
-|-------------------|----------|-----------|-------------|
-| `zen-garden:s3//` | (derived) | any | `apps/{binary-name}/` |
-| `zen-garden:s3//my-app` | my-app | any | `apps/my-app/` |
-| `zen-garden:s3//@seed-glorious-dawn` | (derived) | seed-glorious-dawn | `apps/{binary-name}/` |
-| `zen-garden:s3//my-app@seed-glorious-dawn` | my-app | seed-glorious-dawn | `apps/my-app/` |
-
-### App Name Derivation
-
-When app name is omitted, the SDK derives it automatically:
-
-```rust
-fn derive_app_name() -> Result<String> {
-    // 1. Try binary name
-    if let Some(name) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string())) 
-    {
-        return Ok(sanitize_app_name(&name));
-    }
-    
-    // 2. Fallback: require explicit
-    Err("Could not derive app name. Use zen-garden:s3//explicit-name")
-}
-
-fn sanitize_app_name(name: &str) -> String {
-    // Lowercase, alphanumeric + hyphens only
-    name.to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect()
-}
-```
-
-Example: `./my-backup-tool` using `zen-garden:s3//` gets namespace `apps/my-backup-tool/`.
-
-### Unified Pattern
-
-Storage follows the same connection string pattern as all Zen Garden resources:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              UNIFIED CONNECTION STRING PATTERN                  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   zen-garden:mongodb//mydb                                      │
-│       → Resolve "who has mongodb?"                              │
-│       → Connect via MongoDB wire protocol                       │
-│                                                                 │
-│   zen-garden:redis//                                            │
-│       → Resolve "who has redis?"                                │
-│       → Connect via Redis protocol                              │
-│                                                                 │
-│   zen-garden:s3//my-app                                         │
-│       → Resolve "who can serve storage?"                        │
-│       → Connect via S3 protocol                                 │
-│       → Namespace: apps/my-app/                                 │
-│                                                                 │
-│   zen-garden:s3//my-app@seed-glorious-dawn                      │
-│       → Resolve "who serves seed-glorious-dawn?"                │
-│       → Connect via S3 protocol                                 │
-│       → Namespace: apps/my-app/                                 │
-│                                                                 │
-│   SAME PATTERN. SAME DISCOVERY. DIFFERENT PROTOCOLS.            │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Resolution Flow
-
-```
-Application:
-  connection = "zen-garden:s3//my-app@seed-glorious-dawn"
-  
-Zen Garden SDK:
-  1. Parse: protocol=s3, app=my-app, seed_bank=seed-glorious-dawn
-  2. Discovery: broadcast SEED_BANK_QUERY or check cache
-  3. Response: stone-jade-lake has it (direct or proxy)
-  4. Return S3 client configured with:
-       endpoint: http://stone-jade-lake.local:7180/api/v1/storage
-       bucket: garden
-       path_prefix: apps/my-app/
-       credentials: (garden credentials or zen-garden/zen-garden)
-
-Application:
-  s3.put_object("config.json", data)
-  # Actually writes to: apps/my-app/config.json
-```
+| Connection String | Meaning |
+|-------------------|---------|
+| `zen-garden:storage//photos/2026/IMG_0001.jpg` | REST path on default seed bank |
+| `zen-garden:storage//flower-meadow:photos/2026/IMG_0001.jpg` | REST path on named seed bank |
+| `zen-garden:s3//photos` | S3 bucket `photos` on default seed bank |
+| `zen-garden:s3//photos@flower-meadow` | S3 bucket `photos` on named seed bank |
 
 ### Dynamic Endpoint Resolution
 
-When a USB seed bank moves between stones, the connection string remains unchanged:
-
-```
-Before (USB in stone-jade-lake):
-  zen-garden:s3//my-app@seed-glorious-dawn
-    → http://stone-jade-lake.local:7180/api/v1/storage
-
-USB moved to stone-silver-stream...
-
-After:
-  zen-garden:s3//my-app@seed-glorious-dawn
-    → http://stone-silver-stream.local:7180/api/v1/storage
-
-Connection string unchanged. Endpoint resolved dynamically.
-```
+When a seed bank moves between stones, the connection string remains unchanged.
+Resolution returns a new endpoint, but the path/bucket stays the same.
 
 ---
 
@@ -188,30 +125,16 @@ Connection string unchanged. Endpoint resolved dynamically.
 ```
 seed-bank/
 ├── .zen-garden/
-│   └── greetings                    # Seed bank identity
-│
-├── garden/                          # PROTECTED (Moss/cultivation only)
-│   ├── offerings/
-│   │   └── {offering-id}/
-│   │       ├── identity.yaml
-│   │       ├── latest -> {timestamp}/
-│   │       └── {timestamp}/
-│   │           ├── manifest.yaml
-│   │           └── data.archive.gz
-│   ├── stones/
-│   │   └── {stone-id}/
-│   │       ├── identity.yaml
-│   │       └── moss.toml
-│   └── index.yaml
-│
-└── apps/                            # APP NAMESPACE (external apps)
-    ├── my-backup-tool/
-    │   └── data/
-    │       └── config.json
-    ├── restic/
-    │   └── ...
-    └── velero/
-        └── ...
+│   └── manifest.json                # Seed bank identity (JSON)
+└── garden/
+    ├── memories/                    # Nurturing backups (read-only via /api/v1/memories)
+    │   ├── index.json
+    │   └── {offering_id}/
+    │       ├── offering.json
+    │       └── {harvest_id}.tar.gz
+    └── storage/                     # S3/REST storage root
+        └── {bucket}/
+            └── {key}
 ```
 
 ### Access Rules
@@ -221,104 +144,47 @@ seed-bank/
 │                   STORAGE NAMESPACE RULES                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│   External API requests (from apps via SDK):                    │
-│   ──────────────────────────────────────────                    │
-│   • MUST include X-App-Name header                              │
-│   • Paths automatically prefixed: apps/{app-name}/              │
-│   • Writing to root or garden/ → 403 Forbidden                  │
-│   • Path traversal (../) → 403 Forbidden                        │
-│                                                                 │
-│   Internal requests (from Moss cultivation):                    │
-│   ──────────────────────────────────────────                    │
-│   • Include X-Internal-Request: true + signature                │
-│   • Full root access                                            │
-│   • Writes to garden/offerings/, garden/stones/, etc.           │
+│   /api/v1/storage/* is rooted at garden/storage/.               │
+│   /api/v1/memories/* is read-only and rooted at garden/memories.│
+│   Path traversal (../, absolute paths) → 400 Invalid Path       │
+│   Seed bank selection: X-Seed-Bank header or seed-bank query    │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Request Examples
 
-**App request (via SDK):**
+**REST request (default seed bank):**
 
 ```http
-PUT /api/v1/storage/data/config.json
-X-App-Name: my-backup-tool
-Authorization: ZenGarden ...
+PUT /api/v1/storage/my-app/config.json
+Content-Type: application/json
 
 {data}
 ```
 
-Server writes to: `apps/my-backup-tool/data/config.json`
-
-**Missing app name → DENIED:**
-
-```http
-PUT /api/v1/storage/data/config.json
-Authorization: ZenGarden ...
-```
-
-```http
-403 Forbidden
-
-{
-  "error": "AppNameRequired",
-  "message": "X-App-Name header required for storage access",
-  "hint": "Use SDK with zen-garden:s3//your-app-name or set X-App-Name header"
-}
-```
+Server writes to: `garden/storage/my-app/config.json`
 
 **Path traversal attempt → DENIED:**
 
 ```http
-PUT /api/v1/storage/../garden/offerings/evil.txt
-X-App-Name: my-app
-Authorization: ZenGarden ...
+PUT /api/v1/storage/../evil.txt
 ```
 
 ```http
-403 Forbidden
+400 Bad Request
 
 {
-  "error": "PathTraversal",
-  "message": "Path cannot escape app namespace",
-  "attempted_path": "../garden/offerings/evil.txt"
+  "error": "InvalidPath",
+  "message": "Path contains invalid segments"
 }
 ```
 
-**Direct garden access attempt → DENIED:**
+**Memories access (read-only):**
 
 ```http
-PUT /api/v1/storage/garden/offerings/abc123/manifest.yaml
-X-App-Name: my-app
-Authorization: ZenGarden ...
+GET /api/v1/memories/abc123/manifest
 ```
-
-```http
-403 Forbidden
-
-{
-  "error": "ProtectedNamespace",
-  "message": "Cannot write to garden/ namespace",
-  "hint": "The garden/ namespace is reserved for system use"
-}
-```
-
-### Internal Requests (Moss)
-
-Moss uses signed internal requests for cultivation:
-
-```http
-PUT /api/v1/storage/garden/offerings/abc123/2026-01-23T03:00:00Z/manifest.yaml
-X-Internal-Request: true
-X-Stone-Id: stone-jade-lake-abc123
-X-Signature: ed25519:base64...
-Content-Type: application/yaml
-
-{manifest content}
-```
-
-The signature covers the request path, timestamp, and stone ID — preventing forgery.
 
 ---
 
@@ -327,31 +193,22 @@ The signature covers the request path, timestamp, and stone ID — preventing fo
 ### Rust
 
 ```rust
-// Minimal - derive app name from binary, any seed bank
-let storage = zen_garden::s3("zen-garden:s3//").await?;
+// REST storage (garden-scoped)
+let storage = zen_garden::storage("zen-garden:storage//").await?;
 
-// Explicit app name
-let storage = zen_garden::s3("zen-garden:s3//my-app").await?;
+// By default, SDKs scope to the app (client-side only)
+storage.put("config.json", data).await?;           // → garden/storage/{app}/config.json
+storage.put("photos/2026/IMG_0001.jpg", data).await?; // → garden/storage/photos/2026/IMG_0001.jpg
+let config = storage.get("config.json").await?;    // ← garden/storage/{app}/config.json
 
-// Specific seed bank, derived app name
-let storage = zen_garden::s3("zen-garden:s3//@seed-glorious-dawn").await?;
+// List within a bucket prefix
+let entries = storage.list("photos/").await?;
 
-// Fully explicit
-let storage = zen_garden::s3("zen-garden:s3//my-app@seed-glorious-dawn").await?;
-
-// All operations are namespaced automatically
-storage.put("config.json", data).await?;           // → apps/my-app/config.json
-storage.put("data/backup.tar.gz", data).await?;    // → apps/my-app/data/backup.tar.gz
-let config = storage.get("config.json").await?;    // ← apps/my-app/config.json
-
-// List within namespace
-let entries = storage.list("data/").await?;        // Lists apps/my-app/data/*
-
-// Get raw S3 client (still namespaced)
-let s3_client = storage.s3_client();
+// Raw S3 client (bucket/key are explicit)
+let s3_client = zen_garden::s3("zen-garden:s3//").await?;
 s3_client.put_object()
-    .bucket("garden")
-    .key("config.json")                            // SDK prefixes automatically
+    .bucket("photos")
+    .key("2026/IMG_0001.jpg")
     .body(ByteStream::from(data))
     .send()
     .await?;
@@ -360,28 +217,25 @@ s3_client.put_object()
 ### Python
 
 ```python
-# Minimal
-storage = zen_garden.s3("zen-garden:s3//")
+# REST storage
+storage = zen_garden.storage("zen-garden:storage//")
 
-# Explicit app name  
-storage = zen_garden.s3("zen-garden:s3//my-app")
+# Client-side app scoping (default)
+storage.put("config.json", data)                   # → garden/storage/{app}/config.json
+config = storage.get("config.json")                # ← garden/storage/{app}/config.json
 
-# Specific seed bank
-storage = zen_garden.s3("zen-garden:s3//my-app@seed-glorious-dawn")
+# Explicit bucket/key
+storage.put("photos/2026/IMG_0001.jpg", data)      # → garden/storage/photos/2026/IMG_0001.jpg
 
-# All operations namespaced
-storage.put("config.json", data)                   # → apps/my-app/config.json
-config = storage.get("config.json")                # ← apps/my-app/config.json
-
-# List within namespace
-for entry in storage.list("data/"):
+# List within a bucket prefix
+for entry in storage.list("photos/"):
     print(f"{entry.key}: {entry.size} bytes")
 
-# Get boto3 client (still namespaced via path prefix)
-s3 = storage.s3_client()
+# Raw boto3 client (bucket/key explicit)
+s3 = zen_garden.s3("zen-garden:s3//").client()
 s3.put_object(
-    Bucket="garden",
-    Key="config.json",                             # SDK prefixes automatically
+    Bucket="photos",
+    Key="2026/IMG_0001.jpg",
     Body=data
 )
 ```
@@ -389,231 +243,122 @@ s3.put_object(
 ### C# / .NET
 
 ```csharp
-// Minimal
-var storage = await ZenGarden.S3("zen-garden:s3//");
+// REST storage
+var storage = await ZenGarden.Storage("zen-garden:storage//");
 
-// Explicit app name
-var storage = await ZenGarden.S3("zen-garden:s3//my-app");
+// Client-side app scoping (default)
+await storage.PutAsync("config.json", data);        // → garden/storage/{app}/config.json
+var config = await storage.GetAsync("config.json"); // ← garden/storage/{app}/config.json
 
-// Specific seed bank
-var storage = await ZenGarden.S3("zen-garden:s3//my-app@seed-glorious-dawn");
+// Explicit bucket/key
+await storage.PutAsync("photos/2026/IMG_0001.jpg", data);
 
-// All operations namespaced
-await storage.PutAsync("config.json", data);       // → apps/my-app/config.json
-var config = await storage.GetAsync("config.json"); // ← apps/my-app/config.json
-
-// List within namespace
-await foreach (var entry in storage.ListAsync("data/"))
+// List within a bucket prefix
+await foreach (var entry in storage.ListAsync("photos/"))
 {
     Console.WriteLine($"{entry.Key}: {entry.Size} bytes");
 }
+
+// Raw S3 client (bucket/key explicit)
+var s3 = await ZenGarden.S3("zen-garden:s3//");
+await s3.PutObjectAsync("photos", "2026/IMG_0001.jpg", data);
 ```
 
 ### Node.js / TypeScript
 
 ```typescript
-// Minimal
-const storage = await zenGarden.s3("zen-garden:s3//");
+// REST storage
+const storage = await zenGarden.storage("zen-garden:storage//");
 
-// Explicit app name
-const storage = await zenGarden.s3("zen-garden:s3//my-app");
+// Client-side app scoping (default)
+await storage.put("config.json", data);            // → garden/storage/{app}/config.json
+const config = await storage.get("config.json");   // ← garden/storage/{app}/config.json
 
-// Specific seed bank
-const storage = await zenGarden.s3("zen-garden:s3//my-app@seed-glorious-dawn");
+// Explicit bucket/key
+await storage.put("photos/2026/IMG_0001.jpg", data);
 
-// All operations namespaced
-await storage.put("config.json", data);            // → apps/my-app/config.json
-const config = await storage.get("config.json");   // ← apps/my-app/config.json
-
-// List within namespace  
-for await (const entry of storage.list("data/")) {
+// List within a bucket prefix
+for await (const entry of storage.list("photos/")) {
     console.log(`${entry.key}: ${entry.size} bytes`);
 }
+
+// Raw S3 client (bucket/key explicit)
+const s3 = await zenGarden.s3("zen-garden:s3//");
+await s3.putObject({ bucket: "photos", key: "2026/IMG_0001.jpg", body: data });
 ```
 
 ### Go
 
 ```go
-// Minimal
-storage, err := zenGarden.S3("zen-garden:s3//")
+// REST storage
+storage, err := zenGarden.Storage("zen-garden:storage//")
 
-// Explicit app name
-storage, err := zenGarden.S3("zen-garden:s3//my-app")
+// Client-side app scoping (default)
+err = storage.Put("config.json", data)             // → garden/storage/{app}/config.json
+config, err := storage.Get("config.json")          // ← garden/storage/{app}/config.json
 
-// Specific seed bank
-storage, err := zenGarden.S3("zen-garden:s3//my-app@seed-glorious-dawn")
+// Explicit bucket/key
+err = storage.Put("photos/2026/IMG_0001.jpg", data)
 
-// All operations namespaced
-err = storage.Put("config.json", data)             // → apps/my-app/config.json
-config, err := storage.Get("config.json")          // ← apps/my-app/config.json
-
-// List within namespace
-entries, err := storage.List("data/")
+// List within a bucket prefix
+entries, err := storage.List("photos/")
 for _, entry := range entries {
     fmt.Printf("%s: %d bytes\n", entry.Key, entry.Size)
 }
+
+// Raw S3 client (bucket/key explicit)
+s3, err := zenGarden.S3("zen-garden:s3//")
+_ = s3.Put("photos", "2026/IMG_0001.jpg", data)
 ```
 
 ---
 
 ## External Tool Integration
 
-### Local Resolver Proxy
+### Direct S3 Gateway (No Proxy)
 
-For tools that can't use the Zen Garden SDK (standard `aws` CLI, `rclone`, etc.), run a local resolver proxy:
+Most S3-compatible tools can point directly at the gateway:
 
-```bash
-# Start the resolver proxy with app name
-$ zen-garden-s3-proxy start --app my-backup-tool
-Listening on localhost:9000
-App namespace: apps/my-backup-tool/
-Resolving storage requests to garden seed banks...
-
-# Now any S3 tool works with dynamic resolution:
-$ aws --endpoint-url http://localhost:9000 s3 ls s3://zen-garden/
-                           PRE data/
-                           PRE config/
-2026-01-23 03:00:00       1234 settings.json
-
-# These paths are actually apps/my-backup-tool/* on the seed bank
+```
+http://{stone}.local:7180/api/v1/storage/s3
 ```
 
+Buckets map directly to `garden/storage/{bucket}`. No server-side app prefixing.
+
+### Local Resolver Proxy (Optional)
+
+If you want automatic seed bank routing or to force a named seed bank, use a resolver proxy.
 The proxy:
-1. Receives S3 request for bucket `zen-garden`
-2. Resolves seed bank via Zen Garden discovery protocol
-3. Prefixes all paths with `apps/{app-name}/`
-4. Forwards to actual stone endpoint
-5. Returns response transparently
-
-### Proxy Configuration
+1. Resolves a seed bank to a stone endpoint.
+2. Adds `X-Seed-Bank` (optional).
+3. Forwards requests to `/api/v1/storage/s3`.
 
 ```bash
-# Start with app name (required)
-zen-garden-s3-proxy start --app my-backup-tool
+# Route to any available seed bank (default)
+zen-garden-s3-proxy start
 
-# Custom port
-zen-garden-s3-proxy start --app my-backup-tool --port 9001
+# Force a named seed bank
+zen-garden-s3-proxy start --seed-bank flower-meadow
 
-# Specific seed bank
-zen-garden-s3-proxy start --app my-backup-tool --seed-bank seed-glorious-dawn
-
-# Run as daemon
-zen-garden-s3-proxy start --app my-backup-tool --daemon
-zen-garden-s3-proxy stop
-
-# Check status
-zen-garden-s3-proxy status
+# Example (AWS CLI)
+aws --endpoint-url http://localhost:9000 s3 ls s3://photos/
+aws --endpoint-url http://localhost:9000 s3 cp ./img.jpg s3://photos/2026/img.jpg
 ```
 
-### Bucket Mapping
-
-The proxy maps bucket names to seed banks:
-
-| Bucket Name | Resolves To |
-|-------------|-------------|
-| `zen-garden` | Any available seed bank |
-| `seed-glorious-dawn` | Specific seed bank |
-| `seed-patient-winter` | Specific seed bank |
-
-```bash
-# Any seed bank
-aws --endpoint-url http://localhost:9000 s3 ls s3://zen-garden/
-
-# Specific seed bank
-aws --endpoint-url http://localhost:9000 s3 ls s3://seed-glorious-dawn/
-```
-
-### rclone Configuration
+### rclone Example
 
 ```ini
-# ~/.config/rclone/rclone.conf
-
-# Via resolver proxy (recommended)
 [zen-garden]
 type = s3
 provider = Other
-endpoint = http://localhost:9000
+endpoint = http://stone.local:7180/api/v1/storage/s3
 access_key_id = zen-garden
 secret_access_key = zen-garden
 ```
 
 ```bash
-# Start proxy first
-zen-garden-s3-proxy start --app rclone-backup
-
-# bucket = zen-garden for any seed bank
-rclone ls zen-garden:zen-garden/
-
-# bucket = seed bank name for specific
-rclone ls zen-garden:seed-glorious-dawn/
-
-# Sync to local (paths are within app namespace)
-rclone sync zen-garden:zen-garden/data/ ./local-backup/
-
-# Check integrity
-rclone check zen-garden:zen-garden/data/ ./local-backup/
-
-# Copy between seed banks
-rclone copy zen-garden:seed-glorious-dawn/ zen-garden:seed-patient-winter/
-```
-
-### AWS CLI Configuration
-
-```bash
-# Configure credentials (one-time)
-aws configure set aws_access_key_id zen-garden --profile zen-garden
-aws configure set aws_secret_access_key zen-garden --profile zen-garden
-aws configure set region zen-garden --profile zen-garden
-
-# Start proxy
-zen-garden-s3-proxy start --app aws-backup
-
-# Create alias
-alias zg-s3='aws --endpoint-url http://localhost:9000 --profile zen-garden s3'
-
-# Now use naturally (all paths within apps/aws-backup/)
-zg-s3 ls s3://zen-garden/
-zg-s3 cp ./data.tar.gz s3://zen-garden/backups/
-zg-s3 sync ./backup/ s3://zen-garden/daily/2026-01-24/
-
-# Specific seed bank
-zg-s3 ls s3://seed-glorious-dawn/
-```
-
-### MinIO Client (mc)
-
-```bash
-# Start proxy
-zen-garden-s3-proxy start --app mc-tools
-
-# Configure alias
-mc alias set zg http://localhost:9000 zen-garden zen-garden
-
-# Use naturally (all paths within apps/mc-tools/)
-mc ls zg/zen-garden/
-mc cp ./data.tar.gz zg/zen-garden/backups/
-mc mirror ./backup/ zg/zen-garden/daily/2026-01-24/
-```
-
-### restic Integration
-
-```bash
-# Start proxy for restic
-zen-garden-s3-proxy start --app restic
-
-# Configure restic
-export AWS_ACCESS_KEY_ID=zen-garden
-export AWS_SECRET_ACCESS_KEY=zen-garden
-export RESTIC_REPOSITORY=s3:http://localhost:9000/zen-garden/restic-repo
-
-# Initialize repository (stored in apps/restic/restic-repo/)
-restic init
-
-# Backup
-restic backup /home/user/documents
-
-# Restore
-restic restore latest --target /tmp/restore
+rclone ls zen-garden:photos/
+rclone sync ./local-backup/ zen-garden:backups/2026-01/
 ```
 
 ---
@@ -626,19 +371,22 @@ restic restore latest --target /tmp/restore
 | PostgreSQL | `zen-garden:postgresql//mydb` | PostgreSQL | `mydb` |
 | Redis | `zen-garden:redis//` | Redis | - |
 | Redis DB | `zen-garden:redis//0` | Redis | DB 0 |
-| S3 Storage | `zen-garden:s3//app-name` | S3 | `apps/app-name/` |
-| S3 Storage | `zen-garden:s3//app@seed-name` | S3 | `apps/app/` on seed-name |
+| S3 Storage | `zen-garden:s3//{bucket}` | S3 | `garden/storage/{bucket}/` |
+| S3 Storage | `zen-garden:s3//{bucket}@{seed-name}` | S3 | `garden/storage/{bucket}/` on seed-name |
 
 All resources follow the pattern:
 ```
 zen-garden:{protocol}//[{name}][@{target}]
 ```
 
-Discovery is unified. Protocol is standard. Endpoints resolve dynamically. Namespaces are enforced.
+Discovery is unified. Protocol is standard. Endpoints resolve dynamically. Namespaces are client-defined (no server enforcement).
 
 ---
 
 ## Presigned URLs
+
+**Status:** Planned (not implemented).  
+Examples below use bucket/key paths (no `apps/` prefix).
 
 > **🔒 Pond Only** — Presigned URLs require the cryptographic infrastructure provided by Pond. Dry gardens do not support this feature.
 
@@ -688,7 +436,6 @@ Presigned URLs allow temporary, scoped access to storage without requiring authe
 http://{stone}.local:7180/api/v1/storage/{path}
   ?X-Zen-Signature={signature}
   &X-Zen-Expires={expiration}
-  &X-Zen-App={app-name}
   &X-Zen-Operation={operation}
   &X-Zen-Garden={garden-id}
 ```
@@ -696,10 +443,9 @@ http://{stone}.local:7180/api/v1/storage/{path}
 **Example:**
 
 ```
-http://stone-jade-lake.local:7180/api/v1/storage/apps/my-app/data/backup.tar.gz
+http://stone-jade-lake.local:7180/api/v1/storage/my-app/data/backup.tar.gz
   ?X-Zen-Signature=ed25519:3Kf8sJ2mNpQrT...
   &X-Zen-Expires=2026-01-23T04:00:00Z
-  &X-Zen-App=my-app
   &X-Zen-Operation=GET
   &X-Zen-Garden=jade-mountain-abc123
 ```
@@ -714,7 +460,7 @@ Authorization: ZenGarden ...
 Content-Type: application/json
 
 {
-  "path": "data/backup.tar.gz",
+  "path": "my-app/data/backup.tar.gz",
   "operation": "GET",
   "expires_in": "1h"
 }
@@ -727,9 +473,9 @@ Content-Type: application/json
 Content-Type: application/json
 
 {
-  "url": "http://stone-jade-lake.local:7180/api/v1/storage/apps/my-app/data/backup.tar.gz?X-Zen-Signature=ed25519:3Kf8sJ2mNpQrT...&X-Zen-Expires=2026-01-23T04:00:00Z&X-Zen-App=my-app&X-Zen-Operation=GET&X-Zen-Garden=jade-mountain-abc123",
+  "url": "http://stone-jade-lake.local:7180/api/v1/storage/my-app/data/backup.tar.gz?X-Zen-Signature=ed25519:3Kf8sJ2mNpQrT...&X-Zen-Expires=2026-01-23T04:00:00Z&X-Zen-Operation=GET&X-Zen-Garden=jade-mountain-abc123",
   "expires": "2026-01-23T04:00:00Z",
-  "path": "apps/my-app/data/backup.tar.gz",
+  "path": "my-app/data/backup.tar.gz",
   "operation": "GET"
 }
 ```
@@ -738,7 +484,7 @@ Content-Type: application/json
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `path` | string | Yes | Path within app namespace |
+| `path` | string | Yes | Path within storage root (`{bucket}/{key}`) |
 | `operation` | string | Yes | `GET`, `PUT`, `DELETE`, or `LIST` |
 | `expires_in` | duration | Yes | How long until expiration (e.g., `1h`, `30m`, `7d`) |
 | `content_type` | string | No | Required Content-Type for PUT (validation) |
@@ -765,7 +511,7 @@ The signature covers all claims to prevent tampering:
 ```rust
 struct PresignedClaims {
     // What
-    path: String,              // "apps/my-app/data/backup.tar.gz"
+    path: String,              // "my-app/data/backup.tar.gz"
     operation: Operation,      // GET, PUT, DELETE, LIST
     
     // When
@@ -773,7 +519,7 @@ struct PresignedClaims {
     issued_at: DateTime<Utc>,  // When signature was created
     
     // Who
-    app: String,               // Issuing app namespace
+    bucket: String,            // Issuing bucket (first path segment)
     garden_id: String,         // Which garden issued it
     issued_by_stone: String,   // Which stone created it
     
@@ -790,7 +536,7 @@ impl PresignedClaims {
             self.path,
             self.operation,
             self.expires.to_rfc3339(),
-            self.app,
+            self.bucket,
             self.garden_id,
             self.content_type.as_deref().unwrap_or(""),
         )
@@ -992,10 +738,10 @@ url, err := storage.Presign("uploads/photo.jpg", PresignOptions{
 
 ```bash
 # Simple download
-curl -o backup.tar.gz "http://stone.local:7180/api/v1/storage/apps/my-app/data/backup.tar.gz?X-Zen-Signature=..."
+curl -o backup.tar.gz "http://stone.local:7180/api/v1/storage/my-app/data/backup.tar.gz?X-Zen-Signature=..."
 
 # With wget
-wget -O backup.tar.gz "http://stone.local:7180/api/v1/storage/apps/my-app/data/backup.tar.gz?X-Zen-Signature=..."
+wget -O backup.tar.gz "http://stone.local:7180/api/v1/storage/my-app/data/backup.tar.gz?X-Zen-Signature=..."
 
 # Browser: just open the URL
 ```
@@ -1007,20 +753,20 @@ wget -O backup.tar.gz "http://stone.local:7180/api/v1/storage/apps/my-app/data/b
 curl -X PUT \
   -H "Content-Type: application/gzip" \
   --data-binary @myfile.tar.gz \
-  "http://stone.local:7180/api/v1/storage/apps/my-app/uploads/myfile.tar.gz?X-Zen-Signature=..."
+  "http://stone.local:7180/api/v1/storage/my-app/uploads/myfile.tar.gz?X-Zen-Signature=..."
 
 # With content-type constraint (must match)
 curl -X PUT \
   -H "Content-Type: image/jpeg" \
   --data-binary @photo.jpg \
-  "http://stone.local:7180/api/v1/storage/apps/my-app/uploads/photo.jpg?X-Zen-Signature=..."
+  "http://stone.local:7180/api/v1/storage/my-app/uploads/photo.jpg?X-Zen-Signature=..."
 ```
 
 #### List Directory (LIST)
 
 ```bash
 # Returns JSON listing
-curl "http://stone.local:7180/api/v1/storage/apps/my-app/data/2026-01/?X-Zen-Signature=...&X-Zen-Operation=LIST"
+curl "http://stone.local:7180/api/v1/storage/my-app/data/2026-01/?X-Zen-Signature=...&X-Zen-Operation=LIST"
 ```
 
 ### Error Responses
@@ -1078,9 +824,9 @@ All presigned URL usage is logged:
 {
   "event": "presigned_url_used",
   "timestamp": "2026-01-23T03:45:00Z",
-  "path": "apps/my-app/data/backup.tar.gz",
+  "path": "my-app/data/backup.tar.gz",
   "operation": "GET",
-  "issued_by_app": "my-app",
+  "issued_by_bucket": "my-app",
   "issued_by_stone": "stone-jade-lake",
   "issued_at": "2026-01-23T03:00:00Z",
   "client_ip": "192.168.1.50",
@@ -1150,8 +896,8 @@ Paths are hierarchical, like a filesystem:
 /api/v1/storage/{path}
 
 Examples:
-/api/v1/storage/offerings/abc123/latest/manifest.yaml
-/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/data.archive.gz
+/api/v1/storage/backups/abc123/latest/manifest.yaml
+/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/data.archive.gz
 /api/v1/storage/stones/xyz789/identity.yaml
 /api/v1/storage/index.yaml
 ```
@@ -1198,7 +944,7 @@ Complex S3 features we don't need:
 
 | Feature | Reason to Skip |
 |---------|----------------|
-| Buckets | We use path prefixes instead |
+| Bucket management | No explicit create/delete; buckets are implicit by first path segment |
 | ACLs | Pond handles security at garden level |
 | Versioning | We use timestamped directories |
 | Lifecycle policies | We handle retention in cultivation logic |
@@ -1227,12 +973,12 @@ aws configure set aws_secret_access_key zen-garden
 aws configure set region zen-garden
 
 # Use with endpoint override
-aws --endpoint-url http://stone-jade-lake.local:7180/api/v1/storage \
-    s3 ls s3://garden/offerings/
+aws --endpoint-url http://stone-jade-lake.local:7180/api/v1/storage/s3 \
+    s3 ls s3://backups/
 
 # Or use s3api
-aws --endpoint-url http://stone-jade-lake.local:7180/api/v1/storage \
-    s3api get-object --bucket garden --key offerings/abc123/latest/manifest.yaml output.yaml
+aws --endpoint-url http://stone-jade-lake.local:7180/api/v1/storage/s3 \
+    s3api get-object --bucket backups --key abc123/latest/manifest.yaml output.yaml
 ```
 
 ### Path Style vs Virtual Host
@@ -1241,7 +987,7 @@ We use **path-style** addressing only:
 
 ```
 # Path style (supported)
-http://stone.local:7180/api/v1/storage/garden/path/to/object
+http://stone.local:7180/api/v1/storage/s3/photos/2026/IMG_0001.jpg
 
 # Virtual host style (NOT supported)
 http://garden.stone.local:7180/path/to/object
@@ -1249,26 +995,27 @@ http://garden.stone.local:7180/path/to/object
 
 ### Bucket Mapping
 
-S3 clients expect a bucket. We map the bucket name `garden` to our storage root:
+S3 buckets map directly to `garden/storage/{bucket}`:
 
 ```
-S3 path:     s3://garden/offerings/abc123/manifest.yaml
-Maps to:     {seed-bank}/garden/offerings/abc123/manifest.yaml
-API path:    /api/v1/storage/offerings/abc123/manifest.yaml
+S3 path:     s3://backups/abc123/manifest.yaml
+Maps to:     {seed-bank}/garden/storage/backups/abc123/manifest.yaml
+API path:    /api/v1/storage/s3/backups/abc123/manifest.yaml
+REST path:   /api/v1/storage/backups/abc123/manifest.yaml
 ```
-
-The `garden` bucket is implicit in our REST API but explicit for S3 clients.
 
 ---
 
 ## Authentication
+
+**Status:** Planned. Current implementation does not enforce auth on `/api/v1/storage` or `/api/v1/memories` (memories access is audited only).
 
 ### Dry Gardens
 
 No authentication required. All stones in the garden are trusted.
 
 ```http
-GET /api/v1/storage/offerings/abc123/manifest.yaml
+GET /api/v1/storage/backups/abc123/manifest.yaml
 
 # No Authorization header needed
 ```
@@ -1278,14 +1025,14 @@ GET /api/v1/storage/offerings/abc123/manifest.yaml
 Use garden credentials derived from Keystone:
 
 ```http
-GET /api/v1/storage/offerings/abc123/manifest.yaml
+GET /api/v1/storage/backups/abc123/manifest.yaml
 Authorization: ZenGarden stone-id=xyz789,signature=base64...
 ```
 
 Or S3-compatible signature:
 
 ```http
-GET /api/v1/storage/offerings/abc123/manifest.yaml
+GET /api/v1/storage/backups/abc123/manifest.yaml
 Authorization: AWS4-HMAC-SHA256 Credential=.../zen-garden/s3/aws4_request, ...
 ```
 
@@ -1295,7 +1042,7 @@ When stone-01 proxies for stone-03, stone-03's credentials are forwarded:
 
 ```http
 # stone-03 → stone-01 (proxy)
-GET /api/v1/storage/offerings/abc123/manifest.yaml
+GET /api/v1/storage/backups/abc123/manifest.yaml
 Authorization: ZenGarden stone-id=stone-03-id,signature=...
 X-Forwarded-For: stone-03
 ```
@@ -1389,7 +1136,7 @@ X-Allow-Overwrite: true
 curl -X PUT \
   -H "Content-Type: application/yaml" \
   --data-binary @manifest.yaml \
-  http://stone-jade-lake.local:7180/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/manifest.yaml
+  http://stone-jade-lake.local:7180/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/manifest.yaml
 ```
 
 ---
@@ -1460,7 +1207,7 @@ If-None-Match: "d41d8cd98f00b204e9800998ecf8427e"
 **Example:**
 
 ```bash
-curl http://stone-jade-lake.local:7180/api/v1/storage/offerings/abc123/latest/manifest.yaml
+curl http://stone-jade-lake.local:7180/api/v1/storage/backups/abc123/latest/manifest.yaml
 ```
 
 ---
@@ -1516,7 +1263,7 @@ DELETE /api/v1/storage/{path}/?recursive=true
 
 ```bash
 curl -X DELETE \
-  http://stone-jade-lake.local:7180/api/v1/storage/offerings/abc123/2026-01-20T03:00:00Z/?recursive=true
+  http://stone-jade-lake.local:7180/api/v1/storage/backups/abc123/2026-01-20T03:00:00Z/?recursive=true
 ```
 
 ---
@@ -1551,7 +1298,7 @@ X-Content-SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8
 **Example:**
 
 ```bash
-curl -I http://stone-jade-lake.local:7180/api/v1/storage/offerings/abc123/latest/data.archive.gz
+curl -I http://stone-jade-lake.local:7180/api/v1/storage/backups/abc123/latest/data.archive.gz
 ```
 
 ---
@@ -1686,7 +1433,7 @@ X-Copy-Source: {source-path}
 ```bash
 curl -X POST \
   -H "X-Copy-Source: offerings/abc123/latest/data.archive.gz" \
-  "http://stone-jade-lake.local:7180/api/v1/storage/offerings/abc123/backup/data.archive.gz?copy"
+  "http://stone-jade-lake.local:7180/api/v1/storage/backups/abc123/backup/data.archive.gz?copy"
 ```
 
 ---
@@ -1910,9 +1657,7 @@ timeout = base_timeout + (size_mb * per_mb_timeout)
 ```
 API Path                                    Filesystem Path
 ────────────────────────────────────────    ─────────────────────────────────────
-/api/v1/storage/offerings/abc123/...   →   {mount}/garden/offerings/abc123/...
-/api/v1/storage/stones/xyz789/...      →   {mount}/garden/stones/xyz789/...
-/api/v1/storage/index.yaml             →   {mount}/garden/index.yaml
+/api/v1/storage/{bucket}/{key}       →   {mount}/garden/storage/{bucket}/{key}
 ```
 
 ### Atomic Writes
@@ -1977,7 +1722,7 @@ data.archive.gz.sha256    # Contains: e3b0c44298fc1c149afbf4c8996fb92427ae41e464
 For `latest` pointers:
 
 ```http
-PUT /api/v1/storage/offerings/abc123/latest
+PUT /api/v1/storage/backups/abc123/latest
 Content-Type: application/x-symlink
 
 2026-01-23T03:00:00Z/
@@ -2001,48 +1746,48 @@ GET follows symlinks transparently.
 curl -X PUT \
   -H "Content-Type: application/yaml" \
   --data-binary @manifest.yaml \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/manifest.yaml"
+  "http://stone.local:7180/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/manifest.yaml"
 
 # 2. Upload data (multipart for large files)
 # Initiate
 UPLOAD_ID=$(curl -X POST \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/data.archive.gz?uploads" \
+  "http://stone.local:7180/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/data.archive.gz?uploads" \
   | jq -r '.upload_id')
 
 # Upload parts
 curl -X PUT \
   --data-binary @part1.bin \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/data.archive.gz?partNumber=1&uploadId=$UPLOAD_ID"
+  "http://stone.local:7180/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/data.archive.gz?partNumber=1&uploadId=$UPLOAD_ID"
 
 curl -X PUT \
   --data-binary @part2.bin \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/data.archive.gz?partNumber=2&uploadId=$UPLOAD_ID"
+  "http://stone.local:7180/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/data.archive.gz?partNumber=2&uploadId=$UPLOAD_ID"
 
 # Complete
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"parts":[{"part_number":1,"etag":"..."},{"part_number":2,"etag":"..."}]}' \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/2026-01-23T03:00:00Z/data.archive.gz?uploadId=$UPLOAD_ID"
+  "http://stone.local:7180/api/v1/storage/backups/abc123/2026-01-23T03:00:00Z/data.archive.gz?uploadId=$UPLOAD_ID"
 
 # 3. Update latest symlink
 curl -X PUT \
   -H "Content-Type: application/x-symlink" \
   -d "2026-01-23T03:00:00Z/" \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/latest"
+  "http://stone.local:7180/api/v1/storage/backups/abc123/latest"
 ```
 
 ### Restore Workflow
 
 ```bash
 # 1. Get manifest
-curl "http://stone.local:7180/api/v1/storage/offerings/abc123/latest/manifest.yaml" > manifest.yaml
+curl "http://stone.local:7180/api/v1/storage/backups/abc123/latest/manifest.yaml" > manifest.yaml
 
 # 2. Download data (with resume support)
 curl -C - -o data.archive.gz \
-  "http://stone.local:7180/api/v1/storage/offerings/abc123/latest/data.archive.gz"
+  "http://stone.local:7180/api/v1/storage/backups/abc123/latest/data.archive.gz"
 
 # 3. Verify checksum
-EXPECTED=$(curl -I "http://stone.local:7180/api/v1/storage/offerings/abc123/latest/data.archive.gz" \
+EXPECTED=$(curl -I "http://stone.local:7180/api/v1/storage/backups/abc123/latest/data.archive.gz" \
   | grep X-Content-SHA256 | awk '{print $2}')
 ACTUAL=$(sha256sum data.archive.gz | awk '{print $1}')
 [ "$EXPECTED" = "$ACTUAL" ] && echo "Checksum OK"
@@ -2057,16 +1802,16 @@ aws configure set aws_secret_access_key zen-garden
 aws configure set region zen-garden
 
 # List offerings
-aws --endpoint-url http://stone.local:7180/api/v1/storage \
-  s3 ls s3://garden/offerings/
+aws --endpoint-url http://stone.local:7180/api/v1/storage/s3 \
+  s3 ls s3://backups/
 
 # Download backup
-aws --endpoint-url http://stone.local:7180/api/v1/storage \
-  s3 cp s3://garden/offerings/abc123/latest/data.archive.gz ./
+aws --endpoint-url http://stone.local:7180/api/v1/storage/s3 \
+  s3 cp s3://backups/abc123/latest/data.archive.gz ./
 
 # Upload backup
-aws --endpoint-url http://stone.local:7180/api/v1/storage \
-  s3 cp ./data.archive.gz s3://garden/offerings/abc123/2026-01-24T03:00:00Z/
+aws --endpoint-url http://stone.local:7180/api/v1/storage/s3 \
+  s3 cp ./data.archive.gz s3://backups/abc123/2026-01-24T03:00:00Z/
 ```
 
 ### Using rclone
@@ -2076,17 +1821,17 @@ aws --endpoint-url http://stone.local:7180/api/v1/storage \
 [zen-garden]
 type = s3
 provider = Other
-endpoint = http://stone-jade-lake.local:7180/api/v1/storage
+endpoint = http://stone-jade-lake.local:7180/api/v1/storage/s3
 access_key_id = zen-garden
 secret_access_key = zen-garden
 ```
 
 ```bash
 # Sync backups
-rclone sync zen-garden:garden/offerings/abc123/ ./local-backup/
+rclone sync zen-garden:backups/abc123/ ./local-backup/
 
 # Check integrity
-rclone check zen-garden:garden/offerings/abc123/ ./local-backup/
+rclone check zen-garden:backups/abc123/ ./local-backup/
 ```
 
 ---

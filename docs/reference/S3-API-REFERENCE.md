@@ -182,13 +182,17 @@ For seed bank storage gateway, implement:
 ### Path Mapping
 ```
 S3 Path: /{bucket}/{key}
-Local Path: {seed-bank-mount}/{app-namespace}/{bucket}/{key}
+Local Path: {seed-bank-mount}/garden/storage/{bucket}/{key}
 ```
 
-### Application Isolation
-- `X-App-Name` header provides application namespace
-- Objects stored under `{mount}/apps/{app-name}/{bucket}/{key}`
-- Prevents cross-app data access
+### Seed Bank Selection
+- Optional header: `X-Seed-Bank: <name>`
+- Optional query param: `seed-bank=<name>`
+- Default seed bank name: `seed-bank-zen-garden`
+
+### Application Namespacing (Client Convention)
+- No server-side app isolation.
+- Clients may prefix keys with `{app}/{bucket}/...` by convention.
 
 ### ETag Generation
 - Calculate MD5 hash during upload

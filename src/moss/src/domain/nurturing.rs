@@ -18,6 +18,9 @@
 use crate::domain::harvest::HarvestManifest;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use garden_common::storage::MemoriesOfferingManifest;
+use garden_common::manifests::Offering as OfferingManifest;
+use garden_common::types::Offering;
 
 /// A/B slot identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,6 +374,20 @@ pub struct RemoteNurturingIndex {
     /// Retention slots per offering (default 5)
     #[serde(default = "default_retention_slots")]
     pub retention_slots: usize,
+}
+
+// ============================================================================ 
+// Hydration Helpers
+// ============================================================================ 
+
+/// Build a hydration manifest for a runtime offering.
+pub fn build_memories_manifest(
+    offering: &Offering,
+    manifest: Option<OfferingManifest>,
+    stone_id: &str,
+    stone_name: &str,
+) -> MemoriesOfferingManifest {
+    MemoriesOfferingManifest::from_offering(offering, manifest, stone_id, stone_name)
 }
 
 fn default_retention_slots() -> usize {

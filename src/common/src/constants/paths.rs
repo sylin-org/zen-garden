@@ -142,26 +142,82 @@ pub fn nurturing_index_path() -> String {
 }
 
 // ============================================================================
-// Seed Bank Nurturing Paths
+// Seed Bank Memories & Storage Paths
 // ============================================================================
 
-/// Seed bank apps directory name
-pub const SEED_BANK_APPS_DIR: &str = "apps/garden";
+/// Seed bank garden root directory
+/// Layout: {mount_path}/garden/
+pub const SEED_BANK_GARDEN_DIR: &str = "garden";
 
-/// Get nurturing directory on a seed bank
-/// Layout: {mount_path}/apps/garden/nurturing/
-pub fn seed_bank_nurturing_dir(mount_path: &str) -> String {
-    format!("{}/{}/{}", mount_path, SEED_BANK_APPS_DIR, NURTURING_SUBDIR)
+/// Seed bank memories directory (nurturing backups)
+/// Layout: {mount_path}/garden/memories/
+pub const SEED_BANK_MEMORIES_DIR: &str = "garden/memories";
+
+/// Seed bank memories index filename
+/// Layout: {mount_path}/garden/memories/index.json
+pub const SEED_BANK_MEMORIES_INDEX_FILE: &str = "index.json";
+
+/// Seed bank memories offering manifest filename
+/// Layout: {mount_path}/garden/memories/{offering_id}/offering.json
+pub const SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE: &str = "offering.json";
+
+/// Seed bank storage directory (S3 root)
+/// Layout: {mount_path}/garden/storage/
+pub const SEED_BANK_STORAGE_DIR: &str = "garden/storage";
+
+/// Get memories directory on a seed bank
+/// Layout: {mount_path}/garden/memories/
+pub fn seed_bank_memories_dir(mount_path: &str) -> String {
+    format!("{}/{}", mount_path, SEED_BANK_MEMORIES_DIR)
 }
 
-/// Get offering directory on a seed bank
-/// Layout: {mount_path}/apps/garden/nurturing/{offering_id}/
-pub fn seed_bank_offering_dir(mount_path: &str, offering_id: &str) -> String {
-    format!("{}/{}", seed_bank_nurturing_dir(mount_path), offering_id)
+/// Get memories index path on a seed bank
+/// Layout: {mount_path}/garden/memories/index.json
+pub fn seed_bank_memories_index_path(mount_path: &str) -> String {
+    format!(
+        "{}/{}",
+        seed_bank_memories_dir(mount_path),
+        SEED_BANK_MEMORIES_INDEX_FILE
+    )
+}
+
+/// Get offering memories directory on a seed bank
+/// Layout: {mount_path}/garden/memories/{offering_id}/
+pub fn seed_bank_memory_offering_dir(mount_path: &str, offering_id: &str) -> String {
+    format!("{}/{}", seed_bank_memories_dir(mount_path), offering_id)
+}
+
+/// Get offering manifest path on a seed bank
+/// Layout: {mount_path}/garden/memories/{offering_id}/offering.json
+pub fn seed_bank_memory_offering_manifest_path(mount_path: &str, offering_id: &str) -> String {
+    format!(
+        "{}/{}",
+        seed_bank_memory_offering_dir(mount_path, offering_id),
+        SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE
+    )
 }
 
 /// Get harvest tarball path on a seed bank
-/// Layout: {mount_path}/apps/garden/nurturing/{offering_id}/{harvest_id}.tar.gz
-pub fn seed_bank_harvest_path(mount_path: &str, offering_id: &str, harvest_id: &str) -> String {
-    format!("{}/{}.tar.gz", seed_bank_offering_dir(mount_path, offering_id), harvest_id)
+/// Layout: {mount_path}/garden/memories/{offering_id}/{harvest_id}.tar.gz
+pub fn seed_bank_memory_harvest_path(mount_path: &str, offering_id: &str, harvest_id: &str) -> String {
+    format!("{}/{}.tar.gz", seed_bank_memory_offering_dir(mount_path, offering_id), harvest_id)
+}
+
+/// Get storage directory on a seed bank
+/// Layout: {mount_path}/garden/storage/
+pub fn seed_bank_storage_dir(mount_path: &str) -> String {
+    format!("{}/{}", mount_path, SEED_BANK_STORAGE_DIR)
+}
+
+// ========================================================================
+// Audit Log Paths
+// ========================================================================
+
+/// Audit log filename
+pub const AUDIT_LOG_FILE: &str = "audit.log";
+
+/// Audit log path
+/// Layout: {data_dir}/audit.log
+pub fn audit_log_path() -> String {
+    format!("{}/{}", data_dir(), AUDIT_LOG_FILE)
 }

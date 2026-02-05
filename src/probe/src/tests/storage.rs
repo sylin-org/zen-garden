@@ -3,8 +3,48 @@
 use crate::registry::TestDef;
 use crate::{Bag, LiveGarden, StepResult};
 use anyhow::Result;
+use garden_common::constants::headers::HEADER_SEED_BANK;
+use reqwest::StatusCode;
+use serde_json::Value;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+#[derive(Clone)]
+struct SelectedSeedBank {
+    stone: crate::garden::Stone,
+    id: String,
+    name: String,
+}
+
+fn extract_bank_info(bank: &Value) -> Option<(String, String)> {
+    let id = bank.get("id").and_then(|i| i.as_str())?.to_string();
+    let name = bank.get("name").and_then(|n| n.as_str())?.to_string();
+    Some((id, name))
+}
+
+async fn select_seed_bank(garden: &LiveGarden) -> Option<SelectedSeedBank> {
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/bank").await {
+            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+                for bank in banks {
+                    if let Some((id, name)) = extract_bank_info(bank) {
+                        return Some(SelectedSeedBank {
+                            stone: stone.clone(),
+                            id,
+                            name,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
 
 // ============================================================================
 // storage.overview - Get storage overview from each stone
@@ -34,9 +74,18 @@ async fn test_overview(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
             Ok(resp) => {
                 let banks = resp
                     .get("data")
-                    .and_then(|d| d.get("seed_banks"))
-                    .and_then(|b| b.as_array())
-                    .map(|arr| arr.len())
+                    .and_then(|d| d.get("bank_count"))
+                    .and_then(|b| b.as_u64())
+                    .map(|v| v as usize)
+                    .or_else(|| {
+                        resp.get("data")
+                            .and_then(|d| d.get("types"))
+                            .and_then(|t| t.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|t| t.get("count"))
+                            .and_then(|c| c.as_u64())
+                            .map(|v| v as usize)
+                    })
                     .unwrap_or(0);
 
                 let capacity = resp
@@ -85,6 +134,89 @@ async fn test_overview(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
             "total_capacity_gb": total_capacity_gb,
         })),
     );
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.health - Check storage readiness on each stone
+// ============================================================================
+
+pub fn health_test() -> TestDef {
+    TestDef {
+        id: "storage.health",
+        name: "Storage Health",
+        description: "Check storage readiness (mounted + canonical + writable) on each stone",
+        category: "storage",
+        tags: &["storage", "health", "readiness"],
+        run: |garden, bag| Box::pin(test_health(garden, bag)),
+    }
+}
+
+async fn test_health(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    for stone in &garden.stones {
+        let start = Instant::now();
+        let result = stone.get_json("/api/v1/stone/storage/health").await;
+        let duration = start.elapsed();
+
+        match result {
+            Ok(resp) => {
+                let data = resp.get("data");
+                let ready = data
+                    .and_then(|d| d.get("ready"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let bank_count = data
+                    .and_then(|d| d.get("bank_count"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let ready_count = data
+                    .and_then(|d| d.get("ready_count"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let issues = data
+                    .and_then(|d| d.get("issues"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|i| i.as_str())
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                let status = if ready { "ready" } else { "not ready" };
+                let issue_text = if issues.is_empty() {
+                    "no issues".to_string()
+                } else {
+                    issues.join(", ")
+                };
+
+                bag.record_step(
+                    format!("health_{}", stone.name),
+                    format!(
+                        "{}: {} (banks: {}, ready: {}, issues: {})",
+                        stone.name, status, bank_count, ready_count, issue_text
+                    ),
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "ready": ready,
+                        "bank_count": bank_count,
+                        "ready_count": ready_count,
+                        "issues": issues,
+                    })),
+                );
+            }
+            Err(e) => {
+                bag.record_step(
+                    format!("health_{}", stone.name),
+                    format!("{} storage health check failed", stone.name),
+                    duration.as_millis() as u64,
+                    StepResult::failed(e.to_string()),
+                );
+            }
+        }
+    }
 
     Ok(bag)
 }
@@ -293,27 +425,8 @@ pub fn object_roundtrip_test() -> TestDef {
 }
 
 async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
-    // Find a stone with at least one seed bank
-    let mut target_stone: Option<&crate::garden::Stone> = None;
-    let mut target_bank_id: Option<String> = None;
-
-    for stone in &garden.stones {
-        let result = stone.get_json("/api/v1/stone/storage/bank").await;
-        if let Ok(resp) = result {
-            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
-                if let Some(bank) = banks.first() {
-                    if let Some(id) = bank.get("id").and_then(|i| i.as_str()) {
-                        target_stone = Some(stone);
-                        target_bank_id = Some(id.to_string());
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    let (stone, bank_id) = match (target_stone, target_bank_id) {
-        (Some(s), Some(id)) => (s, id),
+    let selected = match select_seed_bank(&garden).await {
+        Some(target) => target,
         _ => {
             bag.record_step(
                 "object_roundtrip",
@@ -325,9 +438,13 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
         }
     };
 
+    let stone = selected.stone;
+    let bank_id = selected.id;
+    let bank_name = selected.name;
+
     bag.record_step(
         "select_bank",
-        format!("Using bank {} on {}", bank_id, stone.name),
+        format!("Using bank {} ({}) on {}", bank_id, bank_name, stone.name),
         0,
         StepResult::ok(),
     );
@@ -461,6 +578,257 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
             "bank": bank_id,
             "key": test_key,
         })),
+    );
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.gateway_roundtrip - PUT, GET, DELETE via garden storage gateway
+// ============================================================================
+
+pub fn gateway_roundtrip_test() -> TestDef {
+    TestDef {
+        id: "storage.gateway_roundtrip",
+        name: "Gateway Roundtrip",
+        description: "Upload, retrieve, and delete an object via /api/v1/storage",
+        category: "storage",
+        tags: &["storage", "gateway", "object"],
+        run: |garden, bag| Box::pin(test_gateway_roundtrip(garden, bag)),
+    }
+}
+
+async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    let selected = match select_seed_bank(&garden).await {
+        Some(target) => target,
+        None => {
+            bag.record_step(
+                "gateway_roundtrip",
+                "No seed banks available for testing",
+                0,
+                StepResult::skipped("No seed banks in garden"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    let stone = selected.stone;
+    let seed_bank = selected.name;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let bucket = "probe-test";
+    let key = format!("gateway-roundtrip-{}.txt", timestamp);
+    let test_content = format!("Zen Garden gateway test at {}", timestamp);
+    let test_bytes = test_content.as_bytes().to_vec();
+    let url = format!("{}/api/v1/storage/{}/{}", stone.endpoint, bucket, key);
+
+    // PUT
+    let put_start = Instant::now();
+    let put_resp = client
+        .put(&url)
+        .header("Content-Type", "text/plain")
+        .header(HEADER_SEED_BANK, &seed_bank)
+        .body(test_bytes.clone())
+        .send()
+        .await?;
+    let put_duration = put_start.elapsed();
+
+    if !put_resp.status().is_success() {
+        bag.record_step(
+            "gateway_put",
+            format!("PUT failed with {}", put_resp.status()),
+            put_duration.as_millis() as u64,
+            StepResult::failed(format!("PUT status {}", put_resp.status())),
+        );
+        return Ok(bag);
+    }
+
+    let put_json: Value = put_resp.json().await.unwrap_or(Value::Null);
+    bag.record_step(
+        "gateway_put",
+        format!("PUT {} bytes to {}/{}", test_bytes.len(), bucket, key),
+        put_duration.as_millis() as u64,
+        StepResult::ok_with(serde_json::json!({
+            "bucket": bucket,
+            "key": key,
+            "seed_bank": seed_bank,
+            "response": put_json,
+        })),
+    );
+
+    // GET
+    let get_start = Instant::now();
+    let get_resp = client
+        .get(&url)
+        .header(HEADER_SEED_BANK, &seed_bank)
+        .send()
+        .await?;
+    let get_duration = get_start.elapsed();
+
+    if get_resp.status() != StatusCode::OK {
+        bag.record_step(
+            "gateway_get",
+            format!("GET failed with {}", get_resp.status()),
+            get_duration.as_millis() as u64,
+            StepResult::failed(format!("GET status {}", get_resp.status())),
+        );
+        return Ok(bag);
+    }
+
+    let bytes = get_resp.bytes().await?;
+    let content_matches = bytes.as_ref() == test_bytes;
+    if content_matches {
+        bag.record_step(
+            "gateway_get",
+            format!("GET {} bytes, content verified", bytes.len()),
+            get_duration.as_millis() as u64,
+            StepResult::ok_with(serde_json::json!({
+                "size": bytes.len(),
+                "verified": true,
+            })),
+        );
+    } else {
+        bag.record_step(
+            "gateway_get",
+            "Content mismatch",
+            get_duration.as_millis() as u64,
+            StepResult::failed(format!(
+                "Expected {} bytes, got {} bytes",
+                test_bytes.len(),
+                bytes.len()
+            )),
+        );
+    }
+
+    // DELETE
+    let delete_start = Instant::now();
+    let delete_resp = client
+        .delete(&url)
+        .header(HEADER_SEED_BANK, &seed_bank)
+        .send()
+        .await?;
+    let delete_duration = delete_start.elapsed();
+
+    if delete_resp.status() == StatusCode::NO_CONTENT || delete_resp.status() == StatusCode::OK {
+        bag.record_step(
+            "gateway_delete",
+            format!("DELETE {} - cleaned up", key),
+            delete_duration.as_millis() as u64,
+            StepResult::ok(),
+        );
+    } else {
+        bag.record_step(
+            "gateway_delete",
+            format!("DELETE returned {}", delete_resp.status()),
+            delete_duration.as_millis() as u64,
+            StepResult::failed(format!("DELETE status {}", delete_resp.status())),
+        );
+    }
+
+    bag.record_step(
+        "gateway_summary",
+        format!("Gateway roundtrip completed on {}", stone.name),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "stone": stone.name,
+            "seed_bank": seed_bank,
+            "bucket": bucket,
+            "key": key,
+        })),
+    );
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.memories_index - List remote memories via /api/v1/memories
+// ============================================================================
+
+pub fn memories_index_test() -> TestDef {
+    TestDef {
+        id: "storage.memories_index",
+        name: "Memories Index",
+        description: "List remote snapshots via /api/v1/memories",
+        category: "storage",
+        tags: &["storage", "memories", "hydration"],
+        run: |garden, bag| Box::pin(test_memories_index(garden, bag)),
+    }
+}
+
+async fn test_memories_index(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    let selected = match select_seed_bank(&garden).await {
+        Some(target) => target,
+        None => {
+            bag.record_step(
+                "memories_index",
+                "No seed banks available for testing",
+                0,
+                StepResult::skipped("No seed banks in garden"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    let stone = selected.stone;
+    let seed_bank = selected.name;
+    let seed_bank_id = selected.id;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let url = format!("{}/api/v1/memories", stone.endpoint);
+    let start = Instant::now();
+    let resp = client
+        .get(&url)
+        .header(HEADER_SEED_BANK, &seed_bank)
+        .send()
+        .await?;
+    let duration = start.elapsed();
+
+    if resp.status() != StatusCode::OK {
+        bag.record_step(
+            "memories_index",
+            format!("GET /api/v1/memories failed with {}", resp.status()),
+            duration.as_millis() as u64,
+            StepResult::failed(format!("Status {}", resp.status())),
+        );
+        return Ok(bag);
+    }
+
+    let json: Value = resp.json().await.unwrap_or(Value::Null);
+    let data = json.get("data");
+    let reported_id = data
+        .and_then(|d| d.get("seed_bank_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let snapshots = data
+        .and_then(|d| d.get("snapshots"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    let id_matches = reported_id == seed_bank_id;
+    let result = if id_matches {
+        StepResult::ok_with(serde_json::json!({
+            "seed_bank": seed_bank,
+            "seed_bank_id": seed_bank_id,
+            "snapshots": snapshots,
+        }))
+    } else {
+        StepResult::failed(format!(
+            "seed_bank_id mismatch (expected {}, got {})",
+            seed_bank_id, reported_id
+        ))
+    };
+
+    bag.record_step(
+        "memories_index",
+        format!("Found {} snapshots on {}", snapshots, seed_bank),
+        duration.as_millis() as u64,
+        result,
     );
 
     Ok(bag)

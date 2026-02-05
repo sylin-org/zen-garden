@@ -2710,8 +2710,8 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
             }
 
             // List offering directories on seed bank
-            // Use the correct seed bank path: {mount}/apps/garden/nurturing
-            let nurturing_path = garden_common::paths::seed_bank_nurturing_dir(bank_mount);
+            // Use the correct seed bank path: {mount}/garden/memories
+            let nurturing_path = garden_common::paths::seed_bank_memories_dir(bank_mount);
             let start = Instant::now();
             let offerings = ssh.list_files(stone, &nurturing_path).unwrap_or_default();
             let duration = start.elapsed();

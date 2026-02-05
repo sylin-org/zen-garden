@@ -14,11 +14,12 @@
 //! Uses the local SeedBankRegistry to find available seed banks and selects
 //! targets based on routing strategy. Implements failover if primary fails.
 
-use crate::domain::nurturing::{NurturingResult, ReplicationResult};
+use crate::domain::nurturing::{NurturingResult, ReplicationResult, build_memories_manifest};
 use crate::infra::storage::SeedBankRegistry;
 use crate::AppState;
 use anyhow::{Context, Result};
 use garden_common::storage::SeedBankInfo;
+use garden_common::types::Offering;
 
 /// Result of a full nurturing workflow execution
 #[derive(Debug, Clone, serde::Serialize)]
@@ -143,14 +144,16 @@ impl NurturingScheduler {
         );
 
         // Look up offering to get offering_id
-        let (offering_id, actual_name) = {
+        let offering_entry = {
             let offerings = self.state.offerings.read().await;
             offerings
                 .iter()
                 .find(|o| o.name == offering_name || o.offering_id == offering_name)
-                .map(|o| (o.offering_id.clone(), o.name.clone()))
+                .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in registry", offering_name))?
         };
+        let offering_id = offering_entry.offering_id.clone();
+        let actual_name = offering_entry.name.clone();
 
         // Phase 1: Local snapshot
         let local_result = self.create_local_snapshot(&offering_id, &actual_name).await;
@@ -186,7 +189,7 @@ impl NurturingScheduler {
         };
 
         // Phase 2: Find seed banks and replicate
-        let replications = self.replicate_to_seed_banks(&offering_id, &actual_name).await;
+        let replications = self.replicate_to_seed_banks(&offering_entry).await;
 
         // Determine overall success
         let local_success = local_snapshot.is_some();
@@ -232,16 +235,12 @@ impl NurturingScheduler {
     }
 
     /// Replicate to seed banks based on routing strategy
-    async fn replicate_to_seed_banks(
-        &self,
-        offering_id: &str,
-        offering_name: &str,
-    ) -> Vec<ReplicationAttempt> {
+    async fn replicate_to_seed_banks(&self, offering: &Offering) -> Vec<ReplicationAttempt> {
         // Get available seed banks
         let seed_banks = match self.find_available_seed_banks().await {
             Ok(banks) if banks.is_empty() => {
                 tracing::debug!(
-                    offering = offering_name,
+                    offering = offering.name,
                     "No seed banks available for replication"
                 );
                 return Vec::new();
@@ -249,7 +248,7 @@ impl NurturingScheduler {
             Ok(banks) => banks,
             Err(e) => {
                 tracing::warn!(
-                    offering = offering_name,
+                    offering = offering.name,
                     error = ?e,
                     "Failed to find seed banks"
                 );
@@ -261,11 +260,23 @@ impl NurturingScheduler {
         let targets = self.select_targets(&seed_banks);
 
         tracing::debug!(
-            offering = offering_name,
+            offering = offering.name,
             target_count = targets.len(),
             available_count = seed_banks.len(),
             strategy = ?self.config.routing_strategy,
             "Selected seed bank targets"
+        );
+
+        let manifest = self
+            .state
+            .manifest_registry
+            .get_offering(&offering.offering)
+            .cloned();
+        let hydration_manifest = build_memories_manifest(
+            offering,
+            manifest,
+            &self.state.stone_id,
+            &self.state.stone_name,
         );
 
         // Attempt replication to each target
@@ -280,7 +291,7 @@ impl NurturingScheduler {
             }
 
             let attempt = self
-                .attempt_replication(offering_id, offering_name, &seed_bank)
+                .attempt_replication(offering, &seed_bank, &hydration_manifest)
                 .await;
 
             if attempt.success {
@@ -328,12 +339,12 @@ impl NurturingScheduler {
     /// Attempt replication to a single seed bank
     async fn attempt_replication(
         &self,
-        offering_id: &str,
-        offering_name: &str,
+        offering: &Offering,
         seed_bank: &SeedBankInfo,
+        hydration_manifest: &garden_common::storage::MemoriesOfferingManifest,
     ) -> ReplicationAttempt {
         tracing::debug!(
-            offering = offering_name,
+            offering = offering.name,
             seed_bank = %seed_bank.name,
             "Attempting replication"
         );
@@ -342,18 +353,19 @@ impl NurturingScheduler {
             .state
             .nurturing_store
             .replicate_to_seed_bank(
-                offering_id,
+                &offering.offering_id,
                 &seed_bank.mount_path,
                 &seed_bank.id,
                 &seed_bank.name,
                 &self.state.stone_id,
+                Some(hydration_manifest.clone()),
             )
             .await;
 
         match result {
             Ok(replication_result) => {
                 tracing::info!(
-                    offering = offering_name,
+                    offering = offering.name,
                     seed_bank = %seed_bank.name,
                     size = replication_result.size_bytes,
                     pruned = replication_result.pruned_harvest_ids.len(),
@@ -369,7 +381,7 @@ impl NurturingScheduler {
             }
             Err(e) => {
                 tracing::warn!(
-                    offering = offering_name,
+                    offering = offering.name,
                     seed_bank = %seed_bank.name,
                     error = ?e,
                     "Replication failed"

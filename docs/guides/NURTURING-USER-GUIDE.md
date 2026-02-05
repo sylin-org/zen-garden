@@ -114,31 +114,35 @@ garden-rake prepare seed-bank --device /dev/sdb --name portable-backup
 3. Single partition formatted as btrfs (with zstd compression)
 4. Fstab entry added (Linux)
 5. Device mounted to `/var/lib/zen-garden/mounts/{name}/`
-6. Manifest written to `.zen-garden/manifest.yaml`
+6. Manifest written to `.zen-garden/manifest.json`
 
 ### Seed Bank Manifest Structure
 
 After preparation, the seed bank contains:
 ```
 {mount_path}/.zen-garden/
-├── manifest.yaml           # Identity and metadata
-├── garden/
-│   ├── index.yaml          # Backup index
-│   └── offerings/          # Offering snapshots
-└── journal/                # Sync history
+├── manifest.json           # Identity and metadata
+└── garden/
+    ├── memories/           # Nurturing backups (seed bank memories)
+    │   ├── index.json       # Remote nurturing index
+    │   └── {offering_id}/
+    │       ├── offering.json
+    │       └── {harvest_id}.tar.gz
+    └── storage/            # S3/REST storage root
 ```
 
 **Manifest fields:**
-```yaml
-version: 1
-id: "01956a3e-7c00-7000-8000-..."    # Immutable GUIDv7
-pool_id: "01956a3e-7c00-7000-..."    # Sync group (for multi-bank pools)
-name: "portable-backup"
-visibility: "open"                    # open or closed
-filesystem: "btrfs"                   # btrfs or ext4
-created_at: "2026-01-28T10:35:00Z"
-created_by:
-  stone: "stone-coral-prairie"
+```json
+{
+  "version": 2,
+  "id": "01956a3e-7c00-7000-8000-000000000001",
+  "pool_id": "0195",
+  "name": "portable-backup",
+  "visibility": "open",
+  "filesystem": "btrfs",
+  "origin_stone": "stone-coral-prairie",
+  "created_at": "2026-01-28T10:35:00Z"
+}
 ```
 
 ### Release a Seed Bank
@@ -252,6 +256,29 @@ curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering}/replicate \
 ```bash
 curl http://localhost:7185/api/v1/stone/nurturing/remote/{seed_bank_name}
 ```
+
+### Hydration Access (Memories API)
+
+External orchestrators can read seed bank backups through the **read-only** Memories API.
+Requests are automatically routed to the stone that hosts the selected seed bank, and
+access is **audited** (no auth gating yet).
+
+```bash
+# List all remote snapshots (index)
+curl http://localhost:7185/api/v1/memories
+
+# List snapshots for a specific offering
+curl http://localhost:7185/api/v1/memories/{offering_id}
+
+# Get hydration metadata (offering.json)
+curl http://localhost:7185/api/v1/memories/{offering_id}/manifest
+
+# Download snapshot tarball
+curl -o snapshot.tar.gz \
+  http://localhost:7185/api/v1/memories/{offering_id}/{harvest_id}
+```
+
+**Optional:** target a specific seed bank by name with `X-Seed-Bank: {name}` or `?seed-bank={name}`.
 
 ---
 

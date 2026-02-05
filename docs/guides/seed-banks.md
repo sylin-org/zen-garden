@@ -334,7 +334,7 @@ The manifest file (`.zen-garden/manifest.json`) contains:
   "group": "primary",
   "replica_id": 1,
   "pool_id": null,
-  "visibility": "private",
+  "visibility": "open",
   "origin_stone": "stone-coral-prairie",
   "created_at": "2026-01-30T12:00:00Z",
   "filesystem": "ext4",
@@ -354,7 +354,7 @@ The manifest file (`.zen-garden/manifest.json`) contains:
 | `group` | No | Logical group for replicated seed banks |
 | `replica_id` | No | Replica number within group (1, 2, ...) |
 | `pool_id` | No | Associated pool (for pool-specific backups) |
-| `visibility` | Yes | `private` or `shared` |
+| `visibility` | Yes | `open` or `closed` |
 | `origin_stone` | Yes | Stone that prepared this device |
 
 ---
@@ -469,39 +469,61 @@ The filesystem label `zen-seed` is no longer required but still works as an opti
 
 ## API Reference
 
-### List Seed Banks
+### Storage Health
 
 ```
-GET /api/v1/storage/seed-banks
+GET /api/v1/stone/storage/health
 ```
 
 Response:
 ```json
 {
-  "seed_banks": [
+  "data": {
+    "ready": true,
+    "bank_count": 1,
+    "ready_count": 1,
+    "issues": [],
+    "banks": [
+      {
+        "id": "01948abc-1234-5678-9abc-def012345678",
+        "name": "primary",
+        "device": "/dev/sdb1",
+        "mount_path": "/var/lib/zen-garden/mounts/primary",
+        "canonical": true,
+        "writable": true,
+        "ready": true,
+        "issues": []
+      }
+    ]
+  }
+}
+```
+
+### List Seed Banks
+
+```
+GET /api/v1/stone/storage/bank
+```
+
+Response:
+```json
+{
+  "data": [
     {
+      "id": "01948abc-1234-5678-9abc-def012345678",
       "name": "primary",
+      "pool_id": "0194",
       "group": "primary",
-      "replicas": [
-        {
-          "replica_id": 1,
-          "device": "/dev/sdb",
-          "mount_path": "/var/lib/zen-garden/mounts/primary/replica-1",
-          "online": true,
-          "capacity_bytes": 500000000000,
-          "used_bytes": 120000000000
-        },
-        {
-          "replica_id": 2,
-          "device": "/dev/sdc",
-          "mount_path": "/var/lib/zen-garden/mounts/primary/replica-2",
-          "online": true,
-          "capacity_bytes": 500000000000,
-          "used_bytes": 118000000000
-        }
-      ],
-      "healthy": true,
-      "replication_status": "synced"
+      "replica_id": 1,
+      "device": "/dev/sdb",
+      "mount_path": "/var/lib/zen-garden/mounts/primary/replica-1",
+      "capacity_bytes": 500000000000,
+      "used_bytes": 120000000000,
+      "visibility": "open",
+      "btrfs": true,
+      "origin_stone": "stone-coral-prairie",
+      "created_at": "2026-01-30T12:00:00Z",
+      "online": true
     }
   ]
 }
@@ -510,7 +532,7 @@ Response:
 ### Prepare Seed Bank
 
 ```
-POST /api/v1/storage/prepare
+POST /api/v1/stone/storage/prepare
 Content-Type: application/json
 
 {

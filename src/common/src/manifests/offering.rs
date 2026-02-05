@@ -283,7 +283,7 @@ struct ServiceConfig {
 /// - `managed.is_some()` → supports Managed mode (container deployment)
 /// - `adopted.is_some()` → supports Adopted mode (native service detection)
 /// - `borrowed.is_some()` → supports Borrowed mode (external service)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Offering {
     // ═══════════════════════════════════════════════════════════════════════
     // IDENTITY

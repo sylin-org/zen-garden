@@ -1,4 +1,4 @@
-﻿//! S3-compatible Object Storage Gateway API
+//! S3-compatible Object Storage Gateway API
 //!
 //! Provides S3-compatible endpoints for storing and retrieving objects from seed banks.
 //! See docs/reference/S3-API-REFERENCE.md and docs/decisions/STORAGE-0002-api-structure.md.
@@ -6,18 +6,22 @@
 //! ## Endpoints
 //!
 //! ```text
-//! GET  /api/v1/stone/storage/s3              → List buckets (XML)
-//! GET  /api/v1/stone/storage/s3/:bucket      → List objects in bucket (XML)
-//! PUT  /api/v1/stone/storage/s3/:bucket/*key → Put object
-//! GET  /api/v1/stone/storage/s3/:bucket/*key → Get object (raw bytes)
-//! HEAD /api/v1/stone/storage/s3/:bucket/*key → Object metadata (headers)
-//! DELETE /api/v1/stone/storage/s3/:bucket/*key → Delete object
+//! GET  /api/v1/storage/s3              → List buckets (XML)
+//! GET  /api/v1/storage/s3/:bucket      → List objects in bucket (XML)
+//! PUT  /api/v1/storage/s3/:bucket/*key → Put object
+//! GET  /api/v1/storage/s3/:bucket/*key → Get object (raw bytes)
+//! HEAD /api/v1/storage/s3/:bucket/*key → Object metadata (headers)
+//! DELETE /api/v1/storage/s3/:bucket/*key → Delete object
 //! ```
 //!
 //! ## Headers
 //!
-//! - `X-App-Name` - Required. Application namespace for isolation.
+//! - `X-Seed-Bank` - Optional. Select a specific seed bank by name.
 //! - `Content-Type` - MIME type for PUT (default: application/octet-stream)
+//!
+//! ## Query Params
+//!
+//! - `seed-bank` - Optional. Select a specific seed bank by name.
 //!
 //! ## Response Format
 //!
@@ -34,59 +38,138 @@ use tracing::{debug, warn};
 
 use crate::infra::storage::{ObjectStore, SeedBankRegistry};
 use crate::AppState;
+use garden_common::paths;
+use garden_common::constants::headers::HEADER_SEED_BANK;
+use garden_common::storage::DEFAULT_SEED_BANK_NAME;
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const HEADER_APP_NAME: &str = "x-app-name";
 const DEFAULT_MAX_KEYS: usize = 1000;
 const MAX_MAX_KEYS: usize = 1000;
+
+// ============================================================================
+// Helper Types
+// ============================================================================
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SeedBankSelector {
+    #[serde(rename = "seed-bank")]
+    seed_bank_dash: Option<String>,
+    seed_bank: Option<String>,
+}
+
+impl SeedBankSelector {
+    fn name(&self) -> Option<String> {
+        self.seed_bank_dash.clone().or_else(|| self.seed_bank.clone())
+    }
+}
+
+enum SeedBankRoute {
+    Local { mount_path: String },
+    Remote { endpoint: String },
+}
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-/// Extract app name from headers
-fn get_app_name(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(HEADER_APP_NAME)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
+fn get_seed_bank_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Option<String> {
+    if let Some(name) = headers.get(HEADER_SEED_BANK).and_then(|v| v.to_str().ok()) {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    selector.name()
 }
 
-/// Find the default seed bank for storage operations
-async fn get_default_seed_bank() -> Result<String, (StatusCode, String)> {
+fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
+    let memories = std::path::Path::new(mount_path).join(paths::SEED_BANK_MEMORIES_DIR);
+    let storage = std::path::Path::new(mount_path).join(paths::SEED_BANK_STORAGE_DIR);
+
+    if !memories.is_dir() || !storage.is_dir() {
+        return Err("Seed bank is non-canonical; missing garden/memories and/or garden/storage. Re-prepare the seed bank.".to_string());
+    }
+
+    Ok(())
+}
+
+fn has_path_traversal(value: &str) -> bool {
+    if value.contains('\\') {
+        return true;
+    }
+    std::path::Path::new(value).components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    })
+}
+
+fn validate_bucket(bucket: &str) -> Option<Response> {
+    if bucket.is_empty() {
+        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket name cannot be empty"));
+    }
+    if has_path_traversal(bucket) {
+        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket contains invalid path segments"));
+    }
+    None
+}
+
+fn validate_key(key: &str) -> Option<Response> {
+    if key.is_empty() {
+        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidKey", "Object key cannot be empty"));
+    }
+    if has_path_traversal(key) {
+        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidKey", "Object key contains invalid path segments"));
+    }
+    None
+}
+
+async fn resolve_seed_bank_route(
+    state: &AppState,
+    name: &str,
+) -> Result<SeedBankRoute, (StatusCode, String)> {
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to scan seed banks: {}", e)))?;
-    
-    let banks = registry.list();
-    
-    // Prefer local (non-roaming) seed banks that are online
-    let local_bank = banks.iter()
-        .find(|b| !b.roaming && b.online);
-    
-    if let Some(bank) = local_bank {
-        return Ok(bank.mount_path.clone());
+
+    if let Some(bank) = registry.get(name) {
+        if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+            return Err((StatusCode::CONFLICT, msg));
+        }
+        return Ok(SeedBankRoute::Local { mount_path: bank.mount_path.clone() });
     }
-    
-    // Fall back to any available seed bank
-    banks.first()
-        .map(|b| b.mount_path.clone())
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "No seed banks available".to_string()))
+
+    let cache = state.storage_cache.read().await;
+    for beacon in cache.all_beacons() {
+        if beacon.stone_id == state.stone_id {
+            continue;
+        }
+        for sb in &beacon.seed_banks {
+            if sb.name == name {
+                return Ok(SeedBankRoute::Remote { endpoint: beacon.endpoint.clone() });
+            }
+        }
+    }
+
+    Err((StatusCode::SERVICE_UNAVAILABLE, format!("Seed bank '{}' not available", name)))
 }
 
 /// Build XML error response
 fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
     let body = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Error>
     <Code>{}</Code>
     <Message>{}</Message>
 </Error>"#,
         code, message
     );
-    
+
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -94,292 +177,388 @@ fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
         .unwrap()
 }
 
+async fn proxy_s3_request(
+    method: reqwest::Method,
+    endpoint: &str,
+    path: &str,
+    query: Vec<(String, String)>,
+    headers: &HeaderMap,
+    body: Option<Bytes>,
+) -> Response {
+    let client = reqwest::Client::new();
+    let url = format!("{}/{}", endpoint.trim_end_matches('/'), path.trim_start_matches('/'));
+    let mut request = client.request(method, url);
+
+    if !query.is_empty() {
+        request = request.query(&query);
+    }
+
+    if let Some(content_type) = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+        request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+    }
+
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+
+    let response = match request.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return xml_error(StatusCode::BAD_GATEWAY, "UpstreamError", &e.to_string());
+        }
+    };
+
+    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let resp_headers = response.headers().clone();
+    let body = response.bytes().await.unwrap_or_default();
+
+    let mut builder = Response::builder().status(status);
+    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+        builder = builder.header(header::CONTENT_TYPE, value);
+    }
+    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()) {
+        builder = builder.header(header::CONTENT_LENGTH, value);
+    }
+    if let Some(value) = resp_headers.get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()) {
+        builder = builder.header(header::ETAG, value);
+    }
+    if let Some(value) = resp_headers.get(reqwest::header::LAST_MODIFIED).and_then(|v| v.to_str().ok()) {
+        builder = builder.header(header::LAST_MODIFIED, value);
+    }
+
+    builder.body(body.into()).unwrap()
+}
+
 // ============================================================================
-// PUT /api/v1/stone/storage/s3/:bucket/*key - Put Object
+// PUT /api/v1/storage/s3/:bucket/*key - Put Object
 // ============================================================================
 
 /// Put an object to seed bank storage
 pub async fn put_object(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    // Get app name from header
-    let app = match get_app_name(&headers) {
-        Some(a) => a,
-        None => return xml_error(StatusCode::BAD_REQUEST, "MissingAppName", "X-App-Name header is required"),
-    };
-
     // Validate bucket and key
-    if bucket.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket name cannot be empty");
+    if let Some(resp) = validate_bucket(&bucket) {
+        return resp;
     }
     let key = key.trim_start_matches('/');
-    if key.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", "Object key cannot be empty");
+    if let Some(resp) = validate_key(&key) {
+        return resp;
     }
 
-    // Get default seed bank
-    let mount_path = match get_default_seed_bank().await {
-        Ok(p) => p,
+    let selected = get_seed_bank_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+
+    let route = match resolve_seed_bank_route(&state, &selected).await {
+        Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
 
-    // Get content type
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream");
+    match route {
+        SeedBankRoute::Local { mount_path } => {
+            let content_type = headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream");
 
-    // Store object
-    let store = ObjectStore::new(&mount_path);
-    match store.put_object(&app, &bucket, &key, content_type, &body).await {
-        Ok(result) => {
-            debug!(app = %app, bucket = %bucket, key = %key, size = body.len(), "PUT object success");
-            
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::ETAG, &result.etag)
-                .body("".into())
-                .unwrap()
+            let store = ObjectStore::new(&mount_path);
+            match store.put_object(&bucket, &key, content_type, &body).await {
+                Ok(result) => {
+                    debug!(bucket = %bucket, key = %key, size = body.len(), "PUT object success");
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::ETAG, &result.etag)
+                        .body("".into())
+                        .unwrap()
+                }
+                Err(e) => {
+                    warn!(error = %e, "PUT object failed");
+                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                }
+            }
         }
-        Err(e) => {
-            warn!(error = %e, "PUT object failed");
-            xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+        SeedBankRoute::Remote { endpoint } => {
+            let mut query = Vec::new();
+            if selected != DEFAULT_SEED_BANK_NAME {
+                query.push(("seed-bank".to_string(), selected));
+            }
+            proxy_s3_request(
+                reqwest::Method::PUT,
+                &endpoint,
+                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+                query,
+                &headers,
+                Some(body),
+            )
+            .await
         }
     }
 }
 
 // ============================================================================
-// GET /api/v1/stone/storage/s3/:bucket/*key - Get Object
+// GET /api/v1/storage/s3/:bucket/*key - Get Object
 // ============================================================================
 
 /// Get an object from seed bank storage
 pub async fn get_object(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Get app name from header
-    let app = match get_app_name(&headers) {
-        Some(a) => a,
-        None => return xml_error(StatusCode::BAD_REQUEST, "MissingAppName", "X-App-Name header is required"),
-    };
-
     // Validate bucket and key
-    if bucket.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket name cannot be empty");
+    if let Some(resp) = validate_bucket(&bucket) {
+        return resp;
     }
     let key = key.trim_start_matches('/');
     if key.is_empty() {
         return xml_error(StatusCode::NOT_FOUND, "NoSuchKey", "Object key cannot be empty");
     }
+    if let Some(resp) = validate_key(&key) {
+        return resp;
+    }
 
-    // Get default seed bank
-    let mount_path = match get_default_seed_bank().await {
-        Ok(p) => p,
+    let selected = get_seed_bank_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+
+    let route = match resolve_seed_bank_route(&state, &selected).await {
+        Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
 
-    // Retrieve object
-    let store = ObjectStore::new(&mount_path);
-    match store.get_object(&app, &bucket, &key).await {
-        Ok(Some((data, meta))) => {
-            debug!(app = %app, bucket = %bucket, key = %key, size = data.len(), "GET object success");
-            
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, &meta.content_type)
-                .header(header::CONTENT_LENGTH, data.len())
-                .header(header::ETAG, &meta.etag)
-                .header(header::LAST_MODIFIED, &meta.last_modified)
-                .body(data.into())
-                .unwrap()
+    match route {
+        SeedBankRoute::Local { mount_path } => {
+            let store = ObjectStore::new(&mount_path);
+            match store.get_object(&bucket, &key).await {
+                Ok(Some((data, meta))) => {
+                    debug!(bucket = %bucket, key = %key, size = data.len(), "GET object success");
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, &meta.content_type)
+                        .header(header::CONTENT_LENGTH, data.len())
+                        .header(header::ETAG, &meta.etag)
+                        .header(header::LAST_MODIFIED, &meta.last_modified)
+                        .body(data.into())
+                        .unwrap()
+                }
+                Ok(None) => xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &format!("Key '{}' not found", key)),
+                Err(e) => {
+                    warn!(error = %e, "GET object failed");
+                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                }
+            }
         }
-        Ok(None) => {
-            xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &format!("Key '{}' not found", key))
-        }
-        Err(e) => {
-            warn!(error = %e, "GET object failed");
-            xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+        SeedBankRoute::Remote { endpoint } => {
+            let mut query = Vec::new();
+            if selected != DEFAULT_SEED_BANK_NAME {
+                query.push(("seed-bank".to_string(), selected));
+            }
+            proxy_s3_request(
+                reqwest::Method::GET,
+                &endpoint,
+                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+                query,
+                &headers,
+                None,
+            )
+            .await
         }
     }
 }
 
 // ============================================================================
-// HEAD /api/v1/stone/storage/s3/:bucket/*key - Head Object
+// HEAD /api/v1/storage/s3/:bucket/*key - Head Object
 // ============================================================================
 
 /// Get object metadata without body
 pub async fn head_object(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Get app name from header
-    let app = match get_app_name(&headers) {
-        Some(a) => a,
-        None => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("".into())
-                .unwrap();
-        }
-    };
-
     // Validate bucket and key
-    if bucket.is_empty() {
-        return Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body("".into())
-            .unwrap();
+    if let Some(resp) = validate_bucket(&bucket) {
+        return resp;
     }
     let key = key.trim_start_matches('/');
     if key.is_empty() {
-        return Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body("".into())
-            .unwrap();
+        return Response::builder().status(StatusCode::NOT_FOUND).body("".into()).unwrap();
+    }
+    if let Some(resp) = validate_key(&key) {
+        return resp;
     }
 
-    // Get default seed bank
-    let mount_path = match get_default_seed_bank().await {
-        Ok(p) => p,
-        Err((status, _)) => {
-            return Response::builder()
-                .status(status)
-                .body("".into())
-                .unwrap();
-        }
+    let selected = get_seed_bank_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+
+    let route = match resolve_seed_bank_route(&state, &selected).await {
+        Ok(route) => route,
+        Err((status, _)) => return Response::builder().status(status).body("".into()).unwrap(),
     };
 
-    // Get metadata
-    let store = ObjectStore::new(&mount_path);
-    match store.head_object(&app, &bucket, &key).await {
-        Ok(Some(meta)) => {
-            debug!(app = %app, bucket = %bucket, key = %key, "HEAD object success");
-            
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, &meta.content_type)
-                .header(header::CONTENT_LENGTH, meta.size)
-                .header(header::ETAG, &meta.etag)
-                .header(header::LAST_MODIFIED, &meta.last_modified)
-                .body("".into())
-                .unwrap()
+    match route {
+        SeedBankRoute::Local { mount_path } => {
+            let store = ObjectStore::new(&mount_path);
+            match store.head_object(&bucket, &key).await {
+                Ok(Some(meta)) => {
+                    debug!(bucket = %bucket, key = %key, "HEAD object success");
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, &meta.content_type)
+                        .header(header::CONTENT_LENGTH, meta.size)
+                        .header(header::ETAG, &meta.etag)
+                        .header(header::LAST_MODIFIED, &meta.last_modified)
+                        .body("".into())
+                        .unwrap()
+                }
+                Ok(None) => Response::builder().status(StatusCode::NOT_FOUND).body("".into()).unwrap(),
+                Err(_) => Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body("".into()).unwrap(),
+            }
         }
-        Ok(None) => {
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body("".into())
-                .unwrap()
-        }
-        Err(_) => {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("".into())
-                .unwrap()
+        SeedBankRoute::Remote { endpoint } => {
+            let mut query = Vec::new();
+            if selected != DEFAULT_SEED_BANK_NAME {
+                query.push(("seed-bank".to_string(), selected));
+            }
+            proxy_s3_request(
+                reqwest::Method::HEAD,
+                &endpoint,
+                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+                query,
+                &headers,
+                None,
+            )
+            .await
         }
     }
 }
 
 // ============================================================================
-// DELETE /api/v1/stone/storage/s3/:bucket/*key - Delete Object
+// DELETE /api/v1/storage/s3/:bucket/*key - Delete Object
 // ============================================================================
 
 /// Delete an object from seed bank storage
 pub async fn delete_object(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Get app name from header
-    let app = match get_app_name(&headers) {
-        Some(a) => a,
-        None => return xml_error(StatusCode::BAD_REQUEST, "MissingAppName", "X-App-Name header is required"),
-    };
-
     // Validate bucket and key
-    if bucket.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket name cannot be empty");
+    if let Some(resp) = validate_bucket(&bucket) {
+        return resp;
     }
     let key = key.trim_start_matches('/');
-    if key.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", "Object key cannot be empty");
+    if let Some(resp) = validate_key(&key) {
+        return resp;
     }
 
-    // Get default seed bank
-    let mount_path = match get_default_seed_bank().await {
-        Ok(p) => p,
+    let selected = get_seed_bank_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+
+    let route = match resolve_seed_bank_route(&state, &selected).await {
+        Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
 
-    // Delete object
-    let store = ObjectStore::new(&mount_path);
-    match store.delete_object(&app, &bucket, &key).await {
-        Ok(_) => {
-            debug!(app = %app, bucket = %bucket, key = %key, "DELETE object success");
-            
-            Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body("".into())
-                .unwrap()
+    match route {
+        SeedBankRoute::Local { mount_path } => {
+            let store = ObjectStore::new(&mount_path);
+            match store.delete_object(&bucket, &key).await {
+                Ok(_) => {
+                    debug!(bucket = %bucket, key = %key, "DELETE object success");
+                    Response::builder().status(StatusCode::NO_CONTENT).body("".into()).unwrap()
+                }
+                Err(e) => {
+                    warn!(error = %e, "DELETE object failed");
+                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                }
+            }
         }
-        Err(e) => {
-            warn!(error = %e, "DELETE object failed");
-            xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+        SeedBankRoute::Remote { endpoint } => {
+            let mut query = Vec::new();
+            if selected != DEFAULT_SEED_BANK_NAME {
+                query.push(("seed-bank".to_string(), selected));
+            }
+            proxy_s3_request(
+                reqwest::Method::DELETE,
+                &endpoint,
+                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+                query,
+                &headers,
+                None,
+            )
+            .await
         }
     }
 }
 
 // ============================================================================
-// GET /api/v1/stone/storage/s3 - List Buckets
+// GET /api/v1/storage/s3 - List Buckets
 // ============================================================================
 
-/// List all buckets (grouped by app namespace)
+/// List all buckets
 pub async fn list_buckets(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Get app name from header
-    let app = match get_app_name(&headers) {
-        Some(a) => a,
-        None => return xml_error(StatusCode::BAD_REQUEST, "MissingAppName", "X-App-Name header is required"),
-    };
+    let selected = get_seed_bank_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    // Get default seed bank
-    let mount_path = match get_default_seed_bank().await {
-        Ok(p) => p,
+    let route = match resolve_seed_bank_route(&state, &selected).await {
+        Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
 
-    // List buckets for this app
-    let store = ObjectStore::new(&mount_path);
-    match store.list_buckets(&app).await {
-        Ok(buckets) => {
-            debug!(app = %app, count = buckets.len(), "LIST buckets success");
-            
-            let xml = build_list_all_buckets_result(&buckets);
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/xml")
-                .body(xml.into())
-                .unwrap()
+    match route {
+        SeedBankRoute::Local { mount_path } => {
+            let store = ObjectStore::new(&mount_path);
+            match store.list_buckets().await {
+                Ok(buckets) => {
+                    debug!(count = buckets.len(), "LIST buckets success");
+                    let xml = build_list_all_buckets_result(&buckets);
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "application/xml")
+                        .body(xml.into())
+                        .unwrap()
+                }
+                Err(e) => {
+                    warn!(error = %e, "LIST buckets failed");
+                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                }
+            }
         }
-        Err(e) => {
-            warn!(error = %e, "LIST buckets failed");
-            xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+        SeedBankRoute::Remote { endpoint } => {
+            let mut query = Vec::new();
+            if selected != DEFAULT_SEED_BANK_NAME {
+                query.push(("seed-bank".to_string(), selected));
+            }
+            proxy_s3_request(
+                reqwest::Method::GET,
+                &endpoint,
+                "/api/v1/storage/s3",
+                query,
+                &headers,
+                None,
+            )
+            .await
         }
     }
 }
 
 // ============================================================================
-// GET /api/v1/stone/storage/s3/:bucket - List Objects
+// GET /api/v1/storage/s3/:bucket - List Objects
 // ============================================================================
 
 /// Query parameters for list objects
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct ListObjectsQuery {
     /// Only return keys with this prefix
     pub prefix: Option<String>,
@@ -390,72 +569,101 @@ pub struct ListObjectsQuery {
     /// Maximum keys to return (default: 1000)
     #[serde(rename = "max-keys")]
     pub max_keys: Option<usize>,
+    /// Optional seed bank selector
+    #[serde(rename = "seed-bank")]
+    pub seed_bank_dash: Option<String>,
+    pub seed_bank: Option<String>,
+}
+
+impl ListObjectsQuery {
 }
 
 /// List objects in a bucket
 pub async fn list_objects(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(bucket): Path<String>,
     Query(query): Query<ListObjectsQuery>,
     headers: HeaderMap,
 ) -> Response {
-    // Get app name from header
-    let app = match get_app_name(&headers) {
-        Some(a) => a,
-        None => return xml_error(StatusCode::BAD_REQUEST, "MissingAppName", "X-App-Name header is required"),
-    };
-
     // Validate bucket
-    if bucket.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket name cannot be empty");
+    if let Some(resp) = validate_bucket(&bucket) {
+        return resp;
     }
 
-    // Get default seed bank
-    let mount_path = match get_default_seed_bank().await {
-        Ok(p) => p,
+    let selector = SeedBankSelector {
+        seed_bank_dash: query.seed_bank_dash.clone(),
+        seed_bank: query.seed_bank.clone(),
+    };
+
+    let selected = get_seed_bank_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+
+    let route = match resolve_seed_bank_route(&state, &selected).await {
+        Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
 
     let max_keys = query.max_keys.unwrap_or(DEFAULT_MAX_KEYS).min(MAX_MAX_KEYS);
 
-    // List objects
-    let store = ObjectStore::new(&mount_path);
-    match store.list_objects(
-        &app,
-        &bucket,
-        query.prefix.as_deref(),
-        query.delimiter.as_deref(),
-        query.marker.as_deref(),
-        max_keys,
-    ).await {
-        Ok(result) => {
-            debug!(
-                app = %app,
-                bucket = %bucket,
-                count = result.contents.len(),
-                truncated = result.is_truncated,
-                "LIST objects success"
-            );
-            
-            // Build XML response
-            let xml = build_list_bucket_result(
+    match route {
+        SeedBankRoute::Local { mount_path } => {
+            let store = ObjectStore::new(&mount_path);
+            match store.list_objects(
                 &bucket,
-                query.prefix.as_deref().unwrap_or(""),
-                query.marker.as_deref().unwrap_or(""),
+                query.prefix.as_deref(),
+                query.delimiter.as_deref(),
+                query.marker.as_deref(),
                 max_keys,
-                query.delimiter.as_deref().unwrap_or(""),
-                &result,
-            );
-            
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/xml")
-                .body(xml.into())
-                .unwrap()
+            ).await {
+                Ok(result) => {
+                    debug!(bucket = %bucket, count = result.contents.len(), truncated = result.is_truncated, "LIST objects success");
+
+                    let xml = build_list_bucket_result(
+                        &bucket,
+                        query.prefix.as_deref().unwrap_or(""),
+                        query.marker.as_deref().unwrap_or(""),
+                        max_keys,
+                        query.delimiter.as_deref().unwrap_or(""),
+                        &result,
+                    );
+
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "application/xml")
+                        .body(xml.into())
+                        .unwrap()
+                }
+                Err(e) => {
+                    warn!(error = %e, "LIST objects failed");
+                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                }
+            }
         }
-        Err(e) => {
-            warn!(error = %e, "LIST objects failed");
-            xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+        SeedBankRoute::Remote { endpoint } => {
+            let mut query_params = Vec::new();
+            if let Some(prefix) = &query.prefix {
+                query_params.push(("prefix".to_string(), prefix.clone()));
+            }
+            if let Some(delimiter) = &query.delimiter {
+                query_params.push(("delimiter".to_string(), delimiter.clone()));
+            }
+            if let Some(marker) = &query.marker {
+                query_params.push(("marker".to_string(), marker.clone()));
+            }
+            query_params.push(("max-keys".to_string(), max_keys.to_string()));
+            if selected != DEFAULT_SEED_BANK_NAME {
+                query_params.push(("seed-bank".to_string(), selected));
+            }
+
+            proxy_s3_request(
+                reqwest::Method::GET,
+                &endpoint,
+                &format!("/api/v1/storage/s3/{}", bucket),
+                query_params,
+                &headers,
+                None,
+            )
+            .await
         }
     }
 }
@@ -470,20 +678,20 @@ fn build_list_bucket_result(
     result: &crate::infra::storage::ListResult,
 ) -> String {
     let mut xml = String::new();
-    xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+    xml.push_str(r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"#);
     xml.push_str("\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
-    
+
     xml.push_str(&format!("\n  <Name>{}</Name>", escape_xml(bucket)));
     xml.push_str(&format!("\n  <Prefix>{}</Prefix>", escape_xml(prefix)));
     xml.push_str(&format!("\n  <Marker>{}</Marker>", escape_xml(marker)));
     xml.push_str(&format!("\n  <MaxKeys>{}</MaxKeys>", max_keys));
-    
+
     if !delimiter.is_empty() {
         xml.push_str(&format!("\n  <Delimiter>{}</Delimiter>", escape_xml(delimiter)));
     }
-    
+
     xml.push_str(&format!("\n  <IsTruncated>{}</IsTruncated>", result.is_truncated));
-    
+
     for obj in &result.contents {
         xml.push_str("\n  <Contents>");
         xml.push_str(&format!("\n    <Key>{}</Key>", escape_xml(&obj.key)));
@@ -493,13 +701,13 @@ fn build_list_bucket_result(
         xml.push_str("\n    <StorageClass>STANDARD</StorageClass>");
         xml.push_str("\n  </Contents>");
     }
-    
+
     for prefix in &result.common_prefixes {
         xml.push_str("\n  <CommonPrefixes>");
         xml.push_str(&format!("\n    <Prefix>{}</Prefix>", escape_xml(prefix)));
         xml.push_str("\n  </CommonPrefixes>");
     }
-    
+
     xml.push_str("\n</ListBucketResult>");
     xml
 }
@@ -516,14 +724,14 @@ fn escape_xml(s: &str) -> String {
 /// Build ListAllMyBucketsResult XML
 fn build_list_all_buckets_result(buckets: &[String]) -> String {
     let mut xml = String::new();
-    xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+    xml.push_str(r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"#);
     xml.push_str("\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
-    
+
     xml.push_str("\n  <Owner>");
     xml.push_str("\n    <ID>zen-garden</ID>");
     xml.push_str("\n    <DisplayName>zen-garden</DisplayName>");
     xml.push_str("\n  </Owner>");
-    
+
     xml.push_str("\n  <Buckets>");
     for bucket in buckets {
         xml.push_str("\n    <Bucket>");
@@ -532,7 +740,7 @@ fn build_list_all_buckets_result(buckets: &[String]) -> String {
         xml.push_str("\n    </Bucket>");
     }
     xml.push_str("\n  </Buckets>");
-    
+
     xml.push_str("\n</ListAllMyBucketsResult>");
     xml
 }

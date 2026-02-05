@@ -9,7 +9,7 @@
 //! ## Object Storage
 //! 
 //! The `objects` module provides S3-compatible object storage on seed banks:
-//! - Objects stored at: `{mount}/apps/{app}/{bucket}/{key}`
+//! - Objects stored at: `{mount}/garden/storage/{bucket}/{key}`
 //! - Metadata in sidecar files: `{key}.meta.json`
 //! - Atomic writes with temp-file + rename
 //!

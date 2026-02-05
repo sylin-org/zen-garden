@@ -142,48 +142,27 @@ SUBSYSTEM=="block", ENV{ID_USB_DRIVER}=="uas", ENV{UDISKS_IGNORE}="1"
 #### List Seed Banks (Logical View)
 
 ```
-GET /api/v1/storage/seed-banks
+GET /api/v1/stone/storage/bank
 ```
 
 ```json
 {
-  "seed_banks": [
+  "data": [
     {
+      "id": "01948abc-1234-5678-9abc-def012345678",
       "name": "primary",
+      "pool_id": "0194",
       "group": "primary",
-      "replicas": [
-        {
-          "replica_id": 1,
-          "device": "/dev/sdb",
-          "mount_path": "/var/lib/zen-garden/mounts/primary/replica-1",
-          "online": true,
-          "capacity_bytes": 500000000000,
-          "used_bytes": 120000000000
-        },
-        {
-          "replica_id": 2,
-          "device": "/dev/sdc",
-          "mount_path": "/var/lib/zen-garden/mounts/primary/replica-2",
-          "online": true,
-          "capacity_bytes": 500000000000,
-          "used_bytes": 118000000000
-        }
-      ],
-      "healthy": true,
-      "replication_status": "synced"
-    },
-    {
-      "name": "offsite",
-      "group": null,
-      "replicas": [
-        {
-          "replica_id": null,
-          "device": "/dev/sdd",
-          "mount_path": "/var/lib/zen-garden/mounts/offsite",
-          "online": true
-        }
-      ],
-      "healthy": true
+      "replica_id": 1,
+      "device": "/dev/sdb",
+      "mount_path": "/var/lib/zen-garden/mounts/primary/replica-1",
+      "capacity_bytes": 500000000000,
+      "used_bytes": 120000000000,
+      "visibility": "open",
+      "btrfs": true,
+      "origin_stone": "stone-coral-prairie",
+      "created_at": "2026-01-30T12:00:00Z",
+      "online": true
     }
   ]
 }

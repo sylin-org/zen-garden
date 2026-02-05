@@ -4,6 +4,7 @@
 pub mod timeouts;
 pub mod paths;
 pub mod limits;
+pub mod headers;
 
 /// Configuration directory path (platform-specific)
 ///

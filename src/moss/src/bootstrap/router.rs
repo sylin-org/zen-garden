@@ -90,6 +90,7 @@ pub fn configure(state: AppState) -> Router {
 
         // Stone storage (seed banks on THIS stone)
         .route("/api/v1/stone/storage", get(api::v1::storage::storage_overview_v1))
+        .route("/api/v1/stone/storage/health", get(api::v1::storage::storage_health_v1))
         .route("/api/v1/stone/storage/candidates", get(api::v1::storage::list_candidates_v1))
         .route("/api/v1/stone/storage/prepare", post(api::v1::storage::prepare_seed_bank_v1))
         .route("/api/v1/stone/storage/release-all", post(api::v1::storage::release_all_seed_banks_v1))
@@ -103,14 +104,6 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/stone/storage/bank/:id/*path", put(api::v1::storage::put_object_v1))
         .route("/api/v1/stone/storage/bank/:id/*path", delete(api::v1::storage::delete_object_v1))
         .route("/api/v1/stone/storage/bank/:id/*path", head(api::v1::storage::head_object_v1))
-
-        // Stone S3 gateway (S3-compatible interface)
-        .route("/api/v1/stone/storage/s3", get(api::v1::s3_gateway::list_buckets))
-        .route("/api/v1/stone/storage/s3/:bucket", get(api::v1::s3_gateway::list_objects))
-        .route("/api/v1/stone/storage/s3/:bucket/*key", put(api::v1::s3_gateway::put_object))
-        .route("/api/v1/stone/storage/s3/:bucket/*key", get(api::v1::s3_gateway::get_object))
-        .route("/api/v1/stone/storage/s3/:bucket/*key", head(api::v1::s3_gateway::head_object))
-        .route("/api/v1/stone/storage/s3/:bucket/*key", delete(api::v1::s3_gateway::delete_object))
 
         // Stone presence (PRESENCE-0001)
         .route("/api/v1/stone/presence/stream", get(api::v1::presence::stream_stone_presence))
@@ -151,6 +144,25 @@ pub fn configure(state: AppState) -> Router {
         // Garden nourishment (updates across ALL stones)
         .route("/api/v1/garden/nourishment", get(api::v1::nourishment::check_garden))
         .route("/api/v1/garden/nourishment/execute", post(api::v1::nourishment::execute_garden))
+
+        // Garden storage (S3-compatible interface)
+        .route("/api/v1/storage/s3", get(api::v1::s3_gateway::list_buckets))
+        .route("/api/v1/storage/s3/:bucket", get(api::v1::s3_gateway::list_objects))
+        .route("/api/v1/storage/s3/:bucket/*key", put(api::v1::s3_gateway::put_object))
+        .route("/api/v1/storage/s3/:bucket/*key", get(api::v1::s3_gateway::get_object))
+        .route("/api/v1/storage/s3/:bucket/*key", head(api::v1::s3_gateway::head_object))
+        .route("/api/v1/storage/s3/:bucket/*key", delete(api::v1::s3_gateway::delete_object))
+        // Garden storage (REST interface for SDKs)
+        .route("/api/v1/storage", get(api::v1::storage_gateway::list_buckets))
+        .route("/api/v1/storage/*path", get(api::v1::storage_gateway::get_object))
+        .route("/api/v1/storage/*path", put(api::v1::storage_gateway::put_object))
+        .route("/api/v1/storage/*path", head(api::v1::storage_gateway::head_object))
+        .route("/api/v1/storage/*path", delete(api::v1::storage_gateway::delete_object))
+        // Garden memories (read-only backups for hydration)
+        .route("/api/v1/memories", get(api::v1::memories::list_memories))
+        .route("/api/v1/memories/:offering_id/manifest", get(api::v1::memories::get_offering_manifest))
+        .route("/api/v1/memories/:offering_id/:harvest_id", get(api::v1::memories::download_snapshot))
+        .route("/api/v1/memories/:offering_id", get(api::v1::memories::list_offering_snapshots))
 
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/jobs - Job tracking

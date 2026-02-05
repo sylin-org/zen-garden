@@ -8,6 +8,16 @@
 
 ---
 
+## Alignment Note (2026-02-05)
+
+This proposal predates the seed-bank realignment. Apply these updates when reading:
+- `garden/storage/{bucket}/{key}` is the only S3/REST storage root (no `apps/`).
+- App scoping is client-side (SDKs default to `{app}/{bucket}`), not server-enforced.
+- S3 gateway lives at `/api/v1/storage/s3/*`.
+- REST storage surface is `/api/v1/storage/*` (non-S3).
+- Seed bank selection uses `X-Seed-Bank` or `seed-bank` (no `X-App-Name`).
+- Offering backups use `garden/memories`; `garden/offerings` is reserved for listing active services.
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -390,7 +400,7 @@ Clients pick by priority, health, or proximity. Failover is automatic.
 
 ### S3 (Storage)
 
-**Protocol:** `zen-garden:s3//{app-name}[@{seed-bank}]`
+**Protocol:** `zen-garden:s3//{bucket}[@{seed-bank}]`
 
 **Backend:** Seed Banks (see [Storage API Specification](zen-garden-spec-storage-api.md))
 
@@ -416,20 +426,20 @@ Clients pick by priority, health, or proximity. Failover is automatic.
 
 ```javascript
 const s3 = new S3Client({
-  endpoint: await zenGarden.resolve("zen-garden:s3//my-app"),
+  endpoint: await zenGarden.resolve("zen-garden:s3//photos"),
   credentials: { accessKeyId: "zen-garden", secretAccessKey: "zen-garden" },
   region: "zen-garden",
   forcePathStyle: true,
 });
 
 await s3.send(new PutObjectCommand({
-  Bucket: "garden",
-  Key: "data/file.txt",
+  Bucket: "photos",
+  Key: "2026/file.txt",
   Body: "Hello, World!",
 }));
 ```
 
-**Namespace:** Apps write to `apps/{app-name}/`. System (cultivation) writes to `garden/`.
+**Namespace:** Buckets map to `garden/storage/{bucket}/`. App scoping is client-side only.
 
 ---
 
@@ -2607,11 +2617,11 @@ The bridge validates requests against Keystone.
 
 #### App Namespacing
 
-All services enforce app namespaces:
+Most services enforce app namespaces. S3 storage uses bucket scoping (client-side only).
 
 | Service | Namespace |
 |---------|-----------|
-| S3 | `apps/{app-name}/` |
+| S3 | `garden/storage/{bucket}/` (no server-enforced app prefix) |
 | SQS | Queue names prefixed with `{app-name}/` |
 | DynamoDB | Table names prefixed with `{app-name}_` |
 | Secrets | Secret names prefixed with `{app-name}/` |
@@ -2619,7 +2629,7 @@ All services enforce app namespaces:
 | Lambda | Function names prefixed with `{app-name}-` |
 | Logs | Log groups prefixed with `/{app-name}/` |
 
-Apps cannot access other apps' resources.
+Apps cannot access other apps' resources for services with enforced namespaces. S3 buckets are client-scoped by intent.
 
 ### Pond Features
 
@@ -3043,16 +3053,16 @@ internal class ZenGardenS3Wrapper : IAmazonS3
 {
     private readonly IAmazonS3 _inner;
     private readonly string _appName;
-    private readonly string _targetBucket;
+    private readonly string? _appPrefix;
     
     public async Task<PutObjectResponse> PutObjectAsync(
         PutObjectRequest request, 
         CancellationToken ct = default)
     {
-        // Remap bucket and key transparently
+        // Optional client-side app prefixing
         var rewritten = Clone(request);
-        rewritten.BucketName = _targetBucket;  // "garden" in garden mode
-        rewritten.Key = $"apps/{_appName}/{request.BucketName}/{request.Key}";
+        rewritten.BucketName = request.BucketName;
+        rewritten.Key = _appPrefix is null ? request.Key : $"{_appPrefix}{request.Key}";
         
         return await _inner.PutObjectAsync(rewritten, ct);
     }
@@ -3062,8 +3072,8 @@ internal class ZenGardenS3Wrapper : IAmazonS3
         CancellationToken ct = default)
     {
         var rewritten = Clone(request);
-        rewritten.BucketName = _targetBucket;
-        rewritten.Key = $"apps/{_appName}/{request.BucketName}/{request.Key}";
+        rewritten.BucketName = request.BucketName;
+        rewritten.Key = _appPrefix is null ? request.Key : $"{_appPrefix}{request.Key}";
         
         return await _inner.GetObjectAsync(rewritten, ct);
     }
@@ -3072,9 +3082,11 @@ internal class ZenGardenS3Wrapper : IAmazonS3
         ListObjectsV2Request request,
         CancellationToken ct = default)
     {
-        var prefix = $"apps/{_appName}/{request.BucketName}/{request.Prefix ?? ""}";
+        var prefix = _appPrefix is null
+            ? request.Prefix ?? ""
+            : $"{_appPrefix}{request.Prefix ?? ""}";
         var rewritten = Clone(request);
-        rewritten.BucketName = _targetBucket;
+        rewritten.BucketName = request.BucketName;
         rewritten.Prefix = prefix;
         
         var response = await _inner.ListObjectsV2Async(rewritten, ct);
@@ -3082,7 +3094,10 @@ internal class ZenGardenS3Wrapper : IAmazonS3
         // Strip prefix from returned keys
         foreach (var obj in response.S3Objects)
         {
-            obj.Key = StripAppPrefix(obj.Key, request.BucketName);
+            if (_appPrefix is not null)
+            {
+                obj.Key = StripAppPrefix(obj.Key, _appPrefix);
+            }
         }
         
         return response;

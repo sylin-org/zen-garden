@@ -72,24 +72,51 @@ pub struct FireflySerial {
 impl FireflySerial {
     /// Open serial connection to Firefly device
     pub fn new(port_name: &str, device_type: FireflyDeviceType) -> Result<Self> {
-        let port = serialport::new(port_name, 115200)
-            .timeout(Duration::from_millis(2000)) // Longer timeout for ESP8266 boot
+        // Standard serial settings: 115200 8N1, no flow control
+        let mut port = serialport::new(port_name, 115200)
+            .timeout(Duration::from_millis(2000))
+            .data_bits(serialport::DataBits::Eight)
+            .stop_bits(serialport::StopBits::One)
+            .parity(serialport::Parity::None)
+            .flow_control(serialport::FlowControl::None)
             .open()
             .with_context(|| format!("Failed to open serial port {}", port_name))?;
 
-        // For ESP8266: Opening the port toggles DTR which resets the device.
-        // We need to wait for it to boot and print "OK,ready" before sending commands.
-        if device_type == FireflyDeviceType::Esp8266Oled {
-            tracing::debug!("Waiting for ESP8266 to boot...");
+        // Log port settings for diagnostics
+        tracing::debug!(
+            port = %port_name,
+            baud = 115200,
+            settings = "8N1",
+            flow_control = "none",
+            "Serial port opened"
+        );
 
-            // Wait longer for ESP8266 to boot (MicroPython takes ~1-2s)
-            std::thread::sleep(Duration::from_millis(2000));
+        // Stabilization: all devices need a moment after port open
+        // Opening a serial port can toggle DTR/RTS which may reset the device
+        let stabilize_ms = match device_type {
+            FireflyDeviceType::Esp8266Oled => 2000, // MicroPython boot takes longer
+            FireflyDeviceType::Rp2040Matrix => 200, // Short stabilization
+            FireflyDeviceType::Unknown => 500,      // Conservative default
+        };
 
-            // Clear any boot garbage from input buffer
-            let _ = port.clear(serialport::ClearBuffer::Input);
+        tracing::debug!(
+            device_type = %device_type,
+            stabilize_ms = stabilize_ms,
+            "Waiting for device stabilization"
+        );
+        std::thread::sleep(Duration::from_millis(stabilize_ms));
 
-            tracing::debug!("ESP8266 boot wait complete, buffer cleared");
-        }
+        // Clear buffers to start fresh
+        let _ = port.clear(serialport::ClearBuffer::All);
+
+        // Wake-up sequence: send newline to clear any partial command state
+        // Some devices may be waiting for input or have garbage in their buffer
+        let _ = port.write_all(b"\n");
+        let _ = port.flush();
+        std::thread::sleep(Duration::from_millis(50));
+        let _ = port.clear(serialport::ClearBuffer::Input); // Discard any response to wake-up
+
+        tracing::debug!("Serial port ready, buffers cleared");
 
         Ok(Self {
             port: Mutex::new(port),
@@ -314,20 +341,65 @@ impl FireflyConnection {
 
         let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
 
-        // Verify device responds - retry once for ESP8266 which may need more boot time
-        let response = match serial.send_command("I") {
-            Ok(resp) => resp,
-            Err(e) if detected.device_type == FireflyDeviceType::Esp8266Oled => {
-                tracing::debug!(error = %e, "First info command failed, retrying after delay");
-                std::thread::sleep(Duration::from_millis(500));
-                serial.send_command("I")?
+        // Verify device responds to Firefly protocol with retry logic
+        // Retry delays increase: 100ms, 300ms, 500ms
+        const MAX_RETRIES: usize = 3;
+        let retry_delays = [100, 300, 500];
+
+        let mut last_error = None;
+        let mut response = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            match serial.send_command("I") {
+                Ok(resp) => {
+                    response = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < MAX_RETRIES {
+                        let delay = retry_delays.get(attempt).copied().unwrap_or(500);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = MAX_RETRIES + 1,
+                            delay_ms = delay,
+                            "Info command failed, retrying"
+                        );
+                        std::thread::sleep(Duration::from_millis(delay));
+                    }
+                }
             }
-            Err(e) => return Err(e),
+        }
+
+        let response = match response {
+            Some(r) => r,
+            None => {
+                // All retries exhausted - provide helpful diagnostic
+                let error = last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error"));
+                tracing::info!(
+                    port = %detected.port_name,
+                    device_type = %detected.device_type,
+                    vid = format!("{:04x}", detected.vid),
+                    error = %error,
+                    "Device does not respond to Firefly protocol (may have incompatible firmware)"
+                );
+                return Err(anyhow::anyhow!(
+                    "Device on {} does not respond to Firefly protocol after {} attempts: {}",
+                    detected.port_name,
+                    MAX_RETRIES + 1,
+                    error
+                ));
+            }
         };
 
         if !response.starts_with("OK") {
+            tracing::info!(
+                port = %detected.port_name,
+                response = %response,
+                "Device responded but not with Firefly protocol (incompatible firmware)"
+            );
             return Err(anyhow::anyhow!(
-                "Device did not respond correctly: {}",
+                "Device did not respond with Firefly protocol. Got: {}",
                 response
             ));
         }

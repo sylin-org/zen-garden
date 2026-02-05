@@ -4,7 +4,8 @@
 //! Emits StorageEvents via EventBus when eligible devices are detected.
 
 use anyhow::{Context, Result};
-use garden_common::storage::StorageDetectedInfo;
+use garden_common::storage::{SeedBankManifest, StorageDetectedInfo};
+use std::path::Path;
 use tracing::{debug, error, info, warn};
 
 use crate::domain::StorageEvent;
@@ -15,6 +16,26 @@ use super::analyze_device;
 pub struct StorageMonitor {
     /// Event bus for domain events
     event_bus: EventBus,
+}
+
+fn resolve_seed_bank_name(info: &StorageDetectedInfo) -> String {
+    if info.state == garden_common::storage::DeviceState::Prepared {
+        if let Some(mount_path) = info.mount_path.as_deref() {
+            let manifest_path = Path::new(mount_path).join(".zen-garden/manifest.json");
+            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                if let Ok(manifest) = serde_json::from_str::<SeedBankManifest>(&content) {
+                    if !manifest.name.trim().is_empty() {
+                        return manifest.name;
+                    }
+                }
+            }
+        }
+    }
+
+    info.label
+        .as_deref()
+        .unwrap_or(&info.device)
+        .to_string()
 }
 
 impl StorageMonitor {
@@ -129,8 +150,9 @@ fn run_udev_monitor(event_bus: EventBus) -> Result<()> {
                                 }
 
                                 // Emit StorageEvent via EventBus
+                                let display_name = resolve_seed_bank_name(&info);
                                 let storage_event = StorageEvent::seed_bank_detected(
-                                    info.label.as_deref().unwrap_or(&info.device),
+                                    &display_name,
                                     &info.device,
                                     info.mount_path.as_deref().unwrap_or(""),
                                     info.capacity_bytes / (1024 * 1024 * 1024), // Convert to GB

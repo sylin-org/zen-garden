@@ -15,6 +15,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
+use garden_common::storage::SeedBankInfo;
 use garden_common::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
 use crate::domain::topology::{TopologyCache, upsert_from_chirp, mark_stone_offline};
@@ -583,6 +584,21 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                         "Failed to update storage cache after mount recovery"
                     );
                 }
+
+                // Refresh seed bank cache for portrait/UI
+                match SeedBankRegistry::scan().await {
+                    Ok(registry) => {
+                        let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                        let mut cache = state_persistence.seed_bank_cache.write().await;
+                        *cache = banks;
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            error = %e,
+                            "Failed to refresh seed bank cache after mount recovery"
+                        );
+                    }
+                }
             }
         }
     });
@@ -622,6 +638,13 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                             seed_banks = count,
                             "Hot-plug scan: seed banks detected"
                         );
+                    }
+
+                    // Refresh seed bank cache for portrait/UI
+                    {
+                        let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                        let mut cache = state_hotplug.seed_bank_cache.write().await;
+                        *cache = banks;
                     }
 
                     // Update storage cache and broadcast if we have storage
@@ -676,6 +699,12 @@ fn start_seedbank_hotplug_detection_basic(state: AppState) {
                             seed_banks = count,
                             "Hot-plug scan: seed banks detected"
                         );
+                    }
+
+                    {
+                        let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                        let mut cache = state.seed_bank_cache.write().await;
+                        *cache = banks;
                     }
 
                     // Update storage cache and broadcast if we have storage

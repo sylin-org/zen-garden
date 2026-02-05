@@ -69,6 +69,31 @@ capabilities:
           macos: "ollama rm {{item}}"
       timeout_secs: 60
 
+    # Check for model updates (compare local digest with registry)
+    check_updates:
+      available: true
+      local_command:
+        managed:
+          linux: "docker exec {{container_name}} ollama show {{item}} --json 2>/dev/null || echo '{}'"
+          windows: "docker exec {{container_name}} ollama show {{item}} --json 2>nul || echo {}"
+          macos: "docker exec {{container_name}} ollama show {{item}} --json 2>/dev/null || echo '{}'"
+        adopted:
+          linux: "ollama show {{item}} --json 2>/dev/null || echo '{}'"
+          windows: "ollama.exe show {{item}} --json 2>nul || echo {}"
+          macos: "ollama show {{item}} --json 2>/dev/null || echo '{}'"
+      compare:
+        local_path: ".digest"
+        remote_path: ".digest"
+      timeout_secs: 30
+
+    # Upgrade model to latest version (same as pull for Ollama)
+    upgrade:
+      available: true
+      # Falls back to add commands (ollama pull handles both new and update)
+      timeout_secs: 7200
+      progress:
+        pattern: "(\\d+)%"
+
     # Summary for rake list display
     summary:
       format: "{{count}} models"

@@ -1127,12 +1127,134 @@ async fn offering_to_service_info_for_refresh(
     }
 }
 
-/// Mark a job as failed (helper for refresh task)
+/// Mark a job as failed (helper for background tasks)
 async fn mark_job_failed(state: &AppState, job_id: &str, key: &str, error: &str) {
     let mut jobs = state.jobs.write().await;
     if let Some(job) = jobs.get_mut(job_id) {
         job.status = JobStatus::Failed;
         job.failed.insert(key.to_string(), error.to_string());
         job.completed_at = Some(std::time::SystemTime::now());
+    }
+}
+
+/// Background task for adding a single capability
+///
+/// Creates a job, executes the add command, and updates job status.
+pub async fn add_capability_task(
+    state: &AppState,
+    job_id: &str,
+    offering: &str,
+    cap_type: &str,
+    capability_name: &str,
+) {
+    use crate::domain::CapabilityExecutor;
+    use crate::infra::manifests::get_capability_manifest;
+
+    // Update job status to Running
+    {
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.status = JobStatus::Running;
+        }
+    }
+
+    // Emit job started event
+    state.console.emit(console::ConsoleEvent::new(
+        console::EventCategory::Jobs,
+        console::EventStatus::Started,
+        format!("Add {} {} to {} (job: {})", cap_type, capability_name, offering, &job_id[..8.min(job_id.len())])
+    ));
+
+    emit_job_started(state, job_id, offering, "add-capability");
+    tracing::info!(job_id, offering, cap_type, capability_name, "Starting capability add");
+
+    // Find the offering
+    let (service, mode) = {
+        let offerings = state.offerings.read().await;
+        match offerings.iter().find(|o| o.offering.to_lowercase() == offering.to_lowercase()) {
+            Some(o) => {
+                let mode = o.mode();
+                let service = offering_to_service_info_for_refresh(o, state).await;
+                (service, mode)
+            }
+            None => {
+                let error = format!("Offering '{}' not found", offering);
+                emit_job_failed(state, job_id, offering, &error);
+                mark_job_failed(state, job_id, capability_name, &error).await;
+                return;
+            }
+        }
+    };
+
+    // Get capability manifest
+    let manifest = match get_capability_manifest(&service.offering) {
+        Some(m) => m,
+        None => {
+            let error = format!("No capability manifest found for '{}'", offering);
+            emit_job_failed(state, job_id, offering, &error);
+            mark_job_failed(state, job_id, capability_name, &error).await;
+            return;
+        }
+    };
+
+    // Execute add operation
+    let executor = CapabilityExecutor::new();
+
+    emit_job_progress(
+        state,
+        "info",
+        format!("Adding {} '{}'...", cap_type, capability_name),
+        job_id,
+        offering,
+    );
+
+    match executor.add_capability(&service, manifest, mode, cap_type, capability_name).await {
+        Ok(result) if result.success => {
+            // Mark as completed
+            {
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.status = JobStatus::Completed;
+                    job.completed.push(capability_name.to_string());
+                    job.completed_at = Some(std::time::SystemTime::now());
+                }
+            }
+
+            emit_job_completed(state, job_id, offering);
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Completed,
+                format!("Added {} '{}' to {} (job: {})", cap_type, capability_name, offering, &job_id[..8.min(job_id.len())])
+            ));
+
+            tracing::info!(job_id, offering, cap_type, capability_name, "Capability add completed");
+        }
+        Ok(result) => {
+            // Operation returned but reported failure
+            let error = result.error.unwrap_or_else(|| "Unknown error".to_string());
+            emit_job_failed(state, job_id, offering, &error);
+            mark_job_failed(state, job_id, capability_name, &error).await;
+
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Failed,
+                format!("Failed to add {} '{}': {} (job: {})", cap_type, capability_name, error, &job_id[..8.min(job_id.len())])
+            ));
+
+            tracing::warn!(job_id, offering, cap_type, capability_name, error = %error, "Capability add failed");
+        }
+        Err(e) => {
+            let error = e.to_string();
+            emit_job_failed(state, job_id, offering, &error);
+            mark_job_failed(state, job_id, capability_name, &error).await;
+
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Failed,
+                format!("Error adding {} '{}': {} (job: {})", cap_type, capability_name, error, &job_id[..8.min(job_id.len())])
+            ));
+
+            tracing::error!(job_id, offering, cap_type, capability_name, error = %error, "Capability add error");
+        }
     }
 }

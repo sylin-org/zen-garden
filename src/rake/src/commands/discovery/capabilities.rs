@@ -149,6 +149,49 @@ pub struct AddCapabilityRequest {
     pub name: String,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub cap_type: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Response for add capability operation (job-based)
+#[derive(Debug, Deserialize)]
+#[serde(tag = "status")]
+pub enum AddCapabilityResponse {
+    /// Capability already exists
+    #[serde(rename = "exists")]
+    AlreadyExists {
+        offering: String,
+        capability: String,
+        cap_type: String,
+        message: String,
+    },
+
+    /// Dry run - validation passed
+    #[serde(rename = "dry_run")]
+    DryRun {
+        offering: String,
+        capability: String,
+        cap_type: String,
+        message: String,
+    },
+
+    /// Job already running
+    #[serde(rename = "in_progress")]
+    InProgress {
+        offering: String,
+        capability: String,
+        job_id: String,
+        message: String,
+    },
+
+    /// Job started
+    #[serde(rename = "started")]
+    Started {
+        offering: String,
+        capability: String,
+        job_id: String,
+        message: String,
+    },
 }
 
 /// Add a capability to an offering
@@ -159,16 +202,19 @@ pub struct AddCapabilityCommand {
     pub name: String,
     /// Capability type (optional)
     pub cap_type: Option<String>,
+    /// Dry run mode
+    pub dry_run: bool,
     /// Quiet mode
     pub quiet_mode: bool,
 }
 
 impl AddCapabilityCommand {
-    pub fn new(offering: String, name: String, cap_type: Option<String>, quiet_mode: bool) -> Self {
+    pub fn new(offering: String, name: String, cap_type: Option<String>, dry_run: bool, quiet_mode: bool) -> Self {
         Self {
             offering,
             name,
             cap_type,
+            dry_run,
             quiet_mode,
         }
     }
@@ -177,9 +223,11 @@ impl AddCapabilityCommand {
 #[async_trait]
 impl Command for AddCapabilityCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+        let action = if self.dry_run { "Validating" } else { "Adding" };
         println!(
-            "{} Adding {} to {}...",
+            "{} {} {} to {}...",
             ui::status_indicator("info", ctx.term.supports_color),
+            action,
             self.name,
             self.offering
         );
@@ -188,6 +236,7 @@ impl Command for AddCapabilityCommand {
         let request_body = AddCapabilityRequest {
             name: self.name.clone(),
             cap_type: self.cap_type.clone(),
+            dry_run: self.dry_run,
         };
 
         let response = ctx.client.post(&url).json(&request_body).send().await?;
@@ -208,27 +257,65 @@ impl Command for AddCapabilityCommand {
             anyhow::bail!("Request failed with status {}: {}", status, body);
         }
 
-        let api_response: ApiResponse<CapabilityMutationResponse> = response
+        let api_response: ApiResponse<AddCapabilityResponse> = response
             .json()
             .await
             .context("Failed to parse response")?;
 
-        let data = api_response.data;
+        match api_response.data {
+            AddCapabilityResponse::AlreadyExists { offering, capability, cap_type, message } => {
+                println!(
+                    "{} {} '{}' already exists in {}",
+                    ui::status_indicator("info", ctx.term.supports_color),
+                    cap_type,
+                    capability,
+                    offering
+                );
+                println!("  {}", message);
+            }
 
-        if data.success {
-            println!(
-                "{} Successfully added '{}' to {}",
-                ui::status_indicator("success", ctx.term.supports_color),
-                data.capability,
-                self.offering
-            );
-        } else {
-            eprintln!(
-                "{} Failed to add '{}': {}",
-                ui::status_indicator("error", ctx.term.supports_color),
-                data.capability,
-                data.error.unwrap_or_else(|| "Unknown error".to_string())
-            );
+            AddCapabilityResponse::DryRun { offering, capability, cap_type, message } => {
+                println!(
+                    "\n{} DRY RUN - No changes made",
+                    ui::status_indicator("info", ctx.term.supports_color)
+                );
+                println!();
+                println!(
+                    "  {} '{}' can be added to {}",
+                    cap_type,
+                    capability,
+                    offering
+                );
+                println!("  {}", message);
+            }
+
+            AddCapabilityResponse::InProgress { offering, capability, job_id, message } => {
+                println!(
+                    "{} Add operation already in progress",
+                    ui::status_indicator("info", ctx.term.supports_color)
+                );
+                println!();
+                println!("  Offering:   {}", offering);
+                println!("  Capability: {}", capability);
+                println!("  Job ID:     {}", &job_id[..16.min(job_id.len())]);
+                println!();
+                println!("  {}", message);
+            }
+
+            AddCapabilityResponse::Started { offering, capability, job_id, message } => {
+                println!(
+                    "{} {}",
+                    ui::status_indicator("success", ctx.term.supports_color),
+                    message
+                );
+                println!();
+                println!("  Offering:   {}", offering);
+                println!("  Capability: {}", capability);
+                println!("  Job ID:     {}", &job_id[..16.min(job_id.len())]);
+                println!();
+                println!("  The download is running in the background.");
+                println!("  Use 'rake capabilities {}' to verify when complete.", offering);
+            }
         }
 
         suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);

@@ -29,7 +29,7 @@ pub struct ExecutorContext {
     pub port: u16,
 }
 
-/// Result of an add/remove operation
+/// Result of an add/remove/upgrade operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityMutationResult {
     /// Whether the operation succeeded
@@ -41,6 +41,26 @@ pub struct CapabilityMutationResult {
     pub capability: String,
     /// The operation performed
     pub operation: String,
+}
+
+/// Result of checking if a capability has an update available
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityUpdateStatus {
+    /// Capability name
+    pub name: String,
+    /// Capability type
+    pub cap_type: String,
+    /// Whether an update is available
+    pub update_available: bool,
+    /// Local version/digest (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_version: Option<String>,
+    /// Remote version/digest (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_version: Option<String>,
+    /// Error if check failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Capability executor - runs manifest commands to discover, add, and remove capabilities
@@ -292,6 +312,308 @@ impl CapabilityExecutor {
                     operation: "remove".to_string(),
                 })
             }
+        }
+    }
+
+    /// Check if a capability has an update available
+    ///
+    /// Uses manifest-defined commands to compare local vs remote version/digest.
+    ///
+    /// # Arguments
+    /// * `service` - The service to check
+    /// * `manifest` - The capability manifest
+    /// * `mode` - The offering mode
+    /// * `cap_type` - The capability type (e.g., "model")
+    /// * `capability_name` - The name of the capability to check
+    pub async fn check_capability_update(
+        &self,
+        service: &ServiceInfo,
+        manifest: &CapabilityManifest,
+        mode: OfferingMode,
+        cap_type: &str,
+        capability_name: &str,
+    ) -> Result<CapabilityUpdateStatus> {
+        // Validate capability name
+        self.validate_capability_name(capability_name)?;
+
+        // Find the capability type config
+        let cap_config = manifest
+            .get_capability_type(cap_type)
+            .with_context(|| format!("Unknown capability type: {}", cap_type))?;
+
+        // Check if check_updates is available
+        let check_config = match &cap_config.check_updates {
+            Some(c) if c.available => c,
+            Some(_) => {
+                // Not available - return status indicating check not supported
+                return Ok(CapabilityUpdateStatus {
+                    name: capability_name.to_string(),
+                    cap_type: cap_type.to_string(),
+                    update_available: false,
+                    local_version: None,
+                    remote_version: None,
+                    error: Some("Update check not available for this capability type".to_string()),
+                });
+            }
+            None => {
+                // No check_updates config - return unknown status
+                return Ok(CapabilityUpdateStatus {
+                    name: capability_name.to_string(),
+                    cap_type: cap_type.to_string(),
+                    update_available: false,
+                    local_version: None,
+                    remote_version: None,
+                    error: Some("Update check not configured for this capability type".to_string()),
+                });
+            }
+        };
+
+        // Build context
+        let context = ExecutorContext {
+            mode,
+            container_name: Some(format!("zen-offering-{}", service.name)),
+            port: service.ports.native,
+        };
+
+        // Get local version/digest
+        let local_version = if let Some(local_cmd) = &check_config.local_command {
+            match self.get_command(local_cmd, &context) {
+                Ok(cmd) => {
+                    let templated = self.template_command_with_item(&cmd, &context, capability_name)?;
+                    match self.execute_command(&templated, check_config.timeout_secs, &context).await {
+                        Ok(output) => self.extract_version(&output, check_config.compare.as_ref().map(|c| c.local_path.as_str())),
+                        Err(e) => {
+                            tracing::debug!(error = ?e, "Failed to get local version");
+                            None
+                        }
+                    }
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        // Get remote version/digest
+        let remote_version = if let Some(remote_cmd) = &check_config.remote_command {
+            match self.get_command(remote_cmd, &context) {
+                Ok(cmd) => {
+                    let templated = self.template_command_with_item(&cmd, &context, capability_name)?;
+                    match self.execute_command(&templated, check_config.timeout_secs, &context).await {
+                        Ok(output) => self.extract_version(&output, check_config.compare.as_ref().map(|c| c.remote_path.as_str())),
+                        Err(e) => {
+                            tracing::debug!(error = ?e, "Failed to get remote version");
+                            None
+                        }
+                    }
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        // Compare versions
+        let update_available = match (&local_version, &remote_version) {
+            (Some(local), Some(remote)) => local != remote,
+            _ => false, // Can't determine without both versions
+        };
+
+        Ok(CapabilityUpdateStatus {
+            name: capability_name.to_string(),
+            cap_type: cap_type.to_string(),
+            update_available,
+            local_version,
+            remote_version,
+            error: None,
+        })
+    }
+
+    /// Upgrade a capability to the latest version
+    ///
+    /// Semantically distinct from add - used for updating existing capabilities.
+    /// Falls back to add command if upgrade command is not defined.
+    ///
+    /// # Arguments
+    /// * `service` - The service to upgrade capability for
+    /// * `manifest` - The capability manifest
+    /// * `mode` - The offering mode
+    /// * `cap_type` - The capability type (e.g., "model")
+    /// * `capability_name` - The name of the capability to upgrade
+    pub async fn upgrade_capability(
+        &self,
+        service: &ServiceInfo,
+        manifest: &CapabilityManifest,
+        mode: OfferingMode,
+        cap_type: &str,
+        capability_name: &str,
+    ) -> Result<CapabilityMutationResult> {
+        // Validate capability name
+        self.validate_capability_name(capability_name)?;
+
+        // Find the capability type config
+        let cap_config = manifest
+            .get_capability_type(cap_type)
+            .with_context(|| format!("Unknown capability type: {}", cap_type))?;
+
+        // Build context
+        let context = ExecutorContext {
+            mode,
+            container_name: Some(format!("zen-offering-{}", service.name)),
+            port: service.ports.native,
+        };
+
+        // Try upgrade config first, fall back to add config
+        let (commands, timeout) = if let Some(upgrade_config) = &cap_config.upgrade {
+            if !upgrade_config.available {
+                let reason = upgrade_config.reason.as_deref().unwrap_or("Upgrade not available");
+                return Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some(reason.to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "upgrade".to_string(),
+                });
+            }
+            // Use upgrade commands if defined, otherwise fall back to add
+            if let Some(cmds) = &upgrade_config.commands {
+                (cmds, upgrade_config.timeout_secs)
+            } else if let Some(add_config) = &cap_config.add {
+                if let Some(cmds) = &add_config.commands {
+                    (cmds, upgrade_config.timeout_secs)
+                } else {
+                    return Ok(CapabilityMutationResult {
+                        success: false,
+                        error: Some("No commands defined for upgrade operation".to_string()),
+                        capability: capability_name.to_string(),
+                        operation: "upgrade".to_string(),
+                    });
+                }
+            } else {
+                return Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some("No commands defined for upgrade operation".to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "upgrade".to_string(),
+                });
+            }
+        } else if let Some(add_config) = &cap_config.add {
+            // No upgrade config, fall back to add (implicit upgrade)
+            if !add_config.available {
+                let reason = add_config.reason.as_deref().unwrap_or("Operation not available");
+                return Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some(reason.to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "upgrade".to_string(),
+                });
+            }
+            if let Some(cmds) = &add_config.commands {
+                (cmds, add_config.timeout_secs)
+            } else {
+                return Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some("No commands defined for upgrade operation".to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "upgrade".to_string(),
+                });
+            }
+        } else {
+            return Ok(CapabilityMutationResult {
+                success: false,
+                error: Some("Neither upgrade nor add operation configured".to_string()),
+                capability: capability_name.to_string(),
+                operation: "upgrade".to_string(),
+            });
+        };
+
+        // Get and template command
+        let command = self.get_command(commands, &context)?;
+        let templated = self.template_command_with_item(&command, &context, capability_name)?;
+
+        tracing::info!(
+            service = %service.name,
+            cap_type = %cap_type,
+            capability = %capability_name,
+            command = %templated,
+            "Executing capability upgrade command"
+        );
+
+        // Execute the command
+        match self.execute_command(&templated, timeout, &context).await {
+            Ok(_output) => {
+                tracing::info!(
+                    service = %service.name,
+                    capability = %capability_name,
+                    "Successfully upgraded capability"
+                );
+                Ok(CapabilityMutationResult {
+                    success: true,
+                    error: None,
+                    capability: capability_name.to_string(),
+                    operation: "upgrade".to_string(),
+                })
+            }
+            Err(e) => {
+                tracing::warn!(
+                    service = %service.name,
+                    capability = %capability_name,
+                    error = ?e,
+                    "Failed to upgrade capability"
+                );
+                Ok(CapabilityMutationResult {
+                    success: false,
+                    error: Some(e.to_string()),
+                    capability: capability_name.to_string(),
+                    operation: "upgrade".to_string(),
+                })
+            }
+        }
+    }
+
+    /// Check if a capability already exists
+    ///
+    /// Used to provide early return when trying to add an already-installed capability.
+    pub async fn capability_exists(
+        &self,
+        service: &ServiceInfo,
+        manifest: &CapabilityManifest,
+        mode: OfferingMode,
+        cap_type: &str,
+        capability_name: &str,
+    ) -> Result<bool> {
+        // List current capabilities
+        let collections = self.list_capabilities(service, manifest, mode).await?;
+
+        // Find the matching type and check if capability exists
+        for collection in collections {
+            if collection.cap_type == cap_type {
+                return Ok(collection.items.iter().any(|item| {
+                    item.name.to_lowercase() == capability_name.to_lowercase()
+                }));
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Extract version/digest from JSON output using a JSONPath
+    fn extract_version(&self, output: &str, path: Option<&str>) -> Option<String> {
+        let json: serde_json::Value = serde_json::from_str(output).ok()?;
+
+        if let Some(json_path) = path {
+            // Simple JSONPath extraction (supports .field.subfield)
+            let mut current = &json;
+            for part in json_path.trim_start_matches('.').split('.') {
+                current = current.get(part)?;
+            }
+            current.as_str().map(|s| s.to_string())
+        } else {
+            // No path specified, try common fields
+            json.get("digest")
+                .or_else(|| json.get("version"))
+                .or_else(|| json.get("tag"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
         }
     }
 

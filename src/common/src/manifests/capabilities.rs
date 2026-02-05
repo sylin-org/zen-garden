@@ -51,6 +51,14 @@ pub struct CapabilityTypeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remove: Option<RemoveOperationConfig>,
 
+    /// Check for updates operation (optional - detects if updates are available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_updates: Option<CheckUpdatesConfig>,
+
+    /// Upgrade operation (optional - upgrades existing capability to latest)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<UpgradeOperationConfig>,
+
     /// Summary configuration for rake list display
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<SummaryConfig>,
@@ -244,6 +252,78 @@ fn default_remove_timeout() -> u64 {
     60
 }
 
+/// Configuration for the CHECK_UPDATES operation
+///
+/// Detects if a capability has an update available by comparing local vs remote state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckUpdatesConfig {
+    /// Whether this operation is available
+    #[serde(default = "default_true")]
+    pub available: bool,
+
+    /// Command to get local capability info (returns JSON with digest/version)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_command: Option<ModeCommands>,
+
+    /// Command to get remote/registry info (returns JSON with digest/version)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_command: Option<ModeCommands>,
+
+    /// Comparison specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare: Option<UpdateCompareSpec>,
+
+    /// Timeout in seconds
+    #[serde(default = "default_check_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_check_timeout() -> u64 {
+    30
+}
+
+/// Specification for comparing local vs remote capability state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCompareSpec {
+    /// JSONPath to local version/digest
+    pub local_path: String,
+
+    /// JSONPath to remote version/digest
+    pub remote_path: String,
+}
+
+/// Configuration for the UPGRADE operation
+///
+/// Upgrades an existing capability to the latest version.
+/// Semantically distinct from ADD (which installs new capabilities).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpgradeOperationConfig {
+    /// Whether this operation is available
+    #[serde(default = "default_true")]
+    pub available: bool,
+
+    /// Reason if not available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+
+    /// Commands to upgrade capability (mode and platform specific)
+    /// If not specified, falls back to add commands
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commands: Option<ModeCommands>,
+
+    /// Timeout in seconds
+    #[serde(default = "default_upgrade_timeout")]
+    pub timeout_secs: u64,
+
+    /// Progress extraction pattern
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ProgressConfig>,
+}
+
+fn default_upgrade_timeout() -> u64 {
+    7200 // Same as add - 2 hours for large downloads
+}
+
 /// Progress extraction configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressConfig {
@@ -303,6 +383,16 @@ impl CapabilityTypeConfig {
     /// Check if remove operation is available
     pub fn can_remove(&self) -> bool {
         self.remove.as_ref().map(|r| r.available).unwrap_or(false)
+    }
+
+    /// Check if check_updates operation is available
+    pub fn can_check_updates(&self) -> bool {
+        self.check_updates.as_ref().map(|c| c.available).unwrap_or(false)
+    }
+
+    /// Check if upgrade operation is available
+    pub fn can_upgrade(&self) -> bool {
+        self.upgrade.as_ref().map(|u| u.available).unwrap_or(false)
     }
 
     /// Check if capabilities can be modified at runtime

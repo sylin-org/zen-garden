@@ -1086,6 +1086,9 @@ enum CapabilitiesAction {
         /// Capability type (optional, defaults to first type in manifest)
         #[arg(long = "type", short = 't')]
         cap_type: Option<String>,
+        /// Validate only without actually adding
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Remove a capability from an offering (e.g., delete a model)
     Remove {
@@ -1748,8 +1751,8 @@ async fn async_main() -> anyhow::Result<()> {
 
         Commands::Capabilities { action, offering, at } => {
             match action {
-                Some(CapabilitiesAction::Add { offering, name, cap_type }) => {
-                    let cmd = commands::discovery::AddCapabilityCommand::new(offering, name, cap_type, quiet_mode);
+                Some(CapabilitiesAction::Add { offering, name, cap_type, dry_run }) => {
+                    let cmd = commands::discovery::AddCapabilityCommand::new(offering, name, cap_type, dry_run, quiet_mode);
                     dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
                 }
                 Some(CapabilitiesAction::Remove { offering, name, cap_type }) => {

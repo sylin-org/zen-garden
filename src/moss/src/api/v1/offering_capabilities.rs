@@ -159,6 +159,10 @@ pub struct AddCapabilityRequest {
     /// Capability type (optional, defaults to first capability type in manifest)
     #[serde(rename = "type")]
     pub cap_type: Option<String>,
+
+    /// If true, only validate without actually adding
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// Response for capability mutations (add/remove)
@@ -178,9 +182,51 @@ pub struct CapabilityMutationResponse {
     pub error: Option<String>,
 }
 
+/// Response for add capability operation (job-based)
+#[derive(Debug, Serialize)]
+#[serde(tag = "status")]
+pub enum AddCapabilityResponse {
+    /// Capability already exists
+    #[serde(rename = "exists")]
+    AlreadyExists {
+        offering: String,
+        capability: String,
+        cap_type: String,
+        message: String,
+    },
+
+    /// Dry run - validation passed, would add
+    #[serde(rename = "dry_run")]
+    DryRun {
+        offering: String,
+        capability: String,
+        cap_type: String,
+        message: String,
+    },
+
+    /// Job already running - return current progress
+    #[serde(rename = "in_progress")]
+    InProgress {
+        offering: String,
+        capability: String,
+        job_id: String,
+        message: String,
+    },
+
+    /// Job started - return job_id for tracking
+    #[serde(rename = "started")]
+    Started {
+        offering: String,
+        capability: String,
+        job_id: String,
+        message: String,
+    },
+}
+
 /// POST /api/v1/stone/offerings/:name/capabilities
 ///
 /// Add a capability to an offering (e.g., pull a model for Ollama).
+/// Creates a background job for the add operation.
 ///
 /// # Path Parameters
 /// - `name`: Offering name (e.g., "ollama")
@@ -189,25 +235,39 @@ pub struct CapabilityMutationResponse {
 /// ```json
 /// {
 ///   "name": "llama2:7b",
-///   "type": "model"  // optional
+///   "type": "model",  // optional
+///   "dry_run": false  // optional - validate only
 /// }
 /// ```
 ///
-/// # Response
+/// # Response Variants
+///
+/// **Capability already exists:**
 /// ```json
-/// {
-///   "data": {
-///     "success": true,
-///     "capability": "llama2:7b",
-///     "operation": "add"
-///   }
-/// }
+/// { "data": { "status": "exists", "offering": "ollama", "capability": "llama2:7b", ... } }
+/// ```
+///
+/// **Dry run (validation):**
+/// ```json
+/// { "data": { "status": "dry_run", "offering": "ollama", "capability": "llama2:7b", ... } }
+/// ```
+///
+/// **Job already running:**
+/// ```json
+/// { "data": { "status": "in_progress", "job_id": "...", ... } }
+/// ```
+///
+/// **Job started:**
+/// ```json
+/// { "data": { "status": "started", "job_id": "...", ... } }
 /// ```
 pub async fn add_offering_capability_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
     Json(request): Json<AddCapabilityRequest>,
-) -> Result<Json<ApiResponse<CapabilityMutationResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<Json<ApiResponse<AddCapabilityResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    use crate::{Job, JobStatus};
+
     // Find the service (managed or adopted)
     let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
 
@@ -222,10 +282,10 @@ pub async fn add_offering_capability_v1(
     })?;
 
     // Determine capability type
-    let cap_type = request.cap_type.as_deref().unwrap_or_else(|| {
+    let cap_type = request.cap_type.clone().unwrap_or_else(|| {
         manifest.capabilities.first()
-            .map(|c| c.cap_type.as_str())
-            .unwrap_or("model")
+            .map(|c| c.cap_type.clone())
+            .unwrap_or_else(|| "model".to_string())
     });
 
     // Find the capability definition
@@ -250,26 +310,109 @@ pub async fn add_offering_capability_v1(
         ));
     }
 
-    // Execute add operation
+    // Case 1: Check if capability already exists
     let executor = CapabilityExecutor::new();
-    let result = executor
-        .add_capability(&service, &manifest, mode, cap_type, &request.name)
+    let exists = executor
+        .capability_exists(&service, manifest, mode, &cap_type, &request.name)
         .await
         .map_err(|e| {
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "ADD_FAILED",
-                format!("Failed to add capability: {}", e),
+                "CHECK_FAILED",
+                format!("Failed to check existing capabilities: {}", e),
                 None,
             )
         })?;
 
+    if exists {
+        return Ok(Json(ApiResponse {
+            data: AddCapabilityResponse::AlreadyExists {
+                offering: service.offering.clone(),
+                capability: request.name.clone(),
+                cap_type: cap_type.clone(),
+                message: format!("{} '{}' already exists for {}", cap_type, request.name, service.offering),
+            },
+            suggestions: None,
+        }));
+    }
+
+    // Case 2: Dry run - validation passed
+    if request.dry_run {
+        return Ok(Json(ApiResponse {
+            data: AddCapabilityResponse::DryRun {
+                offering: service.offering.clone(),
+                capability: request.name.clone(),
+                cap_type: cap_type.clone(),
+                message: format!("{} '{}' can be added to {}", cap_type, request.name, service.offering),
+            },
+            suggestions: None,
+        }));
+    }
+
+    // Case 3: Check for existing running add job for this capability
+    let job_key = format!("add-capability-{}-{}", service.offering, request.name);
+    {
+        let jobs = state.jobs.read().await;
+        for (job_id, job) in jobs.iter() {
+            if job_id.starts_with(&job_key) && matches!(job.status, JobStatus::Running | JobStatus::Pending) {
+                return Ok(Json(ApiResponse {
+                    data: AddCapabilityResponse::InProgress {
+                        offering: service.offering.clone(),
+                        capability: request.name.clone(),
+                        job_id: job_id.clone(),
+                        message: format!("Add operation already in progress for {} '{}'", cap_type, request.name),
+                    },
+                    suggestions: None,
+                }));
+            }
+        }
+    }
+
+    // Case 4: Create job and spawn background task
+    let job_id = format!("{}-{}", job_key, uuid::Uuid::now_v7());
+
+    let job = Job {
+        id: job_id.clone(),
+        offerings: vec![request.name.clone()], // Track capability name
+        status: JobStatus::Pending,
+        completed: vec![],
+        failed: std::collections::HashMap::new(),
+        started_at: std::time::SystemTime::now(),
+        completed_at: None,
+    };
+
+    state.jobs.write().await.insert(job_id.clone(), job);
+
+    // Spawn background task
+    let state_clone = state.clone();
+    let job_id_clone = job_id.clone();
+    let offering_clone = service.offering.clone();
+    let cap_name_clone = request.name.clone();
+    let cap_type_clone = cap_type.clone();
+    tokio::spawn(async move {
+        crate::tasks::add_capability_task(
+            &state_clone,
+            &job_id_clone,
+            &offering_clone,
+            &cap_type_clone,
+            &cap_name_clone,
+        ).await;
+    });
+
+    tracing::info!(
+        offering = %service.offering,
+        capability = %request.name,
+        cap_type = %cap_type,
+        job_id = %job_id,
+        "Capability add job started"
+    );
+
     Ok(Json(ApiResponse {
-        data: CapabilityMutationResponse {
-            success: result.success,
-            capability: result.capability,
-            operation: result.operation,
-            error: result.error,
+        data: AddCapabilityResponse::Started {
+            offering: service.offering.clone(),
+            capability: request.name.clone(),
+            job_id,
+            message: format!("Adding {} '{}' to {}", cap_type, request.name, service.offering),
         },
         suggestions: None,
     }))

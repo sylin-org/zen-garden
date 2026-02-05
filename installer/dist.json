@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "./dist.schema.json",
   "version": "2.1",
   "description": "Zen Garden distribution - mirrors target filesystem structure",
@@ -107,13 +107,13 @@
   },
   
   "linux": {
-    "buildScript": "dist-linux.ps1",
+    "buildScript": "build-linux.ps1",
     "distDir": "../dist/linux",
     "architecture": "amd64"
   },
   
   "windows": {
-    "buildScript": "dist-windows.ps1",
+    "buildScript": "build-windows.ps1",
     "distDir": "../dist/windows",
     "architecture": "amd64"
   }

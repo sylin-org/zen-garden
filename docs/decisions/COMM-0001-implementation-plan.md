@@ -1,4 +1,4 @@
-﻿# COMM-0001 Implementation Plan
+# COMM-0001 Implementation Plan
 
 **Decision Reference**: [COMM-0001-p2p-transport-singleton.md](./COMM-0001-p2p-transport-singleton.md)  
 **Status**: Ready for Implementation  
@@ -356,7 +356,7 @@ rg "socket.send_to\(" src/moss/src/ --glob '!**/p2p.rs'
 
 If issues occur:
 1. Revert commits: `git revert <commit-range>`
-2. Redeploy previous version: `./installer/dist.ps1; ./installer/push2all.ps1`
+2. Redeploy previous version: `./installer/build.ps1; ./installer/deploy.ps1`
 3. Document failure mode in COMM-0001 decision doc
 
 ---

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     Test first-boot console output functionality in Docker
@@ -23,7 +23,7 @@ Write-Host   "╚═════════════════════
 $mossBinary = ".\dist\linux\garden-moss"
 if (-not (Test-Path $mossBinary)) {
     Write-Host "  [FAIL] Moss binary not found at $mossBinary" -ForegroundColor Red
-    Write-Host "  Run: .\installer\build-linux.ps1 first" -ForegroundColor Yellow
+    Write-Host "  Run: .\installer\compile-linux.ps1 first" -ForegroundColor Yellow
     exit 1
 }
 

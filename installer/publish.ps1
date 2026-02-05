@@ -4,12 +4,12 @@
     Build and publish garden binaries to all stones in one step.
 
 .DESCRIPTION
-    This is a convenience script that combines dist.ps1 (build) and push2all.ps1 (deploy).
+    This is a convenience script that combines build.ps1 (build) and deploy.ps1 (deploy).
     Use this for quick iteration during development - build once, deploy everywhere.
 
     Steps:
-    1. Run dist.ps1 to build the binaries
-    2. Run push2all.ps1 with -SkipBuild -Y to deploy to all discovered stones
+    1. Run build.ps1 to build the binaries
+    2. Run deploy.ps1 with -SkipBuild -Y to deploy to all discovered stones
 
 .PARAMETER Method
     Deployment method: 'HTTP' (via API) or 'SSH' (direct file transfer)
@@ -58,9 +58,9 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 Write-Host "Step 1: Building binaries..." -ForegroundColor Yellow
 Write-Host "----------------------------------------" -ForegroundColor DarkGray
 
-$distScript = Join-Path $ScriptDir "dist.ps1"
+$distScript = Join-Path $ScriptDir "build.ps1"
 if (-not (Test-Path $distScript)) {
-    Write-Host "Error: dist.ps1 not found at $distScript" -ForegroundColor Red
+    Write-Host "Error: build.ps1 not found at $distScript" -ForegroundColor Red
     exit 1
 }
 
@@ -76,9 +76,9 @@ Write-Host "`nBuild completed successfully." -ForegroundColor Green
 Write-Host "`nStep 2: Deploying to all stones..." -ForegroundColor Yellow
 Write-Host "----------------------------------------" -ForegroundColor DarkGray
 
-$push2allScript = Join-Path $ScriptDir "push2all.ps1"
-if (-not (Test-Path $push2allScript)) {
-    Write-Host "Error: push2all.ps1 not found at $push2allScript" -ForegroundColor Red
+$deployScript = Join-Path $ScriptDir "deploy.ps1"
+if (-not (Test-Path $deployScript)) {
+    Write-Host "Error: deploy.ps1 not found at $deployScript" -ForegroundColor Red
     exit 1
 }
 
@@ -94,7 +94,7 @@ if ($Method -eq 'SSH') {
     $pushArgs += @("-SSHUser", $SSHUser, "-SSHPassword", $SSHPassword)
 }
 
-& $push2allScript @pushArgs
+& $deployScript @pushArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`nDeployment failed." -ForegroundColor Red
     exit 1

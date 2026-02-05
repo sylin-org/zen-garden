@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     Manually fix moss binary on a stone when HTTP upload fails
@@ -88,5 +88,5 @@ catch {
 }
 
 Write-Host "`n✅ Manual fix complete!" -ForegroundColor Green
-Write-Host "You can now use push2all.ps1 for future updates." -ForegroundColor White
+Write-Host "You can now use deploy.ps1 for future updates." -ForegroundColor White
 Write-Host ""

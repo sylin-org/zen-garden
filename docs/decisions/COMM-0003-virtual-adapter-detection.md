@@ -40,7 +40,7 @@ Both approaches are **brittle**:
 | Component | File | Issue |
 |-----------|------|-------|
 | Rust P2P transport | `common/src/infra/communications/p2p.rs` | Selected wrong interface |
-| PowerShell push2all | `installer/push2all.ps1` | Selected wrong interface |
+| PowerShell deploy | `installer/deploy.ps1` | Selected wrong interface |
 
 ## Decision
 
@@ -111,7 +111,7 @@ Switched from `if-addrs` to `network-interface` crate:
 | `if-addrs` (old) | No | No |
 | `network-interface` (new) | Yes | No |
 
-#### PowerShell (push2all.ps1)
+#### PowerShell (deploy.ps1)
 
 PowerShell doesn't have easy access to MAC addresses via `Get-NetIPAddress`. Retained IP-range filtering as practical fallback, but improved with priority tiers:
 

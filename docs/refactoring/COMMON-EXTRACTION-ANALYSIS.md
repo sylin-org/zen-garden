@@ -1,4 +1,4 @@
-﻿# Common Extraction Analysis
+# Common Extraction Analysis
 
 **Date**: 2026-01-25  
 **Scope**: Identify components in moss that should be in common  
@@ -228,7 +228,7 @@
    - Use envelope format via common
 
 6. **Test full stack**
-   - push2all discovery
+   - deploy discovery
    - rake tend another
    - rake observe
    - mDNS discovery

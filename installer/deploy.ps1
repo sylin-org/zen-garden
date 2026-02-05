@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Push Zen Garden packages to all discovered stones on the network.
+    Deploy Zen Garden packages to all discovered stones on the network.
 
 .DESCRIPTION
     This script:
@@ -14,7 +14,7 @@
     Discovery timeout in seconds (default: 5)
 
 .PARAMETER Sequential
-    Push to stones sequentially instead of in parallel.
+    Deploy to stones sequentially instead of in parallel.
     Use for debugging to see detailed output per stone.
 
 .PARAMETER Port
@@ -24,15 +24,15 @@
     Build binaries before deploying
 
 .EXAMPLE
-    .\push2all.ps1
+    .\deploy.ps1
     Deploy to all discovered stones using existing packages
 
 .EXAMPLE
-    .\push2all.ps1 -Build
+    .\deploy.ps1 -Build
     Build packages first, then deploy to all stones
 
 .EXAMPLE
-    .\push2all.ps1 -Sequential
+    .\deploy.ps1 -Sequential
     Deploy one stone at a time (for debugging)
 #>
 
@@ -48,7 +48,7 @@ $ErrorActionPreference = "Stop"
 # Build if requested
 if ($Build) {
     Write-Host "`n🔨 Building packages..." -ForegroundColor Cyan
-    $buildScript = Join-Path $PSScriptRoot "dist.ps1"
+    $buildScript = Join-Path $PSScriptRoot "build.ps1"
     & $buildScript
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ Build failed" -ForegroundColor Red
@@ -73,7 +73,7 @@ if (Test-Path $packagesDir) {
 
 if (-not $linuxPackage -and -not $windowsPackage) {
     Write-Host "⚠️  No packages found in $packagesDir" -ForegroundColor Yellow
-    Write-Host "   Run with -Build flag or run dist.ps1 first." -ForegroundColor Yellow
+    Write-Host "   Run with -Build flag or run build.ps1 first." -ForegroundColor Yellow
     exit 1
 }
 
@@ -164,7 +164,7 @@ function Find-AllStones {
         data = @{
             discover = "moss"
             request_id = $requestId
-            requester = "push2all"
+            requester = "deploy"
         }
     } | ConvertTo-Json -Compress
 
@@ -253,14 +253,14 @@ function Get-StoneInfo {
     }
 }
 
-function Push-PackageToStone {
+function Deploy-PackageToStone {
     param(
         [PSCustomObject]$Stone,
         [string]$PackagePath,
         [string]$Platform
     )
 
-    Write-Status "`n📦 Pushing package to $($Stone.Name) ($Platform)..."
+    Write-Status "`n📦 Deploying package to $($Stone.Name) ($Platform)..."
 
     $url = "$($Stone.Endpoint.TrimEnd('/'))/api/v1/stone/deploy"
     $packageName = Split-Path -Leaf $PackagePath
@@ -322,7 +322,7 @@ function Push-PackageToStone {
 # Main execution
 try {
     Write-Status "`n═══════════════════════════════════════════════════════════════"
-    Write-Status "  Push Zen Garden Packages to All Stones"
+    Write-Status "  Deploy Zen Garden Packages to All Stones"
     Write-Status "═══════════════════════════════════════════════════════════════`n"
 
     Write-Status "📦 Using packages:" -ForegroundColor Cyan
@@ -384,7 +384,7 @@ try {
     }
 
     # Deploy
-    Write-Status "`n📡 Pushing packages to $($stoneConfigs.Count) stone(s)..."
+    Write-Status "`n📡 Deploying packages to $($stoneConfigs.Count) stone(s)..."
 
     $results = @()
 
@@ -457,7 +457,7 @@ try {
         Write-Status "   Mode: Sequential deployment`n"
 
         foreach ($config in $stoneConfigs) {
-            $success = Push-PackageToStone -Stone $config.Stone -PackagePath $config.PackagePath -Platform $config.Platform
+            $success = Deploy-PackageToStone -Stone $config.Stone -PackagePath $config.PackagePath -Platform $config.Platform
             $results += @{
                 Success = $success
                 Name = $config.Stone.Name

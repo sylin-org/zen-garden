@@ -1,4 +1,4 @@
-﻿# COMM-0002: P2P Transport Pipeline Specification
+# COMM-0002: P2P Transport Pipeline Specification
 
 **Status**: Active  
 **Date**: 2026-01-25  
@@ -274,7 +274,7 @@ if envelope.announcement_type == announcement_types::DISCOVERY_RESPONSE {
 $requestData = @{
     discover = "moss"
     request_id = [guid]::NewGuid().ToString()
-    requester = "push2all-script"
+    requester = "deploy"
 }
 
 $announcement = @{

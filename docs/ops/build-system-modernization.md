@@ -1,4 +1,4 @@
-﻿# Modern Cross-Compilation Build System
+# Modern Cross-Compilation Build System
 
 **Date**: 2026-01-25  
 **Status**: Recommended for adoption
@@ -18,7 +18,7 @@ Our custom Docker build has intermittent issues where binaries show wrong versio
 - **Workaround**: Manual cache cleaning (fragile, incomplete)
 
 ### 2. **Complex Cache Management**
-Current `build-linux.ps1` requires manual cleaning of:
+Current `compile-linux.ps1` requires manual cleaning of:
 - Final binaries (`target/*/garden-*`)
 - Build script outputs (`target/*/build/garden-*`)
 - Incremental cache (`target/*/incremental/garden*`)
@@ -74,24 +74,24 @@ cargo install cross --git https://github.com/cross-rs/cross
 
 ### Phase 2: Use new build script
 
-We've created `installer/build-cross.ps1` that uses cross-rs:
+We've created `installer/compile-cross.ps1` that uses cross-rs:
 
 ```powershell
 cd installer
-.\build-cross.ps1              # Default: fast-release
-.\build-cross.ps1 -Release     # Full LTO
-.\build-cross.ps1 -DebugBuild  # Debug build
+.\compile-cross.ps1              # Default: fast-release
+.\compile-cross.ps1 -Release     # Full LTO
+.\compile-cross.ps1 -DebugBuild  # Debug build
 ```
 
-### Phase 3: Update dist.ps1
+### Phase 3: Update build.ps1
 
-Replace `build-linux.ps1` call with `build-cross.ps1`.
+Replace `compile-linux.ps1` call with `compile-cross.ps1`.
 
 ### Phase 4: Remove old infrastructure (optional)
 
 Once validated, remove:
 - `Dockerfile.build`
-- `build-linux.ps1` 
+- `compile-linux.ps1` 
 - Docker container management logic
 
 ---
@@ -100,7 +100,7 @@ Once validated, remove:
 
 ### The Correct Pattern
 
-1. **dist.ps1** sets environment variable:
+1. **build.ps1** sets environment variable:
    ```powershell
    $env:CARGO_BUILD_NUMBER = "202601251447"
    ```
@@ -150,7 +150,7 @@ println!("cargo::rerun-if-env-changed=CARGO_BUILD_NUMBER");
 **A**: Much better! cross-rs properly manages Cargo cache per target. No more manual cleaning.
 
 ### Q: What if cross-rs breaks?
-**A**: Fallback to `build-linux.ps1`. But cross-rs is mature (5+ years, used by major projects).
+**A**: Fallback to `compile-linux.ps1`. But cross-rs is mature (5+ years, used by major projects).
 
 ### Q: Performance difference?
 **A**: Similar or faster:
@@ -176,7 +176,7 @@ Before fully migrating, test:
 
 1. **Build with cross-rs**:
    ```powershell
-   .\build-cross.ps1
+   .\compile-cross.ps1
    ```
 
 2. **Check version**:
@@ -187,7 +187,7 @@ Before fully migrating, test:
 
 3. **Change source, rebuild**:
    - Edit a .rs file
-   - `.\build-cross.ps1` again
+   - `.\compile-cross.ps1` again
    - Version should update
 
 4. **Deploy to stone**:
@@ -214,7 +214,7 @@ Before fully migrating, test:
 
 **Risk**: Low - cross-rs is mature, actively maintained, and we can fallback to old method if needed.
 
-**Effort**: Low - `build-cross.ps1` already written, just swap in `dist.ps1`.
+**Effort**: Low - `compile-cross.ps1` already written, just swap in `build.ps1`.
 
 ---
 
@@ -229,7 +229,7 @@ Before fully migrating, test:
 
 ## Appendix: Current vs Proposed
 
-### Current (build-linux.ps1)
+### Current (compile-linux.ps1)
 ```
 Windows → PowerShell → Docker build (Dockerfile.build)
          → Volume mount workspace
@@ -239,7 +239,7 @@ Windows → PowerShell → Docker build (Dockerfile.build)
          → Hope version is correct 🤞
 ```
 
-### Proposed (build-cross.ps1)
+### Proposed (compile-cross.ps1)
 ```
 Windows → PowerShell → cross build --target x86_64-unknown-linux-gnu
          → cross handles Docker automatically
@@ -253,4 +253,4 @@ Windows → PowerShell → cross build --target x86_64-unknown-linux-gnu
 
 ---
 
-**Next Action**: Test `build-cross.ps1` and validate version correctness.
+**Next Action**: Test `compile-cross.ps1` and validate version correctness.

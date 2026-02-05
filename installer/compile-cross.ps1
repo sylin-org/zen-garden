@@ -1,6 +1,6 @@
-﻿<#
+<#
 .SYNOPSIS
-    Modern cross-compilation build using cross-rs
+    Modern cross-compilation via cross-rs
 
 .DESCRIPTION
     Uses cross-rs for reliable Linux binary builds from Windows.
@@ -13,17 +13,17 @@
     Use full release profile (full LTO, smallest binaries)
 
 .PARAMETER DebugBuild
-    Build debug binaries
+    Compile debug binaries
 
 .PARAMETER Jobs
     Number of parallel jobs (default: CPU count)
 
 .EXAMPLE
-    .\build-cross.ps1
+    .\compile-cross.ps1
     # Default: fast-release build
 
 .EXAMPLE
-    .\build-cross.ps1 -Release
+    .\compile-cross.ps1 -Release
     # Full LTO release build
 #>
 
@@ -164,5 +164,5 @@ Get-ChildItem $LINUX_DIR -ErrorAction SilentlyContinue | ForEach-Object {
 }
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  Deploy: .\push2all.ps1 -UsePackage"
+Write-Host "  Deploy: .\deploy.ps1 -UsePackage"
 Write-Host "  USB:    .\NewStone.ps1 -UsbDrive G:"

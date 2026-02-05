@@ -1,236 +1,230 @@
-﻿<#
+<#
 .SYNOPSIS
-    Build Zen Garden Windows binaries natively
+    Build and package Zen Garden Windows distribution
 
 .DESCRIPTION
-    Builds garden-moss.exe and garden-rake.exe for Windows using the MSVC toolchain.
-    Requires Rust with x86_64-pc-windows-msvc target installed.
+    Complete Windows build pipeline:
+    - Clean Cargo cache (incremental, fingerprints, build outputs)
+    - Build Windows binaries natively (only tier-specified binaries)
+    - Create deployment package (zip with ALL available binaries, manifests)
 
-.PARAMETER Targets
-    List of cargo package names to build (e.g., "garden-moss", "garden-rake")
-    If not specified, builds all binaries.
+    The package always includes all binaries found in dist/windows/, even if only
+    core binaries were built. This allows fast iteration on core components while
+    including previously-built Companions in the package.
+
+.PARAMETER Version
+    Version string (e.g., "0.1.202601251234")
+
+.PARAMETER Tier
+    Build tier: "core" (moss + rake only) or "full" (all binaries)
+    Default: "core" for fast iteration. Use "full" for complete rebuilds.
 
 .PARAMETER DebugBuild
-    Build debug binaries instead of optimized release (default: release)
+    Build debug binaries
+
+.PARAMETER Release
+    Build full-release binaries (full LTO)
 
 .PARAMETER Fast
-    Use fast-release profile (~40% faster compile, ~5-10% larger binaries)
-    Uses thin LTO and parallel codegen for faster iteration
+    Use fast-release profile (default, thin LTO)
 
 .PARAMETER SkipTests
     Skip running tests before build
 
+.PARAMETER SkipPackage
+    Skip creating deployment package
+
 .PARAMETER Jobs
-    Number of parallel cargo jobs (default: number of CPUs)
-
-.EXAMPLE
-    .\build-windows.ps1
-    # Build all binaries for Windows (default)
-
-.EXAMPLE
-    .\build-windows.ps1 -Targets "garden-moss","garden-rake"
-    # Build only moss and rake (core tier)
-
-.EXAMPLE
-    .\build-windows.ps1 -Fast
-    # Build with fast-release profile (~40% faster, slightly larger binaries)
-
-.EXAMPLE
-    .\build-windows.ps1 -DebugBuild
-    # Build debug binaries (faster compile, larger size)
-
-.EXAMPLE
-    .\build-windows.ps1 -SkipTests
-    # Fast build without tests
+    Number of parallel cargo jobs
 #>
 
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)]
     [string]$Version,
-    [string[]]$Targets,
+
+    [ValidateSet('core', 'full')]
+    [string]$Tier = "core",
+
     [switch]$DebugBuild,
+    [switch]$Release,
     [switch]$Fast,
     [switch]$SkipTests,
+    [switch]$SkipPackage,
     [int]$Jobs = 0
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Detect if running on Windows (works in both Windows PowerShell 5.x and PowerShell Core 6+)
-$RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)) {
-    $IsWindows
-} else {
-    $env:OS -eq "Windows_NT"
-}
+# Import config module
+Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
 $WINDOWS_DIR = Join-Path $DIST_DIR "windows"
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Windows Build                         ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+# Load configuration
+$config = Get-DistConfig -ConfigPath (Join-Path $PSScriptRoot "dist.json")
 
-if (-not $RunningOnWindows) {
-    Write-Host "✗ This script must run on Windows." -ForegroundColor Red
-    Write-Host "  For Linux builds, use build-linux.ps1" -ForegroundColor Yellow
-    exit 1
-}
+# Set environment variables for build
+$env:GARDEN_VERSION = $Version
+$env:BUILD_NUMBER = ($Version -split '\.')[-1]
+$env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
 
-# Determine build type (default: release for production)
-# Priority: DebugBuild > Fast > Release
-$buildProfile = if ($DebugBuild) {
-    "debug"
-} elseif ($Fast) {
-    "fast-release"  # Custom profile in Cargo.toml
-} else {
-    "release"
-}
-
-# Use version from parameter if provided, otherwise generate default
-if ($Version) {
-    $env:GARDEN_VERSION = $Version
-    # Extract build number from version (assumes format: major.minor.buildNumber)
-    $parts = $Version.Split('.')
-    if ($parts.Length -ge 3) {
-        $env:BUILD_NUMBER = $parts[2]
-        $env:CARGO_BUILD_NUMBER = $parts[2]
-    }
-} elseif (-not $env:GARDEN_VERSION) {
-    $revision = (Get-Date).ToString("yyyyMMddHHmm")
-    $env:GARDEN_VERSION = "0.1.$revision"
-    $env:BUILD_NUMBER = $revision
-    $env:CARGO_BUILD_NUMBER = $revision
-    Write-Host "⚠ Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
-}
-$version = $env:GARDEN_VERSION
-
-# Determine parallel jobs
-$parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
-
-Write-Host "Configuration:" -ForegroundColor Yellow
-Write-Host "  Platform: Windows"
-Write-Host "  Version: $version"
-$buildTypeDesc = switch ($buildProfile) {
-    "debug" { "Debug (fastest compile, largest binary)" }
-    "fast-release" { "Fast-Release (thin LTO, ~40% faster compile)" }
-    default { "Release (full LTO, smallest binary)" }
-}
-Write-Host "  Build Type: $buildTypeDesc"
-Write-Host "  Parallel Jobs: $parallelJobs"
-Write-Host "  Output Dir: $WINDOWS_DIR"
+Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host " Windows Build Pipeline" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+Write-Host "Version: $Version" -ForegroundColor Cyan
+Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
+Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'fast-release' })" -ForegroundColor Cyan
 Write-Host ""
 
-# Create dist directories
-New-Item -ItemType Directory -Force -Path $WINDOWS_DIR | Out-Null
-
-# Run tests
-if (-not $SkipTests) {
-    Write-Host "Running tests..." -ForegroundColor Yellow
-    Push-Location $WORKSPACE_ROOT
-    try {
-        cargo test --workspace --target x86_64-pc-windows-msvc
-        if ($LASTEXITCODE -ne 0) {
-            throw "Tests failed with exit code $LASTEXITCODE"
-        }
-        Write-Host "✓ All tests passed`n" -ForegroundColor Green
-    } finally {
-        Pop-Location
-    }
-} else {
-    Write-Host "⚠ Skipping tests`n" -ForegroundColor DarkYellow
-}
-
-# Check if MSVC target installed
-Write-Host "Checking Rust toolchain..." -ForegroundColor Yellow
-$installedTargets = rustup target list --installed 2>$null
-if ($installedTargets -notcontains "x86_64-pc-windows-msvc") {
-    Write-Host "  Installing x86_64-pc-windows-msvc target..."
-    rustup target add x86_64-pc-windows-msvc
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install Windows target" }
-}
-Write-Host "  ✓ x86_64-pc-windows-msvc target ready`n" -ForegroundColor Green
-
-# Determine which binaries to build
-$defaultTargets = @("garden-moss", "garden-rake", "garden-lantern", "garden-cricket", "garden-firefly")
-$buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
-
-# Build Windows binaries
-Write-Host "Building Windows binaries..." -ForegroundColor Cyan
-foreach ($target in $buildTargets) {
-    Write-Host "  → Building $target.exe..."
-}
-
-Push-Location $WORKSPACE_ROOT
-try {
-    # Build common args: profile and parallel jobs
-    $commonArgs = @("-j", "$parallelJobs")
-    if ($buildProfile -eq "debug") {
-        # Debug build - no profile flag needed
-    } elseif ($buildProfile -eq "fast-release") {
-        $commonArgs += @("--profile", "fast-release")
-    } else {
-        $commonArgs += "--release"
-    }
-
-    # Build all targets
-    $buildArgs = @("build") + $commonArgs + @("--target", "x86_64-pc-windows-msvc")
-    foreach ($target in $buildTargets) {
-        $buildArgs += @("--bin", $target)
-    }
-
-    cargo @buildArgs
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ⚠ Build failed with exit code $LASTEXITCODE" -ForegroundColor Yellow
-    }
-
-    # Copy binaries from target to dist/windows/
-    $srcDir = Join-Path $WORKSPACE_ROOT "target\x86_64-pc-windows-msvc\$buildProfile"
-
-    foreach ($target in $buildTargets) {
-        $srcPath = "$srcDir\$target.exe"
-        if (Test-Path $srcPath) {
-            Copy-Item $srcPath "$WINDOWS_DIR\$target.exe" -Force
-            Write-Host "  ✓ $target.exe built" -ForegroundColor Green
-        } else {
-            Write-Host "  ⚠ $target.exe not found (build may have failed)" -ForegroundColor Yellow
-        }
-    }
-
-    Write-Host "`n✓ Windows binaries built`n" -ForegroundColor Green
-
-} finally {
-    Pop-Location
-}
-
-# Display results
-Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║   Build Complete!                                  ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
-
-Write-Host "Artifacts in $WINDOWS_DIR`:" -ForegroundColor Cyan
-
-$artifacts = Get-ChildItem $WINDOWS_DIR -Filter "*.exe" -ErrorAction SilentlyContinue
-if ($artifacts) {
-    $artifacts | ForEach-Object {
-        $sizeMB = [math]::Round($_.Length / 1MB, 2)
-        $sizeStr = if ($sizeMB -lt 1) {
-            "$([math]::Round($_.Length / 1KB, 0)) KB"
-        } else {
-            "$sizeMB MB"
+# Clean Windows Cargo cache to ensure version update
+Write-Host "Cleaning Cargo cache for version update..." -ForegroundColor DarkGray
+$targetProfiles = @("fast-release", "release", "debug")
+foreach ($profile in $targetProfiles) {
+    $profileDir = Join-Path $WORKSPACE_ROOT "target\$profile"
+    if (Test-Path $profileDir) {
+        # 1. Final binaries
+        Get-ChildItem $profileDir -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        
+        # 2. Build outputs
+        $buildDir = Join-Path $profileDir "build"
+        if (Test-Path $buildDir) {
+            Get-ChildItem $buildDir -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         }
         
-        Write-Host ("  ✓ {0,-20} {1,10}" -f $_.Name, $sizeStr) -ForegroundColor Green
+        # 3. Incremental cache
+        $incrementalDir = Join-Path $profileDir "incremental"
+        if (Test-Path $incrementalDir) {
+            Get-ChildItem $incrementalDir -Filter "garden*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        # 4. Fingerprints
+        $fingerprintDir = Join-Path $profileDir ".fingerprint"
+        if (Test-Path $fingerprintDir) {
+            Get-ChildItem $fingerprintDir -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
-} else {
-    Write-Host "  (no Windows artifacts found)" -ForegroundColor DarkGray
-}
-
-Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  1. Test garden-rake.exe: .\dist\windows\garden-rake.exe list"
-if (Test-Path "$WINDOWS_DIR\garden-moss.exe") {
-    Write-Host "  2. Test garden-moss.exe (requires admin): .\dist\windows\garden-moss.exe --help"
 }
 Write-Host ""
+
+# Update Cargo.toml files with version
+Write-Host "Updating Cargo.toml files..." -ForegroundColor DarkGray
+$cargoFiles = @(
+    (Join-Path $WORKSPACE_ROOT "src\moss\Cargo.toml"),
+    (Join-Path $WORKSPACE_ROOT "src\rake\Cargo.toml"),
+    (Join-Path $WORKSPACE_ROOT "src\lantern\Cargo.toml"),
+    (Join-Path $WORKSPACE_ROOT "src\common\Cargo.toml")
+)
+
+$versionMajorMinor = ($Version -split '\.')[0..1] -join '.'
+foreach ($file in $cargoFiles) {
+    if (Test-Path $file) {
+        $lines = Get-Content $file
+        $updated = $lines | ForEach-Object {
+            if ($_ -match '^version\s*=\s*"[\d\.]+"' -and $_ -notmatch 'rust-version') {
+                "version = `"$versionMajorMinor.0`""
+            } else {
+                $_
+            }
+        }
+        Set-Content $file ($updated -join "`n")
+    }
+}
+Write-Host ""
+
+# Get build targets for this tier
+$buildTargets = Get-CargoBuildTargets -Config $config -Tier $Tier
+Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
+
+# Build Windows binaries (only tier-specified targets)
+$buildScript = Join-Path $PSScriptRoot "compile-windows.ps1"
+$buildArgs = @{
+    Targets = $buildTargets
+}
+if ($DebugBuild) { $buildArgs.Add('DebugBuild', $true) }
+if ($Release) { $buildArgs.Add('Release', $true) }
+if ($Fast -or (-not $DebugBuild -and -not $Release)) { $buildArgs.Add('Fast', $true) }
+if ($SkipTests) { $buildArgs.Add('SkipTests', $true) }
+if ($Jobs -gt 0) { $buildArgs.Add('Jobs', $Jobs) }
+
+& $buildScript @buildArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows build failed"
+}
+
+# Create package (includes ALL available binaries, not just those built in this tier)
+if (-not $SkipPackage) {
+    Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
+    Write-Host "  (Including all available binaries from dist/windows/)" -ForegroundColor DarkGray
+
+    $stagingDir = Join-Path $DIST_DIR "staging\windows"
+    New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+
+    $packageName = "zen-garden-$Version-windows-amd64"
+    $packageDir = Join-Path $stagingDir $packageName
+    $zipPath = Join-Path $stagingDir "$packageName.zip"
+
+    # Clean and create package directory
+    if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+    # Copy ALL available binaries (not just tier-specific ones)
+    # This allows packages to include previously-built Companions even when only core was built
+    $binaries = Get-PlatformBinaries -Config $config -Platform "windows"
+    $includedCount = 0
+    $skippedCount = 0
+    foreach ($binary in $binaries) {
+        $result = Copy-BinaryToStaging -SourceDir $WINDOWS_DIR -StagingRoot $packageDir -Binary $binary -Platform "windows"
+        if ($result) { $includedCount++ } else { $skippedCount++ }
+    }
+    Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
+    
+    # Copy assets from config
+    $assets = Get-PlatformAssets -Config $config -Platform "windows"
+    foreach ($asset in $assets) {
+        Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
+    }
+    
+    # Create package manifest
+    $components = @{}
+    foreach ($binary in $binaries) {
+        $sourceFilename = $binary.Source + ".exe"
+        $sourcePath = Join-Path $WINDOWS_DIR $sourceFilename
+        if (Test-Path $sourcePath) {
+            $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = $binary.Destination + $sourceFilename
+            $components[$binary.Source] = @{
+                path = $relativePath
+                sha256 = $hash
+                size = (Get-Item $sourcePath).Length
+                required = $binary.Required
+            }
+        }
+    }
+    
+    $manifest = @{
+        version = $Version
+        platform = "windows"
+        architecture = "amd64"
+        created = (Get-Date).ToUniversalTime().ToString("o")
+        components = $components
+    }
+    # Write without BOM (UTF8 with BOM breaks JSON parsing)
+    $jsonContent = $manifest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText((Join-Path $packageDir "package.json"), $jsonContent, [System.Text.UTF8Encoding]::new($false))
+    
+    # Create zip in staging area
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    Compress-Archive -Path $packageDir -DestinationPath $zipPath -Force
+    
+    $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 2)
+    Write-Host "`n✓ Package: $packageName.zip ($sizeMB MB)" -ForegroundColor Green
+    Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
+    
+    Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "`n✓ Windows build complete" -ForegroundColor Green

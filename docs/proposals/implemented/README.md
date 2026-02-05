@@ -61,7 +61,7 @@ Package-based deployment system with atomic upgrades and validation.
    - Status: ✅ 100% Complete (Windows uses flag-based upgrade)
    - Implementation Date: 2026-01-23
    - API: `POST /api/v1/stone/deploy`
-   - Push script: `push2all.ps1` with package mode
+   - Push script: `deploy.ps1` with package mode
 
 ### Key Features
 - ✅ Platform-specific packages (tar.gz/zip)

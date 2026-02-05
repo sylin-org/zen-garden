@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to Zen Garden will be documented in this file.
 
@@ -10,7 +10,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Known virtual OUIs: Hyper-V (`00:15:5D`), VMware (`00:50:56`), VirtualBox (`08:00:27`), Docker (`02:42`), QEMU/KVM (`52:54:00`), Xen (`00:16:3E`)
   - Detection hierarchy: MAC OUI (primary) → interface name patterns (secondary) → Docker 172.17.x.x (tertiary)
   - Decision: [COMM-0003](decisions/COMM-0003-virtual-adapter-detection.md)
-- **Fixed push2all.ps1 interface selection** - Added filtering for Hyper-V (`192.168.224+`), WSL, Docker Desktop ranges
+- **Fixed deploy.ps1 interface selection** - Added filtering for Hyper-V (`192.168.224+`), WSL, Docker Desktop ranges
   - Added priority tiers: `192.168.0-15.x` (priority 1) over higher subnets
 - **Restored Windows-specific stone naming theme** - Platform-aware name generation
   - Linux: Nature theme (64×64 = 4,096 names): `stone-golden-summit`, `stone-crystal-forest`
@@ -502,7 +502,7 @@ leo-main                [thriving]           192.168.1.166
 6. **`src/moss/src/tasks/mod.rs`**
    - Exported: `start_topology_maintenance` function
 
-7. **`installer/push2all.ps1`** (lines 350-365)
+7. **`installer/deploy.ps1`** (lines 350-365)
    - Changed: Discovery now sends to **both** multicast and broadcast
    - Primary: Multicast to `239.255.42.99:7184`
    - Fallback: Limited broadcast to `255.255.255.255:7184` (for older moss versions)
@@ -683,7 +683,7 @@ Announcement frequency: **~1/second** (STONE_CHIRP debounced to 100ms)
 - [x] No regressions in existing functionality
 - [x] Topology maintenance task runs every 30s
 - [x] Offline threshold reduced to 45s (faster cleanup)
-- [x] push2all.ps1 uses multicast + broadcast fallback
+- [x] deploy.ps1 uses multicast + broadcast fallback
 
 ---
 

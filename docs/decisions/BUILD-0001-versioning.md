@@ -1,4 +1,4 @@
-﻿# BUILD-0001: Natural Flow Versioning
+# BUILD-0001: Natural Flow Versioning
 
 **Status:** Accepted  
 **Date:** 2026-01-18  
@@ -72,7 +72,7 @@ This reflects Zen Garden's core principles:
 ### Implementation
 
 - `version.json` stores major/minor at repo root
-- `dist.ps1` reads version and appends timestamp
+- `build.ps1` reads version and appends timestamp
 - All build scripts receive full version string
 - Cargo.toml files updated before build
 

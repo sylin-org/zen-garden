@@ -1,4 +1,4 @@
-﻿# Manifest Directory Restructuring Plan
+# Manifest Directory Restructuring Plan
 
 **Status:** Draft
 **Created:** 2026-01-24
@@ -265,7 +265,7 @@ ManifestsDir = (Join-Path $PSScriptRoot "..\manifests")  # No change needed
 
 ---
 
-### 3. `installer/dist.ps1`
+### 3. `installer/build.ps1`
 
 **Current (lines 472-474, 531-533):**
 
@@ -400,10 +400,10 @@ With `ManifestRegistry.hw` in place, future work includes:
 ### Priority 3: Installer Scripts
 - [ ] Update `NewStone.ps1` - dynamic category copy from `sw/`
 - [ ] Update `moss-update-helper.sh` - handle `sw/` and `hw/` paths
-- [ ] Verify `dist.ps1` works with new structure
+- [ ] Verify `build.ps1` works with new structure
 
 ### Verification
-- [ ] Build distribution: `.\installer\dist.ps1`
+- [ ] Build distribution: `.\installer\build.ps1`
 - [ ] Create USB: `.\installer\NewStone.ps1`
 - [ ] Deploy to test stone
 - [ ] Verify `garden-rake list` shows all offerings

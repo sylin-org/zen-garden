@@ -2,7 +2,7 @@
 # moss-update-helper.sh - Process validated upgrades before Moss starts
 #
 # Flow:
-# 1. push2all.ps1 sends package to Moss HTTP API (/api/v1/stone/deploy)
+# 1. deploy.ps1 sends package to Moss HTTP API (/api/v1/stone/deploy)
 # 2. Moss validates and extracts to /var/lib/zen-garden/staging/validated/
 # 3. Moss triggers service restart
 # 4. This script (ExecStartPre) installs from validated/ before Moss starts

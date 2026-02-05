@@ -1,4 +1,4 @@
-﻿# Windows Deployment Analysis - Critical Gaps Identified
+# Windows Deployment Analysis - Critical Gaps Identified
 **Date**: 2026-01-26  
 **Status**: ⚠️ **INCOMPLETE IMPLEMENTATION**  
 **Severity**: **HIGH** - Windows self-update non-functional
@@ -134,7 +134,7 @@ RestartSec=5s
 
 ### 4. Push2All Deployment Script ⚠️ **WORKAROUND EXISTS**
 
-**Script**: [`installer/push2all.ps1`](../../installer/push2all.ps1)  
+**Script**: [`installer/deploy.ps1`](../../installer/deploy.ps1)  
 **Methods**:
 1. **HTTP API** (default): Calls `/api/v1/stone:deploy` with package
    - ✅ Works on Linux (systemd scripts apply staged binaries)
@@ -382,7 +382,7 @@ Windows doesn't allow replacing a running `.exe`. Adjust strategy:
 - [ ] Test rollback scenario (corrupt staged binary)
 - [ ] Update Windows package to include startup scripts (for future)
 - [ ] Document Windows-specific update behavior
-- [ ] Update push2all.ps1 to verify HTTP method after fix
+- [ ] Update deploy.ps1 to verify HTTP method after fix
 - [ ] Add integration test for Windows self-update
 
 ---
@@ -391,7 +391,7 @@ Windows doesn't allow replacing a running `.exe`. Adjust strategy:
 
 ### Manual Test (Windows)
 
-1. Build package: `installer\dist.ps1`
+1. Build package: `installer\build.ps1`
 2. Install moss as service: `.\garden-moss.exe install-service`
 3. Deploy new package: `Invoke-RestMethod -Method POST -Uri "http://localhost:7185/api/v1/stone:deploy" -Headers @{"X-Package-SHA256"="<hash>"} -InFile "package.zip"`
 4. Verify staged binaries: `ls .zen-garden\staging\validated\bin\`

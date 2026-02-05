@@ -76,7 +76,7 @@ cargo build --release --bin garden-rake --target x86_64-pc-windows-msvc
 
 ### Cross-Platform Build Script
 
-**build-dist.ps1** (Windows PowerShell):
+**build.ps1** (Windows PowerShell):
 ```powershell
 <#
 .SYNOPSIS
@@ -323,7 +323,7 @@ garden-rake list
 
 ## Deployment Checklist
 
-- [ ] Build release binaries (`build-dist.ps1 -Release`)
+- [ ] Build release binaries (`build.ps1 -Release`)
 - [ ] Verify binary sizes (<20MB each)
 - [ ] Test garden-moss binary on Linux (WSL or VM)
 - [ ] Test garden-rake on Linux

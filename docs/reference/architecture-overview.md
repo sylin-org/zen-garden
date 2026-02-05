@@ -1,4 +1,4 @@
-﻿---
+---
 audience: [contributor, developer, ai]
 doc_type: reference
 status: current
@@ -90,7 +90,7 @@ The `zen-common` crate provides:
 
 - **Build Numbers**: Timestamp-based versioning (yyyyMMdd.HHmm)
   - Set via `CARGO_BUILD_NUMBER` environment variable
-  - Build scripts in `build-dist.ps1`, `build-linux.ps1`, `build-windows.ps1`
+  - Build scripts in `build.ps1`, `compile-linux.ps1`, `compile-windows.ps1`
   - Captured by `zen-build-utils::capture_build_number()`
 
 - **Cross-Platform**: 
@@ -190,13 +190,13 @@ cargo build --workspace
 ### Release
 ```bash
 # Windows
-.\installer\build-windows.ps1
+.\installer\compile-windows.ps1
 
 # Linux (via Docker)
-.\installer\build-linux.ps1
+.\installer\compile-linux.ps1
 
 # Distribution package
-.\installer\dist.ps1
+.\installer\build.ps1
 ```
 
 ### Deployment

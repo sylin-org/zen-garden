@@ -1,9 +1,9 @@
-﻿<#
+<#
 .SYNOPSIS
     Build full Zen Garden distribution (all binaries including Companions)
 
 .DESCRIPTION
-    Convenience wrapper for dist.ps1 -Tier full.
+    Convenience wrapper for build.ps1 -Tier full.
     Builds all binaries: moss, rake, lantern, cricket, firefly.
 
 .PARAMETER SkipLinux
@@ -28,11 +28,11 @@
     Number of parallel cargo jobs
 
 .EXAMPLE
-    .\dist-full.ps1
+    .\build-full.ps1
     Build all binaries for both platforms
 
 .EXAMPLE
-    .\dist-full.ps1 -SkipWindows
+    .\build-full.ps1 -SkipWindows
     Build all binaries for Linux only
 #>
 
@@ -47,8 +47,8 @@ param(
     [int]$Jobs = 0
 )
 
-# Forward all parameters to dist.ps1 with -Tier full
-$scriptPath = Join-Path $PSScriptRoot "dist.ps1"
+# Forward all parameters to build.ps1 with -Tier full
+$scriptPath = Join-Path $PSScriptRoot "build.ps1"
 
 & $scriptPath `
     -Tier full `

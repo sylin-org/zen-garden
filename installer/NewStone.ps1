@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Creates a bootable USB drive that auto-installs a Zen Garden Stone.
 
@@ -997,7 +997,7 @@ function Write-StoneFiles {
     
     if (-not $linuxPackage) {
         Write-Step "No Linux package found in $($script:Config.PackagesDir)" "FAIL"
-        throw "Linux package required. Run dist.ps1 first to create packages."
+        throw "Linux package required. Run build.ps1 first to create packages."
     }
     
     Write-Step "Using package: $(Split-Path -Leaf $linuxPackage)" "OK"
@@ -1581,7 +1581,7 @@ function Main {
                     # Build Linux binaries (release is default, no flag needed)
                     Write-Host ""
                     Write-Step "Building Linux binaries..." "..."
-                    $buildScript = Join-Path $PSScriptRoot "build-linux.ps1"
+                    $buildScript = Join-Path $PSScriptRoot "compile-linux.ps1"
 
                     if (Test-Path $buildScript) {
                         try {
@@ -1601,7 +1601,7 @@ function Main {
                         }
                     }
                     else {
-                        Write-Step "build-linux.ps1 not found at $buildScript" "FAIL"
+                        Write-Step "compile-linux.ps1 not found at $buildScript" "FAIL"
                         Start-Sleep -Seconds 2
                     }
                 }

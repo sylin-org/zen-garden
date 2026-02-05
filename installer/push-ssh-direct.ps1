@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     Push garden binaries to a specific stone via SSH (bypass discovery)
@@ -39,7 +39,7 @@ $ErrorActionPreference = "Stop"
 # Build if needed
 if (-not $SkipBuild) {
     Write-Host "🔨 Building release binaries..." -ForegroundColor Cyan
-    $buildScript = Join-Path $PSScriptRoot "dist.ps1"
+    $buildScript = Join-Path $PSScriptRoot "build.ps1"
     & $buildScript
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ Build failed" -ForegroundColor Red

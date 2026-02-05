@@ -1,4 +1,4 @@
-﻿# Build Optimization Guide
+# Build Optimization Guide
 
 ## Overview
 
@@ -10,9 +10,9 @@ The Zen Garden build scripts now **default to optimized release builds** for pro
 Optimized for **size and performance**. Use for distribution and production deployment.
 
 ```powershell
-.\installer\dist.ps1                    # All platforms
-.\installer\build-linux.ps1             # Linux only
-.\installer\build-windows.ps1           # Windows only
+.\installer\build.ps1                    # All platforms
+.\installer\compile-linux.ps1             # Linux only
+.\installer\compile-windows.ps1           # Windows only
 ```
 
 **Optimization settings** (from [Cargo.toml](../Cargo.toml#L38-L41)):
@@ -29,9 +29,9 @@ Optimized for **size and performance**. Use for distribution and production depl
 Faster compilation for **development iteration**. Larger binaries with debug symbols.
 
 ```powershell
-.\installer\dist.ps1 -Debug
-.\installer\build-linux.ps1 -Debug
-.\installer\build-windows.ps1 -Debug
+.\installer\build.ps1 -Debug
+.\installer\compile-linux.ps1 -Debug
+.\installer\compile-windows.ps1 -Debug
 ```
 
 **When to use:**
@@ -45,17 +45,17 @@ Faster compilation for **development iteration**. Larger binaries with debug sym
 
 ## Deployment
 
-The `push2all.ps1` script expects **release binaries** from `dist/`:
+The `deploy.ps1` script expects **release binaries** from `dist/`:
 - Automatically detects platform (Linux/Windows) for each stone
 - Deploys appropriately sized binaries (release mode)
 - Configured for 200 MB body limit (handles base64 overhead)
 
 ```powershell
 # Build optimized binaries for all platforms
-.\installer\dist.ps1
+.\installer\build.ps1
 
 # Deploy to all discovered stones
-.\installer\push2all.ps1
+.\installer\deploy.ps1
 ```
 
 ## Size Verification

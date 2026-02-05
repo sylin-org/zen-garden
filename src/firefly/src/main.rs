@@ -15,6 +15,7 @@ use garden_companion_sdk::{
 mod animation;
 mod events;
 mod handler;
+mod oled;
 mod serial;
 
 use animation::{start_animation, AnimationContext};
@@ -207,6 +208,7 @@ async fn main() -> Result<()> {
 
     // Spawn background task to monitor connection and retry every 5 seconds
     let conn_for_retry = Arc::clone(&connection);
+    let ctx_for_retry = Arc::clone(&animation_context);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
@@ -226,6 +228,32 @@ async fn main() -> Result<()> {
                         tracing::info!("Firefly device reconnected");
                         // Clear display on reconnect for clean slate
                         let _ = conn_for_retry.with_device(|serial| serial.clear());
+                        if conn_for_retry.device_type() == FireflyDeviceType::Esp8266Oled {
+                            let (stone_name, health, cpu, memory, uptime) = {
+                                let ctx = ctx_for_retry.read().await;
+                                (
+                                    ctx.stone_name.clone(),
+                                    ctx.health_label.clone(),
+                                    ctx.cpu_percent,
+                                    ctx.memory_percent,
+                                    ctx.uptime_seconds,
+                                )
+                            };
+                            if let Some(name) = stone_name {
+                                let _ = oled::send_oled_snapshot(
+                                    conn_for_retry.as_ref(),
+                                    &name,
+                                    &health,
+                                    cpu,
+                                    memory,
+                                    uptime,
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Firefly reconnected but no cached stone name available"
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         // Log at debug level to help diagnose issues without spamming

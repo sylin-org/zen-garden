@@ -11,6 +11,7 @@ use rand::{Rng, SeedableRng};
 use tokio::sync::RwLock;
 
 use crate::serial::FireflyConnection;
+use crate::oled::DEFAULT_HEALTH_LABEL;
 
 /// Matrix dimensions
 const GRID_SIZE: u8 = 5;
@@ -154,6 +155,8 @@ pub struct AnimationContext {
     pub has_services: bool,
     /// Current health state
     pub health: Health,
+    /// Raw health label (for OLED sync)
+    pub health_label: String,
     /// Active override (if any)
     pub active_override: Option<(Override, Instant)>,
     /// Whether animation should run
@@ -208,6 +211,7 @@ impl AnimationContext {
             has_seed_bank: false,
             has_services: false,
             health: Health::Thriving,
+            health_label: DEFAULT_HEALTH_LABEL.to_string(),
             active_override: None,
             enabled: true,
             brightness,

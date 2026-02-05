@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use crate::animation::{AnimationContext, Health, Override};
+use crate::oled;
 use crate::serial::{FireflyConnection, FireflyDeviceType};
 
 /// Presence snapshot from Moss
@@ -57,19 +58,6 @@ struct TendedEvent {
     by: Option<String>,
 }
 
-/// Format uptime seconds into human-readable string (e.g., "1h", "3d", "2m")
-fn format_uptime(seconds: u64) -> String {
-    if seconds < 60 {
-        format!("{}s", seconds)
-    } else if seconds < 3600 {
-        format!("{}m", seconds / 60)
-    } else if seconds < 86400 {
-        format!("{}h", seconds / 3600)
-    } else {
-        format!("{}d", seconds / 86400)
-    }
-}
-
 /// Firefly event handler - updates animation context and sends OLED commands
 pub struct FireflyEventHandler {
     context: Arc<RwLock<AnimationContext>>,
@@ -102,23 +90,14 @@ impl FireflyEventHandler {
 
     /// Send OLED-specific commands for a snapshot
     fn send_oled_snapshot(&self, snapshot: &PresenceSnapshot) {
-        let _ = self.connection.with_device(|serial| {
-            // Set stone name (uppercase in firmware)
-            serial.oled_stone_name(&snapshot.stone.name)?;
-
-            // Set health state
-            serial.oled_health(&snapshot.stone.health)?;
-
-            // Update metrics
-            let uptime = format_uptime(snapshot.stone.uptime_seconds);
-            serial.oled_metrics(
-                snapshot.stone.cpu_percent as u8,
-                snapshot.stone.memory_percent as u8,
-                &uptime,
-            )?;
-
-            Ok(())
-        });
+        let _ = oled::send_oled_snapshot(
+            self.connection.as_ref(),
+            &snapshot.stone.name,
+            &snapshot.stone.health,
+            snapshot.stone.cpu_percent as u8,
+            snapshot.stone.memory_percent as u8,
+            snapshot.stone.uptime_seconds,
+        );
     }
 
     /// Send OLED command for health change
@@ -128,7 +107,7 @@ impl FireflyEventHandler {
 
     /// Send OLED command for metrics update
     fn send_oled_metrics(&self, cpu: f64, memory: f64, uptime_secs: u64) {
-        let uptime = format_uptime(uptime_secs);
+        let uptime = oled::format_uptime(uptime_secs);
         let _ = self.connection.with_device(|serial| {
             serial.oled_metrics(cpu as u8, memory as u8, &uptime)
         });
@@ -212,6 +191,7 @@ impl EventHandler for FireflyEventHandler {
                     // Store stone info for OLED updates
                     ctx.stone_name = Some(snapshot.stone.name.clone());
                     ctx.uptime_seconds = snapshot.stone.uptime_seconds;
+                    ctx.health_label = snapshot.stone.health.clone();
 
                     // Update health
                     ctx.health = Self::parse_health(&snapshot.stone.health);
@@ -300,6 +280,7 @@ impl EventHandler for FireflyEventHandler {
 
                     let mut ctx = self.context.write().await;
                     ctx.health = Self::parse_health(&evt.health);
+                    ctx.health_label = evt.health.clone();
 
                     // Trigger/clear override based on health (Matrix only)
                     if device_type == FireflyDeviceType::Rp2040Matrix {

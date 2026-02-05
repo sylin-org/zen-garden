@@ -82,6 +82,16 @@ impl FireflySerial {
             .open()
             .with_context(|| format!("Failed to open serial port {}", port_name))?;
 
+        // CircuitPython (RP2040) requires DTR/RTS asserted before it will transmit data.
+        if device_type == FireflyDeviceType::Rp2040Matrix {
+            if let Err(e) = port.write_data_terminal_ready(true) {
+                tracing::debug!(error = %e, "Failed to set DTR true on RP2040");
+            }
+            if let Err(e) = port.write_request_to_send(true) {
+                tracing::debug!(error = %e, "Failed to set RTS true on RP2040");
+            }
+        }
+
         // Log port settings for diagnostics
         tracing::debug!(
             port = %port_name,
@@ -95,8 +105,8 @@ impl FireflySerial {
         // Opening a serial port can toggle DTR/RTS which may reset the device
         let stabilize_ms = match device_type {
             FireflyDeviceType::Esp8266Oled => 2000, // MicroPython boot takes longer
-            FireflyDeviceType::Rp2040Matrix => 200, // Short stabilization
-            FireflyDeviceType::Unknown => 500,      // Conservative default
+            FireflyDeviceType::Rp2040Matrix => 2000, // CircuitPython boot + animation
+            FireflyDeviceType::Unknown => 500,       // Conservative default
         };
 
         tracing::debug!(
@@ -314,119 +324,87 @@ impl FireflyConnection {
 
     /// Try to connect to a device
     pub fn try_connect(&self) -> Result<()> {
-        let detected = match &self.preferred_port {
+        let candidates = match &self.preferred_port {
             Some(p) => {
-                // If port is specified, detect its type
                 let device_type = detect_device_type(p).unwrap_or(FireflyDeviceType::Unknown);
                 tracing::info!(port = %p, device_type = %device_type, "Trying specified port");
-                DetectedDevice {
+                vec![DetectedDevice {
                     port_name: p.clone(),
                     device_type,
                     vid: 0,
                     pid: 0,
-                }
+                }]
             }
-            None => {
-                let device = find_firefly_device()?;
-                tracing::info!(
-                    port = %device.port_name,
-                    device_type = %device.device_type,
-                    vid = format!("{:04x}", device.vid),
-                    pid = format!("{:04x}", device.pid),
-                    "Found candidate device, verifying protocol"
-                );
-                device
-            }
+            None => find_firefly_devices()?,
         };
 
-        let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
-
-        // Verify device responds to Firefly protocol with retry logic
-        // Retry delays increase: 100ms, 300ms, 500ms
-        const MAX_RETRIES: usize = 3;
-        let retry_delays = [100, 300, 500];
+        if candidates.is_empty() {
+            return Err(anyhow::anyhow!("No Firefly device found"));
+        }
 
         let mut last_error = None;
-        let mut response = None;
 
-        for attempt in 0..=MAX_RETRIES {
-            match serial.send_command("I") {
-                Ok(resp) => {
-                    response = Some(resp);
-                    break;
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < MAX_RETRIES {
-                        let delay = retry_delays.get(attempt).copied().unwrap_or(500);
-                        tracing::debug!(
-                            attempt = attempt + 1,
-                            max = MAX_RETRIES + 1,
-                            delay_ms = delay,
-                            "Info command failed, retrying"
-                        );
-                        std::thread::sleep(Duration::from_millis(delay));
-                    }
-                }
-            }
-        }
-
-        let response = match response {
-            Some(r) => r,
-            None => {
-                // All retries exhausted - provide helpful diagnostic
-                let error = last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error"));
-                tracing::info!(
-                    port = %detected.port_name,
-                    device_type = %detected.device_type,
-                    vid = format!("{:04x}", detected.vid),
-                    error = %error,
-                    "Device does not respond to Firefly protocol (may have incompatible firmware)"
-                );
-                return Err(anyhow::anyhow!(
-                    "Device on {} does not respond to Firefly protocol after {} attempts: {}",
-                    detected.port_name,
-                    MAX_RETRIES + 1,
-                    error
-                ));
-            }
-        };
-
-        if !response.starts_with("OK") {
+        for detected in candidates {
             tracing::info!(
                 port = %detected.port_name,
-                response = %response,
-                "Device responded but not with Firefly protocol (incompatible firmware)"
+                device_type = %detected.device_type,
+                vid = format!("{:04x}", detected.vid),
+                pid = format!("{:04x}", detected.pid),
+                "Found candidate device, verifying protocol"
             );
-            return Err(anyhow::anyhow!(
-                "Device did not respond with Firefly protocol. Got: {}",
-                response
-            ));
+
+            let serial = match FireflySerial::new(&detected.port_name, detected.device_type) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::info!(
+                        port = %detected.port_name,
+                        error = %e,
+                        "Failed to open device, trying next candidate"
+                    );
+                    last_error = Some(e);
+                    continue;
+                }
+            };
+
+            match verify_protocol(&serial, &detected) {
+                Ok(response) => {
+                    tracing::info!(
+                        port = %detected.port_name,
+                        device_type = %detected.device_type,
+                        response = %response,
+                        "Firefly device connected"
+                    );
+
+                    {
+                        let mut dt = self
+                            .device_type
+                            .lock()
+                            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+                        *dt = detected.device_type;
+                    }
+
+                    let mut guard = self
+                        .serial
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+                    *guard = Some(serial);
+
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::info!(
+                        port = %detected.port_name,
+                        device_type = %detected.device_type,
+                        error = %e,
+                        "Device does not respond to Firefly protocol, trying next candidate"
+                    );
+                    last_error = Some(e);
+                    continue;
+                }
+            }
         }
 
-        tracing::info!(
-            port = %detected.port_name,
-            device_type = %detected.device_type,
-            response = %response,
-            "Firefly device connected"
-        );
-
-        // Update device type
-        {
-            let mut dt = self
-                .device_type
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
-            *dt = detected.device_type;
-        }
-
-        let mut guard = self
-            .serial
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
-        *guard = Some(serial);
-
-        Ok(())
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No Firefly device found")))
     }
 
     /// Disconnect from device (clears connection state)
@@ -529,7 +507,7 @@ pub fn detect_device_type(port_name: &str) -> Result<FireflyDeviceType> {
 }
 
 /// Find any supported Firefly device (RP2040 or ESP8266)
-pub fn find_firefly_device() -> Result<DetectedDevice> {
+pub fn find_firefly_devices() -> Result<Vec<DetectedDevice>> {
     let ports = serialport::available_ports()?;
 
     tracing::debug!(port_count = ports.len(), "Scanning for Firefly devices");
@@ -575,7 +553,11 @@ pub fn find_firefly_device() -> Result<DetectedDevice> {
         FireflyDeviceType::Unknown => 2,
     });
 
-    candidates
+    Ok(candidates)
+}
+
+pub fn find_firefly_device() -> Result<DetectedDevice> {
+    find_firefly_devices()?
         .into_iter()
         .next()
         .ok_or_else(|| anyhow::anyhow!("No Firefly device found"))
@@ -585,6 +567,72 @@ pub fn find_firefly_device() -> Result<DetectedDevice> {
 #[allow(dead_code)] // Legacy API, kept for backwards compatibility
 pub fn find_firefly_port() -> Result<String> {
     find_firefly_device().map(|d| d.port_name)
+}
+
+fn verify_protocol(serial: &FireflySerial, detected: &DetectedDevice) -> Result<String> {
+    // Verify device responds to Firefly protocol with retry logic
+    // Retry delays increase: 100ms, 300ms, 500ms
+    const MAX_RETRIES: usize = 3;
+    let retry_delays = [100, 300, 500];
+
+    let mut last_error = None;
+    let mut response = None;
+
+    for attempt in 0..=MAX_RETRIES {
+        match serial.send_command("I") {
+            Ok(resp) => {
+                response = Some(resp);
+                break;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    let delay = retry_delays.get(attempt).copied().unwrap_or(500);
+                    tracing::debug!(
+                        attempt = attempt + 1,
+                        max = MAX_RETRIES + 1,
+                        delay_ms = delay,
+                        "Info command failed, retrying"
+                    );
+                    std::thread::sleep(Duration::from_millis(delay));
+                }
+            }
+        }
+    }
+
+    let response = match response {
+        Some(r) => r,
+        None => {
+            let error = last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error"));
+            tracing::info!(
+                port = %detected.port_name,
+                device_type = %detected.device_type,
+                vid = format!("{:04x}", detected.vid),
+                error = %error,
+                "Device does not respond to Firefly protocol (may have incompatible firmware)"
+            );
+            return Err(anyhow::anyhow!(
+                "Device on {} does not respond to Firefly protocol after {} attempts: {}",
+                detected.port_name,
+                MAX_RETRIES + 1,
+                error
+            ));
+        }
+    };
+
+    if !response.starts_with("OK") {
+        tracing::info!(
+            port = %detected.port_name,
+            response = %response,
+            "Device responded but not with Firefly protocol (incompatible firmware)"
+        );
+        return Err(anyhow::anyhow!(
+            "Device did not respond with Firefly protocol. Got: {}",
+            response
+        ));
+    }
+
+    Ok(response)
 }
 
 /// Parse color string (hex or r,g,b format)

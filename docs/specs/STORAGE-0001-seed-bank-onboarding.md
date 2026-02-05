@@ -16,18 +16,20 @@ This specification defines the UX flow and technical implementation for onboardi
 
 ### Seed Bank Types
 
-| Type | Naming | Receives Unnamed Requests | Receives Named Requests | Sync Participation |
-|------|--------|---------------------------|-------------------------|--------------------|
-| **Unnamed** | Default: `seed-bank-zengarden` | ✅ Primary pool | ❌ No name to match | ✅ Syncs with all unnamed |
-| **Named + Open** | User-specified | ✅ Fallback if no unnamed | ✅ If name matches | ✅ Syncs with all open |
-| **Named + Closed** | User-specified | ❌ Never | ✅ Only if name matches | ✅ Syncs only with same-name closed |
+| Type               | Naming                         | Receives Unnamed Requests | Receives Named Requests | Sync Participation                  |
+| ------------------ | ------------------------------ | ------------------------- | ----------------------- | ----------------------------------- |
+| **Unnamed**        | Default: `seed-bank-zengarden` | ✅ Primary pool           | ❌ No name to match     | ✅ Syncs with all unnamed           |
+| **Named + Open**   | User-specified                 | ✅ Fallback if no unnamed | ✅ If name matches      | ✅ Syncs with all open              |
+| **Named + Closed** | User-specified                 | ❌ Never                  | ✅ Only if name matches | ✅ Syncs only with same-name closed |
 
 **Naming Rules:**
+
 - Default name (no `as` clause): `seed-bank-zen-garden`
 - Random name (`prepare {device} named`): Generates `seed-{adjective}-{noun}` from word lists
 - Explicit name (`as backup-vault`): Uses provided name
 
 **Sync Groups & Pool Identity:**
+
 - All **unnamed** seed-banks form a single sync group (garden-wide pool)
 - All **named + open** seed-banks sync with the unnamed pool
 - **Named + closed** seed-banks with the **same name** sync only among themselves (private replication group)
@@ -79,23 +81,23 @@ USB Insert → Moss Event Queue
 
 A storage device is **eligible** for seed bank preparation when:
 
-| Criterion | Requirement |
-|-----------|-------------|
-| Removable | Device is marked as removable by kernel |
-| Writable | Mount is read-write or device has no filesystem |
-| Empty | Zero visible files (no hidden files except system-created) |
-| Not prepared | No `.zen-garden/` directory exists |
-| Allowed path | Mounted under `/mnt/*`, `/media/*`, or `/run/media/*` |
+| Criterion    | Requirement                                                |
+| ------------ | ---------------------------------------------------------- |
+| Removable    | Device is marked as removable by kernel                    |
+| Writable     | Mount is read-write or device has no filesystem            |
+| Empty        | Zero visible files (no hidden files except system-created) |
+| Not prepared | No `.zen-garden/` directory exists                         |
+| Allowed path | Mounted under `/mnt/*`, `/media/*`, or `/run/media/*`      |
 
 ### 1.2 Device States
 
-| State | Description | Action |
-|-------|-------------|--------|
-| `unpartitioned` | Raw device, no partition table | Partition + format |
-| `unformatted` | Partition exists, no filesystem | Format only |
-| `empty` | Filesystem exists, zero visible files | Create structure |
-| `prepared` | Has `.zen-garden/` directory | Already a seed bank |
-| `has_data` | Contains visible files | Cannot prepare (user must clean) |
+| State           | Description                           | Action                           |
+| --------------- | ------------------------------------- | -------------------------------- |
+| `unpartitioned` | Raw device, no partition table        | Partition + format               |
+| `unformatted`   | Partition exists, no filesystem       | Format only                      |
+| `empty`         | Filesystem exists, zero visible files | Create structure                 |
+| `prepared`      | Has `.zen-garden/` directory          | Already a seed bank              |
+| `has_data`      | Contains visible files                | Cannot prepare (user must clean) |
 
 ### 1.3 Detection Mechanism
 
@@ -111,11 +113,11 @@ async fn monitor_usb_storage() -> Result<()> {
     let socket = MonitorBuilder::new()?
         .match_subsystem("block")?
         .listen()?;
-    
+
     // Wrap in async (udev socket is sync, use tokio::task::spawn_blocking or polling)
     loop {
         let event = poll_udev_event(&socket).await?;
-        
+
         if event.event_type() == EventType::Add && is_usb_storage(&event) {
             let info = analyze_device(&event.devnode())?;
             if info.eligible {
@@ -166,6 +168,7 @@ pub const STORAGE_PREPARE_PROGRESS: &str = "storage.prepare.progress";
 ```
 
 **Pool Conflict Event:**
+
 ```json
 {
   "type": "storage.pool_conflict",
@@ -241,15 +244,15 @@ This design allows tunes to customize which events trigger audio and which sampl
 ```rust
 /// Print seed bank detection ribbon to TTY1
 pub fn print_storage_detected_ribbon(info: &StorageDetectedInfo) -> Result<()> {
-    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    
+    let divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+
     // USB icon with storage info
-    let line1 = format!("    ┌──┐      🌱          Device: {} ({})", 
+    let line1 = format!("    ┌──┐      🌱          Device: {} ({})",
         info.label, format_bytes(info.capacity_bytes));
     let line2 = "    │▓▓│                  A new seed bank awaits...";
     let line3 = "    └┬─┘";
     let line4 = format!("     │        Prepare:    garden-rake prepare seed-bank");
-    
+
     tty_write("")?;
     tty_write(divider)?;
     tty_write(&line1)?;
@@ -258,7 +261,7 @@ pub fn print_storage_detected_ribbon(info: &StorageDetectedInfo) -> Result<()> {
     tty_write(&line4)?;
     tty_write(divider)?;
     tty_write("")?;
-    
+
     Ok(())
 }
 ```
@@ -281,10 +284,10 @@ When multiple eligible devices are detected:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     ┌──┐      🌱          2 devices await preparation
-    │▓▓│                  
+    │▓▓│
     └┬─┘                  SANDISK_32GB (32.00 GB) at /mnt/usb
      │                    KINGSTON_64GB (64.00 GB) at /mnt/usb2
-     │        
+     │
      │        Prepare:    garden-rake prepare seed-bank SANDISK_32GB
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
@@ -358,16 +361,16 @@ prepare seed-bank [<device>] [named | as <name>] [at <stone>]
 
 ### 4.4 Normative Flags
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--device` | `-d` | Device label or mount path |
-| `--name` | `-n` | Custom seed bank name |
-| `--named` | | Generate random name (`seed-{adjective}-{noun}`) |
-| `--visibility` | `-v` | Visibility: `open` (default) or `closed` |
-| `--filesystem` | | Filesystem: `btrfs` (default) or `ext4` |
-| `--at` | | Target stone (normative form) |
-| `--format` | `-f` | Output format: `text`, `json` |
-| `--yes` | `-y` | Skip confirmation prompts |
+| Flag           | Short | Description                                      |
+| -------------- | ----- | ------------------------------------------------ |
+| `--device`     | `-d`  | Device label or mount path                       |
+| `--name`       | `-n`  | Custom seed bank name                            |
+| `--named`      |       | Generate random name (`seed-{adjective}-{noun}`) |
+| `--visibility` | `-v`  | Visibility: `open` (default) or `closed`         |
+| `--filesystem` |       | Filesystem: `btrfs` (default) or `ext4`          |
+| `--at`         |       | Target stone (normative form)                    |
+| `--format`     | `-f`  | Output format: `text`, `json`                    |
+| `--yes`        | `-y`  | Skip confirmation prompts                        |
 
 ### 4.5 Release Command
 
@@ -386,6 +389,7 @@ garden-rake release all seed-banks at stone-alpha
 ```
 
 **Behavior:**
+
 1. Sync pending writes to disk (`sync`)
 2. Unmount filesystem
 3. Remove fstab entry (optional, with `--permanent`)
@@ -400,17 +404,17 @@ garden-rake release all seed-banks at stone-alpha
 
 All stone-local storage operations under `/api/v1/stone/storage/`:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/stone/storage` | List all storage (seed banks + candidates) |
-| GET | `/api/v1/stone/storage/candidates` | List eligible devices awaiting preparation |
-| POST | `/api/v1/stone/storage/prepare` | Prepare a device as seed bank |
-| PATCH | `/api/v1/stone/storage/{name}/visibility` | Change visibility (open/closed) |
-| PATCH | `/api/v1/stone/storage/{name}/rename` | Rename seed bank (with pool rules) |
-| POST | `/api/v1/stone/storage/{name}/release` | Safely unmount seed bank |
-| POST | `/api/v1/stone/storage/release-all` | Safely unmount all seed banks |
-| POST | `/api/v1/stone/storage/merge` | Merge two pools (resolve conflict) |
-| DELETE | `/api/v1/stone/storage/{name}` | Remove seed bank (doesn't delete data) |
+| Method | Endpoint                                  | Description                                |
+| ------ | ----------------------------------------- | ------------------------------------------ |
+| GET    | `/api/v1/stone/storage`                   | List all storage (seed banks + candidates) |
+| GET    | `/api/v1/stone/storage/candidates`        | List eligible devices awaiting preparation |
+| POST   | `/api/v1/stone/storage/prepare`           | Prepare a device as seed bank              |
+| PATCH  | `/api/v1/stone/storage/{name}/visibility` | Change visibility (open/closed)            |
+| PATCH  | `/api/v1/stone/storage/{name}/rename`     | Rename seed bank (with pool rules)         |
+| POST   | `/api/v1/stone/storage/{name}/release`    | Safely unmount seed bank                   |
+| POST   | `/api/v1/stone/storage/release-all`       | Safely unmount all seed banks              |
+| POST   | `/api/v1/stone/storage/merge`             | Merge two pools (resolve conflict)         |
+| DELETE | `/api/v1/stone/storage/{name}`            | Remove seed bank (doesn't delete data)     |
 
 ### 5.2 Prepare Endpoint
 
@@ -426,10 +430,12 @@ Content-Type: application/json
 ```
 
 **Visibility rules:**
+
 - Unnamed seed-banks: Always `open` (cannot be closed)
 - Named seed-banks: Default `open`, can be `closed` for private storage
 
 **Response (accepted - async job):**
+
 ```json
 {
   "accepted": true,
@@ -439,6 +445,7 @@ Content-Type: application/json
 ```
 
 **Job Status Polling:**
+
 ```http
 GET /api/v1/stone/jobs/{job_id}
 ```
@@ -446,6 +453,7 @@ GET /api/v1/stone/jobs/{job_id}
 Format operations run asynchronously. The API returns immediately with a `job_id`. Use the job status endpoint or SSE stream (`storage.prepare.progress`, `storage.prepared`) to track completion.
 
 **Response (success):**
+
 ```json
 {
   "success": true,
@@ -464,6 +472,7 @@ Format operations run asynchronously. The API returns immediately with a `job_id
 ```
 
 **Response (error - has data):**
+
 ```json
 {
   "success": false,
@@ -476,6 +485,7 @@ Format operations run asynchronously. The API returns immediately with a `job_id
 ```
 
 **Response (error - needs partition):**
+
 ```json
 {
   "success": false,
@@ -503,6 +513,7 @@ Content-Type: application/json
 ```
 
 This will:
+
 1. Create GPT partition table on device
 2. Create single partition (partition 1) spanning entire device
 3. Format partition as **btrfs** with label `zen-seed` (compression: zstd)
@@ -512,6 +523,7 @@ This will:
 7. Store device serial number in manifest (if available)
 
 **Filesystem Choice:**
+
 - Default: **btrfs** (snapshots, compression, checksums for backup scenarios)
 - Override: `--filesystem ext4` for compatibility edge cases
 
@@ -524,6 +536,7 @@ GET /api/v1/stone/storage
 ```
 
 **Response:**
+
 ```json
 {
   "seed_banks": [
@@ -564,6 +577,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -574,6 +588,7 @@ Content-Type: application/json
 ```
 
 **Behavior:**
+
 - `open` → `closed`: Stops syncing with unnamed pool, starts syncing only with same-name closed banks
 - `closed` → `open`: Begins catch-up sync with unnamed pool
 - Unnamed seed-banks cannot be changed to `closed` (400 error)
@@ -590,6 +605,7 @@ Content-Type: application/json
 ```
 
 **Response (success):**
+
 ```json
 {
   "success": true,
@@ -600,6 +616,7 @@ Content-Type: application/json
 ```
 
 **Response (pool conflict):**
+
 ```json
 {
   "success": false,
@@ -612,6 +629,7 @@ Content-Type: application/json
 ```
 
 **Rename Rules:**
+
 1. Device must be **empty** OR joining a pool with **no files** (becomes donor)
 2. If target pool exists with different `pool_id`:
    - Emit `storage.pool_conflict` SSE event
@@ -627,6 +645,7 @@ POST /api/v1/stone/storage/{name}/release
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -636,11 +655,13 @@ POST /api/v1/stone/storage/{name}/release
 ```
 
 **Release All:**
+
 ```http
 POST /api/v1/stone/storage/release-all
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -659,12 +680,13 @@ Content-Type: application/json
 
 {
   "source": "7c00",           // 4-digit pool_id prefix
-  "target": "7c01",           // 4-digit pool_id prefix  
+  "target": "7c01",           // 4-digit pool_id prefix
   "policy": "incremental"     // incremental | wipe-target | wipe-source
 }
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -686,18 +708,18 @@ Content-Type: application/json
 
 Object CRUD operations on seed bank contents:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/stone/storage/bank/:id/*path` | Get object (raw bytes) |
-| PUT | `/api/v1/stone/storage/bank/:id/*path` | Create/update object |
-| DELETE | `/api/v1/stone/storage/bank/:id/*path` | Delete object |
-| HEAD | `/api/v1/stone/storage/bank/:id/*path` | Get object metadata |
+| Method | Endpoint                               | Description            |
+| ------ | -------------------------------------- | ---------------------- |
+| GET    | `/api/v1/stone/storage/bank/:id/*path` | Get object (raw bytes) |
+| PUT    | `/api/v1/stone/storage/bank/:id/*path` | Create/update object   |
+| DELETE | `/api/v1/stone/storage/bank/:id/*path` | Delete object          |
+| HEAD   | `/api/v1/stone/storage/bank/:id/*path` | Get object metadata    |
 
 **Query Parameters:**
 
-| Parameter | Values | Description |
-|-----------|--------|-------------|
-| `depth` | `1` (default), `2`, `3`, ..., `all`, `-1` | Listing depth for directory paths |
+| Parameter | Values                                    | Description                       |
+| --------- | ----------------------------------------- | --------------------------------- |
+| `depth`   | `1` (default), `2`, `3`, ..., `all`, `-1` | Listing depth for directory paths |
 
 **Examples:**
 
@@ -715,21 +737,32 @@ GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=-1  # Unix convent
 
 **Depth Behavior:**
 
-| Value | Behavior |
-|-------|----------|
-| `1` | Immediate children only (default) |
-| `2` | Children and grandchildren |
-| `N` | N levels of subdirectories |
-| `all` or `-1` | Full recursive listing |
+| Value         | Behavior                          |
+| ------------- | --------------------------------- |
+| `1`           | Immediate children only (default) |
+| `2`           | Children and grandchildren        |
+| `N`           | N levels of subdirectories        |
+| `all` or `-1` | Full recursive listing            |
 
 **Response (directory listing):**
+
 ```json
 {
   "path": "apps/myapp/",
   "entries": [
-    {"name": "config.json", "type": "file", "size": 1024, "modified": "2026-01-28T10:30:00Z"},
-    {"name": "data/", "type": "dir"},
-    {"name": "data/users.db", "type": "file", "size": 51200, "modified": "2026-01-28T09:15:00Z"}
+    {
+      "name": "config.json",
+      "type": "file",
+      "size": 1024,
+      "modified": "2026-01-28T10:30:00Z"
+    },
+    { "name": "data/", "type": "dir" },
+    {
+      "name": "data/users.db",
+      "type": "file",
+      "size": 51200,
+      "modified": "2026-01-28T09:15:00Z"
+    }
   ],
   "truncated": false
 }
@@ -742,6 +775,7 @@ GET /api/v1/stone/storage/bank/backup-vault/apps/myapp/?depth=-1  # Unix convent
 ### 6.1 Directory Layout
 
 Seed banks are mounted under `{data_dir}/mounts/`:
+
 - Linux: `/var/lib/zen-garden/mounts/{name}/`
 - Development: `.zen-garden/mounts/{name}/`
 
@@ -771,12 +805,12 @@ Seed banks are mounted under `{data_dir}/mounts/`:
 ```yaml
 # /mnt/usb/.zen-garden/manifest.yaml
 version: 1
-id: 01956a3e-7c00-7000-8000-000000000001  # GUIDv7 (immutable identity)
-pool_id: 01956a3e-7c00-7000-8000-000000000099  # Sync group identity
+id: 01956a3e-7c00-7000-8000-000000000001 # GUIDv7 (immutable identity)
+pool_id: 01956a3e-7c00-7000-8000-000000000099 # Sync group identity
 name: portable-backup
-visibility: open   # open | closed
-filesystem: btrfs  # btrfs | ext4
-device_serial: "WD-WMC1T0123456"  # For future cryptographic signing
+visibility: open # open | closed
+filesystem: btrfs # btrfs | ext4
+device_serial: "WD-WMC1T0123456" # For future cryptographic signing
 created_at: 2026-01-28T10:35:00Z
 created_by:
   stone: stone-golden-delta
@@ -787,6 +821,7 @@ protocols:
 ```
 
 **Identity:**
+
 - `id` is generated once at creation and never changes
 - `id` is authoritative for federation sync (not label or name)
 - If device is renamed (`name` changes), `id` remains stable
@@ -804,6 +839,7 @@ Prepared seed banks use label-based auto-mount on scan:
 **Filesystem Label (`zen-seed`):**
 
 During preparation, the filesystem is labeled `zen-seed`:
+
 ```bash
 mkfs.ext4 -L zen-seed /dev/sdb1
 # or
@@ -831,18 +867,21 @@ async fn auto_mount_seed_banks() -> Result<()> {
 ```
 
 This approach is preferred over fstab because:
+
 - No stale entries when device is absent
 - Works across reboots without configuration
 - Handles roaming devices (plugged into different stones)
 - Simpler than UUID-based fstab management
 
 **Mount Directory:**
+
 - Linux: `/var/lib/zen-garden/mounts/{name}/`
 - Development: `.zen-garden/mounts/{name}/`
 
 ### 7.2 Roaming Seed Banks
 
 When a prepared seed bank is plugged into a different stone:
+
 1. Moss detects `.zen-garden/` directory → treats as `prepared` state
 2. Reads `manifest.yaml` to get identity (GUIDv7 `id`)
 3. Registers locally with original name
@@ -863,17 +902,17 @@ const ALLOWED_PREFIXES: &[&str] = &[
 
 fn validate_mount_path(path: &Path) -> Result<(), StorageError> {
     let path_str = path.to_string_lossy();
-    
+
     // Must be under allowed prefix
     if !ALLOWED_PREFIXES.iter().any(|p| path_str.starts_with(p)) {
         return Err(StorageError::PathNotAllowed(path.to_path_buf()));
     }
-    
+
     // Must be a mount point (not subdirectory)
     if !is_mount_point(path)? {
         return Err(StorageError::NotMountPoint(path.to_path_buf()));
     }
-    
+
     Ok(())
 }
 ```
@@ -886,21 +925,21 @@ fn is_device_empty(path: &Path) -> Result<bool, StorageError> {
         let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        
+
         // Ignore system-created hidden files
-        if name_str == ".Trash-1000" || 
+        if name_str == ".Trash-1000" ||
            name_str == ".Spotlight-V100" ||
            name_str == ".fseventsd" ||
            name_str == "System Volume Information" ||
            name_str == "$RECYCLE.BIN" {
             continue;
         }
-        
+
         // Check for existing seed bank
         if name_str == ".zen-garden" {
             return Err(StorageError::AlreadyPrepared(path.to_path_buf()));
         }
-        
+
         // Any other file = not empty
         return Ok(false);
     }
@@ -915,11 +954,11 @@ fn is_removable(device: &Path) -> Result<bool, StorageError> {
     // Check /sys/block/{device}/removable
     let device_name = device.file_name()
         .ok_or(StorageError::InvalidDevice)?;
-    
+
     let removable_path = Path::new("/sys/block")
         .join(device_name)
         .join("removable");
-    
+
     let content = std::fs::read_to_string(&removable_path)?;
     Ok(content.trim() == "1")
 }
@@ -930,11 +969,13 @@ fn is_removable(device: &Path) -> Result<bool, StorageError> {
 ## 9. Implementation Plan
 
 ### Phase 1: Core Infrastructure
+
 - [ ] Add storage event types to `event_types.rs`
 - [ ] Create `StorageDetectedInfo` and `SeedBankInfo` types in `garden_common`
 - [ ] Implement `print_storage_detected_ribbon()` in `tty.rs`
 
 ### Phase 2: Moss Detection
+
 - [ ] Create `src/moss/src/infra/storage/` module
 - [ ] Implement udev monitoring for USB storage (via `udev` crate)
 - [ ] Implement device eligibility checks
@@ -942,6 +983,7 @@ fn is_removable(device: &Path) -> Result<bool, StorageError> {
 - [ ] Wire up SSE event emission
 
 ### Phase 3: API Endpoints
+
 - [ ] `GET /api/v1/stone/storage`
 - [ ] `GET /api/v1/stone/storage/candidates`
 - [ ] `POST /api/v1/stone/storage/prepare`
@@ -952,11 +994,13 @@ fn is_removable(device: &Path) -> Result<bool, StorageError> {
 - [ ] `DELETE /api/v1/stone/storage/{name}`
 
 ### Phase 4: Rake Commands
+
 - [ ] `garden-rake prepare seed-bank` (koan + normative)
 - [ ] `garden-rake release seed-bank`
 - [ ] Add to command manifest
 
 ### Phase 5: Integration
+
 - [ ] Cricket audio feedback for storage events
 - [ ] S3 gateway integration with seed banks
 - [ ] Journal implementation (see below)
@@ -975,12 +1019,14 @@ Seed banks don't discover each other—the **Moss instances** managing them do v
 **Event-Driven Announcements:**
 
 Moss broadcasts a `STORAGE_BEACON` on:
+
 - Seed bank mount (USB insert, boot detection)
 - Seed bank unmount (release, removal)
 - Visibility change (open ↔ closed)
 - When a new stone joins the garden (all storage-having stones beacon)
 
 **Beacon Structure:**
+
 ```rust
 StorageBeacon {
     stone_id: String,           // Links to TopologyEntry
@@ -992,11 +1038,13 @@ StorageBeacon {
 ```
 
 **Cache Design:**
+
 - Separate `StorageCache` references `TopologyCache` by `stone_id`
 - All stones lurk-listen and update their cache on beacon receipt
 - Cache entries expire when stone goes offline (topology-driven)
 
 **New Stone Flow:**
+
 1. New stone broadcasts `STONE_CHIRP`
 2. All stones with seed banks hear the chirp
 3. They each broadcast `STORAGE_BEACON`
@@ -1016,6 +1064,7 @@ See [STORAGE-0003](../decisions/STORAGE-0003-beacon-protocol.md) for full protoc
 ```
 
 **Entry:**
+
 ```json
 {
   "id": "01956a3e-7c00-7000-8000-000000000001",
@@ -1034,6 +1083,7 @@ See [STORAGE-0003](../decisions/STORAGE-0003-beacon-protocol.md) for full protoc
 ### 10.3 Conflict Resolution
 
 **Same-key concurrent writes:** Last-write-wins (LWW) based on GUIDv7 ordering.
+
 - GUIDv7 encodes timestamp → later wins
 - Same timestamp → higher random suffix wins (deterministic, no coordination)
 
@@ -1051,15 +1101,16 @@ garden-rake merge seed-bank 7c00 to 7c01 --policy wipe-target  # wipe 7c01
 garden-rake merge seed-bank 7c00 to 7c01 --policy wipe-source  # wipe 7c00
 ```
 
-| Policy | Behavior |
-|--------|----------|
+| Policy                  | Behavior                                         |
+| ----------------------- | ------------------------------------------------ |
 | `incremental` (default) | Interleave journals by GUIDv7, LWW for conflicts |
-| `wipe-target` | Delete target pool content, copy source |
-| `wipe-source` | Delete source pool content, copy target |
+| `wipe-target`           | Delete target pool content, copy source          |
+| `wipe-source`           | Delete source pool content, copy target          |
 
 ### 10.5 Read-Only Seed Banks
 
 Seed banks with write-protect enabled:
+
 - Detected via mount options or write test
 - Marked `status: "read-only"` in registry
 - **Can serve reads** but cannot update journal

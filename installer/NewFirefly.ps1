@@ -31,6 +31,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 #region Configuration
+# Centralized config to avoid magic strings and make firmware/runtime updates easy.
 $script:Config = @{
     CacheDir      = (Join-Path $env:USERPROFILE ".zen-garden\firefly-cache")
     FirmwareDir   = (Join-Path $PSScriptRoot "..\firmware\firefly")
@@ -110,9 +111,11 @@ function Initialize-Cache {
 #endregion
 
 #region Device Detection
+# Detect via COM ports + drive labels (bootloader/CircuitPython).
 function Get-ConnectedDevices {
     $devices = @()
 
+    # COM ports from PnP devices (VID/PID/name heuristics).
     $ports = Get-WmiObject Win32_PnPEntity -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -and $_.Name -match 'COM\d+' }
 
@@ -125,6 +128,7 @@ function Get-ConnectedDevices {
         if ($p.DeviceID -match 'VID_([0-9A-F]{4})') { $vendorId = $matches[1] }
         if ($p.DeviceID -match 'PID_([0-9A-F]{4})') { $productId = $matches[1] }
 
+        # VID/PID takes priority; fall back to friendly-name heuristics.
         if ($vendorId -eq "2E8A" -or $vendorId -eq "239A") { $type = "RP2040" }
         elseif ($vendorId -eq "1A86" -and $productId -eq "7523") { $type = "ESP8266" }
         elseif ($p.Name -match 'RP2|CircuitPython|Board CDC') { $type = "RP2040" }
@@ -135,11 +139,13 @@ function Get-ConnectedDevices {
         }
     }
 
+    # RP2040 bootloader exposes a mass-storage drive named RPI-RP2.
     $boot = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq "RPI-RP2" }
     if ($boot) {
         $devices += @{ Type = "RP2040"; BootloaderDrive = "$($boot.DriveLetter):"; Name = "RP2040 Bootloader" }
     }
 
+    # CircuitPython drive for firmware + libraries.
     $cpy = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq "CIRCUITPY" }
     if ($cpy) {
         $existing = $devices | Where-Object { $_.Type -eq "RP2040" } | Select-Object -First 1
@@ -152,6 +158,7 @@ function Get-ConnectedDevices {
 #endregion
 
 #region RP2040 Handler
+# CircuitPython runtime + NeoPixel library + Firefly firmware (code.py).
 function Get-RP2040Runtime {
     Initialize-Cache
     $path = Join-Path $script:Config.CacheDir "circuitpython-rp2040.uf2"
@@ -161,6 +168,7 @@ function Get-RP2040Runtime {
     }
     Write-Step "Downloading CircuitPython..." "..."
     $ProgressPreference = 'SilentlyContinue'
+    # Cache downloads so repeat runs are fast/offline-friendly.
     Invoke-WebRequest -Uri $script:Config.RP2040.CircuitPythonUrl -OutFile $path -UseBasicParsing
     Write-Step "CircuitPython downloaded" "OK"
     return $path
@@ -193,6 +201,7 @@ function Install-RP2040Runtime {
     param([string]$Drive)
     $uf2 = Get-RP2040Runtime
     Write-Step "Flashing CircuitPython to $Drive..." "..."
+    # UF2 flashing is just a copy to the bootloader volume.
     Copy-Item $uf2 "$Drive\" -Force
     Write-Step "CircuitPython flashed" "OK"
 }
@@ -220,6 +229,7 @@ function Test-RP2040Connection {
         $serial.Open()
         Start-Sleep -Milliseconds 500
         $serial.DiscardInBuffer()
+        # "I" is a lightweight identity probe expected to contain "firefly".
         $serial.WriteLine("I")
         Start-Sleep -Milliseconds 300
         $response = ""
@@ -238,6 +248,7 @@ function Test-RP2040Connection {
 function Invoke-RP2040VisualTest {
     param([string]$Port)
     Write-Step "Running LED test sequence..." "TEST"
+    # Firefly command protocol: C=clear, F=r,g,b, A=animation, T=theme.
     $cmds = @("C", "F,255,0,0", "F,0,255,0", "F,0,0,255", "A,rainbow", "T,healthy", "C")
     $delays = @(200, 600, 600, 600, 2000, 1000, 200)
     for ($i = 0; $i -lt $cmds.Count; $i++) {
@@ -301,6 +312,7 @@ function Invoke-RP2040Handler {
 #endregion
 
 #region ESP8266 Handler
+# MicroPython runtime + Firefly OLED resources (boot.py/main.py + .mpy libs).
 function Get-ESP8266Runtime {
     Initialize-Cache
     $path = Join-Path $script:Config.CacheDir "micropython-esp8266.bin"
@@ -345,7 +357,8 @@ function Send-ESP8266File {
     if (-not (Test-Path $LocalPath)) { return $false }
 
     $serial = $null
-    $chunkSize = 512  # Send in chunks to avoid buffer overflow
+    # Send in chunks to avoid MicroPython REPL buffer overflow.
+    $chunkSize = 512
 
     try {
         $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
@@ -364,14 +377,14 @@ function Send-ESP8266File {
         Start-Sleep -Milliseconds 200
         $serial.DiscardInBuffer()
 
-        # Read file as raw bytes (works for both text and binary .mpy files)
+        # Read file as raw bytes (works for both text and binary .mpy files).
         $bytes = [System.IO.File]::ReadAllBytes($LocalPath)
         $b64 = [Convert]::ToBase64String($bytes)
 
         $serial.Write("import ubinascii`r`n")
         Start-Sleep -Milliseconds 100
 
-        # Write chunks
+        # Write chunks and drain buffer to avoid REPL backpressure.
         for ($i = 0; $i -lt $b64.Length; $i += $chunkSize) {
             $chunk = $b64.Substring($i, [Math]::Min($chunkSize, $b64.Length - $i))
             $serial.Write("f.write(ubinascii.a2b_base64('$chunk'))`r`n")
@@ -471,7 +484,7 @@ function Invoke-ESP8266VisualTest {
         Start-Sleep -Milliseconds 500
         $serial.DiscardInBuffer()
 
-        # Enter paste mode (Ctrl+E)
+        # Enter paste mode (Ctrl+E) to send a multi-line script.
         $serial.Write([char]5)
         Start-Sleep -Milliseconds 200
 
@@ -500,6 +513,28 @@ function Invoke-ESP8266VisualTest {
     }
 }
 
+function Reset-ESP8266 {
+    param([string]$Port)
+    $serial = $null
+    try {
+        $serial = New-Object System.IO.Ports.SerialPort $Port, 115200
+        $serial.ReadTimeout = 5000
+        $serial.Open()
+        # Ensure REPL prompt
+        $serial.Write([char]3)
+        Start-Sleep -Milliseconds 200
+        $serial.DiscardInBuffer()
+        # Hard reset (more reliable than Ctrl+D after paste mode)
+        $serial.Write("import machine`r`n")
+        Start-Sleep -Milliseconds 200
+        $serial.Write("machine.reset()`r`n")
+        Start-Sleep -Milliseconds 200
+        $serial.Close()
+    } catch {
+        if ($serial) { try { $serial.Close() } catch {} }
+    }
+}
+
 function Invoke-ESP8266Handler {
     param($Device)
     Write-Step "Handling ESP8266-OLED..." "..."
@@ -510,8 +545,8 @@ function Invoke-ESP8266Handler {
         return
     }
 
-    # Always do a clean install: erase flash + re-flash MicroPython + upload resources
-    # This ensures no stale files and consistent behavior
+    # Always do a clean install: erase flash + re-flash MicroPython + upload resources.
+    # This ensures no stale files and consistent behavior.
     Write-Step "Erasing and flashing MicroPython..." "..."
     Install-ESP8266Runtime -Port $port
     Write-Step "Waiting for reboot..." "WAIT"
@@ -520,26 +555,10 @@ function Invoke-ESP8266Handler {
     Install-ESP8266Resources -Port $port
     Invoke-ESP8266VisualTest -Port $port
 
-    # Final reset to let main.py auto-start (visual test leaves device in REPL)
-    # Use soft reset (Ctrl+D) which is more reliable than DTR on some boards
+    # Final reset to let main.py auto-start (visual test leaves device in REPL).
     Write-Step "Starting main.py..." "..."
-    $serial = $null
-    try {
-        $serial = New-Object System.IO.Ports.SerialPort $port, 115200
-        $serial.ReadTimeout = 5000
-        $serial.Open()
-        # Ctrl+C to ensure we're at REPL prompt
-        $serial.Write([char]3)
-        Start-Sleep -Milliseconds 300
-        # Ctrl+D for soft reset - runs boot.py + main.py
-        $serial.Write([char]4)
-        # Wait for main.py to start
-        Start-Sleep -Seconds 5
-        $serial.DiscardInBuffer()
-        $serial.Close()
-    } catch {
-        if ($serial) { try { $serial.Close() } catch {} }
-    }
+    Reset-ESP8266 -Port $port
+    Start-Sleep -Seconds 5
 
     Write-Panel -Title "ESP8266-OLED Firefly Ready!" -Color "Green" -Lines @(
         "Installation complete."
@@ -554,6 +573,7 @@ function Invoke-ESP8266Handler {
 #endregion
 
 #region Main
+# Single-device flow: detect, pick first supported device, install/test.
 function Invoke-DeviceHandler {
     param($Device)
 

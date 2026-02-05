@@ -212,6 +212,7 @@
         .horizon-spacer { flex-grow: 1; }
         .horizon-hints { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); }
         .horizon-tags { display: inline-flex; gap: 0.25rem; margin-left: 0.5rem; font-size: 0.8rem; }
+        .horizon-sprout { font-size: 0.8rem; color: var(--accent-hopeful); margin-left: 0.4rem; }
         .horizon-status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; font-family: ui-monospace, monospace; text-transform: uppercase; color: var(--stone-600); }
         .tend-btn { background: transparent; border: 1px solid var(--vellum-border); border-radius: 2px; padding: 0.15rem 0.4rem; font-size: 0.6rem; cursor: pointer; color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.03em; font-family: ui-monospace, monospace; }
         .tend-btn:hover { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
@@ -1123,9 +1124,9 @@
                 icon: { class: 'hopeful-icon', char: '✦' },
                 meta: [`${c.capacity_gb.toFixed(0)} GB`, c.state],
                 dotClass: 'hopeful',
-                statusText: 'NEW',
+                statusText: '[Candidate]',
                 description: canPrepare
-                    ? 'A new device is ready to join your garden as a seed bank.'
+                    ? 'A candidate device is ready to join your garden as a seed bank.'
                     : 'This device contains data and cannot be prepared automatically.',
                 details: [
                     { label: 'Device', value: c.device },
@@ -1138,7 +1139,7 @@
             });
         }).join('');
 
-        $('seedbanks-list').innerHTML = candidateHtml + seedBankHtml;
+        $('seedbanks-list').innerHTML = seedBankHtml + candidateHtml;
 
         // Companions
         const companions = data.companions || [];
@@ -1165,9 +1166,13 @@
         }).join('');
 
         // Horizon
-        const horizon = data.horizon || { count: 0, stones: [] };
+        const horizon = data.horizon || { count: 0, seed_bank_count: 0, stones: [] };
+        const seedBankCount = horizon.seed_bank_count ?? 0;
         $('horizon-label').textContent = horizon.count > 0 
-            ? horizon.count + ' stone' + (horizon.count !== 1 ? 's' : '') + ' visible'
+            ? horizon.count + ' stone' + (horizon.count !== 1 ? 's' : '') + ' visible' +
+              (seedBankCount > 0
+                  ? ' | ' + seedBankCount + ' seed bank' + (seedBankCount !== 1 ? 's' : '')
+                  : '')
             : 'Alone in the garden';
         $('horizon-list').innerHTML = (horizon.stones || []).map(s => {
             // Build hardware model string (manufacturer + product)
@@ -1196,11 +1201,13 @@
                 hasOpportunity ? '<span class="hopeful-icon" title="Has opportunity">✦</span>' : '',
                 hasAttention ? '<span class="attention-icon" title="Needs attention">⚠</span>' : ''
             ].filter(Boolean).join('');
+            const sprout = s.has_seed_banks ? '<span class="horizon-sprout" title="Seed bank connected">🌱</span>' : '';
 
             return `
             <div class="horizon-stone" role="listitem">
                 <div class="horizon-color" style="background-color:${s.color || 'var(--accent-sage)'}" aria-hidden="true"></div>
                 <a class="horizon-name" href="${s.endpoint}">${s.name}</a>
+                ${sprout}
                 ${tagIcons ? `<span class="horizon-tags">${tagIcons}</span>` : ''}
                 <button class="tend-btn" onclick="copyTendCommand(this, '${s.name}')" title="Copy tend command">Tend</button>
                 <div class="horizon-spacer"></div>

@@ -1,316 +1,348 @@
-"""
-Firefly OLED - Main Entry Point
+import gc, sys, time, select
+from machine import Timer, UART
+W = 128
+H = 64
+Y = 16
+BH = 48
+S_BOOT = 0
+S_READY = 1
+S_NC = 2
+S_CONN = 3
+S_IDLE = 4
+TO = 10000
+TICK = 100
+SIN = (0, 38, 70, 92, 100, 92, 70, 38, 0, -38, -70, -92, -100, -92, -70, -38)
+FX = 0
+FP = 1
+FS = 2
+FA = 3
+FB = 4
+FD = 5
+FDN = 6
+u = UART(0, 115200)
+fnt = None
 
-ESP8266 NodeMCU with 128×64 SSD1306 OLED display (dual-color: yellow header, blue body).
-Serial protocol for communication with Moss Firefly companion.
+def _ns():
+    pass
+d = None
+tm = None
+needs = False
+state = S_BOOT
+last_rx = None
+ff = []
+ff_t0 = 0
+ff_last = 0
+dash = 1
+ht = 0
+dash_init = False
 
-Display Layout:
-  - Yellow zone (header): rows 0-15, shows stone name with auto-scroll if long
-  - Blue zone (body): rows 16-63, shows health icon, CPU/MEM bars, uptime
-
-Protocol Commands (line-based, \\n terminated):
-  I                    - Device info (returns: OK,firefly-oled,esp8266,128x64,...)
-  C                    - Clear display
-  S,name               - Set stone name (uppercased, auto-scrolls if > 120px)
-  H,state              - Set health (thriving/withering/wilting/resting)
-  M,cpu,mem,uptime     - Update metrics (cpu/mem: 0-100, uptime: string like "1h")
-  T,x,y,text           - Draw text at pixel position
-  R                    - Refresh/redraw status screen
-  B,0-100              - Set brightness (0-100 mapped to 0-255 contrast)
-
-  Drawing Commands:
-  FILL,0|1             - Fill display with 0 (off) or 1 (on)
-  RECT,x,y,w,h[,fill]  - Draw rectangle (fill=1 for filled)
-  BAR,x,y,w,h,percent  - Draw progress bar
-
-  Animation Commands:
-  WIPE-IN,line1,line2  - Wipe left->right with message, then clear to status
-  WIPE-OUT,line1,line2 - Wipe right->left with message, then clear to status
-  BLINK,count          - Blink blue zone (default: 3 blinks)
-  PULSE,count          - Pulse brightness (breathing effect, default: 3 pulses)
-
-Responses:
-  OK                   - Command succeeded
-  OK,data              - Command succeeded with data
-  ERR,message          - Command failed
-
-Notes:
-  - Display refreshes automatically at 4Hz (250ms timer)
-  - Header scrolling uses tick-based "shader" approach
-  - Long stone names pause at each end, then scroll smoothly
-  - Animations pause the refresh timer while running
-"""
-
-import gc
-gc.collect()
-import sys
-import time
-import select
-from machine import Timer
-gc.collect()
-from firefly_oled import FireflyOLED
-gc.collect()
-
-# Initialize display
-display = None
-refresh_timer = None
-needs_refresh = False  # Flag set by timer
-
-# Animation queue: (type, args) or None for idle
-pending_animation = None
-
-# Use UART directly for unbuffered output
-from machine import UART
-_uart = UART(0, 115200)
-
-
-def respond(msg):
-    """Send response immediately via UART write (unbuffered).
-
-    Using UART.write() directly ensures bytes are sent immediately
-    to the hardware TX buffer. The small delay ensures the hardware
-    TX FIFO is flushed before we return.
-    """
-    _uart.write(msg + "\n")
-    # Brief delay to ensure hardware UART TX buffer flushes
-    # ESP8266 UART at 115200 baud: ~0.1ms per byte, 3 bytes = 0.3ms
-    # Add 1ms margin to be safe
+def r(msg):
+    u.write(msg + "\n")
     time.sleep_ms(2)
 
-
-def timer_callback(t):
-    """Timer callback - just sets refresh flag."""
-    global needs_refresh
-    needs_refresh = True
-
+def tcb(t):
+    global needs
+    needs = True
 
 def init_display():
-    """Initialize the OLED display."""
-    global display, refresh_timer
+    global d, tm, fnt
     try:
-        display = FireflyOLED()
-        display.draw_boot_screen()
-        time.sleep(1)
-        # Start 200ms refresh timer (5Hz) - just sets flag
-        refresh_timer = Timer(-1)
-        refresh_timer.init(period=200, mode=Timer.PERIODIC, callback=timer_callback)
+        gc.collect()
+        from firefly_oled import FireflyOLED
+        d = FireflyOLED()
+        fo = sys.modules.get('firefly_oled')
+        fnt = fo.font if fo else None
+        tm = Timer(-1)
+        tm.init(period=200, mode=Timer.PERIODIC, callback=tcb)
         return True
     except Exception as e:
-        respond(f"ERR,display_init:{e}")
+        r("ERR,display_init:%s" % e)
         return False
 
+def tw(s):
+    if fnt:
+        return fnt.text_width(s)
+    return len(s) * 8
 
-def run_animation(anim_type, anim_args):
-    """Run an animation (blocking)."""
-    global display
-    if anim_type == "wipe-in":
-        display.wipe(anim_args[0], anim_args[1], direction="in")
-    elif anim_type == "wipe-out":
-        display.wipe(anim_args[0], anim_args[1], direction="out")
-    elif anim_type == "blink":
-        display.blink(count=anim_args)
-    elif anim_type == "pulse":
-        display.pulse(count=anim_args)
+def msg(title, line1, line2=None):
+    d.oled.contrast(255)
+    d.oled.fill_rect(0, 0, W, Y, 0)
+    t = title.upper()
+    w = tw(t)
+    x = 2 if w >= W else (W - w) // 2
+    if fnt:
+        fnt.draw(d.oled, t, x, 3)
+    else:
+        d.text(t, x, 3)
+    d.oled.fill_rect(0, Y, W, BH, 0)
+    if line2 is None:
+        lines = [line1]
+        ys = [32]
+    else:
+        lines = [line1, line2]
+        ys = [24, 40]
+    for i in range(len(lines)):
+        s = lines[i]
+        w = tw(s)
+        x = 2 if w >= W else (W - w) // 2
+        if fnt:
+            fnt.draw(d.oled, s, x, ys[i])
+        else:
+            d.text(s, x, ys[i])
+    d.show()
 
+def hdr(show=True):
+    global ht
+    d.oled.fill_rect(0, 0, W, Y, 0)
+    name = d.stone_name.upper()
+    w = tw(name)
+    hw = 120
+    if w <= hw:
+        x = 2
+        if fnt:
+            fnt.draw(d.oled, name, x, 3)
+        else:
+            d.text(name, x, 3)
+    else:
+        scroll_max = w - hw + 4
+        pause = 20
+        scroll_ticks = scroll_max // 2 if scroll_max > 0 else 1
+        cycle = 2 * pause + 2 * scroll_ticks
+        t = ht % cycle
+        if t < pause:
+            sx = 0
+        elif t < pause + scroll_ticks:
+            sx = (t - pause) * 2
+        elif t < 2 * pause + scroll_ticks:
+            sx = scroll_max
+        else:
+            sx = scroll_max - (t - 2 * pause - scroll_ticks) * 2
+        if sx < 0:
+            sx = 0
+        if sx > scroll_max:
+            sx = scroll_max
+        if fnt:
+            fnt.draw(d.oled, name, 2 - sx, 3)
+        else:
+            d.text(name, 2 - sx, 3)
+        ht += 1
+    d.oled.fill_rect(0, Y, W, BH, 0)
+    if show:
+        d.show()
 
-def parse_command(line):
-    """Parse and execute a command."""
-    global display, pending_animation
+def fade(ms=500, steps=10):
+    if steps <= 0:
+        steps = 1
+    delay = ms // steps
+    for i in range(steps):
+        c = 255 - int((i + 1) * 255 / steps)
+        d.oled.contrast(c)
+        time.sleep_ms(delay)
+    d.oled.fill(0)
+    d.show()
 
+def ff_init():
+    global ff, ff_t0, ff_last
+    ff_t0 = time.ticks_ms()
+    ff_last = ff_t0
+    ff = [
+        [-6, 0, 1, 6, 24, 0, 0],
+        [-8, 4, 2, 8, 34, 1000, 0],
+        [-10, 8, 1, 5, 44, 2000, 0],
+    ]
+
+def ff_step(mode="float"):
+    global ff_last, dash, dash_init
+    now = time.ticks_ms()
+    if time.ticks_diff(now, ff_last) < TICK:
+        return False
+    ff_last = now
+    hdr(False)
+    for f in ff:
+        if f[FDN]:
+            continue
+        if time.ticks_diff(now, ff_t0) < f[FD]:
+            continue
+        if mode == "dash" and dash_init:
+            f[FD] = 0
+            f[FDN] = 0
+            if f[FX] < 0:
+                f[FX] = 0
+            elif f[FX] > W - 2:
+                f[FX] = W - 2
+        if mode == "dash":
+            f[FX] += dash
+        else:
+            f[FX] += f[FS]
+            f[FP] = (f[FP] + f[FS]) % len(SIN)
+        if f[FX] > W + 2:
+            if mode == "dash":
+                f[FDN] = 1
+            else:
+                f[FX] = -2
+                f[FP] = 0
+        sv = SIN[f[FP]]
+        y = f[FB] + (f[FA] * sv) // 100
+        if y < Y + 1:
+            y = Y + 1
+        if y > H - 2:
+            y = H - 2
+        x = int(f[FX])
+        if 0 <= x < W and 0 <= y < H:
+            d.oled.pixel(x, int(y), 1)
+    d.show()
+    if mode == "dash":
+        dash = dash * 2
+        dash_init = False
+        return all(f[FDN] for f in ff)
+    return False
+
+def wipe(line1, line2, direction=1):
+    msg("Zen Garden", line1, line2)
+    y = H - 1
+    step = 8
+    steps = W // step
+    delay = 500 // (steps if steps > 0 else 1)
+    if direction >= 0:
+        for x in range(0, W + 1, step):
+            d.oled.hline(0, y, x, 1)
+            d.show()
+            time.sleep_ms(delay)
+    else:
+        for x in range(W, -1, -step):
+            d.oled.hline(x, y, W - x, 1)
+            d.show()
+            time.sleep_ms(delay)
+    time.sleep_ms(1000)
+    if direction >= 0:
+        for x in range(0, W + 1, step):
+            d.oled.hline(0, y, x, 0)
+            d.show()
+            time.sleep_ms(delay)
+    else:
+        for x in range(W, -1, -step):
+            d.oled.hline(x, y, W - x, 0)
+            d.show()
+            time.sleep_ms(delay)
+
+def enter(s):
+    global state, needs, dash, dash_init
+    state = s
+    if s == S_BOOT:
+        msg("Zen Garden", "Firefly Initializing...")
+    elif s == S_READY:
+        msg("Zen Garden", "Firefly ready!")
+    elif s == S_CONN:
+        if not ff:
+            ff_init()
+        needs = False
+        d.oled.contrast(255)
+        hdr()
+        dash = 1
+        dash_init = True
+        global ff_last
+        ff_last = 0
+    elif s == S_NC:
+        needs = False
+        d.oled.contrast(255)
+        hdr()
+        ff_init()
+    elif s == S_IDLE:
+        needs = True
+
+def cmd(line):
+    global last_rx
     line = line.strip()
     if not line:
         return
-
-    # Split command and args
     parts = line.split(",", 1)
-    cmd = parts[0].upper()
-    args = parts[1] if len(parts) > 1 else ""
-
+    c = parts[0].upper()
+    a = parts[1] if len(parts) > 1 else ""
+    # Transitions override rendering: only accept state/data updates while transitioning.
+    if state != S_IDLE and c not in ("I", "S", "H", "M", "R", "WIPE-IN", "WIPE-OUT"):
+        r("OK")
+        return
+    last_rx = time.ticks_ms()
+    if state == S_NC and c in ("S", "H", "M", "R"):
+        enter(S_CONN)
     try:
-        if cmd == "I":
-            # Device info
-            respond(display.device_info())
-
-        elif cmd == "C":
-            # Clear display
-            display.clear()
-            respond("OK")
-
-        elif cmd == "S":
-            # Set stone name
-            display.set_stone_name(args)
-            display.draw_status_screen()
-            respond("OK")
-
-        elif cmd == "H":
-            # Set health state
-            display.set_health(args.lower())
-            display.draw_status_screen()
-            respond("OK")
-
-        elif cmd == "M":
-            # Update metrics: cpu,mem,uptime (timer handles refresh)
-            metric_parts = args.split(",")
-            cpu = int(metric_parts[0]) if len(metric_parts) > 0 else None
-            mem = int(metric_parts[1]) if len(metric_parts) > 1 else None
-            uptime = metric_parts[2] if len(metric_parts) > 2 else None
-            display.update_metrics(cpu=cpu, mem=mem, uptime=uptime)
-            respond("OK")
-
-        elif cmd == "T":
-            # Draw text: x,y,text
-            text_parts = args.split(",", 2)
-            if len(text_parts) >= 3:
-                x = int(text_parts[0])
-                y = int(text_parts[1])
-                text = text_parts[2]
-                display.text(text, x, y)
-                display.show()
-                respond("OK")
-            else:
-                respond("ERR,invalid_args")
-
-        elif cmd == "R":
-            # Refresh status screen
-            display.draw_status_screen()
-            respond("OK")
-
-        elif cmd == "B":
-            # Set brightness (contrast)
-            contrast = int(args)
-            # Map 0-100 to 0-255
-            contrast_byte = int(contrast * 255 / 100)
-            display.oled.contrast(contrast_byte)
-            respond("OK")
-
-        elif cmd == "FILL":
-            # Fill display (for testing)
-            value = int(args) if args else 1
-            display.fill(value)
-            respond("OK")
-
-        elif cmd == "RECT":
-            # Draw rectangle: x,y,w,h,fill
-            rect_parts = args.split(",")
-            if len(rect_parts) >= 4:
-                x = int(rect_parts[0])
-                y = int(rect_parts[1])
-                w = int(rect_parts[2])
-                h = int(rect_parts[3])
-                fill = int(rect_parts[4]) if len(rect_parts) > 4 else 0
-                if fill:
-                    display.draw_fill_rect(x, y, w, h)
-                else:
-                    display.draw_rect(x, y, w, h)
-                display.show()
-                respond("OK")
-            else:
-                respond("ERR,invalid_args")
-
-        elif cmd == "BAR":
-            # Draw progress bar: x,y,w,h,percent
-            bar_parts = args.split(",")
-            if len(bar_parts) >= 5:
-                x = int(bar_parts[0])
-                y = int(bar_parts[1])
-                w = int(bar_parts[2])
-                h = int(bar_parts[3])
-                percent = int(bar_parts[4])
-                display.draw_progress_bar(x, y, w, h, percent)
-                display.show()
-                respond("OK")
-            else:
-                respond("ERR,invalid_args")
-
-        # ==================== ANIMATION COMMANDS ====================
-        # Animations are queued and run by the timer callback
-
-        elif cmd == "WIPE-IN":
-            # Wipe left→right transition
-            wipe_parts = args.split(",", 1)
-            line1 = wipe_parts[0] if len(wipe_parts) > 0 else ""
-            line2 = wipe_parts[1] if len(wipe_parts) > 1 else ""
-            pending_animation = ("wipe-in", (line1, line2))
-            respond("OK")
-
-        elif cmd == "WIPE-OUT":
-            # Wipe right→left transition
-            wipe_parts = args.split(",", 1)
-            line1 = wipe_parts[0] if len(wipe_parts) > 0 else ""
-            line2 = wipe_parts[1] if len(wipe_parts) > 1 else ""
-            pending_animation = ("wipe-out", (line1, line2))
-            respond("OK")
-
-        elif cmd == "BLINK":
-            # Blink blue zone
-            count = int(args) if args else 3
-            pending_animation = ("blink", count)
-            respond("OK")
-
-        elif cmd == "PULSE":
-            # Pulse brightness
-            count = int(args) if args else 3
-            pending_animation = ("pulse", count)
-            respond("OK")
-
+        if c == "I":
+            r(d.device_info())
+        elif c == "C":
+            d.clear(); r("OK")
+        elif c == "S":
+            global ht
+            ht = 0
+            d.set_stone_name(a)
+            if state == S_IDLE:
+                d.oled.contrast(255); d.draw_status_screen()
+            r("OK")
+        elif c == "H":
+            d.set_health(a.lower())
+            if state == S_IDLE:
+                d.oled.contrast(255); d.draw_status_screen()
+            r("OK")
+        elif c == "M":
+            p = a.split(",")
+            cpu = int(p[0]) if len(p) > 0 else None
+            mem = int(p[1]) if len(p) > 1 else None
+            up = p[2] if len(p) > 2 else None
+            d.update_metrics(cpu=cpu, mem=mem, uptime=up)
+            r("OK")
+        elif c == "R":
+            if state == S_IDLE:
+                d.oled.contrast(255); d.draw_status_screen()
+            r("OK")
+        elif c == "WIPE-IN" or c == "WIPE-OUT":
+            p = a.split(",", 1)
+            l1 = p[0] if len(p) > 0 else ""
+            l2 = p[1] if len(p) > 1 else ""
+            wipe(l1, l2, 1 if c == "WIPE-IN" else -1)
+            r("OK")
         else:
-            respond(f"ERR,unknown_cmd:{cmd}")
-
+            r("ERR,unknown_cmd:%s" % c)
     except Exception as e:
-        respond(f"ERR,{e}")
-
+        r("ERR,%s" % e)
 
 def main():
-    """Main loop - initialize and process commands."""
-    global needs_refresh, pending_animation
-
-    respond("Firefly OLED starting...")
-
+    global needs, last_rx
+    r("Firefly OLED starting...")
     if not init_display():
-        respond("ERR,failed_to_init_display")
+        r("ERR,failed_to_init_display")
         return
-
-    # Show initial status screen
-    display.set_stone_name("Connecting...")
-    display.set_health("resting")
-    display.draw_status_screen()
-
-    respond("OK,ready")
-
-    # Setup poll for non-blocking stdin
+    d.set_stone_name("Zen Garden")
+    enter(S_NC)
+    r("OK,ready")
     poll = select.poll()
     poll.register(sys.stdin, select.POLLIN)
-
-    # Main loop: check for commands and handle display updates
     while True:
         try:
-            # Check for pending animation first (priority)
-            if pending_animation:
-                anim_type, anim_args = pending_animation
-                pending_animation = None
-                needs_refresh = False  # Clear flag during animation
-                run_animation(anim_type, anim_args)
-
-            # Check if timer says we need a refresh
-            elif needs_refresh:
-                needs_refresh = False
-                display.draw_status_screen()
-
-            # Non-blocking check for serial input (0ms timeout)
+            now = time.ticks_ms()
+            if last_rx is not None and state in (S_IDLE, S_CONN):
+                if time.ticks_diff(now, last_rx) > TO:
+                    enter(S_NC)
+            if state == S_CONN:
+                if ff_step("dash"):
+                    fade(500)
+                    enter(S_IDLE)
+                    needs = True
+            elif state == S_NC:
+                ff_step("float")
+            if needs and state == S_IDLE:
+                needs = False
+                d.oled.contrast(255)
+                d.draw_status_screen()
             events = poll.poll(0)
             if events:
                 line = sys.stdin.readline()
                 if line:
-                    parse_command(line)
+                    cmd(line)
             else:
-                time.sleep_ms(10)  # Small sleep to avoid busy loop
-
+                time.sleep_ms(10)
         except KeyboardInterrupt:
-            respond("OK,interrupted")
+            r("OK,interrupted")
             break
         except Exception as e:
-            respond(f"ERR,{e}")
+            r("ERR,%s" % e)
 
-
-# Auto-run on boot
 main()

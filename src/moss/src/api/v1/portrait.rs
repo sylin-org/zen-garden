@@ -166,12 +166,15 @@ pub struct HorizonStone {
     /// Empty if stone has nothing noteworthy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Whether the stone has at least one locally connected seed bank (remote view)
+    pub has_seed_banks: bool,
 }
 
 /// Horizon section
 #[derive(Debug, Clone, Serialize)]
 pub struct PortraitHorizon {
     pub count: usize,
+    pub seed_bank_count: usize,
     pub stones: Vec<HorizonStone>,
 }
 
@@ -447,8 +450,9 @@ pub async fn get_portrait_data(
     // === Horizon (visible stones) ===
     let horizon = {
         let visible_stones = topology::get_online_stones(&state.topology_cache).await;
+        let storage_cache = state.storage_cache.read().await;
         let stones: Vec<HorizonStone> = visible_stones
-            .into_iter()
+            .iter()
             .filter(|entry| entry.stone_id != state.stone_id) // Exclude self
             .map(|entry| {
                 // Extract resource hints from capabilities
@@ -458,6 +462,10 @@ pub async fn get_portrait_data(
                 let manufacturer = caps.and_then(|c| c.hardware.system_manufacturer.clone());
                 let model = caps.and_then(|c| c.hardware.system_product.clone());
                 let service_count = entry.services.len();
+                let has_seed_banks = storage_cache
+                    .get_beacon(&entry.stone_id)
+                    .map(|b| !b.seed_banks.is_empty())
+                    .unwrap_or(false);
 
                 HorizonStone {
                     name: entry.stone_name.clone(),
@@ -470,12 +478,25 @@ pub async fn get_portrait_data(
                     manufacturer,
                     model,
                     tags: entry.tags.clone(),
+                    has_seed_banks,
                 }
             })
             .collect();
 
+        let seed_bank_count = visible_stones
+            .iter()
+            .filter(|entry| entry.stone_id != state.stone_id)
+            .map(|entry| {
+                storage_cache
+                    .get_beacon(&entry.stone_id)
+                    .map(|b| b.seed_banks.len())
+                    .unwrap_or(0)
+            })
+            .sum();
+
         PortraitHorizon {
             count: stones.len(),
+            seed_bank_count,
             stones,
         }
     };

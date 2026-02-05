@@ -122,6 +122,7 @@ enum Commands {
 
     /// Manage capabilities for an offering (models, extensions, etc.)
     #[command(
+        subcommand_negates_reqs = true,
         after_long_help = "Examples:\n  \
         garden-rake capabilities ollama              # List Ollama models\n  \
         garden-rake capabilities add ollama llama3  # Pull llama3 model\n  \
@@ -133,7 +134,7 @@ enum Commands {
         action: Option<CapabilitiesAction>,
 
         /// Offering name to query (for list without subcommand)
-        #[arg(required_unless_present = "action")]
+        #[arg(required = true)]
         offering: Option<String>,
 
         /// Moss endpoint (omit to auto-discover)

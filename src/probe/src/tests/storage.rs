@@ -9,6 +9,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const PROBE_BUCKET: &str = "probe-test";
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -451,7 +453,8 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
 
     // Create a unique test key with timestamp
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let test_key = format!("probe-test/roundtrip-{}.txt", timestamp);
+    let object_key = format!("roundtrip-{}.txt", timestamp);
+    let test_key = format!("{}/{}", PROBE_BUCKET, object_key);
     let test_content = format!("Zen Garden probe test at {}", timestamp);
     let test_bytes = test_content.as_bytes().to_vec();
 
@@ -488,6 +491,54 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                 StepResult::failed(e.to_string()),
             );
             return Ok(bag);
+        }
+    }
+
+    // LIST the bucket to confirm object shows up
+    let list_path = format!("/api/v1/stone/storage/bank/{}/{}/", bank_id, PROBE_BUCKET);
+    let list_start = Instant::now();
+    let list_result = stone.get_json(&list_path).await;
+    let list_duration = list_start.elapsed();
+
+    match &list_result {
+        Ok(resp) => {
+            let entries = resp
+                .get("data")
+                .and_then(|d| d.get("entries"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let found = entries.iter().any(|entry| {
+                entry
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|name| name == object_key)
+                    .unwrap_or(false)
+            });
+
+            if found {
+                bag.record_step(
+                    "list_object",
+                    format!("LIST {} found {}", PROBE_BUCKET, object_key),
+                    list_duration.as_millis() as u64,
+                    StepResult::ok(),
+                );
+            } else {
+                bag.record_step(
+                    "list_object",
+                    format!("LIST {} missing {}", PROBE_BUCKET, object_key),
+                    list_duration.as_millis() as u64,
+                    StepResult::failed("Object not found in listing".to_string()),
+                );
+            }
+        }
+        Err(e) => {
+            bag.record_step(
+                "list_object",
+                format!("LIST failed: {}", e),
+                list_duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
         }
     }
 
@@ -612,18 +663,38 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         }
     };
 
-    let stone = selected.stone;
+    let storage_stone = selected.stone;
     let seed_bank = selected.name;
+    let gateway_stone = garden
+        .stones
+        .iter()
+        .find(|stone| stone.name != storage_stone.name)
+        .cloned()
+        .unwrap_or_else(|| storage_stone.clone());
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let bucket = "probe-test";
+    let bucket = PROBE_BUCKET;
     let key = format!("gateway-roundtrip-{}.txt", timestamp);
     let test_content = format!("Zen Garden gateway test at {}", timestamp);
     let test_bytes = test_content.as_bytes().to_vec();
-    let url = format!("{}/api/v1/storage/{}/{}", stone.endpoint, bucket, key);
+    let url = format!("{}/api/v1/storage/{}/{}", gateway_stone.endpoint, bucket, key);
+
+    bag.record_step(
+        "gateway_target",
+        format!(
+            "Gateway stone {} (seed bank on {})",
+            gateway_stone.name, storage_stone.name
+        ),
+        0,
+        StepResult::ok_with(serde_json::json!({
+            "gateway_stone": gateway_stone.name,
+            "storage_stone": storage_stone.name,
+            "seed_bank": seed_bank,
+        })),
+    );
 
     // PUT
     let put_start = Instant::now();
@@ -658,6 +729,55 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
             "response": put_json,
         })),
     );
+
+    // LIST
+    let list_url = format!("{}/api/v1/storage/{}/", gateway_stone.endpoint, bucket);
+    let list_start = Instant::now();
+    let list_resp = client
+        .get(&list_url)
+        .header(HEADER_SEED_BANK, &seed_bank)
+        .send()
+        .await?;
+    let list_duration = list_start.elapsed();
+
+    if list_resp.status() == StatusCode::OK {
+        let list_json: Value = list_resp.json().await.unwrap_or(Value::Null);
+        let objects = list_json
+            .get("data")
+            .and_then(|d| d.get("objects"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let found = objects.iter().any(|obj| {
+            obj.get("key")
+                .and_then(|k| k.as_str())
+                .map(|k| k == key)
+                .unwrap_or(false)
+        });
+
+        if found {
+            bag.record_step(
+                "gateway_list",
+                format!("LIST {} found {}", bucket, key),
+                list_duration.as_millis() as u64,
+                StepResult::ok(),
+            );
+        } else {
+            bag.record_step(
+                "gateway_list",
+                format!("LIST {} missing {}", bucket, key),
+                list_duration.as_millis() as u64,
+                StepResult::failed("Object not found in listing".to_string()),
+            );
+        }
+    } else {
+        bag.record_step(
+            "gateway_list",
+            format!("LIST failed with {}", list_resp.status()),
+            list_duration.as_millis() as u64,
+            StepResult::failed(format!("LIST status {}", list_resp.status())),
+        );
+    }
 
     // GET
     let get_start = Instant::now();
@@ -730,10 +850,14 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     bag.record_step(
         "gateway_summary",
-        format!("Gateway roundtrip completed on {}", stone.name),
+        format!(
+            "Gateway roundtrip completed via {} (seed bank on {})",
+            gateway_stone.name, storage_stone.name
+        ),
         0,
         StepResult::ok_with(serde_json::json!({
-            "stone": stone.name,
+            "gateway_stone": gateway_stone.name,
+            "storage_stone": storage_stone.name,
             "seed_bank": seed_bank,
             "bucket": bucket,
             "key": key,

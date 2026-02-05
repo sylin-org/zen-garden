@@ -1,0 +1,410 @@
+---
+audience: [operator, developer]
+doc_type: guide
+status: current
+last_verified: 2026-02-05
+canonical: true
+---
+
+# Storage + Nurturing API Guide
+
+This guide explains how to use the **storage** and **nurturing** APIs, from simple operations to advanced, cross‑stone workflows.
+
+If you are new to seed banks, see `docs/guides/seed-banks.md` for device setup and terminology.
+
+---
+
+## 1. Mental Model
+
+Use these APIs for different purposes:
+
+- **Storage**: app/user data (object storage under `garden/storage` on seed banks)
+- **Nurturing**: offering backups (A/B local snapshots, replication to seed banks)
+- **Memories**: read‑only access to nurturing snapshots for hydration and external orchestrators
+
+Two scopes exist:
+
+- **Stone‑local**: `/api/v1/stone/...` (always targets the local stone)
+- **Garden‑wide**: `/api/v1/storage`, `/api/v1/storage/s3`, `/api/v1/memories` (route to the stone that hosts the selected seed bank)
+
+Seed bank identifiers:
+
+- **Seed bank name**: human‑readable name, used by gateway and memories APIs
+- **Seed bank id**: GUIDv7, used by stone‑local storage object endpoints
+
+Default seed bank name (when none provided):
+
+- `seed-bank-zen-garden`
+
+---
+
+## 2. Quick Start (Read‑Only)
+
+### Check storage readiness on a stone
+
+```bash
+curl http://stone-01:7185/api/v1/stone/storage/health
+```
+
+### List seed banks on a stone
+
+```bash
+curl http://stone-01:7185/api/v1/stone/storage/bank
+```
+
+### List buckets via garden storage gateway
+
+```bash
+curl http://stone-01:7185/api/v1/storage
+```
+
+### List available nurturing snapshots via memories
+
+```bash
+curl http://stone-01:7185/api/v1/memories
+```
+
+---
+
+## 3. Storage Basics (Gateway API)
+
+The storage gateway is the **default** way to read/write seed bank objects.
+
+### 3.1 Upload an object
+
+```bash
+curl -X PUT \
+  -H "Content-Type: text/plain" \
+  -H "X-Seed-Bank: seed-swift-shore" \
+  --data "hello garden" \
+  http://stone-01:7185/api/v1/storage/my-bucket/hello.txt
+```
+
+Notes:
+
+- `my-bucket` maps to `{seed_bank}/garden/storage/my-bucket`
+- `X-Seed-Bank` is optional; omit to use the default seed bank
+
+### 3.2 List objects in a bucket
+
+```bash
+curl http://stone-01:7185/api/v1/storage/my-bucket/
+```
+
+Optional query parameters:
+
+- `prefix=path/`
+- `delimiter=/`
+- `marker=key`
+- `max-keys=1000`
+
+### 3.3 Download an object
+
+```bash
+curl http://stone-01:7185/api/v1/storage/my-bucket/hello.txt
+```
+
+### 3.4 Delete an object
+
+```bash
+curl -X DELETE http://stone-01:7185/api/v1/storage/my-bucket/hello.txt
+```
+
+---
+
+## 4. Storage (Stone‑Local, by Seed Bank ID)
+
+Use these endpoints when you know the **seed bank id** and want direct, local access.
+
+### 4.1 Find the seed bank id
+
+```bash
+curl http://stone-01:7185/api/v1/stone/storage/bank
+```
+
+Example response snippet:
+
+```json
+{
+  "data": [
+    {
+      "id": "019c26fc-5e46-7ac1-9fbb-f1664790dead",
+      "name": "seed-swift-shore"
+    }
+  ]
+}
+```
+
+### 4.2 Put object by id
+
+```bash
+curl -X PUT \
+  -H "Content-Type: application/json" \
+  --data '{"value":42}' \
+  http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
+```
+
+### 4.3 List bucket contents by id
+
+```bash
+curl http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/
+```
+
+Optional query parameter:
+
+- `depth=1` (default), `depth=3`, `depth=all`
+
+### 4.4 Get and delete by id
+
+```bash
+curl http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
+
+curl -X DELETE \
+  http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
+```
+
+---
+
+## 5. Storage (Cross‑Stone, Automatic Routing)
+
+The gateway (`/api/v1/storage`) automatically routes to the stone that hosts the selected seed bank.
+
+### 5.1 Upload from a different stone
+
+```bash
+curl -X PUT \
+  -H "Content-Type: text/plain" \
+  -H "X-Seed-Bank: seed-swift-shore" \
+  --data "from another stone" \
+  http://stone-02:7185/api/v1/storage/shared-bucket/remote.txt
+```
+
+### 5.2 Verify from the original stone
+
+```bash
+curl http://stone-01:7185/api/v1/storage/shared-bucket/remote.txt \
+  -H "X-Seed-Bank: seed-swift-shore"
+```
+
+If the seed bank is unplugged or not announced, the gateway returns `503` with `NO_SEED_BANK`.
+
+---
+
+## 6. Storage (S3‑Compatible Surface)
+
+Use this when an S3 client is required.
+
+Endpoints:
+
+- `GET /api/v1/storage/s3` (list buckets)
+- `GET /api/v1/storage/s3/{bucket}` (list objects)
+- `PUT /api/v1/storage/s3/{bucket}/{key}`
+- `GET /api/v1/storage/s3/{bucket}/{key}`
+- `DELETE /api/v1/storage/s3/{bucket}/{key}`
+
+Example:
+
+```bash
+curl -X PUT \
+  -H "Content-Type: text/plain" \
+  --data "s3 payload" \
+  http://stone-01:7185/api/v1/storage/s3/my-bucket/hello.txt
+```
+
+The same `X-Seed-Bank` header or `seed-bank` query param is supported here.
+
+---
+
+## 7. Nurturing Basics (Local A/B Snapshots)
+
+### 7.1 List all offerings with slots
+
+```bash
+curl http://stone-01:7185/api/v1/stone/nurturing
+```
+
+### 7.2 Create a snapshot (A/B rotation)
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"commit_image": true}' \
+  http://stone-01:7185/api/v1/stone/nurturing/immich
+```
+
+### 7.3 Inspect slots for an offering
+
+```bash
+curl http://stone-01:7185/api/v1/stone/nurturing/immich
+```
+
+### 7.4 Restore from a slot
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"slot":"A"}' \
+  http://stone-01:7185/api/v1/stone/nurturing/immich/restore
+```
+
+---
+
+## 8. Nurturing + Seed Banks (Replication)
+
+Replication is **stone‑local**. The seed bank must be attached to the stone performing the operation.
+
+### 8.1 Replicate to a seed bank
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"seed_bank":"seed-swift-shore"}' \
+  http://stone-01:7185/api/v1/stone/nurturing/immich/replicate
+```
+
+### 8.2 List remote snapshots stored on a seed bank
+
+```bash
+curl http://stone-01:7185/api/v1/stone/nurturing/remote/seed-swift-shore
+```
+
+### 8.3 Restore from a seed bank
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"seed_bank":"seed-swift-shore","harvest_id":null}' \
+  http://stone-01:7185/api/v1/stone/nurturing/immich/restore-remote
+```
+
+---
+
+## 9. Memories API (Read‑Only Hydration)
+
+Memories are garden‑wide, read‑only, and **audited**. Use them for hydration and external orchestrators.
+
+### 9.1 List all snapshots
+
+```bash
+curl http://stone-01:7185/api/v1/memories
+```
+
+### 9.2 List snapshots for one offering
+
+```bash
+curl http://stone-01:7185/api/v1/memories/{offering_id}
+```
+
+### 9.3 Fetch hydration manifest
+
+```bash
+curl http://stone-01:7185/api/v1/memories/{offering_id}/manifest
+```
+
+### 9.4 Download a snapshot
+
+```bash
+curl -o snapshot.tar.gz \
+  http://stone-01:7185/api/v1/memories/{offering_id}/{harvest_id}
+```
+
+Optional audit metadata:
+
+- `X-Requesting-Stone-ID`
+- `X-Requesting-Stone-Name`
+
+Optional seed bank selection:
+
+- `X-Seed-Bank: seed-swift-shore`
+- `?seed-bank=seed-swift-shore`
+
+---
+
+## 10. Nurturing Automation (Triggers)
+
+These endpoints are designed for timers (systemd/Task Scheduler) and run the **full workflow**:
+
+Local snapshot → seed bank routing → replication.
+
+### 10.1 Trigger one offering
+
+```bash
+curl -X POST http://stone-01:7185/api/v1/nurturing/immich/trigger
+```
+
+### 10.2 Trigger all offerings
+
+```bash
+curl -X POST http://stone-01:7185/api/v1/nurturing/trigger-all
+```
+
+---
+
+## 11. Troubleshooting Patterns
+
+### Storage gateway returns `NO_SEED_BANK`
+
+Likely causes:
+
+- Seed bank not plugged in
+- Seed bank not announced yet
+- Name mismatch (header or query param)
+
+### Stone‑local storage returns `BANK_NOT_FOUND`
+
+Likely causes:
+
+- Using seed bank **name** where **id** is required
+- Seed bank is connected to a different stone
+
+### Nurturing replication fails
+
+Likely causes:
+
+- Seed bank not attached to the local stone
+- Seed bank layout missing `garden/storage` or `garden/memories`
+
+---
+
+## 12. API Summary (Storage + Nurturing)
+
+Storage (stone‑local):
+
+- `GET /api/v1/stone/storage`
+- `GET /api/v1/stone/storage/health`
+- `GET /api/v1/stone/storage/bank`
+- `GET /api/v1/stone/storage/bank/{id}`
+- `PUT /api/v1/stone/storage/bank/{id}/{bucket}/{key}`
+- `GET /api/v1/stone/storage/bank/{id}/{bucket}/{key}`
+- `DELETE /api/v1/stone/storage/bank/{id}/{bucket}/{key}`
+
+Storage (garden‑wide):
+
+- `GET /api/v1/storage`
+- `PUT /api/v1/storage/{bucket}/{key}`
+- `GET /api/v1/storage/{bucket}/{key}`
+- `DELETE /api/v1/storage/{bucket}/{key}`
+- `GET /api/v1/storage/s3`
+- `PUT /api/v1/storage/s3/{bucket}/{key}`
+- `GET /api/v1/storage/s3/{bucket}/{key}`
+
+Nurturing (stone‑local):
+
+- `GET /api/v1/stone/nurturing`
+- `GET /api/v1/stone/nurturing/{offering}`
+- `POST /api/v1/stone/nurturing/{offering}`
+- `POST /api/v1/stone/nurturing/{offering}/restore`
+- `POST /api/v1/stone/nurturing/{offering}/replicate`
+- `POST /api/v1/stone/nurturing/{offering}/restore-remote`
+- `GET /api/v1/stone/nurturing/remote/{seed_bank}`
+
+Memories (garden‑wide, read‑only):
+
+- `GET /api/v1/memories`
+- `GET /api/v1/memories/{offering_id}`
+- `GET /api/v1/memories/{offering_id}/manifest`
+- `GET /api/v1/memories/{offering_id}/{harvest_id}`
+
+---
+
+*This guide reflects the live implementation and aligns with the current storage/nurturing design.*

@@ -358,7 +358,7 @@ pub async fn get_bank_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let bank = registry.get(&id)
+    let bank = registry.get_by_id(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
 
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
@@ -381,7 +381,7 @@ pub async fn delete_bank_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    if registry.exists(&id) {
+    if registry.get_by_id(&id).is_some() {
         return Err(err(StatusCode::CONFLICT, "BANK_MOUNTED", "Bank must be released before deletion"));
     }
     
@@ -434,7 +434,7 @@ pub async fn release_bank_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let _bank = registry.get(&id)
+    let _bank = registry.get_by_id(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
     
     #[cfg(target_os = "linux")]
@@ -489,7 +489,7 @@ pub async fn rename_bank_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let bank = registry.get(&id)
+    let bank = registry.get_by_id(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
     
     // Validate new name
@@ -538,7 +538,7 @@ pub async fn get_object_v1(
         Err(e) => return error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
     
-    let bank = match registry.get(&id) {
+    let bank = match registry.get_by_id(&id) {
         Some(b) => b,
         None => return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id)),
     };
@@ -703,7 +703,7 @@ pub async fn put_object_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let bank = registry.get(&id)
+    let bank = registry.get_by_id(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
     
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
@@ -755,7 +755,7 @@ pub async fn delete_object_v1(
     let registry = SeedBankRegistry::scan().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
     
-    let bank = registry.get(&id)
+    let bank = registry.get_by_id(&id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
     
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
@@ -796,7 +796,7 @@ pub async fn head_object_v1(
         Err(e) => return error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
     
-    let bank = match registry.get(&id) {
+    let bank = match registry.get_by_id(&id) {
         Some(b) => b,
         None => return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id)),
     };

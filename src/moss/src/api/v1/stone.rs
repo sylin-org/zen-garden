@@ -603,21 +603,59 @@ pub async fn deploy_stone_v1(
 
     if contains_moss {
         tracing::info!("Package contains garden-moss, initiating upgrade sequence");
-        
+
+        // Show update banner on TTY (Linux) for visual feedback
+        garden_common::console::try_update_banner(Some(&garden_common::console::UpdateBannerInfo {
+            stone_name: state.stone_name.clone(),
+            new_version: None, // Version extracted earlier but not easily accessible here
+        }));
+
         #[cfg(target_os = "windows")]
         {
             use crate::infra::spawn_windows_updater;
             use std::fs::OpenOptions;
             use std::io::Write;
             use std::path::Path;
-            
+
             // Log to update file
             let log_path = Path::new(&garden_common::constants::paths::data_dir()).join("moss-update.log");
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                 let _ = writeln!(file, "[{}] API deploy_stone_v1: Package contains moss, triggering Windows updater", timestamp);
             }
-            
+
+            // Stop all companions BEFORE spawning updater
+            // Moss is responsible for stopping processes it spawned (SoC/DDD principle)
+            // This ensures companion binaries can be overwritten during the update
+            tracing::info!("Stopping all companions before update");
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let _ = writeln!(file, "[{}] API deploy_stone_v1: Stopping all companions before update", timestamp);
+            }
+
+            let stop_results = state.companion_registry.stop_all().await;
+            for (id, result) in &stop_results {
+                match result {
+                    Ok(()) => {
+                        tracing::info!(companion = %id, "Companion stopped for update");
+                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                            let _ = writeln!(file, "[{}] API deploy_stone_v1: Stopped companion {}", timestamp, id);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(companion = %id, error = %e, "Failed to stop companion");
+                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                            let _ = writeln!(file, "[{}] API deploy_stone_v1: WARNING - Failed to stop companion {}: {}", timestamp, id, e);
+                        }
+                    }
+                }
+            }
+
+            // Brief delay to ensure processes have fully terminated
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
             if let Err(e) = spawn_windows_updater().await {
                 tracing::error!(error = ?e, "Failed to spawn updater");
                 

@@ -100,6 +100,8 @@ pub mod ribbon_art {
     pub const CAT_WAKING: &str = "  c(>(^-^)    ";
     /// Cat body sleeping: `  c(-(-.-)    ` (14 chars)
     pub const CAT_SLEEPING: &str = "  c(-(-.-)    ";
+    /// Cat body updating/working: `  c(>(o.O)    ` (14 chars) - wide eyes, alert
+    pub const CAT_UPDATING: &str = "  c(>(o.O)    ";
 
     /// USB drive line 1: `    ┌──┐      ` (14 chars)
     pub const USB_TOP: &str = "    ┌──┐      ";
@@ -729,6 +731,42 @@ pub fn try_shutdown_banner(info: Option<&ShutdownBannerInfo>) {
     if let Some(info) = info {
         if let Err(e) = print_shutdown_banner(info) {
             tracing::debug!(error = ?e, "Failed to print shutdown banner to TTY1");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = info;
+}
+
+/// Update banner info for software updates
+pub struct UpdateBannerInfo {
+    pub stone_name: String,
+    pub new_version: Option<String>,
+}
+
+/// Print update banner to TTY1 when software update starts
+///
+/// Shows update in progress with an alert cat.
+pub fn print_update_banner(info: &UpdateBannerInfo) -> Result<()> {
+    use ribbon_art::{CAT_HEAD, CAT_UPDATING};
+
+    let version_msg = info.new_version.as_ref()
+        .map(|v| format!(" -> v{}", v))
+        .unwrap_or_default();
+
+    print_ribbon(&[
+        &format!("{}UPDATING  Stone: {}{}", CAT_HEAD, info.stone_name, version_msg),
+        &format!("{}          This stone transforms...", CAT_UPDATING),
+    ])
+}
+
+/// Try to print update banner to TTY1 (Linux only, no-op elsewhere)
+///
+/// Logs errors at debug level rather than failing.
+pub fn try_update_banner(info: Option<&UpdateBannerInfo>) {
+    #[cfg(target_os = "linux")]
+    if let Some(info) = info {
+        if let Err(e) = print_update_banner(info) {
+            tracing::debug!(error = ?e, "Failed to print update banner to TTY1");
         }
     }
     #[cfg(not(target_os = "linux"))]

@@ -376,6 +376,274 @@ pub struct RemoveCapabilityQuery {
     pub cap_type: Option<String>,
 }
 
+/// Request body for refreshing capabilities
+#[derive(Debug, Deserialize)]
+pub struct RefreshCapabilitiesRequest {
+    /// Capability type to refresh (optional, refreshes all types if not specified)
+    #[serde(rename = "type")]
+    pub cap_type: Option<String>,
+
+    /// If true, only report what would be refreshed without actually doing it
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Response for refresh capabilities operation (job-based)
+#[derive(Debug, Serialize)]
+#[serde(tag = "status")]
+pub enum RefreshCapabilitiesResponse {
+    /// No capabilities found to refresh
+    #[serde(rename = "no_updates")]
+    NoUpdates {
+        offering: String,
+        cap_type: Option<String>,
+        message: String,
+    },
+
+    /// Dry run - showing what would be refreshed
+    #[serde(rename = "dry_run")]
+    DryRun {
+        offering: String,
+        capabilities: Vec<CapabilityToRefresh>,
+        total: usize,
+    },
+
+    /// Job already running - return current progress
+    #[serde(rename = "in_progress")]
+    InProgress {
+        offering: String,
+        job_id: String,
+        progress_percent: u8,
+        completed: usize,
+        failed: usize,
+        total: usize,
+    },
+
+    /// Job started - return job_id for tracking
+    #[serde(rename = "started")]
+    Started {
+        offering: String,
+        job_id: String,
+        total: usize,
+        message: String,
+    },
+}
+
+/// Capability that would be refreshed (for dry run)
+#[derive(Debug, Serialize, Clone)]
+pub struct CapabilityToRefresh {
+    pub name: String,
+    pub cap_type: String,
+}
+
+/// POST /api/v1/stone/offerings/:name/capabilities/refresh
+///
+/// Refresh/update all capabilities for an offering (e.g., update all Ollama models to latest).
+/// Creates a background job for the refresh operation.
+///
+/// # Path Parameters
+/// - `name`: Offering name (e.g., "ollama")
+///
+/// # Request Body
+/// ```json
+/// {
+///   "type": "model",  // optional - filter by capability type
+///   "dry_run": false  // optional - preview only (no job created)
+/// }
+/// ```
+///
+/// # Response Variants
+///
+/// **No capabilities found:**
+/// ```json
+/// { "data": { "status": "no_updates", "offering": "ollama", "message": "..." } }
+/// ```
+///
+/// **Dry run (preview):**
+/// ```json
+/// { "data": { "status": "dry_run", "offering": "ollama", "capabilities": [...], "total": 5 } }
+/// ```
+///
+/// **Job already running:**
+/// ```json
+/// { "data": { "status": "in_progress", "job_id": "...", "progress_percent": 40, ... } }
+/// ```
+///
+/// **Job started:**
+/// ```json
+/// { "data": { "status": "started", "job_id": "...", "total": 5, "message": "..." } }
+/// ```
+pub async fn refresh_offering_capabilities_v1(
+    State(state): State<AppState>,
+    Path(offering_name): Path<String>,
+    Json(request): Json<RefreshCapabilitiesRequest>,
+) -> Result<Json<ApiResponse<RefreshCapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    use crate::{Job, JobStatus};
+
+    // Find the service (managed or adopted)
+    let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
+
+    // Get capability manifest
+    let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "NO_CAPABILITY_MANIFEST",
+            format!("No capability manifest found for offering '{}'.", service.offering),
+            None,
+        )
+    })?;
+
+    // List existing capabilities
+    let executor = CapabilityExecutor::new();
+    let collections = executor
+        .list_capabilities(&service, manifest, mode)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DISCOVERY_FAILED",
+                format!("Failed to discover capabilities: {}", e),
+                None,
+            )
+        })?;
+
+    // Filter by type if specified
+    let filtered_collections: Vec<_> = if let Some(ref cap_type) = request.cap_type {
+        collections
+            .into_iter()
+            .filter(|c| c.cap_type == *cap_type)
+            .collect()
+    } else {
+        collections
+    };
+
+    // Build list of capabilities to refresh (only those with add operation available)
+    let mut capabilities_to_refresh: Vec<CapabilityToRefresh> = Vec::new();
+    for collection in &filtered_collections {
+        let cap_config = manifest.get_capability_type(&collection.cap_type);
+        let can_refresh = cap_config
+            .and_then(|c| c.add.as_ref())
+            .map(|a| a.available)
+            .unwrap_or(false);
+
+        if can_refresh {
+            for item in &collection.items {
+                capabilities_to_refresh.push(CapabilityToRefresh {
+                    name: item.name.clone(),
+                    cap_type: collection.cap_type.clone(),
+                });
+            }
+        }
+    }
+
+    let total = capabilities_to_refresh.len();
+
+    // Case 1: No capabilities to refresh
+    if total == 0 {
+        let type_label = request.cap_type.as_deref().unwrap_or("capabilities");
+        return Ok(Json(ApiResponse {
+            data: RefreshCapabilitiesResponse::NoUpdates {
+                offering: service.offering.clone(),
+                cap_type: request.cap_type.clone(),
+                message: format!("No {} found for {}", type_label, service.offering),
+            },
+            suggestions: None,
+        }));
+    }
+
+    // Case 2: Dry run - return what would be refreshed
+    if request.dry_run {
+        return Ok(Json(ApiResponse {
+            data: RefreshCapabilitiesResponse::DryRun {
+                offering: service.offering.clone(),
+                capabilities: capabilities_to_refresh,
+                total,
+            },
+            suggestions: None,
+        }));
+    }
+
+    // Case 3: Check for existing running refresh job for this offering
+    let job_key = format!("refresh-capabilities-{}", service.offering);
+    {
+        let jobs = state.jobs.read().await;
+        for (job_id, job) in jobs.iter() {
+            // Check if this is a refresh job for the same offering and still running
+            if job_id.starts_with(&job_key) && matches!(job.status, JobStatus::Running | JobStatus::Pending) {
+                let completed = job.completed.len();
+                let failed = job.failed.len();
+                let job_total = job.offerings.len(); // offerings holds capability names for refresh jobs
+                let progress = if job_total > 0 {
+                    ((completed + failed) * 100 / job_total) as u8
+                } else {
+                    0
+                };
+
+                return Ok(Json(ApiResponse {
+                    data: RefreshCapabilitiesResponse::InProgress {
+                        offering: service.offering.clone(),
+                        job_id: job_id.clone(),
+                        progress_percent: progress,
+                        completed,
+                        failed,
+                        total: job_total,
+                    },
+                    suggestions: None,
+                }));
+            }
+        }
+    }
+
+    // Case 4: Create new job and spawn background task
+    let job_id = format!("{}-{}", job_key, uuid::Uuid::now_v7());
+
+    // For refresh jobs, we use offerings to store capability names for progress tracking
+    let capability_names: Vec<String> = capabilities_to_refresh.iter().map(|c| c.name.clone()).collect();
+
+    let job = Job {
+        id: job_id.clone(),
+        offerings: capability_names, // Repurposed: holds capability names for progress
+        status: JobStatus::Pending,
+        completed: vec![],
+        failed: std::collections::HashMap::new(),
+        started_at: std::time::SystemTime::now(),
+        completed_at: None,
+    };
+
+    state.jobs.write().await.insert(job_id.clone(), job);
+
+    // Spawn background task
+    let state_clone = state.clone();
+    let job_id_clone = job_id.clone();
+    let offering_clone = service.offering.clone();
+    let cap_type_filter = request.cap_type.clone();
+    tokio::spawn(async move {
+        crate::tasks::refresh_capabilities_task(
+            &state_clone,
+            &job_id_clone,
+            &offering_clone,
+            cap_type_filter.as_deref(),
+        ).await;
+    });
+
+    tracing::info!(
+        offering = %service.offering,
+        job_id = %job_id,
+        total = total,
+        "Capabilities refresh job started"
+    );
+
+    Ok(Json(ApiResponse {
+        data: RefreshCapabilitiesResponse::Started {
+            offering: service.offering.clone(),
+            job_id,
+            total,
+            message: format!("Refresh started for {} capabilities", total),
+        },
+        suggestions: None,
+    }))
+}
+
 /// Convert Offering to ServiceInfo for capability executor compatibility
 async fn offering_to_service_info(offering: &Offering, state: &AppState) -> ServiceInfo {
     // Use location port, falling back to manifest default

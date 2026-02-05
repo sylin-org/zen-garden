@@ -47,6 +47,7 @@ pub use health_monitor::health_monitor_task;
 pub use job_executors::{
     install_service_task, install_batch_task,
     build_guidance, backfill_missing_guidance,
+    refresh_capabilities_task,
 };
 pub use metrics_collector::run_metrics_collector;
 pub use network_monitor::{NetworkMonitor, NetworkMonitorConfig, NetworkEvent};

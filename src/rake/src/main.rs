@@ -1097,6 +1097,17 @@ enum CapabilitiesAction {
         #[arg(long = "type", short = 't')]
         cap_type: Option<String>,
     },
+    /// Refresh/update all capabilities for an offering (e.g., update all models to latest)
+    Refresh {
+        /// Offering name
+        offering: String,
+        /// Capability type to refresh (optional, refreshes all types if not specified)
+        #[arg(long = "type", short = 't')]
+        cap_type: Option<String>,
+        /// Show what would be refreshed without actually refreshing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1743,6 +1754,10 @@ async fn async_main() -> anyhow::Result<()> {
                 }
                 Some(CapabilitiesAction::Remove { offering, name, cap_type }) => {
                     let cmd = commands::discovery::RemoveCapabilityCommand::new(offering, name, cap_type, quiet_mode);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                Some(CapabilitiesAction::Refresh { offering, cap_type, dry_run }) => {
+                    let cmd = commands::discovery::RefreshCapabilitiesCommand::new(offering, cap_type, dry_run, quiet_mode);
                     dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
                 }
                 None => {

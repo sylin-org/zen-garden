@@ -326,18 +326,11 @@ impl CapabilityExecutor {
         context: &ExecutorContext,
         item: &str,
     ) -> Result<String> {
-        let mut result = self.template_command(command, context)?;
+        // Replace {{item}} placeholder FIRST, before template_command validates
+        let command_with_item = command.replace("{{item}}", item);
 
-        // Replace {{item}} placeholder with the capability name
-        result = result.replace("{{item}}", item);
-
-        // Verify no unresolved placeholders
-        if result.contains("{{") {
-            let start = result.find("{{").unwrap();
-            let end = result[start..].find("}}").map(|i| start + i + 2).unwrap_or(result.len());
-            let placeholder = &result[start..end];
-            bail!("Unresolved placeholder in command: {}", placeholder);
-        }
+        // Now template the rest of the placeholders
+        let result = self.template_command(&command_with_item, context)?;
 
         Ok(result)
     }

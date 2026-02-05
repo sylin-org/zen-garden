@@ -888,3 +888,251 @@ async fn remove_installing_entry(state: &AppState, offering: &str) {
     // Sync services to self_entry to reflect the removal
     state.sync_self_services(true).await;
 }
+
+// =============================================================================
+// Capabilities Refresh Task
+// =============================================================================
+
+/// Background task for refreshing capabilities (models, extensions, etc.)
+///
+/// Refreshes all capabilities for an offering by re-running the "add" operation
+/// for each existing capability. For Ollama, this pulls the latest version of
+/// each model.
+///
+/// # Arguments
+/// * `state` - Application state
+/// * `job_id` - Job ID for tracking progress
+/// * `offering` - The offering name (e.g., "ollama")
+/// * `cap_type` - Optional capability type filter (e.g., "model")
+///
+/// # Progress Tracking
+/// Progress is tracked in the Job struct:
+/// - `offerings` field holds capability names (not offering names)
+/// - `completed` accumulates successfully refreshed capabilities
+/// - `failed` maps failed capability names to error messages
+pub async fn refresh_capabilities_task(
+    state: &AppState,
+    job_id: &str,
+    offering: &str,
+    cap_type: Option<&str>,
+) {
+    use crate::domain::CapabilityExecutor;
+    use crate::infra::manifests::get_capability_manifest;
+
+    // Update job status to Running
+    {
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.status = JobStatus::Running;
+        }
+    }
+
+    // Emit job started event
+    state.console.emit(console::ConsoleEvent::new(
+        console::EventCategory::Jobs,
+        console::EventStatus::Started,
+        format!("Refresh capabilities {} (job: {})", offering, &job_id[..8])
+    ));
+
+    emit_job_started(state, job_id, offering, "refresh-capabilities");
+    tracing::info!(job_id, offering, "Starting capabilities refresh");
+
+    // Find the offering
+    let (service, mode) = {
+        let offerings = state.offerings.read().await;
+        match offerings.iter().find(|o| o.offering.to_lowercase() == offering.to_lowercase()) {
+            Some(o) => {
+                let mode = o.mode();
+                let service = offering_to_service_info_for_refresh(o, state).await;
+                (service, mode)
+            }
+            None => {
+                let error = format!("Offering '{}' not found", offering);
+                emit_job_failed(state, job_id, offering, &error);
+                mark_job_failed(state, job_id, offering, &error).await;
+                return;
+            }
+        }
+    };
+
+    // Get capability manifest
+    let manifest = match get_capability_manifest(&service.offering) {
+        Some(m) => m,
+        None => {
+            let error = format!("No capability manifest found for '{}'", offering);
+            emit_job_failed(state, job_id, offering, &error);
+            mark_job_failed(state, job_id, offering, &error).await;
+            return;
+        }
+    };
+
+    // List current capabilities
+    let executor = CapabilityExecutor::new();
+    let collections = match executor.list_capabilities(&service, manifest, mode).await {
+        Ok(c) => c,
+        Err(e) => {
+            let error = format!("Failed to list capabilities: {}", e);
+            emit_job_failed(state, job_id, offering, &error);
+            mark_job_failed(state, job_id, offering, &error).await;
+            return;
+        }
+    };
+
+    // Filter by type if specified
+    let filtered_collections: Vec<_> = if let Some(cap_type_filter) = cap_type {
+        collections.into_iter().filter(|c| c.cap_type == cap_type_filter).collect()
+    } else {
+        collections
+    };
+
+    // Build list of capabilities to refresh
+    let mut capabilities: Vec<(String, String)> = Vec::new(); // (name, type)
+    for collection in &filtered_collections {
+        let cap_config = manifest.get_capability_type(&collection.cap_type);
+        let can_refresh = cap_config
+            .and_then(|c| c.add.as_ref())
+            .map(|a| a.available)
+            .unwrap_or(false);
+
+        if can_refresh {
+            for item in &collection.items {
+                capabilities.push((item.name.clone(), collection.cap_type.clone()));
+            }
+        }
+    }
+
+    let total = capabilities.len();
+    tracing::info!(job_id, offering, total, "Refreshing capabilities");
+
+    // Process each capability
+    for (idx, (cap_name, cap_type_str)) in capabilities.iter().enumerate() {
+        emit_job_progress(
+            state,
+            "info",
+            format!("Refreshing {}/{}: {}", idx + 1, total, cap_name),
+            job_id,
+            offering,
+        );
+
+        match executor.add_capability(&service, manifest, mode, cap_type_str, cap_name).await {
+            Ok(result) if result.success => {
+                // Mark as completed
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.completed.push(cap_name.clone());
+                }
+                tracing::debug!(job_id, capability = %cap_name, "Capability refreshed successfully");
+            }
+            Ok(result) => {
+                // Add operation returned but reported failure
+                let error = result.error.unwrap_or_else(|| "Unknown error".to_string());
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.failed.insert(cap_name.clone(), error.clone());
+                }
+                tracing::warn!(job_id, capability = %cap_name, error = %error, "Capability refresh failed");
+            }
+            Err(e) => {
+                // Add operation threw an error
+                let error = e.to_string();
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.failed.insert(cap_name.clone(), error.clone());
+                }
+                tracing::warn!(job_id, capability = %cap_name, error = %error, "Capability refresh error");
+            }
+        }
+    }
+
+    // Mark job as completed
+    let (succeeded, failed_count) = {
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.status = JobStatus::Completed;
+            job.completed_at = Some(std::time::SystemTime::now());
+            (job.completed.len(), job.failed.len())
+        } else {
+            (0, 0)
+        }
+    };
+
+    // Emit completion event
+    if failed_count == 0 {
+        emit_job_completed(state, job_id, offering);
+        state.console.emit(console::ConsoleEvent::new(
+            console::EventCategory::Jobs,
+            console::EventStatus::Completed,
+            format!("Refreshed {} capabilities for {} (job: {})", succeeded, offering, &job_id[..8])
+        ));
+    } else {
+        emit_job_progress(
+            state,
+            "warn",
+            format!("Refresh completed: {} succeeded, {} failed", succeeded, failed_count),
+            job_id,
+            offering,
+        );
+        state.console.emit(console::ConsoleEvent::new(
+            console::EventCategory::Jobs,
+            console::EventStatus::Completed,
+            format!("Refresh {}: {} ok, {} failed (job: {})", offering, succeeded, failed_count, &job_id[..8])
+        ));
+    }
+
+    tracing::info!(
+        job_id,
+        offering,
+        succeeded,
+        failed = failed_count,
+        "Capabilities refresh completed"
+    );
+}
+
+/// Convert Offering to ServiceInfo for capability executor (internal helper)
+async fn offering_to_service_info_for_refresh(
+    offering: &Offering,
+    state: &AppState,
+) -> garden_common::ServiceInfo {
+    use crate::domain::get_offering_port;
+    use garden_common::{ServiceInfo, ServiceStatus, Ports};
+
+    let port = if offering.location.port > 0 {
+        offering.location.port
+    } else {
+        get_offering_port(&offering.offering, state).await
+    };
+
+    ServiceInfo {
+        offering_id: offering.offering_id.clone(),
+        name: offering.name.clone(),
+        offering: offering.offering.clone(),
+        version: offering.version.clone(),
+        status: match offering.status {
+            OfferingStatus::Running => ServiceStatus::Running,
+            OfferingStatus::Stopped => ServiceStatus::Stopped,
+            OfferingStatus::Installing => ServiceStatus::Installing,
+            OfferingStatus::Degraded => ServiceStatus::Degraded,
+            OfferingStatus::Maintenance => ServiceStatus::Maintenance,
+            OfferingStatus::Unknown => ServiceStatus::Unknown,
+        },
+        health: offering.health.clone(),
+        ports: Ports {
+            native: port,
+            agnostic: offering.location.agnostic_port,
+        },
+        resources: offering.managed_data().and_then(|m| m.resources.clone()),
+        job_id: offering.managed_data().and_then(|m| m.job_id.clone()),
+        sub_capabilities: offering.sub_capabilities.clone(),
+        guidance: offering.managed_data().and_then(|m| m.guidance.clone()),
+    }
+}
+
+/// Mark a job as failed (helper for refresh task)
+async fn mark_job_failed(state: &AppState, job_id: &str, key: &str, error: &str) {
+    let mut jobs = state.jobs.write().await;
+    if let Some(job) = jobs.get_mut(job_id) {
+        job.status = JobStatus::Failed;
+        job.failed.insert(key.to_string(), error.to_string());
+        job.completed_at = Some(std::time::SystemTime::now());
+    }
+}

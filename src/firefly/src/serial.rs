@@ -130,7 +130,9 @@ impl FireflySerial {
                 }
                 Ok(_) => continue, // 0 bytes read, retry
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    tracing::warn!(command = %command, "Command timed out");
+                    // Debug level - callers decide severity based on context
+                    // (timeouts are expected during device detection/reconnection)
+                    tracing::debug!(command = %command, "Command timed out");
                     return Err(anyhow::anyhow!("Command timed out"));
                 }
                 Err(e) => return Err(anyhow::anyhow!("Read error: {}", e)),
@@ -289,6 +291,7 @@ impl FireflyConnection {
             Some(p) => {
                 // If port is specified, detect its type
                 let device_type = detect_device_type(p).unwrap_or(FireflyDeviceType::Unknown);
+                tracing::info!(port = %p, device_type = %device_type, "Trying specified port");
                 DetectedDevice {
                     port_name: p.clone(),
                     device_type,
@@ -296,7 +299,17 @@ impl FireflyConnection {
                     pid: 0,
                 }
             }
-            None => find_firefly_device()?,
+            None => {
+                let device = find_firefly_device()?;
+                tracing::info!(
+                    port = %device.port_name,
+                    device_type = %device.device_type,
+                    vid = format!("{:04x}", device.vid),
+                    pid = format!("{:04x}", device.pid),
+                    "Found candidate device, verifying protocol"
+                );
+                device
+            }
         };
 
         let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;

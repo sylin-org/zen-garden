@@ -6,6 +6,7 @@
 //! - Hardware capability detection
 //! - Service discovery (Lantern registration)
 //! - Network monitoring (IP change detection)
+//! - Docker monitoring (daemon availability)
 //! - Topology announcements (periodic stone presence)
 //! - Task coordination (orchestrates all background tasks)
 //! - Nurturing scheduler (automated A/B backups with seed bank replication)
@@ -18,6 +19,7 @@ pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
 pub mod discovery_handler;
+pub mod docker_monitor;
 pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
@@ -48,6 +50,7 @@ pub use job_executors::{
 };
 pub use metrics_collector::run_metrics_collector;
 pub use network_monitor::{NetworkMonitor, NetworkMonitorConfig, NetworkEvent};
+pub use docker_monitor::{DockerMonitor, DockerMonitorConfig, DockerEvent};
 pub use nurturing_scheduler::{
     NurturingScheduler, NurturingWorkflowConfig, NurturingWorkflowResult,
     ReplicationAttempt, RoutingStrategy, trigger_nurturing, trigger_all_nurturing,

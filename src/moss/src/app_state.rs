@@ -198,12 +198,15 @@ pub struct AppState {
 pub struct SubSystems {
     /// Network subsystem state
     pub network: NetworkSubSystem,
+    /// Docker subsystem state
+    pub docker: DockerSubSystem,
 }
 
 impl Default for SubSystems {
     fn default() -> Self {
         Self {
             network: NetworkSubSystem::default(),
+            docker: DockerSubSystem::default(),
         }
     }
 }
@@ -220,6 +223,25 @@ pub struct NetworkSubSystem {
 }
 
 impl Default for NetworkSubSystem {
+    fn default() -> Self {
+        Self {
+            ready: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+/// Docker subsystem state
+///
+/// Tracks whether the Docker daemon is available for container operations.
+#[derive(Clone)]
+pub struct DockerSubSystem {
+    /// True when Docker daemon is healthy (ping succeeds).
+    /// Set by DockerMonitor, read by API handlers and background tasks.
+    /// Use `ready.load(Ordering::Relaxed)` to check.
+    pub ready: Arc<AtomicBool>,
+}
+
+impl Default for DockerSubSystem {
     fn default() -> Self {
         Self {
             ready: Arc::new(AtomicBool::new(false)),

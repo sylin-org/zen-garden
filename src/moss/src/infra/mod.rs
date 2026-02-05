@@ -44,7 +44,7 @@ pub mod storage;
 pub mod update_transaction;
 
 pub use companions::CompanionRegistry;
-pub use api_helpers::{error_response, error_codes};
+pub use api_helpers::{error_response, error_codes, require_docker};
 pub use auth::NoAuth;
 pub use config::{MossConfig, NetworkConfig, StaticIpPoolConfig, AdoptionConfig};
 pub use container::ContainerRuntime;

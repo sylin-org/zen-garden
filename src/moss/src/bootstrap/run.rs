@@ -13,6 +13,8 @@ use crate::{
     install_batch_task,
     // Network monitoring
     NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
+    // Docker monitoring
+    DockerMonitor, DockerMonitorConfig,
     // Bootstrap functions
     load_preinstall_manifest,
     router,
@@ -275,6 +277,18 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
 
     // Phase 7: Docker connection
     let docker = connect_docker(&console_printer, DockerConfig::default()).await?;
+
+    // Phase 7.5: Docker monitoring
+    // Runs in background, polls every 5s when disconnected, 30s when connected
+    // DockerMonitor manages the subsystems.docker.ready flag
+    let _docker_monitor = DockerMonitor::start_with_config(
+        docker.clone(),
+        DockerMonitorConfig::default()
+            .with_disconnect_retry(5)
+            .with_connected_poll(30),
+        subsystems.docker.ready.clone(),
+    ).await;
+    tracing::debug!("Docker monitor started (5s retry, 30s poll)");
 
     // Phase 8: Create channels
     let shutdown_tx = Arc::new(tokio::sync::Notify::new());

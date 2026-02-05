@@ -5,6 +5,8 @@
 use axum::{http::StatusCode, Json};
 use garden_common::api_utils::ApiErrorResponse;
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use crate::AppState;
 
 /// Create an error response for API handlers
 ///
@@ -22,6 +24,30 @@ pub fn error_response(
         ApiErrorResponse::new(error_code, message)
     };
     (status_code, Json(response))
+}
+
+/// Check if Docker daemon is available
+///
+/// Returns Ok(()) if Docker is ready, or a 503 Service Unavailable error if not.
+/// Use this at the start of API handlers that require Docker operations.
+///
+/// # Example
+/// ```rust,ignore
+/// pub async fn create_service(state: State<AppState>) -> Result<..., (StatusCode, Json<ApiErrorResponse>)> {
+///     require_docker(&state)?;
+///     // ... Docker operations ...
+/// }
+/// ```
+pub fn require_docker(state: &AppState) -> Result<(), (StatusCode, Json<ApiErrorResponse>)> {
+    if !state.subsystems.docker.ready.load(Ordering::Relaxed) {
+        return Err(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            garden_common::error_codes::DOCKER_UNAVAILABLE,
+            "Docker daemon is currently unavailable. The service will automatically reconnect when Docker becomes available.",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 // Re-export error codes from common for convenience

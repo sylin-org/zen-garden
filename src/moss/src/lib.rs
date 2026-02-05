@@ -54,6 +54,7 @@ pub use tasks::{
     detect_capabilities_background,
     lantern_registration_loop,
     NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
+    DockerMonitor, DockerMonitorConfig, DockerEvent,
     // Task coordination
     start_all_background_tasks,
     start_discovery_listener, start_hardware_detection,

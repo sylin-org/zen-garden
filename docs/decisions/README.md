@@ -55,6 +55,11 @@ canonical: true
   - **Rationale**: Self-contained handlers for garden-wide effects (registry trust, DNS, etc.)
   - **Impact**: Distributed autonomous configuration, Docker daemon auto-trust for registries
 
+- **[MOSS-0003](MOSS-0003-docker-runtime-resilience.md)**: Docker Runtime Resilience
+  - **Status**: Accepted (2026-02-04)
+  - **Rationale**: Mirror NetworkMonitor pattern for Docker daemon availability tracking
+  - **Impact**: Graceful degradation when Docker unavailable, automatic recovery on reconnect
+
 ### Offerings (Services)
 - **[OFFER-0001](OFFER-0001-offering-taxonomy-and-recommendations.md)**: Offering Taxonomy
   - **Status**: Accepted
@@ -239,9 +244,9 @@ Once an ADR is **Accepted**:
 
 ## ADR Statistics
 
-- **Total ADRs**: 8
+- **Total ADRs**: 9
 - **By Status**:
-  - Accepted: 8
+  - Accepted: 9
   - Proposed: 0
   - Superseded: 0
 - **By Domain**:
@@ -250,7 +255,7 @@ Once an ADR is **Accepted**:
   - Compatibility: 1
   - Lantern: 1
   - Metrics: 1
-  - Moss: 2
+  - Moss: 3
   - Offerings: 1
   - Rake: 1
 
@@ -262,6 +267,6 @@ Once an ADR is **Accepted**:
 
 ---
 
-**Last Updated**: January 18, 2026  
-**Maintained By**: Architecture Team  
+**Last Updated**: February 4, 2026
+**Maintained By**: Architecture Team
 **Review Cycle**: As needed (updated when ADRs added/changed)

@@ -11,6 +11,7 @@
 use crate::AppState;
 use crate::domain::adopt_offering_container;
 use garden_common::{NotificationTag, OfferingStatus, ServiceHealthStatus, NOTIF_SOURCE_OFFERINGS_DEGRADED};
+use std::sync::atomic::Ordering;
 
 /// Background health monitoring loop
 ///
@@ -48,6 +49,13 @@ pub async fn health_monitor_task(state: AppState) {
         let reaped = state.companion_registry.reap_terminated().await;
         if reaped > 0 {
             tracing::debug!(reaped = reaped, "Reaped terminated Companion processes");
+        }
+
+        // Check Docker availability before attempting container operations
+        // If Docker is unavailable, skip container health checks but continue other work
+        if !state.subsystems.docker.ready.load(Ordering::Relaxed) {
+            tracing::debug!("Health monitor: Docker unavailable, skipping container checks");
+            continue;
         }
 
         // Get snapshot of managed offerings to check

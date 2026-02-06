@@ -7,17 +7,17 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::AppState;
-use crate::domain::{
-    CompatibilityDecision, evaluate_compatibility, get_current_compat_capabilities,
-};
 use crate::docker::DockerManager;
+use crate::domain::{
+    connection, evaluate_compatibility, get_current_compat_capabilities, CompatibilityDecision,
+};
 use crate::infra::ManifestRegistry;
+use crate::AppState;
 use garden_common::offerings::parse_offering_fqn;
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
-    ManagedData, Offering, OfferingGuidance, OfferingLocation, OfferingModeData,
-    OfferingStatus, ServiceHealthStatus,
+    ManagedData, Offering, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
+    ServiceHealthStatus,
 };
 
 /// Adopt a container for a specific offering into the registry
@@ -139,7 +139,9 @@ pub async fn adopt_offering_container(
 
     // Convert ServiceStatus to OfferingStatus
     let status = match (&health, service_status) {
-        (ServiceHealthStatus::Degraded, garden_common::ServiceStatus::Running) => OfferingStatus::Degraded,
+        (ServiceHealthStatus::Degraded, garden_common::ServiceStatus::Running) => {
+            OfferingStatus::Degraded
+        }
         (_, garden_common::ServiceStatus::Running) => OfferingStatus::Running,
         (_, garden_common::ServiceStatus::Stopped) => OfferingStatus::Stopped,
         (_, garden_common::ServiceStatus::Installing) => OfferingStatus::Installing,
@@ -147,6 +149,11 @@ pub async fn adopt_offering_container(
         (_, garden_common::ServiceStatus::Maintenance) => OfferingStatus::Maintenance,
         (_, garden_common::ServiceStatus::Unknown) => OfferingStatus::Unknown,
     };
+    let protocol = connection::infer_protocol_from_manifest_metadata(
+        &offering_type,
+        &entry.category,
+        entry.connection_template.as_deref(),
+    );
 
     let adopted = Offering {
         offering_id: generate_guidv7(),
@@ -159,7 +166,7 @@ pub async fn adopt_offering_container(
         location: OfferingLocation {
             host: "localhost".to_string(),
             port: native_port,
-            protocol: "http".to_string(),
+            protocol,
             agnostic_port: None,
         },
         mode_data: OfferingModeData::Managed(ManagedData {
@@ -195,9 +202,7 @@ pub async fn adopt_offering_container(
 /// - Persisting registry changes
 /// - Emitting events
 /// - Logging warnings for failed adoptions
-pub async fn adopt_existing_containers(
-    state: &AppState,
-) -> AdoptionResult {
+pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
     let existing = match state.docker.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {
@@ -219,7 +224,14 @@ pub async fn adopt_existing_containers(
             continue;
         }
 
-        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
+        match adopt_offering_container(
+            &state.docker,
+            &state.manifest_registry,
+            &offering,
+            &state.stone_name,
+        )
+        .await
+        {
             Ok(Some(info)) => {
                 tracing::info!(offering = %offering, "Adopting existing zen-offering container into registry");
                 adopted.push(info);

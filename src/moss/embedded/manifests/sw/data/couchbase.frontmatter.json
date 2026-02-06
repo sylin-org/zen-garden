@@ -4,5 +4,6 @@
   "category": "data",
   "tags": ["database", "document", "nosql", "cache"],
   "port": 8091,
+  "connection_template": "couchbase://{host}:{port}",
   "volumes": ["couchbase-data"]
 }

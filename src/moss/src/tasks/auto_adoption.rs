@@ -10,10 +10,11 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
-use crate::AppState;
-use crate::infra::config::AdoptionConfig;
+use crate::domain::connection;
 use crate::domain::DetectionOrchestrator;
-use garden_common::{ServiceHealthStatus, OfferingMode};
+use crate::infra::config::AdoptionConfig;
+use crate::AppState;
+use garden_common::{OfferingMode, ServiceHealthStatus};
 use std::time::Instant;
 
 /// Background auto-adoption loop
@@ -77,7 +78,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
         scan_count = scan_count.saturating_add(1);
 
         // Get manifests that support adopted mode
-        let adoptable_manifests = state.manifest_registry.offerings_by_mode(&OfferingMode::Adopted);
+        let adoptable_manifests = state
+            .manifest_registry
+            .offerings_by_mode(&OfferingMode::Adopted);
         tracing::info!(
             count = adoptable_manifests.len(),
             scan = scan_count,
@@ -112,11 +115,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                             offering.health = ServiceHealthStatus::Healthy;
                             state_changed = true;
 
-                            state.console.emit(garden_common::console::ConsoleEvent::new(
-                                garden_common::console::EventCategory::Services,
-                                garden_common::console::EventStatus::Healthy,
-                                format!("{} is back online", offering.offering),
-                            ));
+                            state
+                                .console
+                                .emit(garden_common::console::ConsoleEvent::new(
+                                    garden_common::console::EventCategory::Services,
+                                    garden_common::console::EventStatus::Healthy,
+                                    format!("{} is back online", offering.offering),
+                                ));
                         }
                     }
                     Ok(_) | Err(_) => {
@@ -129,11 +134,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                             offering.health = ServiceHealthStatus::Offline;
                             state_changed = true;
 
-                            state.console.emit(garden_common::console::ConsoleEvent::new(
-                                garden_common::console::EventCategory::Services,
-                                garden_common::console::EventStatus::Disconnected,
-                                format!("{} is offline", offering.offering),
-                            ));
+                            state
+                                .console
+                                .emit(garden_common::console::ConsoleEvent::new(
+                                    garden_common::console::EventCategory::Services,
+                                    garden_common::console::EventStatus::Disconnected,
+                                    format!("{} is offline", offering.offering),
+                                ));
                         }
                     }
                 }
@@ -151,7 +158,10 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
             // Check if already adopted
             {
                 let offerings = state.offerings.read().await;
-                if offerings.iter().any(|o| o.offering == manifest.name && o.is_adopted()) {
+                if offerings
+                    .iter()
+                    .any(|o| o.offering == manifest.name && o.is_adopted())
+                {
                     continue; // Already adopted (handled in Phase 1)
                 }
             }
@@ -173,10 +183,15 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                     };
 
                     // Create unified offering for adopted service
+                    let protocol = connection::infer_protocol_from_manifest_metadata(
+                        &manifest.name,
+                        &manifest.category,
+                        manifest.connection_template.as_deref(),
+                    );
                     let location = garden_common::OfferingLocation {
                         host: "localhost".to_string(),
                         port: manifest.default_host_port(),
-                        protocol: manifest.category.clone(),
+                        protocol,
                         agnostic_port: None,
                     };
 
@@ -197,15 +212,23 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         health: ServiceHealthStatus::Healthy,
                         sub_capabilities: Vec::new(), // Populated by capabilities discovery task
                         location,
-                        mode_data: garden_common::OfferingModeData::Adopted(garden_common::AdoptedData {
-                            control_level,
-                            start_command: control.as_ref().and_then(|c| c.start_command.clone()),
-                            stop_command: control.as_ref().and_then(|c| c.stop_command.clone()),
-                            restart_command: control.as_ref().and_then(|c| c.restart_command.clone()),
-                            health_check_url: control.as_ref().and_then(|c| c.health_check_url.clone()),
-                            container_name: None,
-                            detected_at: chrono::Utc::now(),
-                        }),
+                        mode_data: garden_common::OfferingModeData::Adopted(
+                            garden_common::AdoptedData {
+                                control_level,
+                                start_command: control
+                                    .as_ref()
+                                    .and_then(|c| c.start_command.clone()),
+                                stop_command: control.as_ref().and_then(|c| c.stop_command.clone()),
+                                restart_command: control
+                                    .as_ref()
+                                    .and_then(|c| c.restart_command.clone()),
+                                health_check_url: control
+                                    .as_ref()
+                                    .and_then(|c| c.health_check_url.clone()),
+                                container_name: None,
+                                detected_at: chrono::Utc::now(),
+                            },
+                        ),
                         registered_at: chrono::Utc::now(),
                         updated_at: None,
                     };
@@ -215,11 +238,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                     state_changed = true;
 
                     // Emit console event
-                    state.console.emit(garden_common::console::ConsoleEvent::new(
-                        garden_common::console::EventCategory::Services,
-                        garden_common::console::EventStatus::Healthy,
-                        format!("Auto-adopted {}", manifest.name),
-                    ));
+                    state
+                        .console
+                        .emit(garden_common::console::ConsoleEvent::new(
+                            garden_common::console::EventCategory::Services,
+                            garden_common::console::EventStatus::Healthy,
+                            format!("Auto-adopted {}", manifest.name),
+                        ));
                 }
                 Ok(result) if result.detected && !result.stable => {
                     tracing::debug!(

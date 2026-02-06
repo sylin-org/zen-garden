@@ -6,22 +6,23 @@
 //! - List adopted/borrowed offerings
 //! - Remove adopted/borrowed offerings
 
+use crate::api::responses::ApiResponse;
+use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::domain::connection;
+use crate::{error_response, AppState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use crate::api::responses::ApiResponse;
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
-use crate::{error_response, AppState};
+use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     api_utils::ApiErrorResponse,
     constants::{OFFERING_ADOPTED_INSTANCE, OFFERING_FQN_SEPARATOR},
     offerings::parse_offering_fqn,
-    AdoptedControlLevel, AdoptedData, BorrowedData, OfferingLocation,
-    OfferingModeData, OfferingStatus, ServiceHealthStatus, Offering,
+    AdoptedControlLevel, AdoptedData, BorrowedData, Offering, OfferingLocation, OfferingModeData,
+    OfferingStatus, ServiceHealthStatus,
 };
-use garden_common::utils::ids::generate_guidv7;
 use serde::{Deserialize, Serialize};
 
 /// GET /api/v1/offerings/adoptable - List offerings available for adoption
@@ -33,7 +34,9 @@ pub async fn list_adoptable_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Vec<AdoptableOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Get offering manifests that support adopted mode
-    let adoptable_manifests = state.manifest_registry.offerings_by_mode(&garden_common::OfferingMode::Adopted);
+    let adoptable_manifests = state
+        .manifest_registry
+        .offerings_by_mode(&garden_common::OfferingMode::Adopted);
 
     let mut adoptable = Vec::new();
 
@@ -41,7 +44,9 @@ pub async fn list_adoptable_v1(
         // Check if already adopted
         let already_adopted = {
             let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.offering == offering.name && o.is_adopted())
+            offerings
+                .iter()
+                .any(|o| o.offering == offering.name && o.is_adopted())
         };
 
         if already_adopted {
@@ -96,15 +101,16 @@ pub async fn adopt_offering_v1(
     let offering_type = offering_fqn.offering.clone();
     let adopted_name = format!(
         "{}{}{}",
-        offering_type,
-        OFFERING_FQN_SEPARATOR,
-        OFFERING_ADOPTED_INSTANCE
+        offering_type, OFFERING_FQN_SEPARATOR, OFFERING_ADOPTED_INSTANCE
     );
 
     // Check if already adopted
     {
         let offerings = state.offerings.read().await;
-        if offerings.iter().any(|o| o.offering == offering_type && o.is_adopted()) {
+        if offerings
+            .iter()
+            .any(|o| o.offering == offering_type && o.is_adopted())
+        {
             return Err(error_response(
                 StatusCode::CONFLICT,
                 "ALREADY_ADOPTED",
@@ -115,13 +121,17 @@ pub async fn adopt_offering_v1(
     }
 
     // Find offering definition
-    let offering_def = state.manifest_registry.get_offering(&offering_type)
-        .ok_or_else(|| error_response(
-            StatusCode::NOT_FOUND,
-            "OFFERING_NOT_FOUND",
-            format!("Offering '{}' not found", offering_type),
-            None,
-        ))?;
+    let offering_def = state
+        .manifest_registry
+        .get_offering(&offering_type)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "OFFERING_NOT_FOUND",
+                format!("Offering '{}' not found", offering_type),
+                None,
+            )
+        })?;
 
     // Verify offering supports adopted mode
     if !offering_def.supports_mode(&garden_common::OfferingMode::Adopted) {
@@ -135,13 +145,14 @@ pub async fn adopt_offering_v1(
 
     // Detect offering
     let orchestrator = crate::domain::DetectionOrchestrator::new(state.docker.clone());
-    let detection_result = orchestrator.detect(offering_def).await
-        .map_err(|e| error_response(
+    let detection_result = orchestrator.detect(offering_def).await.map_err(|e| {
+        error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "DETECTION_FAILED",
             format!("Detection failed: {}", e),
             None,
-        ))?;
+        )
+    })?;
 
     if !detection_result.detected {
         return Err(error_response(
@@ -153,14 +164,23 @@ pub async fn adopt_offering_v1(
     }
 
     // Extract location from offering or detection result
+    let offering_protocol = connection::infer_protocol_from_manifest_metadata(
+        &offering_type,
+        &offering_def.category,
+        offering_def.connection_template.as_deref(),
+    );
     let location = OfferingLocation {
-        host: req.location.clone().unwrap_or_else(|| "localhost".to_string()),
+        host: req
+            .location
+            .clone()
+            .unwrap_or_else(|| "localhost".to_string()),
         port: req.port.unwrap_or_else(|| offering_def.default_host_port()),
-        protocol: offering_def.category.clone(),
+        protocol: offering_protocol,
         agnostic_port: None,
     };
 
-    let control_level = req.control_level
+    let control_level = req
+        .control_level
         .as_ref()
         .and_then(|s| match s.as_str() {
             "full" => Some(AdoptedControlLevel::Full),
@@ -177,7 +197,9 @@ pub async fn adopt_offering_v1(
         offering_id: generate_guidv7(),
         name: adopted_name,
         offering: offering_type.clone(),
-        version: detection_result.version.unwrap_or_else(|| "unknown".to_string()),
+        version: detection_result
+            .version
+            .unwrap_or_else(|| "unknown".to_string()),
         status: OfferingStatus::Running,
         health: ServiceHealthStatus::Healthy,
         sub_capabilities: Vec::new(), // Populated by capabilities discovery task
@@ -263,7 +285,10 @@ pub async fn unadopt_offering_v1(
     // Find the offering to remove
     let found = {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.name == offering_name && o.is_adopted()).cloned()
+        offerings
+            .iter()
+            .find(|o| o.name == offering_name && o.is_adopted())
+            .cloned()
     };
 
     match found {
@@ -345,7 +370,10 @@ pub async fn borrow_service_v1(
     // Check if already borrowed with this name
     {
         let offerings = state.offerings.read().await;
-        if offerings.iter().any(|o| o.name == req.name && o.is_borrowed()) {
+        if offerings
+            .iter()
+            .any(|o| o.name == req.name && o.is_borrowed())
+        {
             return Err(error_response(
                 StatusCode::CONFLICT,
                 "ALREADY_BORROWED",
@@ -421,7 +449,10 @@ pub async fn unborrow_service_v1(
     // Find the offering to remove
     let found = {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.name == name && o.is_borrowed()).cloned()
+        offerings
+            .iter()
+            .find(|o| o.name == name && o.is_borrowed())
+            .cloned()
     };
 
     match found {

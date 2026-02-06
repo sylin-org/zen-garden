@@ -40,25 +40,49 @@ pub fn default_template(protocol: &str) -> String {
     }
 }
 
-/// Infer protocol from offering category and name
+/// Extract protocol scheme from a connection template.
 ///
-/// Infer protocol from offering manifest or category registry
+/// Example: `mongodb://{host}:{port}` -> `mongodb`
+pub fn protocol_from_template(template: &str) -> Option<String> {
+    let trimmed = template.trim();
+    let scheme_end = trimmed.find("://")?;
+    let scheme = trimmed[..scheme_end].trim().to_ascii_lowercase();
+    if scheme.is_empty() || !is_literal_uri_scheme(&scheme) {
+        None
+    } else {
+        Some(scheme)
+    }
+}
+
+fn is_literal_uri_scheme(scheme: &str) -> bool {
+    let mut chars = scheme.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+}
+
+/// Infer protocol using manifest metadata (connection template + category).
 ///
-/// Looks up offering's connection_template to determine protocol,
-/// falls back to category default_protocol, then "tcp" as last resort.
-pub async fn infer_protocol(offering_name: &str, category: &str, state: &crate::app_state::AppState) -> String {
-    // Try to get protocol from offering's connection_template
-    if let Some(offering) = state.manifest_registry.get_offering(offering_name) {
-        if let Some(ref template) = offering.connection_template {
-            // Extract protocol from template (e.g., "mongodb://", "postgresql://")
-            if let Some(proto_end) = template.find("://") {
-                let protocol = &template[..proto_end];
-                return protocol.to_string();
-            }
+/// Priority:
+/// 1. `connection_template` scheme when present
+/// 2. category `default_protocol` from category registry
+/// 3. `"tcp"` fallback with warning
+pub fn infer_protocol_from_manifest_metadata(
+    offering_name: &str,
+    category: &str,
+    connection_template: Option<&str>,
+) -> String {
+    if let Some(template) = connection_template {
+        if let Some(protocol) = protocol_from_template(template) {
+            return protocol;
         }
     }
 
-    // Fall back to category's default_protocol from category.json
     get_category_registry()
         .default_protocol(category)
         .map(|s| s.to_string())
@@ -70,6 +94,25 @@ pub async fn infer_protocol(offering_name: &str, category: &str, state: &crate::
             );
             "tcp".to_string()
         })
+}
+
+/// Infer protocol from offering category and name
+///
+/// Infer protocol from offering manifest or category registry
+///
+/// Looks up offering's connection_template to determine protocol,
+/// falls back to category default_protocol, then "tcp" as last resort.
+pub async fn infer_protocol(
+    offering_name: &str,
+    category: &str,
+    state: &crate::app_state::AppState,
+) -> String {
+    let connection_template = state
+        .manifest_registry
+        .get_offering(offering_name)
+        .and_then(|offering| offering.connection_template.as_deref());
+
+    infer_protocol_from_manifest_metadata(offering_name, category, connection_template)
 }
 
 /// Extract IP address from endpoint URL
@@ -87,7 +130,10 @@ pub fn extract_ip(endpoint: &str) -> String {
         .unwrap_or(endpoint);
 
     // Extract host:port or just host
-    let host_port = without_protocol.split('/').next().unwrap_or(without_protocol);
+    let host_port = without_protocol
+        .split('/')
+        .next()
+        .unwrap_or(without_protocol);
 
     // Remove port if present
     if let Some(bracket_end) = host_port.find(']') {
@@ -206,7 +252,10 @@ mod tests {
 
     #[test]
     fn test_extract_ip_with_path() {
-        assert_eq!(extract_ip("http://192.168.1.102:7185/api/v1"), "192.168.1.102");
+        assert_eq!(
+            extract_ip("http://192.168.1.102:7185/api/v1"),
+            "192.168.1.102"
+        );
     }
 
     #[test]
@@ -267,19 +316,51 @@ mod tests {
 
     #[test]
     fn test_resolve_connection_default_template() {
-        let conn = resolve_connection(
-            "stone-01",
-            "http://10.0.0.1:7185",
-            6379,
-            "redis",
-            None,
-        );
+        let conn = resolve_connection("stone-01", "http://10.0.0.1:7185", 6379, "redis", None);
 
         assert_eq!(conn.uris[0], "redis://stone-01.local:6379");
     }
 
-    // Note: infer_protocol requires AppState which is complex to construct in tests.
-    // Protocol inference is tested indirectly via integration tests.
+    #[test]
+    fn test_protocol_from_template() {
+        assert_eq!(
+            protocol_from_template("mongodb://{host}:{port}"),
+            Some("mongodb".to_string())
+        );
+        assert_eq!(
+            protocol_from_template(" HTTPS://example "),
+            Some("https".to_string())
+        );
+        assert_eq!(protocol_from_template("{protocol}://{host}:{port}"), None);
+        assert_eq!(protocol_from_template(""), None);
+    }
+
+    #[test]
+    fn test_is_literal_uri_scheme() {
+        assert!(is_literal_uri_scheme("http"));
+        assert!(is_literal_uri_scheme("mongodb"));
+        assert!(is_literal_uri_scheme("redis+tls"));
+        assert!(!is_literal_uri_scheme("{protocol}"));
+        assert!(!is_literal_uri_scheme("1http"));
+        assert!(!is_literal_uri_scheme(""));
+    }
+
+    #[test]
+    fn test_infer_protocol_from_manifest_metadata_prefers_template() {
+        let protocol = infer_protocol_from_manifest_metadata(
+            "mongodb",
+            "data",
+            Some("mongodb://{host}:{port}"),
+        );
+        assert_eq!(protocol, "mongodb");
+    }
+
+    #[test]
+    fn test_infer_protocol_from_manifest_metadata_unknown_category_falls_back_to_tcp() {
+        let protocol =
+            infer_protocol_from_manifest_metadata("mystery", "category-that-does-not-exist", None);
+        assert_eq!(protocol, "tcp");
+    }
 
     #[test]
     fn test_default_template() {

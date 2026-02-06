@@ -5,6 +5,7 @@
   "tags": ["search", "database", "document", "analytics", "full-text", "vector"],
   "ports": [9200, 9300],
   "port": 9200,
+  "connection_template": "http://{host}:{port}",
   "transport_port": 9300,
   "volumes": ["elasticsearch-data"],
   "requires_sysctl": "vm.max_map_count=262144"

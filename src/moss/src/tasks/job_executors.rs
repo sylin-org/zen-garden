@@ -14,8 +14,8 @@ use crate::api::v1::events::{
     emit_job_completed, emit_job_failed, emit_job_progress, emit_job_started,
 };
 use crate::domain::events::OfferingEvent;
-use crate::domain::get_compiled_offering;
 use crate::domain::network::NetworkMode;
+use crate::domain::{connection, get_compiled_offering};
 use crate::infra::config::MossConfig;
 use crate::infra::network::{apply_static_from_pool, load_network_state};
 use crate::infra::TaskStore;
@@ -582,6 +582,14 @@ pub async fn install_service_task(
 
     // Extract values before install_service consumes compiled
     let native_port = compiled.default_host_port();
+    let offering_protocol = connection::infer_protocol_from_manifest_metadata(
+        offering_type,
+        &compiled.category,
+        state
+            .manifest_registry
+            .get_offering(offering_type)
+            .and_then(|entry| entry.connection_template.as_deref()),
+    );
     let guidance = build_guidance(
         state,
         offering,
@@ -658,6 +666,7 @@ pub async fn install_service_task(
             existing.health = ServiceHealthStatus::Healthy;
             existing.version = image_version.clone();
             existing.location.port = native_port;
+            existing.location.protocol = offering_protocol.clone();
             if let Some(ref mut managed) = existing.managed_data_mut() {
                 managed.job_id = None;
                 managed.guidance = guidance.clone();
@@ -677,7 +686,7 @@ pub async fn install_service_task(
                 location: OfferingLocation {
                     host: "localhost".to_string(),
                     port: native_port,
-                    protocol: "http".to_string(),
+                    protocol: offering_protocol.clone(),
                     agnostic_port: None,
                 },
                 mode_data: OfferingModeData::Managed(ManagedData {
@@ -873,6 +882,14 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 
         // Extract values before install_service consumes compiled
         let native_port = compiled.default_host_port();
+        let offering_protocol = connection::infer_protocol_from_manifest_metadata(
+            &offering_type,
+            &compiled.category,
+            state
+                .manifest_registry
+                .get_offering(&offering_type)
+                .and_then(|entry| entry.connection_template.as_deref()),
+        );
         let guidance = build_guidance(
             state,
             &service_name,
@@ -923,7 +940,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             location: OfferingLocation {
                 host: "localhost".to_string(),
                 port: native_port,
-                protocol: "http".to_string(),
+                protocol: offering_protocol,
                 agnostic_port: None,
             },
             mode_data: OfferingModeData::Managed(ManagedData {

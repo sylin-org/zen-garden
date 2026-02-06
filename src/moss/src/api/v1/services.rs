@@ -1,20 +1,23 @@
+use crate::api::responses::{ApiResponse, CreateServiceRequest, ServiceActionResponse};
+use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::domain::connection;
+use crate::domain::events::OfferingEvent;
+use crate::infra::network::{load_network_state, revert_to_dhcp};
+use crate::infra::TaskStore;
+use crate::{error_response, AppState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use crate::api::responses::{CreateServiceRequest, ServiceActionResponse, ApiResponse};
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
-use crate::domain::events::OfferingEvent;
-use crate::infra::TaskStore;
-use crate::infra::network::{load_network_state, revert_to_dhcp};
-use crate::{error_response, AppState};
 use garden_common::{
-    api_utils::{ApiErrorResponse, sanitize_query, sanitize_name_allow_colon, sanitize_tag, is_suspicious},
-    utils::ids::generate_guidv7,
+    api_utils::{
+        is_suspicious, sanitize_name_allow_colon, sanitize_query, sanitize_tag, ApiErrorResponse,
+    },
     offerings::parse_offering_fqn,
-    ManagedData, OfferingLocation, OfferingModeData, OfferingStatus,
-    Ports, ServiceHealthStatus, ServiceInfo, ServiceStatus, Offering,
+    utils::ids::generate_guidv7,
+    ManagedData, Offering, OfferingLocation, OfferingModeData, OfferingStatus, Ports,
+    ServiceHealthStatus, ServiceInfo, ServiceStatus,
 };
 
 /// Convert Offering to ServiceInfo for API responses
@@ -95,7 +98,10 @@ impl ServicesQuery {
 pub async fn list_services_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<
+    Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>,
+    (StatusCode, Json<ApiErrorResponse>),
+> {
     use crate::domain::list_all_local_services;
 
     tracing::debug!("list_services_v1: listing local services only");
@@ -128,8 +134,11 @@ pub async fn find_services_v1(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<ServicesQuery>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    use crate::domain::{ServiceSearchCriteria, find_services, list_all_local_services};
+) -> Result<
+    Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>,
+    (StatusCode, Json<ApiErrorResponse>),
+> {
+    use crate::domain::{find_services, list_all_local_services, ServiceSearchCriteria};
 
     tracing::debug!(
         q = ?query.q,
@@ -257,7 +266,14 @@ pub async fn create_service_v1(
         };
 
         if !in_registry {
-            if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(&state.docker, &state.manifest_registry, &service_name, &state.stone_name).await {
+            if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
+                &state.docker,
+                &state.manifest_registry,
+                &service_name,
+                &state.stone_name,
+            )
+            .await
+            {
                 state.upsert_offering(adopted_offering, true).await;
                 let _ = state.persist_offerings().await;
 
@@ -298,7 +314,10 @@ pub async fn create_service_v1(
     };
 
     if compiled.compatibility.decision == garden_common::COMPAT_FAIL {
-        let reason = compiled.compatibility.reason.unwrap_or_else(|| "Unknown reason".to_string());
+        let reason = compiled
+            .compatibility
+            .reason
+            .unwrap_or_else(|| "Unknown reason".to_string());
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "COMPATIBILITY_FAILED",
@@ -309,7 +328,10 @@ pub async fn create_service_v1(
 
     // Check if already running/maintenance
     let offerings = state.offerings.read().await;
-    if let Some(existing) = offerings.iter().find(|o| o.name == service_name && o.is_managed()) {
+    if let Some(existing) = offerings
+        .iter()
+        .find(|o| o.name == service_name && o.is_managed())
+    {
         if existing.status == OfferingStatus::Maintenance {
             drop(offerings);
             let ctx = SuggestionContext::from_headers(&headers, "create_service");
@@ -345,18 +367,31 @@ pub async fn create_service_v1(
     // This ensures `rake list` shows the service as planting
     {
         let native_port = compiled.default_host_port();
+        let offering_protocol = connection::infer_protocol_from_manifest_metadata(
+            &offering_type,
+            &compiled.category,
+            state
+                .manifest_registry
+                .get_offering(&offering_type)
+                .and_then(|entry| entry.connection_template.as_deref()),
+        );
         let installing_offering = Offering {
             offering_id: generate_guidv7(),
             name: service_name.clone(),
             offering: offering_type.clone(),
-            version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
+            version: compiled
+                .image
+                .split(':')
+                .next_back()
+                .unwrap_or("latest")
+                .into(),
             status: OfferingStatus::Installing,
             health: ServiceHealthStatus::Offline,
             sub_capabilities: Vec::new(),
             location: OfferingLocation {
                 host: "localhost".to_string(),
                 port: native_port,
-                protocol: "http".to_string(),
+                protocol: offering_protocol,
                 agnostic_port: None,
             },
             mode_data: OfferingModeData::Managed(ManagedData {
@@ -378,7 +413,13 @@ pub async fn create_service_v1(
     let service_name_clone = service_name.clone();
     let job_id_clone = job_id.clone();
     tokio::spawn(async move {
-        crate::install_service_task(&state_clone, &job_id_clone, &offering_clone, &service_name_clone).await;
+        crate::install_service_task(
+            &state_clone,
+            &job_id_clone,
+            &offering_clone,
+            &service_name_clone,
+        )
+        .await;
     });
 
     let ctx = SuggestionContext::from_headers(&headers, "create_service");
@@ -389,7 +430,10 @@ pub async fn create_service_v1(
             service: service_name,
             action: "create".to_string(),
             status: "accepted".to_string(),
-            message: format!("Installation started, check /api/jobs/{} for status", job_id),
+            message: format!(
+                "Installation started, check /api/jobs/{} for status",
+                job_id
+            ),
         },
         suggestions,
     }))
@@ -405,19 +449,26 @@ pub async fn rest_service_v1(
     // Find the offering
     let offering_id = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == service_name && o.is_managed())
             .map(|o| o.offering_id.clone())
-            .ok_or_else(|| error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service_name),
-                None,
-            ))?
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service_name),
+                    None,
+                )
+            })?
     };
 
     // Stop the Docker container
-    if let Err(e) = state.docker.stop_service(&service_name, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .stop_service(&service_name, Some(&state.console))
+        .await
+    {
         tracing::error!(error = ?e, service = %service_name, "Failed to stop container");
         return Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -470,19 +521,26 @@ pub async fn wake_service_v1(
     // Find the offering
     let offering_id = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == service_name && o.is_managed())
             .map(|o| o.offering_id.clone())
-            .ok_or_else(|| error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service_name),
-                None,
-            ))?
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service_name),
+                    None,
+                )
+            })?
     };
 
     // Start the Docker container
-    if let Err(e) = state.docker.start_service(&service_name, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .start_service(&service_name, Some(&state.console))
+        .await
+    {
         tracing::error!(error = ?e, service = %service_name, "Failed to start container");
         return Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -586,7 +644,10 @@ pub async fn nourish_service_v1(
         let service_clone = service_name.clone();
         tokio::spawn(async move {
             let mut offerings = state_clone.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.name == service_clone && o.is_managed()) {
+            if let Some(o) = offerings
+                .iter_mut()
+                .find(|o| o.name == service_clone && o.is_managed())
+            {
                 o.status = OfferingStatus::Running;
             }
         });
@@ -613,7 +674,10 @@ pub async fn nourish_service_v1(
     {
         tracing::error!(error = ?e, service = %service_name, "Docker upgrade failed");
         let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name && o.is_managed()) {
+        if let Some(o) = offerings
+            .iter_mut()
+            .find(|o| o.name == service_name && o.is_managed())
+        {
             o.status = OfferingStatus::Running;
         }
         return Err(error_response(
@@ -624,12 +688,20 @@ pub async fn nourish_service_v1(
         ));
     }
 
-    let new_version = template.image.split(':').next_back().unwrap_or("latest").to_string();
+    let new_version = template
+        .image
+        .split(':')
+        .next_back()
+        .unwrap_or("latest")
+        .to_string();
     let new_image = template.image.clone();
 
     {
         let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name && o.is_managed()) {
+        if let Some(o) = offerings
+            .iter_mut()
+            .find(|o| o.name == service_name && o.is_managed())
+        {
             o.status = OfferingStatus::Running;
             o.version = new_version.clone();
         }
@@ -640,7 +712,11 @@ pub async fn nourish_service_v1(
     }
 
     // Emit offering lifecycle event (old_image reconstructed from old_version)
-    let old_image = format!("{}:{}", template.image.split(':').next().unwrap_or(&offering), old_version);
+    let old_image = format!(
+        "{}:{}",
+        template.image.split(':').next().unwrap_or(&offering),
+        old_version
+    );
     state.event_bus.emit(OfferingEvent::updated(
         &offering_id,
         &service_name,
@@ -690,7 +766,11 @@ pub async fn delete_service_v1(
     };
 
     // Remove container first (preserves volumes by default)
-    if let Err(e) = state.docker.remove_service(&service_name, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .remove_service(&service_name, Some(&state.console))
+        .await
+    {
         tracing::error!(error = ?e, service = %service_name, "Docker remove failed");
         // Don't fail completely - continue to remove from registry even if container removal fails
         tracing::warn!(service = %service_name, "Container removal failed, continuing with registry cleanup");
@@ -755,7 +835,8 @@ pub async fn delete_service_v1(
             service: service_name,
             action: "delete".to_string(),
             status: "removed".to_string(),
-            message: "Service removed (container stopped and removed, volumes preserved)".to_string(),
+            message: "Service removed (container stopped and removed, volumes preserved)"
+                .to_string(),
         },
         suggestions,
     }))
@@ -774,17 +855,23 @@ pub async fn destroy_service_v1(
         let o = offerings
             .iter()
             .find(|o| o.name == service_name && o.is_managed())
-            .ok_or_else(|| error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service_name),
-                None,
-            ))?;
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service_name),
+                    None,
+                )
+            })?;
         o.offering_id.clone()
     };
 
     // Hard delete: destroy Docker container first
-    if let Err(e) = state.docker.remove_service(&service_name, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .remove_service(&service_name, Some(&state.console))
+        .await
+    {
         tracing::error!(error = ?e, service = %service_name, "Docker remove failed");
         return Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -866,8 +953,17 @@ pub async fn destroy_service_v1(
 /// GET /api/v1/services/manifests - List all service manifests
 pub async fn list_manifests_v1(
     State(state): State<AppState>,
-) -> Result<(StatusCode, Json<ApiResponse<Vec<crate::infra::manifests::TemplateInfo>>>), (StatusCode, Json<ApiErrorResponse>)> {
-    let manifests: Vec<_> = state.manifest_registry.sw.entries
+) -> Result<
+    (
+        StatusCode,
+        Json<ApiResponse<Vec<crate::infra::manifests::TemplateInfo>>>,
+    ),
+    (StatusCode, Json<ApiErrorResponse>),
+> {
+    let manifests: Vec<_> = state
+        .manifest_registry
+        .sw
+        .entries
         .values()
         .map(|e| e.to_template_info())
         .collect();
@@ -896,16 +992,22 @@ pub async fn get_manifest_v1(
     })?;
     let offering_type = offering_fqn.offering.clone();
 
-    let entry = state.manifest_registry.sw.get(&offering_type).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
-            "MANIFEST_NOT_FOUND",
-            format!("Manifest for '{}' not found", offering_type),
-            None,
-        )
-    })?;
+    let entry = state
+        .manifest_registry
+        .sw
+        .get(&offering_type)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "MANIFEST_NOT_FOUND",
+                format!("Manifest for '{}' not found", offering_type),
+                None,
+            )
+        })?;
 
-    let yaml = entry.managed.as_ref()
+    let yaml = entry
+        .managed
+        .as_ref()
         .map(|m| m.snippet_yaml.clone())
         .unwrap_or_default();
     Ok((StatusCode::OK, yaml))
@@ -915,11 +1017,18 @@ pub async fn get_manifest_v1(
 pub async fn stream_service_logs_v1(
     Path(service): Path<String>,
     State(_state): State<AppState>,
-) -> Result<axum::response::sse::Sse<impl futures_util::stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<
+    axum::response::sse::Sse<
+        impl futures_util::stream::Stream<
+            Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+        >,
+    >,
+    (StatusCode, Json<ApiErrorResponse>),
+> {
     let service_name = normalize_service_name(&service)?;
     // TODO: Implement log streaming from Docker container
-    use axum::response::sse::{Event, KeepAlive, Sse};
     use async_stream::stream;
+    use axum::response::sse::{Event, KeepAlive, Sse};
 
     let log_stream = stream! {
         yield Ok(Event::default().data(format!("Log streaming for '{}' not yet implemented", service_name)));
@@ -935,24 +1044,32 @@ pub async fn restart_service_v1(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     let service_name = normalize_service_name(&service)?;
     // Stop then start
-    state.docker.stop_service(&service_name, Some(&state.console)).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "RESTART_FAILED",
-            format!("Failed to stop service: {}", e),
-            None,
-        )
-    })?;
-    
-    state.docker.start_service(&service_name, Some(&state.console)).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "RESTART_FAILED",
-            format!("Failed to start service: {}", e),
-            None,
-        )
-    })?;
-    
+    state
+        .docker
+        .stop_service(&service_name, Some(&state.console))
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RESTART_FAILED",
+                format!("Failed to stop service: {}", e),
+                None,
+            )
+        })?;
+
+    state
+        .docker
+        .start_service(&service_name, Some(&state.console))
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RESTART_FAILED",
+                format!("Failed to start service: {}", e),
+                None,
+            )
+        })?;
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
@@ -1030,15 +1147,17 @@ pub async fn refresh_manifests_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     // Rebuild offerings index (which includes manifest validation)
-    crate::ensure_offerings_index(&state, true).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "REFRESH_FAILED",
-            format!("Failed to refresh manifests: {}", e),
-            None,
-        )
-    })?;
-    
+    crate::ensure_offerings_index(&state, true)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "REFRESH_FAILED",
+                format!("Failed to refresh manifests: {}", e),
+                None,
+            )
+        })?;
+
     let idx_guard = state.offerings_index.read().await;
     let idx = idx_guard.as_ref().ok_or_else(|| {
         error_response(
@@ -1048,7 +1167,7 @@ pub async fn refresh_manifests_v1(
             None,
         )
     })?;
-    
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
@@ -1070,35 +1189,44 @@ pub async fn refresh_manifests_v1(
 pub async fn discover_service_capabilities_v1(
     State(state): State<AppState>,
     Path(service_name): Path<String>,
-) -> Result<Json<ApiResponse<Vec<garden_common::SubCapability>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<
+    Json<ApiResponse<Vec<garden_common::SubCapability>>>,
+    (StatusCode, Json<ApiErrorResponse>),
+> {
     let service_name = normalize_service_name(&service_name)?;
     // Find the service and convert to ServiceInfo for discovery
     let service = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == service_name && o.is_managed())
             .map(offering_to_service_info)
-            .ok_or_else(|| error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service_name),
-                None,
-            ))?
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service_name),
+                    None,
+                )
+            })?
     };
 
     // Get capability manifest for this offering
     let cap_manifest = crate::infra::manifests::get_capability_manifest(&service.offering)
-        .ok_or_else(|| error_response(
-            StatusCode::NOT_FOUND,
-            "NO_CAPABILITY_MANIFEST",
-            format!("No capability manifest found for '{}'", service.offering),
-            None,
-        ))?;
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "NO_CAPABILITY_MANIFEST",
+                format!("No capability manifest found for '{}'", service.offering),
+                None,
+            )
+        })?;
 
     // Determine offering mode
     let mode = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == service_name)
             .map(|o| o.mode_data.mode())
             .unwrap_or(garden_common::OfferingMode::Managed)
@@ -1106,19 +1234,21 @@ pub async fn discover_service_capabilities_v1(
 
     // Discover capabilities using manifest-based executor
     let executor = crate::domain::CapabilityExecutor::new();
-    let collections = executor.list_capabilities(&service, cap_manifest, mode).await
-        .map_err(|e| error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DISCOVERY_FAILED",
-            format!("Failed to discover capabilities: {}", e),
-            None,
-        ))?;
+    let collections = executor
+        .list_capabilities(&service, cap_manifest, mode)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DISCOVERY_FAILED",
+                format!("Failed to discover capabilities: {}", e),
+                None,
+            )
+        })?;
 
     // Convert to SubCapability format
-    let capabilities: Vec<garden_common::SubCapability> = collections
-        .iter()
-        .map(|c| c.to_sub_capability())
-        .collect();
+    let capabilities: Vec<garden_common::SubCapability> =
+        collections.iter().map(|c| c.to_sub_capability()).collect();
 
     // Update the offering in registry with discovered capabilities
     if !capabilities.is_empty() {
@@ -1148,14 +1278,17 @@ pub async fn refresh_all_capabilities_v1(
     // Get offerings snapshot
     let offerings_snapshot: Vec<(String, String, garden_common::OfferingMode, ServiceInfo)> = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .filter(|o| o.status == OfferingStatus::Running)
-            .map(|o| (
-                o.name.clone(),
-                o.offering.clone(),
-                o.mode_data.mode(),
-                offering_to_service_info(o),
-            ))
+            .map(|o| {
+                (
+                    o.name.clone(),
+                    o.offering.clone(),
+                    o.mode_data.mode(),
+                    offering_to_service_info(o),
+                )
+            })
             .collect()
     };
 
@@ -1170,12 +1303,13 @@ pub async fn refresh_all_capabilities_v1(
         };
 
         // Discover capabilities
-        match executor.list_capabilities(&service, cap_manifest, mode).await {
+        match executor
+            .list_capabilities(&service, cap_manifest, mode)
+            .await
+        {
             Ok(collections) if !collections.is_empty() => {
-                let sub_caps: Vec<garden_common::SubCapability> = collections
-                    .iter()
-                    .map(|c| c.to_sub_capability())
-                    .collect();
+                let sub_caps: Vec<garden_common::SubCapability> =
+                    collections.iter().map(|c| c.to_sub_capability()).collect();
                 tracing::debug!(
                     service = %name,
                     capabilities = ?sub_caps.iter().map(|c| format!("{}:{}", c.cap_type, c.items.len())).collect::<Vec<_>>(),
@@ -1216,9 +1350,7 @@ pub async fn refresh_all_capabilities_v1(
     ))
 }
 
-fn normalize_service_name(
-    service: &str,
-) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
+fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
     parse_offering_fqn(service)
         .map(|fqn| fqn.fqn())
         .map_err(|e| {

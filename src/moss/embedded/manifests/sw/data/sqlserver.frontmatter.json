@@ -4,5 +4,6 @@
   "category": "data",
   "tags": ["database", "relational", "sql", "microsoft"],
   "port": 1433,
+  "connection_template": "sqlserver://{host}:{port}",
   "volumes": ["sqlserver-data"]
 }

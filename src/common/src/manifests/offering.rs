@@ -27,12 +27,10 @@
 //! └── connection_template: Option<String> # Service mesh
 //! ```
 
-use anyhow::{Context, Result};
-use crate::{CompatibilityRules, TaskDefinition, OfferingMode};
+use crate::manifests::detection::{ControlConfig, HealthConfig, LocationConfig, OsDetectionRules};
 use crate::types::AdoptedControlLevel;
-use crate::manifests::detection::{
-    OsDetectionRules, ControlConfig, LocationConfig, HealthConfig,
-};
+use crate::{CompatibilityRules, OfferingMode, TaskDefinition};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -231,9 +229,7 @@ impl ServiceTemplate {
         if let Some(p) = self.ports.get("default") {
             ports.push(*p);
         }
-        let mut other_ports: Vec<_> = self.ports.iter()
-            .filter(|(k, _)| *k != "default")
-            .collect();
+        let mut other_ports: Vec<_> = self.ports.iter().filter(|(k, _)| *k != "default").collect();
         other_ports.sort_by_key(|(k, _)| *k);
         for (_, port) in other_ports {
             ports.push(*port);
@@ -288,7 +284,6 @@ pub struct Offering {
     // ═══════════════════════════════════════════════════════════════════════
     // IDENTITY
     // ═══════════════════════════════════════════════════════════════════════
-
     /// Offering name (e.g., "mongodb", "ollama")
     pub name: String,
 
@@ -298,7 +293,6 @@ pub struct Offering {
     // ═══════════════════════════════════════════════════════════════════════
     // MODE CONFIGURATIONS (at least one must be present)
     // ═══════════════════════════════════════════════════════════════════════
-
     /// Managed mode: container deployment
     pub managed: Option<ManagedConfig>,
 
@@ -311,7 +305,6 @@ pub struct Offering {
     // ═══════════════════════════════════════════════════════════════════════
     // CROSS-MODE FIELDS
     // ═══════════════════════════════════════════════════════════════════════
-
     /// UI metadata (description, tags, icon, etc.)
     pub metadata: OfferingMetadata,
 
@@ -365,13 +358,17 @@ impl Offering {
 
     /// Get description
     pub fn description(&self) -> String {
-        self.metadata.description.clone()
+        self.metadata
+            .description
+            .clone()
             .unwrap_or_else(|| format!("{} service", self.name))
     }
 
     /// Get tags (normalized to lowercase)
     pub fn tags(&self) -> Vec<String> {
-        self.metadata.tags.iter()
+        self.metadata
+            .tags
+            .iter()
             .map(|t| t.trim().to_lowercase())
             .filter(|t| !t.is_empty())
             .collect()
@@ -407,7 +404,9 @@ impl Offering {
 
     /// Parse managed config snippet into ServiceTemplate
     pub fn parse_template(&self) -> Result<ServiceTemplate> {
-        let managed = self.managed.as_ref()
+        let managed = self
+            .managed
+            .as_ref()
             .with_context(|| format!("Offering '{}' has no managed config", self.name))?;
         self.parse_managed_template(managed)
     }
@@ -421,12 +420,13 @@ impl Offering {
         }
 
         // Fallback: try parsing as compose file (services: wrapper)
-        let compose: ComposeFile = serde_yaml::from_str(&yaml)
-            .with_context(|| format!(
+        let compose: ComposeFile = serde_yaml::from_str(&yaml).with_context(|| {
+            format!(
                 "Failed to parse YAML for '{}'. First 100 chars: {}",
                 self.name,
                 &yaml[..yaml.len().min(100)]
-            ))?;
+            )
+        })?;
 
         let service_config = compose
             .services
@@ -439,24 +439,24 @@ impl Offering {
 
     fn service_config_to_template(&self, config: ServiceConfig) -> ServiceTemplate {
         let environment = match &config.environment {
-            Some(serde_yaml::Value::Sequence(list)) => {
-                list.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            }
-            Some(serde_yaml::Value::Mapping(map)) => {
-                map.iter()
-                    .filter_map(|(k, v)| {
-                        let key = k.as_str()?;
-                        let value = v.as_str().unwrap_or("");
-                        Some(format!("{}={}", key, value))
-                    })
-                    .collect()
-            }
+            Some(serde_yaml::Value::Sequence(list)) => list
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+            Some(serde_yaml::Value::Mapping(map)) => map
+                .iter()
+                .filter_map(|(k, v)| {
+                    let key = k.as_str()?;
+                    let value = v.as_str().unwrap_or("");
+                    Some(format!("{}={}", key, value))
+                })
+                .collect(),
             _ => Vec::new(),
         };
 
-        let volumes = config.volumes.iter()
+        let volumes = config
+            .volumes
+            .iter()
             .filter_map(|v| {
                 let parts: Vec<&str> = v.split(':').collect();
                 if parts.len() >= 2 {
@@ -526,14 +526,16 @@ impl OfferingRegistry {
 
     /// Get all offerings in a specific category
     pub fn by_category(&self, category: &str) -> Vec<&Offering> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.category == category)
             .collect()
     }
 
     /// Get all offerings that support a specific mode
     pub fn by_mode(&self, mode: &OfferingMode) -> Vec<&Offering> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.supports_mode(mode))
             .collect()
     }
@@ -623,7 +625,9 @@ impl OfferingRegistry {
                     // Merge with existing or insert new
                     if let Some(existing) = registry.get_mut(offering_name) {
                         existing.adopted = offering.adopted;
-                        existing.connection_template = offering.connection_template.or(existing.connection_template.clone());
+                        existing.connection_template = offering
+                            .connection_template
+                            .or(existing.connection_template.clone());
                     } else {
                         registry.upsert(offering);
                     }
@@ -643,12 +647,13 @@ impl OfferingRegistry {
 
         // Load optional files
         let compatibility = Self::load_compatibility(dir, name);
-        let metadata = Self::load_metadata(dir, name, category);
+        let (metadata, connection_template) =
+            Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None));
         let guidance = Self::load_guidance(dir, name);
 
         Ok(Offering {
             name: name.to_string(),
-            category: metadata.as_ref()
+            category: Some(&metadata)
                 .and_then(|m| m.description.as_ref())
                 .map(|_| category.to_string())
                 .unwrap_or_else(|| category.to_string()),
@@ -659,10 +664,10 @@ impl OfferingRegistry {
             }),
             adopted: None,
             borrowed: None,
-            metadata: metadata.unwrap_or_default(),
+            metadata,
             compatibility,
             guidance,
-            connection_template: None,
+            connection_template,
         })
     }
 
@@ -702,7 +707,9 @@ impl OfferingRegistry {
 
         Ok(Offering {
             name: adopted_file.name.unwrap_or_else(|| name.to_string()),
-            category: adopted_file.category.unwrap_or_else(|| category.to_string()),
+            category: adopted_file
+                .category
+                .unwrap_or_else(|| category.to_string()),
             managed: None,
             adopted: Some(AdoptedConfig {
                 detection: adopted_file.detection,
@@ -730,30 +737,33 @@ impl OfferingRegistry {
         if !path.exists() {
             return None;
         }
-        std::fs::read_to_string(&path).ok()
-            .and_then(|yaml| {
-                let yaml = crate::utils::strings::strip_bom(&yaml);
-                serde_yaml::from_str(yaml).ok()
-            })
+        std::fs::read_to_string(&path).ok().and_then(|yaml| {
+            let yaml = crate::utils::strings::strip_bom(&yaml);
+            serde_yaml::from_str(yaml).ok()
+        })
     }
 
-    fn load_metadata(dir: &Path, name: &str, _category: &str) -> Option<OfferingMetadata> {
+    fn load_metadata(dir: &Path, name: &str) -> Option<(OfferingMetadata, Option<String>)> {
         let path = dir.join(format!("{}.frontmatter.json", name));
         if !path.exists() {
             return None;
         }
-        std::fs::read_to_string(&path).ok()
+        std::fs::read_to_string(&path)
+            .ok()
             .and_then(|json| {
                 let json = crate::utils::strings::strip_bom(&json);
                 serde_json::from_str::<FrontmatterFile>(json).ok()
             })
-            .map(|fm| OfferingMetadata {
-                description: fm.description,
-                tags: fm.tags.unwrap_or_default(),
-                icon: fm.icon,
-                homepage: fm.homepage,
-                documentation: fm.documentation,
-                port: fm.port,
+            .map(|fm| {
+                let metadata = OfferingMetadata {
+                    description: fm.description,
+                    tags: fm.tags.unwrap_or_default(),
+                    icon: fm.icon,
+                    homepage: fm.homepage,
+                    documentation: fm.documentation,
+                    port: fm.port,
+                };
+                (metadata, fm.connection_template)
             })
     }
 
@@ -762,11 +772,10 @@ impl OfferingRegistry {
         if !path.exists() {
             return None;
         }
-        std::fs::read_to_string(&path).ok()
-            .map(|md| {
-                let md = crate::utils::strings::strip_bom(&md);
-                strip_markdown_frontmatter(md)
-            })
+        std::fs::read_to_string(&path).ok().map(|md| {
+            let md = crate::utils::strings::strip_bom(&md);
+            strip_markdown_frontmatter(md)
+        })
     }
 
     /// Load offering from raw content (for embedded assets)
@@ -793,18 +802,21 @@ impl OfferingRegistry {
             .map(crate::utils::strings::strip_bom)
             .and_then(|yaml| serde_yaml::from_str(yaml).ok());
 
-        let metadata = frontmatter_content
+        let (metadata, connection_template) = frontmatter_content
             .map(crate::utils::strings::strip_bom)
             .and_then(|json| serde_json::from_str::<FrontmatterFile>(json).ok())
-            .map(|fm| OfferingMetadata {
-                description: fm.description,
-                tags: fm.tags.unwrap_or_default(),
-                icon: fm.icon,
-                homepage: fm.homepage,
-                documentation: fm.documentation,
-                port: fm.port,
+            .map(|fm| {
+                let metadata = OfferingMetadata {
+                    description: fm.description,
+                    tags: fm.tags.unwrap_or_default(),
+                    icon: fm.icon,
+                    homepage: fm.homepage,
+                    documentation: fm.documentation,
+                    port: fm.port,
+                };
+                (metadata, fm.connection_template)
             })
-            .unwrap_or_default();
+            .unwrap_or((OfferingMetadata::default(), None));
 
         let guidance = guidance_content
             .map(crate::utils::strings::strip_bom)
@@ -823,7 +835,7 @@ impl OfferingRegistry {
             metadata,
             compatibility,
             guidance,
-            connection_template: None,
+            connection_template,
         })
     }
 }
@@ -861,7 +873,7 @@ struct AdoptedFile {
     connection_template: Option<String>,
 }
 
-/// Legacy frontmatter file format (.frontmatter.json)
+/// Frontmatter file format (.frontmatter.json)
 #[derive(Debug, Deserialize)]
 struct FrontmatterFile {
     description: Option<String>,
@@ -870,6 +882,7 @@ struct FrontmatterFile {
     homepage: Option<String>,
     documentation: Option<String>,
     port: Option<u16>,
+    connection_template: Option<String>,
 }
 
 /// Strip YAML frontmatter from markdown content
@@ -880,7 +893,9 @@ fn strip_markdown_frontmatter(content: &str) -> String {
     }
     let after_first = &trimmed[3..];
     if let Some(end_pos) = after_first.find("\n---") {
-        after_first[end_pos + 4..].trim_start_matches('\n').to_string()
+        after_first[end_pos + 4..]
+            .trim_start_matches('\n')
+            .to_string()
     } else {
         content.to_string()
     }
@@ -893,8 +908,8 @@ fn strip_markdown_frontmatter(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_offering(dir: &Path, category: &str, name: &str) {
         let cat_dir = dir.join(category);
@@ -903,12 +918,17 @@ mod tests {
         fs::write(
             cat_dir.join(format!("{}.snippet.yaml", name)),
             format!("image: {}:latest\nports:\n  default: [8080, 8080]", name),
-        ).unwrap();
+        )
+        .unwrap();
 
         fs::write(
             cat_dir.join(format!("{}.frontmatter.json", name)),
-            format!(r#"{{"description": "Test {} service", "tags": ["test"]}}"#, name),
-        ).unwrap();
+            format!(
+                r#"{{"description": "Test {} service", "tags": ["test"]}}"#,
+                name
+            ),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -998,5 +1018,30 @@ mod tests {
         assert_eq!(registry.by_mode(&OfferingMode::Managed).len(), 1);
         assert_eq!(registry.by_mode(&OfferingMode::Adopted).len(), 1);
         assert_eq!(registry.by_mode(&OfferingMode::Borrowed).len(), 0);
+    }
+
+    #[test]
+    fn test_frontmatter_connection_template_propagates() {
+        let temp = TempDir::new().unwrap();
+        let cat_dir = temp.path().join("data");
+        fs::create_dir_all(&cat_dir).unwrap();
+
+        fs::write(
+            cat_dir.join("mongodb.snippet.yaml"),
+            "image: mongodb:latest\nports:\n  default: [27017, 27017]",
+        )
+        .unwrap();
+        fs::write(
+            cat_dir.join("mongodb.frontmatter.json"),
+            r#"{"description":"MongoDB","port":27017,"connection_template":"mongodb://{host}:{port}"}"#,
+        )
+        .unwrap();
+
+        let registry = OfferingRegistry::load(temp.path()).unwrap();
+        let mongo = registry.get("mongodb").unwrap();
+        assert_eq!(
+            mongo.connection_template.as_deref(),
+            Some("mongodb://{host}:{port}")
+        );
     }
 }

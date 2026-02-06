@@ -22,18 +22,30 @@ pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
         };
         let (tool_state, ready) = offering_readiness(offering);
 
-        let protocol = if offering.location.protocol.trim().is_empty() {
-            "http".to_string()
-        } else {
-            offering.location.protocol.trim().to_ascii_lowercase()
-        };
+        let (protocol, connection_template) =
+            if let Some(manifest) = state.manifest_registry.get_offering(&offering.offering) {
+                let protocol = connection::infer_protocol_from_manifest_metadata(
+                    &offering.offering,
+                    &manifest.category,
+                    manifest.connection_template.as_deref(),
+                );
+                (protocol, manifest.connection_template.as_deref())
+            } else {
+                let location_protocol = offering.location.protocol.trim().to_ascii_lowercase();
+                if location_protocol.is_empty() {
+                    ("tcp".to_string(), None)
+                } else {
+                    (location_protocol, None)
+                }
+            };
+
         let connection = if offering.location.port > 0 {
             let resolved = connection::resolve_connection(
                 &state.stone_name,
                 &endpoint,
                 offering.location.port,
                 &protocol,
-                None,
+                connection_template,
             );
             Some(ToolConnection {
                 protocol: resolved.protocol,
@@ -208,4 +220,36 @@ fn to_capability_map(
     }
 
     caps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offering_projection_connection_contract_examples() {
+        let endpoint = "http://192.168.1.20:7185";
+        let cases = [
+            ("mongodb", 27017),
+            ("redis", 6379),
+            ("amqp", 5672),
+            ("http", 11434),
+        ];
+
+        for (protocol, port) in cases {
+            let resolved =
+                connection::resolve_connection("stone-indigo", endpoint, port, protocol, None);
+            assert!(!resolved.uris.is_empty());
+            assert_eq!(resolved.protocol, protocol);
+
+            for uri in resolved.uris {
+                let scheme = uri
+                    .split("://")
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                assert_eq!(scheme, protocol);
+            }
+        }
+    }
 }

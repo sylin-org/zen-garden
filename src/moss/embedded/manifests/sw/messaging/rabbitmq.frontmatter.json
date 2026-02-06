@@ -5,6 +5,7 @@
   "tags": ["messaging", "queue", "broker", "amqp", "mqtt", "stomp", "streams"],
   "ports": [5672, 15672],
   "port": 5672,
+  "connection_template": "amqp://{host}:{port}",
   "management_port": 15672,
   "volumes": ["rabbitmq-data"]
 }

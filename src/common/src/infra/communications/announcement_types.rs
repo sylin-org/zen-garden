@@ -29,3 +29,8 @@ pub const ELECTION_RESULT: &str = "election_result";
 /// Storage capability beacon (event-driven, on mount/unmount/change)
 /// Lightweight announcement of seed bank availability for routing
 pub const STORAGE_BEACON: &str = "storage_beacon";
+
+// Tools beacon protocol (TOOLS-0001)
+/// Unified tools capability beacon (offerings + seed banks).
+/// Broadcasts normalized tool deltas for inter-Moss propagation.
+pub const TOOLS_BEACON: &str = "tools_beacon";

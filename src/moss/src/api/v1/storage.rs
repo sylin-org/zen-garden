@@ -25,20 +25,18 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::paths;
 use garden_common::storage::{
-    DeviceState, PrepareSeedBankRequest,
-    RenameSeedBankRequest, SeedBankInfo, SetVisibilityRequest,
+    DeviceState, PrepareSeedBankRequest, RenameSeedBankRequest, SeedBankInfo, SetVisibilityRequest,
     StorageDetectedInfo, DEFAULT_SEED_BANK_NAME,
 };
-use garden_common::paths;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
-
-use crate::{error_response, AppState};
 use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry};
 use crate::infra::SseEvent;
+use crate::{error_response, AppState};
 use garden_common::presence::event_types;
 
 // ============================================================================
@@ -163,7 +161,7 @@ pub struct DirectoryListResponse {
 pub struct DirectoryEntry {
     pub name: String,
     #[serde(rename = "type")]
-    pub entry_type: String,  // "file" or "dir"
+    pub entry_type: String, // "file" or "dir"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,15 +201,20 @@ fn err(status: StatusCode, code: &str, msg: &str) -> (StatusCode, Json<ApiErrorR
 // ============================================================================
 
 /// Get storage overview (types, counts)
-/// 
+///
 /// Returns local bank stats plus garden-wide view from storage_cache.
 pub async fn storage_overview_v1(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Get local banks from filesystem (for local stats)
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     let local_banks: Vec<&SeedBankInfo> = registry
         .list()
         .into_iter()
@@ -219,11 +222,11 @@ pub async fn storage_overview_v1(
         .collect();
     let total_capacity: u64 = local_banks.iter().map(|b| b.capacity_bytes).sum();
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
-    
+
     // Get garden-wide view from storage_cache
     let storage_cache = state.storage_cache.read().await;
     let mut garden_banks = Vec::new();
-    
+
     for beacon in storage_cache.all_beacons() {
         let is_local = beacon.stone_id == state.stone_id;
         for sb in &beacon.seed_banks {
@@ -241,21 +244,19 @@ pub async fn storage_overview_v1(
             });
         }
     }
-    
+
     let overview = StorageOverview {
         bank_count: local_banks.len(),
         total_capacity_bytes: total_capacity,
         total_used_bytes: total_used,
-        types: vec![
-            StorageTypeInfo {
-                name: "bank".to_string(),
-                count: local_banks.len(),
-                endpoint: "/api/v1/stone/storage/bank".to_string(),
-            },
-        ],
+        types: vec![StorageTypeInfo {
+            name: "bank".to_string(),
+            count: local_banks.len(),
+            endpoint: "/api/v1/stone/storage/bank".to_string(),
+        }],
         garden_banks,
     };
-    
+
     Ok(Json(ApiResponse::new(overview)))
 }
 
@@ -267,8 +268,13 @@ pub async fn storage_overview_v1(
 pub async fn storage_health_v1(
     State(_state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageHealth>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
 
     let mut banks = Vec::new();
 
@@ -334,9 +340,14 @@ pub async fn storage_health_v1(
 pub async fn list_banks_v1(
     State(_state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<SeedBankInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     let banks: Vec<SeedBankInfo> = registry
         .list()
         .into_iter()
@@ -355,16 +366,26 @@ pub async fn get_bank_v1(
     State(_state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<SeedBankInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let bank = registry.get_by_id(&id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let bank = registry.get_by_id(&id).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", id),
+        )
+    })?;
 
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
-    
+
     Ok(Json(ApiResponse::new(bank.clone())))
 }
 
@@ -378,34 +399,58 @@ pub async fn delete_bank_v1(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
     // Check if still mounted
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     if registry.get_by_id(&id).is_some() {
-        return Err(err(StatusCode::CONFLICT, "BANK_MOUNTED", "Bank must be released before deletion"));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "BANK_MOUNTED",
+            "Bank must be released before deletion",
+        ));
     }
-    
+
     // Remove mount directory if it exists
     let data_dir = garden_common::constants::paths::data_dir();
     let mount_dir = PathBuf::from(&data_dir).join("mounts").join(&id);
-    
+
     if mount_dir.exists() {
         #[cfg(target_os = "linux")]
         {
             let output = tokio::process::Command::new("sudo")
                 .args(["rm", "-rf", &mount_dir.to_string_lossy()])
-                .output().await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &e.to_string()))?;
+                .output()
+                .await
+                .map_err(|e| {
+                    err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "DELETE_FAILED",
+                        &e.to_string(),
+                    )
+                })?;
             if !output.status.success() {
-                return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", 
-                    &String::from_utf8_lossy(&output.stderr)));
+                return Err(err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DELETE_FAILED",
+                    &String::from_utf8_lossy(&output.stderr),
+                ));
             }
         }
         #[cfg(not(target_os = "linux"))]
-        tokio::fs::remove_dir_all(&mount_dir).await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &e.to_string()))?;
+        tokio::fs::remove_dir_all(&mount_dir).await.map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DELETE_FAILED",
+                &e.to_string(),
+            )
+        })?;
     }
-    
+
     let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
@@ -431,16 +476,31 @@ pub async fn release_bank_v1(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<ReleaseResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let _bank = registry.get_by_id(&id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let _bank = registry.get_by_id(&id).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", id),
+        )
+    })?;
+
     #[cfg(target_os = "linux")]
-    unmount_device(&_bank.mount_path).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "UNMOUNT_FAILED", &e.to_string()))?;
-    
+    unmount_device(&_bank.mount_path).await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "UNMOUNT_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
@@ -456,18 +516,28 @@ pub async fn release_bank_v1(
     if let Err(e) = garden_common::console::print_storage_released_ribbon(&id) {
         warn!("Failed to print released ribbon: {}", e);
     }
-    
+
     // STORAGE-0003: Update local storage cache AND broadcast beacon
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
+    let tools_state = state.clone();
     let endpoint = state.self_entry.read().await.endpoint.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::update_and_broadcast(&storage_cache, &stone_id, &stone_name, &endpoint).await {
+        if let Err(e) = crate::infra::storage::update_and_broadcast(
+            &storage_cache,
+            &stone_id,
+            &stone_name,
+            &endpoint,
+        )
+        .await
+        {
             warn!(error = %e, "Failed to update storage cache and broadcast beacon after release");
+        } else {
+            tools_state.refresh_local_tools_projection().await;
         }
     });
-    
+
     info!(id = %id, "Bank released");
     Ok(Json(ApiResponse::new(ReleaseResponse {
         released: true,
@@ -482,39 +552,94 @@ pub async fn release_bank_v1(
 
 /// Rename a seed bank
 pub async fn rename_bank_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     Json(request): Json<RenameSeedBankRequest>,
 ) -> Result<Json<ApiResponse<SeedBankInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let bank = registry.get_by_id(&id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let bank = registry.get_by_id(&id).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", id),
+        )
+    })?;
+
     // Validate new name
     if request.new_name.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_NAME", "New name cannot be empty"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_NAME",
+            "New name cannot be empty",
+        ));
     }
-    
+
     // Check if new name already exists
     if registry.exists(&request.new_name) {
-        return Err(err(StatusCode::CONFLICT, "NAME_EXISTS", 
-            &format!("Bank '{}' already exists", request.new_name)));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "NAME_EXISTS",
+            &format!("Bank '{}' already exists", request.new_name),
+        ));
     }
-    
+
     // Update manifest on device
-    update_manifest_name(&bank.mount_path, &request.new_name).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "RENAME_FAILED", &e.to_string()))?;
-    
+    update_manifest_name(&bank.mount_path, &request.new_name)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RENAME_FAILED",
+                &e.to_string(),
+            )
+        })?;
+
     // Re-scan to get updated info
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let updated = registry.get(&request.new_name)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after rename"))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let updated = registry.get(&request.new_name).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            "Bank not found after rename",
+        )
+    })?;
+
     info!(old_id = %id, new_id = %request.new_name, "Bank renamed");
+
+    let storage_cache = state.storage_cache.clone();
+    let stone_id = state.stone_id.clone();
+    let stone_name = state.stone_name.clone();
+    let tools_state = state.clone();
+    let endpoint = state.self_entry.read().await.endpoint.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::infra::storage::update_and_broadcast(
+            &storage_cache,
+            &stone_id,
+            &stone_name,
+            &endpoint,
+        )
+        .await
+        {
+            warn!(error = %e, "Failed to update storage cache and broadcast beacon after rename");
+        } else {
+            tools_state.refresh_local_tools_projection().await;
+        }
+    });
+
     Ok(Json(ApiResponse::new(updated.clone())))
 }
 
@@ -523,7 +648,7 @@ pub async fn rename_bank_v1(
 // ============================================================================
 
 /// Get an object from a bank (raw bytes) or list directory contents
-/// 
+///
 /// If path ends with `/`, returns a directory listing with optional depth:
 /// - `?depth=1` (default): immediate children only
 /// - `?depth=3`: 3 levels deep
@@ -537,18 +662,20 @@ pub async fn get_object_v1(
         Ok(r) => r,
         Err(e) => return error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    
+
     let bank = match registry.get_by_id(&id) {
         Some(b) => b,
-        None => return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id)),
+        None => {
+            return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id))
+        }
     };
-    
+
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return error_response_raw(StatusCode::CONFLICT, &msg);
     }
 
     let store = ObjectStore::new(&bank.mount_path);
-    
+
     // Path format: bucket/key (bucket required for object access)
     let (bucket, key) = parse_object_path(&path);
 
@@ -557,17 +684,23 @@ pub async fn get_object_v1(
     }
 
     if has_path_traversal(&bucket) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket contains invalid path segments");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "Bucket contains invalid path segments",
+        );
     }
     if !key.is_empty() && has_path_traversal(&key) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "Object key contains invalid path segments");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "Object key contains invalid path segments",
+        );
     }
-    
+
     // If path ends with /, treat as directory listing
     if path.ends_with('/') || key.is_empty() {
         return handle_directory_listing(&store, &id, &bucket, &key, &params).await;
     }
-    
+
     // Otherwise, get object
     match store.get_object(&bucket, &key).await {
         Ok(Some((data, meta))) => {
@@ -594,17 +727,24 @@ async fn handle_directory_listing(
     params: &ListQueryParams,
 ) -> Response {
     let max_depth = params.parse_depth();
-    let delimiter = if max_depth == Some(1) { Some("/") } else { None };
-    
-    match store.list_objects(bucket, Some(prefix), delimiter, None, 1000).await {
+    let delimiter = if max_depth == Some(1) {
+        Some("/")
+    } else {
+        None
+    };
+
+    match store
+        .list_objects(bucket, Some(prefix), delimiter, None, 1000)
+        .await
+    {
         Ok(result) => {
             let mut entries: Vec<DirectoryEntry> = Vec::new();
-            
+
             // Add files from contents
             for obj in &result.contents {
                 // Calculate relative path from prefix
                 let name = obj.key.strip_prefix(prefix).unwrap_or(&obj.key);
-                
+
                 // Apply depth filter if needed
                 if let Some(depth) = max_depth {
                     let path_depth = name.matches('/').count() + 1;
@@ -612,7 +752,7 @@ async fn handle_directory_listing(
                         continue;
                     }
                 }
-                
+
                 entries.push(DirectoryEntry {
                     name: name.to_string(),
                     entry_type: "file".to_string(),
@@ -620,7 +760,7 @@ async fn handle_directory_listing(
                     modified: Some(obj.last_modified.clone()),
                 });
             }
-            
+
             // Add directories from common_prefixes (only when depth=1)
             for prefix_path in &result.common_prefixes {
                 let name = prefix_path.strip_prefix(prefix).unwrap_or(prefix_path);
@@ -631,15 +771,15 @@ async fn handle_directory_listing(
                     modified: None,
                 });
             }
-            
+
             let response = DirectoryListResponse {
                 path: format!("{}/{}", bucket, prefix),
                 entries,
                 truncated: result.is_truncated,
             };
-            
+
             debug!(bank = %bank_id, prefix = %prefix, depth = ?max_depth, count = response.entries.len(), "Directory listing");
-            
+
             match serde_json::to_string(&ApiResponse::new(response)) {
                 Ok(json) => Response::builder()
                     .status(StatusCode::OK)
@@ -656,7 +796,10 @@ async fn handle_directory_listing(
 /// Handle bucket listing at storage root
 async fn handle_bucket_listing(store: &ObjectStore, params: &ListQueryParams) -> Response {
     if params.depth.is_some() {
-        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket listing does not support depth");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "Bucket listing does not support depth",
+        );
     }
 
     match store.list_buckets().await {
@@ -688,7 +831,6 @@ async fn handle_bucket_listing(store: &ObjectStore, params: &ListQueryParams) ->
     }
 }
 
-
 // ============================================================================
 // PUT /api/v1/stone/storage/bank/:id/*path - Put Object
 // ============================================================================
@@ -700,40 +842,70 @@ pub async fn put_object_v1(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<ApiResponse<ObjectMeta>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let bank = registry.get_by_id(&id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let bank = registry.get_by_id(&id).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", id),
+        )
+    })?;
+
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
     let store = ObjectStore::new(&bank.mount_path);
-    
+
     // Path format: bucket/key (bucket required for object access)
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket and key are required"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Bucket and key are required",
+        ));
     }
     if has_path_traversal(&bucket) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket contains invalid path segments"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Bucket contains invalid path segments",
+        ));
     }
     if has_path_traversal(&key) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Object key contains invalid path segments"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Object key contains invalid path segments",
+        ));
     }
-    
+
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream");
-    
-    let result = store.put_object(&bucket, &key, content_type, &body).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "PUT_FAILED", &e.to_string()))?;
-    
+
+    let result = store
+        .put_object(&bucket, &key, content_type, &body)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PUT_FAILED",
+                &e.to_string(),
+            )
+        })?;
+
     debug!(bank = %id, key = %key, size = body.len(), "PUT object success");
-    
+
     Ok(Json(ApiResponse::new(ObjectMeta {
         key,
         size: body.len() as u64,
@@ -752,32 +924,59 @@ pub async fn delete_object_v1(
     State(_state): State<AppState>,
     Path((id, path)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let bank = registry.get_by_id(&id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", id)))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let bank = registry.get_by_id(&id).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", id),
+        )
+    })?;
+
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
     let store = ObjectStore::new(&bank.mount_path);
-    
+
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket and key are required"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Bucket and key are required",
+        ));
     }
     if has_path_traversal(&bucket) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket contains invalid path segments"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Bucket contains invalid path segments",
+        ));
     }
     if has_path_traversal(&key) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", "Object key contains invalid path segments"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Object key contains invalid path segments",
+        ));
     }
-    
-    store.delete_object(&bucket, &key).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &e.to_string()))?;
-    
+
+    store.delete_object(&bucket, &key).await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DELETE_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     debug!(bank = %id, key = %key, "DELETE object success");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -795,40 +994,46 @@ pub async fn head_object_v1(
         Ok(r) => r,
         Err(e) => return error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    
+
     let bank = match registry.get_by_id(&id) {
         Some(b) => b,
-        None => return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id)),
+        None => {
+            return error_response_raw(StatusCode::NOT_FOUND, &format!("Bank '{}' not found", id))
+        }
     };
-    
+
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return error_response_raw(StatusCode::CONFLICT, &msg);
     }
 
     let store = ObjectStore::new(&bank.mount_path);
-    
+
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
         return error_response_raw(StatusCode::BAD_REQUEST, "Bucket and key are required");
     }
     if has_path_traversal(&bucket) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "Bucket contains invalid path segments");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "Bucket contains invalid path segments",
+        );
     }
     if has_path_traversal(&key) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "Object key contains invalid path segments");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "Object key contains invalid path segments",
+        );
     }
-    
+
     match store.head_object(&bucket, &key).await {
-        Ok(Some(meta)) => {
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, &meta.content_type)
-                .header(header::CONTENT_LENGTH, meta.size)
-                .header(header::ETAG, &meta.etag)
-                .header("Last-Modified", &meta.last_modified)
-                .body("".into())
-                .unwrap()
-        }
+        Ok(Some(meta)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, &meta.content_type)
+            .header(header::CONTENT_LENGTH, meta.size)
+            .header(header::ETAG, &meta.etag)
+            .header("Last-Modified", &meta.last_modified)
+            .body("".into())
+            .unwrap(),
         Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "Object not found"),
         Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -939,7 +1144,7 @@ pub async fn list_candidates_v1(
     let candidates = scan_candidates().await.unwrap_or_default();
     #[cfg(not(target_os = "linux"))]
     let candidates = Vec::new();
-    
+
     Ok((StatusCode::OK, Json(candidates)))
 }
 
@@ -959,11 +1164,18 @@ pub async fn prepare_seed_bank_v1(
     Json(request): Json<PrepareSeedBankRequest>,
 ) -> Result<(StatusCode, Json<PrepareAcceptedResponse>), (StatusCode, Json<ApiErrorResponse>)> {
     // Validate device exists and is eligible
-    let device_info = analyze_device(&request.device)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, "DEVICE_ANALYSIS_FAILED", &e.to_string()))?;
-    
+    let device_info = analyze_device(&request.device).map_err(|e| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "DEVICE_ANALYSIS_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     if !device_info.eligible {
-        let reason = device_info.ineligible_reason.unwrap_or_else(|| "Unknown reason".to_string());
+        let reason = device_info
+            .ineligible_reason
+            .unwrap_or_else(|| "Unknown reason".to_string());
         let error_code = match device_info.state {
             DeviceState::HasData => "DEVICE_HAS_DATA",
             DeviceState::Prepared => "ALREADY_PREPARED",
@@ -972,7 +1184,7 @@ pub async fn prepare_seed_bank_v1(
         };
         return Err(err(StatusCode::BAD_REQUEST, error_code, &reason));
     }
-    
+
     // Determine seed bank name
     // - random_name: true → generate seed-{adj}-{noun}
     // - name provided → use it
@@ -984,15 +1196,24 @@ pub async fn prepare_seed_bank_v1(
     } else {
         DEFAULT_SEED_BANK_NAME.to_string()
     };
-    
+
     // Check for name collision (live scan)
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     if registry.exists(&name) {
-        return Err(err(StatusCode::CONFLICT, "NAME_COLLISION", &format!("Seed bank '{}' already exists", name)));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "NAME_COLLISION",
+            &format!("Seed bank '{}' already exists", name),
+        ));
     }
-    
+
     let job_id = garden_common::utils::ids::generate_guidv7();
     info!(device = %request.device, name = %name, job_id = %job_id, "Accepted seed bank preparation request");
 
@@ -1007,14 +1228,35 @@ pub async fn prepare_seed_bank_v1(
     let stone_id = state.stone_id.clone();
     let api_port = state.api_port;
     let sse_tx = state.sse_tx.clone();
+    let tools_state = state.clone();
 
     tokio::spawn(async move {
-        match run_prepare_job(&job_id_clone, &device, &name_clone, &filesystem, group.as_deref(), replica_id, &stone_name, sse_tx.clone()).await {
+        match run_prepare_job(
+            &job_id_clone,
+            &device,
+            &name_clone,
+            &filesystem,
+            group.as_deref(),
+            replica_id,
+            &stone_name,
+            sse_tx.clone(),
+        )
+        .await
+        {
             Ok(()) => {
-                // STORAGE-0003: Broadcast storage beacon on successful preparation
+                // STORAGE-0003: Update local cache + broadcast on successful preparation
                 let endpoint = format!("http://{}:{}", stone_name, api_port);
-                if let Err(e) = crate::infra::storage::broadcast_beacon(&stone_id, &stone_name, &endpoint).await {
-                    warn!(error = %e, "Failed to broadcast storage beacon after preparation");
+                if let Err(e) = crate::infra::storage::update_and_broadcast(
+                    &tools_state.storage_cache,
+                    &stone_id,
+                    &stone_name,
+                    &endpoint,
+                )
+                .await
+                {
+                    warn!(error = %e, "Failed to update storage cache and broadcast beacon after preparation");
+                } else {
+                    tools_state.refresh_local_tools_projection().await;
                 }
             }
             Err(e) => {
@@ -1040,12 +1282,15 @@ pub async fn prepare_seed_bank_v1(
             }
         }
     });
-    
-    Ok((StatusCode::ACCEPTED, Json(PrepareAcceptedResponse {
-        accepted: true,
-        job_id,
-        message: format!("Preparing seed bank '{}' in background", name),
-    })))
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(PrepareAcceptedResponse {
+            accepted: true,
+            job_id,
+            message: format!("Preparing seed bank '{}' in background", name),
+        }),
+    ))
 }
 
 /// Run the actual preparation job
@@ -1079,7 +1324,14 @@ async fn run_prepare_job(
     // Create manifest first to derive mount path
     let manifest = if let Some(grp) = group {
         let rid = replica_id.unwrap_or(1);
-        SeedBankManifest::new_replica(name, grp, rid, stone_name, actual_fs, SeedBankVisibility::Open)
+        SeedBankManifest::new_replica(
+            name,
+            grp,
+            rid,
+            stone_name,
+            actual_fs,
+            SeedBankVisibility::Open,
+        )
     } else {
         SeedBankManifest::new(name, stone_name, actual_fs, SeedBankVisibility::Open)
     };
@@ -1092,39 +1344,69 @@ async fn run_prepare_job(
     {
         let output = tokio::process::Command::new("sudo")
             .args(["mkdir", "-p", &mount_dir.to_string_lossy()])
-            .output().await.context("Failed to run sudo mkdir")?;
+            .output()
+            .await
+            .context("Failed to run sudo mkdir")?;
         if !output.status.success() {
-            return Err(anyhow::anyhow!("Failed to create mount directory: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow::anyhow!(
+                "Failed to create mount directory: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
     }
     #[cfg(not(target_os = "linux"))]
-    tokio::fs::create_dir_all(&mount_dir).await.context("Failed to create mount directory")?;
+    tokio::fs::create_dir_all(&mount_dir)
+        .await
+        .context("Failed to create mount directory")?;
 
-    emit_progress(&sse_tx, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
+    emit_progress(
+        &sse_tx,
+        job_id,
+        name,
+        "formatting",
+        &format!("Formatting as {}...", actual_fs),
+    );
 
     #[cfg(target_os = "linux")]
-    format_device(device, actual_fs).await.context("Failed to format device")?;
+    format_device(device, actual_fs)
+        .await
+        .context("Failed to format device")?;
 
     emit_progress(&sse_tx, job_id, name, "mounting", "Mounting filesystem...");
 
     #[cfg(target_os = "linux")]
-    mount_device(device, &mount_dir).await.context("Failed to mount device")?;
+    mount_device(device, &mount_dir)
+        .await
+        .context("Failed to mount device")?;
 
     #[cfg(target_os = "linux")]
     {
         let output = tokio::process::Command::new("sudo")
             .args(["chown", "-R", "stone:stone", &mount_dir.to_string_lossy()])
-            .output().await.context("Failed to run chown")?;
+            .output()
+            .await
+            .context("Failed to run chown")?;
         if !output.status.success() {
-            warn!("Failed to chown mount directory: {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "Failed to chown mount directory: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
-    emit_progress(&sse_tx, job_id, name, "creating", "Creating seed bank structure...");
+    emit_progress(
+        &sse_tx,
+        job_id,
+        name,
+        "creating",
+        "Creating seed bank structure...",
+    );
 
     // Create .zen-garden structure on the device
     let zen_dir = mount_dir.join(".zen-garden");
-    tokio::fs::create_dir_all(&zen_dir).await.context("Failed to create .zen-garden directory")?;
+    tokio::fs::create_dir_all(&zen_dir)
+        .await
+        .context("Failed to create .zen-garden directory")?;
 
     // Serialize manifest (already created above with group/replica support)
     let manifest_json = serde_json::to_string_pretty(&manifest)?;
@@ -1132,17 +1414,26 @@ async fn run_prepare_job(
     // Atomic manifest write: temp file → fsync → rename
     let tmp_manifest = zen_dir.join(".manifest.json.tmp");
     let final_manifest = zen_dir.join("manifest.json");
-    tokio::fs::write(&tmp_manifest, &manifest_json).await.context("Failed to write temp manifest")?;
+    tokio::fs::write(&tmp_manifest, &manifest_json)
+        .await
+        .context("Failed to write temp manifest")?;
 
     {
-        let file = std::fs::File::open(&tmp_manifest).context("Failed to open temp manifest for sync")?;
+        let file =
+            std::fs::File::open(&tmp_manifest).context("Failed to open temp manifest for sync")?;
         file.sync_all().context("Failed to sync temp manifest")?;
     }
 
-    tokio::fs::rename(&tmp_manifest, &final_manifest).await.context("Failed to rename manifest")?;
+    tokio::fs::rename(&tmp_manifest, &final_manifest)
+        .await
+        .context("Failed to rename manifest")?;
 
-    tokio::fs::create_dir_all(zen_dir.join("journal")).await.context("Failed to create journal directory")?;
-    tokio::fs::create_dir_all(zen_dir.join("blobs")).await.context("Failed to create blobs directory")?;
+    tokio::fs::create_dir_all(zen_dir.join("journal"))
+        .await
+        .context("Failed to create journal directory")?;
+    tokio::fs::create_dir_all(zen_dir.join("blobs"))
+        .await
+        .context("Failed to create blobs directory")?;
 
     // Create canonical garden storage layout
     tokio::fs::create_dir_all(mount_dir.join(paths::SEED_BANK_MEMORIES_DIR))
@@ -1168,16 +1459,24 @@ async fn run_prepare_job(
         data: Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
     };
     let _ = sse_tx.send(event);
-    
-    if let Err(e) = garden_common::console::print_storage_prepared_ribbon(name, &mount_dir.to_string_lossy()) {
+
+    if let Err(e) =
+        garden_common::console::print_storage_prepared_ribbon(name, &mount_dir.to_string_lossy())
+    {
         warn!("Failed to print prepared ribbon: {}", e);
     }
-    
+
     info!(name, "Seed bank preparation completed");
     Ok(())
 }
 
-fn emit_progress(tx: &tokio::sync::broadcast::Sender<SseEvent>, job_id: &str, name: &str, phase: &str, message: &str) {
+fn emit_progress(
+    tx: &tokio::sync::broadcast::Sender<SseEvent>,
+    job_id: &str,
+    name: &str,
+    phase: &str,
+    message: &str,
+) {
     let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
@@ -1194,7 +1493,11 @@ fn emit_progress(tx: &tokio::sync::broadcast::Sender<SseEvent>, job_id: &str, na
 async fn check_btrfs_support() -> bool {
     #[cfg(target_os = "linux")]
     {
-        if let Ok(output) = tokio::process::Command::new("which").arg("mkfs.btrfs").output().await {
+        if let Ok(output) = tokio::process::Command::new("which")
+            .arg("mkfs.btrfs")
+            .output()
+            .await
+        {
             return output.status.success();
         }
     }
@@ -1209,14 +1512,20 @@ async fn format_device(device: &str, filesystem: &str) -> anyhow::Result<()> {
         "ext4" => ("mkfs.ext4", vec!["-F", "-L", "zen-seed", device]),
         _ => return Err(anyhow::anyhow!("Unsupported filesystem: {}", filesystem)),
     };
-    
+
     let output = tokio::process::Command::new("sudo")
-        .args([cmd]).args(&args)
-        .output().await.context(format!("Failed to run sudo {}", cmd))?;
+        .args([cmd])
+        .args(&args)
+        .output()
+        .await
+        .context(format!("Failed to run sudo {}", cmd))?;
     if !output.status.success() {
-        return Err(anyhow::anyhow!("Format failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(anyhow::anyhow!(
+            "Format failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
-    
+
     // Sync to flush filesystem to device
     let _ = tokio::process::Command::new("sync").output().await;
     Ok(())
@@ -1227,19 +1536,34 @@ async fn mount_device(device: &str, mount_point: &std::path::Path) -> anyhow::Re
     use anyhow::Context;
     let output = tokio::process::Command::new("sudo")
         .args(["mount", device, &mount_point.to_string_lossy()])
-        .output().await.context("Failed to run sudo mount")?;
+        .output()
+        .await
+        .context("Failed to run sudo mount")?;
     if !output.status.success() {
-        return Err(anyhow::anyhow!("Mount failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(anyhow::anyhow!(
+            "Mount failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
 
 fn generate_seed_bank_name() -> String {
     use rand::seq::SliceRandom;
-    const ADJECTIVES: &[&str] = &["kind", "wise", "calm", "bold", "swift", "quiet", "bright", "deep", "warm", "cool", "fresh", "clear", "soft", "strong", "gentle"];
-    const NOUNS: &[&str] = &["meadow", "valley", "river", "forest", "garden", "grove", "brook", "stone", "path", "spring", "hill", "field", "shore", "cliff", "peak"];
+    const ADJECTIVES: &[&str] = &[
+        "kind", "wise", "calm", "bold", "swift", "quiet", "bright", "deep", "warm", "cool",
+        "fresh", "clear", "soft", "strong", "gentle",
+    ];
+    const NOUNS: &[&str] = &[
+        "meadow", "valley", "river", "forest", "garden", "grove", "brook", "stone", "path",
+        "spring", "hill", "field", "shore", "cliff", "peak",
+    ];
     let mut rng = rand::thread_rng();
-    format!("seed-{}-{}", ADJECTIVES.choose(&mut rng).unwrap(), NOUNS.choose(&mut rng).unwrap())
+    format!(
+        "seed-{}-{}",
+        ADJECTIVES.choose(&mut rng).unwrap(),
+        NOUNS.choose(&mut rng).unwrap()
+    )
 }
 
 // ============================================================================
@@ -1252,55 +1576,105 @@ pub async fn set_visibility_v1(
     Path(name): Path<String>,
     Json(request): Json<SetVisibilityRequest>,
 ) -> Result<(StatusCode, Json<SeedBankInfo>), (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let bank = registry.get(&name)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", &format!("Seed bank '{}' not found", name)))?;
-    
-    update_manifest_visibility(&bank.mount_path, request.visibility).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "MANIFEST_UPDATE_FAILED", &e.to_string()))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let bank = registry.get(&name).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "SEED_BANK_NOT_FOUND",
+            &format!("Seed bank '{}' not found", name),
+        )
+    })?;
+
+    update_manifest_visibility(&bank.mount_path, request.visibility)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "MANIFEST_UPDATE_FAILED",
+                &e.to_string(),
+            )
+        })?;
+
     // Re-scan to get updated info
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
-    let updated = registry.get(&name)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", "Seed bank disappeared after update"))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let updated = registry.get(&name).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "SEED_BANK_NOT_FOUND",
+            "Seed bank disappeared after update",
+        )
+    })?;
+
     info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
-    
+
     // STORAGE-0003: Update local storage cache AND broadcast beacon
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
+    let tools_state = state.clone();
     let endpoint = state.self_entry.read().await.endpoint.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::update_and_broadcast(&storage_cache, &stone_id, &stone_name, &endpoint).await {
+        if let Err(e) = crate::infra::storage::update_and_broadcast(
+            &storage_cache,
+            &stone_id,
+            &stone_name,
+            &endpoint,
+        )
+        .await
+        {
             warn!(error = %e, "Failed to update storage cache and broadcast beacon after visibility change");
+        } else {
+            tools_state.refresh_local_tools_projection().await;
         }
     });
-    
+
     Ok((StatusCode::OK, Json(updated.clone())))
 }
 
-async fn update_manifest_visibility(mount_path: &str, visibility: garden_common::storage::SeedBankVisibility) -> anyhow::Result<()> {
+async fn update_manifest_visibility(
+    mount_path: &str,
+    visibility: garden_common::storage::SeedBankVisibility,
+) -> anyhow::Result<()> {
     use anyhow::Context;
     let manifest_path = std::path::Path::new(mount_path).join(".zen-garden/manifest.json");
-    let content = tokio::fs::read_to_string(&manifest_path).await.context("Failed to read manifest")?;
-    let mut manifest: garden_common::storage::SeedBankManifest = serde_json::from_str(&content).context("Failed to parse manifest")?;
+    let content = tokio::fs::read_to_string(&manifest_path)
+        .await
+        .context("Failed to read manifest")?;
+    let mut manifest: garden_common::storage::SeedBankManifest =
+        serde_json::from_str(&content).context("Failed to parse manifest")?;
     manifest.visibility = visibility;
-    tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?).await.context("Failed to write manifest")?;
+    tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
+        .await
+        .context("Failed to write manifest")?;
     Ok(())
 }
 
 async fn update_manifest_name(mount_path: &str, new_name: &str) -> anyhow::Result<()> {
     use anyhow::Context;
     let manifest_path = std::path::Path::new(mount_path).join(".zen-garden/manifest.json");
-    let content = tokio::fs::read_to_string(&manifest_path).await.context("Failed to read manifest")?;
-    let mut manifest: garden_common::storage::SeedBankManifest = serde_json::from_str(&content).context("Failed to parse manifest")?;
+    let content = tokio::fs::read_to_string(&manifest_path)
+        .await
+        .context("Failed to read manifest")?;
+    let mut manifest: garden_common::storage::SeedBankManifest =
+        serde_json::from_str(&content).context("Failed to parse manifest")?;
     manifest.name = new_name.to_string();
-    tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?).await.context("Failed to write manifest")?;
+    tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
+        .await
+        .context("Failed to write manifest")?;
     Ok(())
 }
 
@@ -1310,9 +1684,14 @@ async fn unmount_device(mount_path: &str) -> anyhow::Result<()> {
     let _ = tokio::process::Command::new("sync").output().await;
     let output = tokio::process::Command::new("sudo")
         .args(["umount", mount_path])
-        .output().await.context("Failed to run umount")?;
+        .output()
+        .await
+        .context("Failed to run umount")?;
     if !output.status.success() {
-        return Err(anyhow::anyhow!("Unmount failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(anyhow::anyhow!(
+            "Unmount failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
@@ -1325,11 +1704,16 @@ async fn unmount_device(mount_path: &str) -> anyhow::Result<()> {
 pub async fn release_all_seed_banks_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<Vec<ReleaseResponse>>), (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string()))?;
-    
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
     let mut results = Vec::new();
-    
+
     for bank in registry.list() {
         #[cfg(target_os = "linux")]
         {
@@ -1358,7 +1742,7 @@ pub async fn release_all_seed_banks_v1(
             message: "Seed bank released (non-Linux).".to_string(),
         });
     }
-    
+
     let event = SseEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: "info".to_string(),
@@ -1371,7 +1755,26 @@ pub async fn release_all_seed_banks_v1(
     };
     let _ = state.sse_tx.send(event);
 
+    let storage_cache = state.storage_cache.clone();
+    let stone_id = state.stone_id.clone();
+    let stone_name = state.stone_name.clone();
+    let tools_state = state.clone();
+    let endpoint = state.self_entry.read().await.endpoint.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::infra::storage::update_and_broadcast(
+            &storage_cache,
+            &stone_id,
+            &stone_name,
+            &endpoint,
+        )
+        .await
+        {
+            warn!(error = %e, "Failed to update storage cache after release-all");
+        } else {
+            tools_state.refresh_local_tools_projection().await;
+        }
+    });
+
     info!(count = results.len(), "All seed banks released");
     Ok((StatusCode::OK, Json(results)))
 }
-

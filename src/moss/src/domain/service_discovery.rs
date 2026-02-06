@@ -28,9 +28,9 @@ pub struct ServiceSearchCriteria {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
 
-    /// Search by sub-capability (type:item format)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sub_capability: Option<SubCapabilityFilter>,
+    /// Required sub-capabilities (all must match)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_capabilities: Vec<SubCapabilityFilter>,
 }
 
 /// Filter for sub-capability search
@@ -49,7 +49,7 @@ impl ServiceSearchCriteria {
             name: Some(name.to_string()),
             category: None,
             tag: None,
-            sub_capability: None,
+            required_capabilities: Vec::new(),
         }
     }
 
@@ -58,7 +58,7 @@ impl ServiceSearchCriteria {
             name: None,
             category: Some(category.to_string()),
             tag: None,
-            sub_capability: None,
+            required_capabilities: Vec::new(),
         }
     }
 
@@ -67,7 +67,7 @@ impl ServiceSearchCriteria {
             name: None,
             category: None,
             tag: Some(tag.to_string()),
-            sub_capability: None,
+            required_capabilities: Vec::new(),
         }
     }
 
@@ -76,24 +76,24 @@ impl ServiceSearchCriteria {
             name: None,
             category: None,
             tag: None,
-            sub_capability: Some(SubCapabilityFilter {
+            required_capabilities: vec![SubCapabilityFilter {
                 cap_type: cap_type.map(String::from),
                 item: item.to_string(),
-            }),
+            }],
         }
     }
 
     /// Create a name search with sub-capability filter
-    /// E.g., ollama[llama2]
-    pub fn by_name_with_sub_capability(name: &str, item: &str) -> Self {
+    /// E.g., ollama[llama2,mistral]
+    pub fn by_name_with_sub_capabilities(
+        name: &str,
+        required_capabilities: Vec<SubCapabilityFilter>,
+    ) -> Self {
         Self {
             name: Some(name.to_string()),
             category: None,
             tag: None,
-            sub_capability: Some(SubCapabilityFilter {
-                cap_type: None,
-                item: item.to_string(),
-            }),
+            required_capabilities,
         }
     }
 
@@ -104,15 +104,21 @@ impl ServiceSearchCriteria {
     /// - `c:database`, `cat:database`, `category:database` - category search
     /// - `t:nosql`, `tag:nosql`, `tags:nosql` - tag search
     /// - `model:llama2` - sub-capability search (type:item)
-    /// - `ollama[llama2]` - name with sub-capability filter
+    /// - `ollama[llama2,mistral]` - name with required capabilities (AND semantics)
     pub fn parse(query: &str) -> Self {
         let query = query.trim();
 
         // Check for sub-capability syntax: name[item]
-        // E.g., "ollama[llama2]" or "ollama[mistral]"
+        // E.g., "ollama[llama2,mistral]"
         if let Some((name_part, rest)) = query.split_once('[') {
             if let Some(item) = rest.strip_suffix(']') {
-                return Self::by_name_with_sub_capability(name_part.trim(), item.trim());
+                let required_capabilities = parse_capability_requirements(item);
+                if !required_capabilities.is_empty() {
+                    return Self::by_name_with_sub_capabilities(
+                        name_part.trim(),
+                        required_capabilities,
+                    );
+                }
             }
         }
 
@@ -135,16 +141,31 @@ impl ServiceSearchCriteria {
         }
 
         // Check for sub-capability prefix: model:item, cap:item
-        // E.g., "model:llama2" or "collection:embeddings"
+        // E.g., "model:llama2,llama3" or "collection:embeddings"
         if let Some(item) = query.strip_prefix("model:") {
-            return Self::by_sub_capability(Some("model"), item);
+            return Self {
+                name: None,
+                category: None,
+                tag: None,
+                required_capabilities: parse_capability_items(Some("model"), item),
+            };
         }
         if let Some(item) = query.strip_prefix("collection:") {
-            return Self::by_sub_capability(Some("collection"), item);
+            return Self {
+                name: None,
+                category: None,
+                tag: None,
+                required_capabilities: parse_capability_items(Some("collection"), item),
+            };
         }
         if let Some(item) = query.strip_prefix("cap:") {
-            // Generic capability search (any type)
-            return Self::by_sub_capability(None, item);
+            // Generic capability search (any type). Multiple values are supported.
+            return Self {
+                name: None,
+                category: None,
+                tag: None,
+                required_capabilities: parse_capability_items(None, item),
+            };
         }
 
         // Check if it's a known category (implicit category search)
@@ -165,8 +186,32 @@ impl ServiceSearchCriteria {
 
     /// Check if this search includes sub-capability filter
     pub fn has_sub_capability_filter(&self) -> bool {
-        self.sub_capability.is_some()
+        !self.required_capabilities.is_empty()
     }
+}
+
+fn parse_capability_items(cap_type: Option<&str>, items: &str) -> Vec<SubCapabilityFilter> {
+    items
+        .split(|c| c == ',' || c == '|')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| SubCapabilityFilter {
+            cap_type: cap_type.map(String::from),
+            item: item.to_string(),
+        })
+        .collect()
+}
+
+fn parse_capability_requirements(input: &str) -> Vec<SubCapabilityFilter> {
+    input
+        .split(|c| c == ',' || c == '|')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| SubCapabilityFilter {
+            cap_type: None,
+            item: token.to_string(),
+        })
+        .collect()
 }
 
 /// Found service with connection information
@@ -257,7 +302,14 @@ pub async fn find_local_services(
             .unwrap_or_else(|| (offering.offering.clone(), vec![], None));
 
         // Check if matches criteria
-        if !matches_criteria(criteria, &offering.name, &offering.offering, &category, &tags, &offering.sub_capabilities) {
+        if !matches_criteria(
+            criteria,
+            &offering.name,
+            &offering.offering,
+            &category,
+            &tags,
+            &offering.sub_capabilities,
+        ) {
             continue;
         }
 
@@ -469,7 +521,8 @@ async fn find_services_in_topology_cache(
 pub async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
     if let Some(offering_def) = state.manifest_registry.get_offering(offering) {
         let port = offering_def.default_host_port();
-        if port != 8080 { // 8080 is the generic default
+        if port != 8080 {
+            // 8080 is the generic default
             return port;
         }
     }
@@ -501,7 +554,8 @@ async fn find_remote_services(
             let criteria = criteria.clone();
             let state_clone = state.clone();
             tokio::spawn(async move {
-                fetch_remote_services(&stone.endpoint, &criteria, &stone, timeout, &state_clone).await
+                fetch_remote_services(&stone.endpoint, &criteria, &stone, timeout, &state_clone)
+                    .await
             })
         })
         .collect();
@@ -529,9 +583,7 @@ async fn fetch_remote_services(
     timeout: Duration,
     state: &AppState,
 ) -> anyhow::Result<Vec<FoundService>> {
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()?;
+    let client = reqwest::Client::builder().timeout(timeout).build()?;
 
     // Build query URL
     let mut url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
@@ -635,19 +687,16 @@ fn matches_criteria(
         }
     }
 
-    // Sub-capability match
-    if let Some(ref filter) = criteria.sub_capability {
+    // Required sub-capabilities (AND semantics)
+    for filter in &criteria.required_capabilities {
         let lower_item = filter.item.to_lowercase();
 
-        // Check if any sub-capability matches
         let has_cap = sub_capabilities.iter().any(|cap| {
-            // If type filter specified, must match type
             if let Some(ref cap_type) = filter.cap_type {
                 if cap.cap_type.to_lowercase() != cap_type.to_lowercase() {
                     return false;
                 }
             }
-            // Check if item exists in capability
             cap.items.iter().any(|i| i.to_lowercase() == lower_item)
         });
 
@@ -725,18 +774,60 @@ mod tests {
     fn test_matches_criteria_name() {
         let criteria = ServiceSearchCriteria::by_name("mongodb");
 
-        assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[], &[]));
-        assert!(matches_criteria(&criteria, "mongodb:dev", "mongodb", "database", &[], &[]));
-        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &[]));
+        assert!(matches_criteria(
+            &criteria,
+            "mongodb",
+            "mongodb",
+            "database",
+            &[],
+            &[]
+        ));
+        assert!(matches_criteria(
+            &criteria,
+            "mongodb:dev",
+            "mongodb",
+            "database",
+            &[],
+            &[]
+        ));
+        assert!(!matches_criteria(
+            &criteria,
+            "redis",
+            "redis",
+            "cache",
+            &[],
+            &[]
+        ));
     }
 
     #[test]
     fn test_matches_criteria_category() {
         let criteria = ServiceSearchCriteria::by_category("database");
 
-        assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[], &[]));
-        assert!(matches_criteria(&criteria, "postgres", "postgres", "database", &[], &[]));
-        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &[]));
+        assert!(matches_criteria(
+            &criteria,
+            "mongodb",
+            "mongodb",
+            "database",
+            &[],
+            &[]
+        ));
+        assert!(matches_criteria(
+            &criteria,
+            "postgres",
+            "postgres",
+            "database",
+            &[],
+            &[]
+        ));
+        assert!(!matches_criteria(
+            &criteria,
+            "redis",
+            "redis",
+            "cache",
+            &[],
+            &[]
+        ));
     }
 
     #[test]
@@ -765,21 +856,88 @@ mod tests {
     fn test_matches_criteria_sub_capability() {
         use garden_common::SubCapability;
 
-        let caps = vec![SubCapability::new("model", vec!["llama2".to_string(), "mistral".to_string()])];
+        let caps = vec![SubCapability::new(
+            "model",
+            vec!["llama2".to_string(), "mistral".to_string()],
+        )];
 
         // Search for model:llama2
         let criteria = ServiceSearchCriteria::by_sub_capability(Some("model"), "llama2");
-        assert!(matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &caps));
-        assert!(!matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &[]));
+        assert!(matches_criteria(
+            &criteria,
+            "ollama",
+            "ollama",
+            "ai",
+            &[],
+            &caps
+        ));
+        assert!(!matches_criteria(
+            &criteria,
+            "ollama",
+            "ollama",
+            "ai",
+            &[],
+            &[]
+        ));
 
         // Search for ollama[mistral]
-        let criteria = ServiceSearchCriteria::by_name_with_sub_capability("ollama", "mistral");
-        assert!(matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &caps));
-        assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &caps));
+        let criteria = ServiceSearchCriteria::by_name_with_sub_capabilities(
+            "ollama",
+            vec![SubCapabilityFilter {
+                cap_type: None,
+                item: "mistral".to_string(),
+            }],
+        );
+        assert!(matches_criteria(
+            &criteria,
+            "ollama",
+            "ollama",
+            "ai",
+            &[],
+            &caps
+        ));
+        assert!(!matches_criteria(
+            &criteria,
+            "redis",
+            "redis",
+            "cache",
+            &[],
+            &caps
+        ));
 
         // Generic cap: search (any type)
         let criteria = ServiceSearchCriteria::by_sub_capability(None, "llama2");
-        assert!(matches_criteria(&criteria, "ollama", "ollama", "ai", &[], &caps));
+        assert!(matches_criteria(
+            &criteria,
+            "ollama",
+            "ollama",
+            "ai",
+            &[],
+            &caps
+        ));
+
+        // Multi-capability (AND semantics): requires both llama2 and mistral
+        let criteria = ServiceSearchCriteria::by_name_with_sub_capabilities(
+            "ollama",
+            vec![
+                SubCapabilityFilter {
+                    cap_type: None,
+                    item: "llama2".to_string(),
+                },
+                SubCapabilityFilter {
+                    cap_type: None,
+                    item: "mistral".to_string(),
+                },
+            ],
+        );
+        assert!(matches_criteria(
+            &criteria,
+            "ollama",
+            "ollama",
+            "ai",
+            &[],
+            &caps
+        ));
     }
 
     #[test]
@@ -787,19 +945,44 @@ mod tests {
         // Test ollama[llama2] syntax
         let criteria = ServiceSearchCriteria::parse("ollama[llama2]");
         assert_eq!(criteria.name, Some("ollama".to_string()));
-        assert!(criteria.sub_capability.is_some());
-        assert_eq!(criteria.sub_capability.as_ref().unwrap().item, "llama2");
+        assert_eq!(criteria.required_capabilities.len(), 1);
+        assert_eq!(criteria.required_capabilities[0].item, "llama2");
+        assert!(criteria.required_capabilities[0].cap_type.is_none());
+
+        // Test multi-capability syntax
+        let criteria = ServiceSearchCriteria::parse("ollama[llama2,mistral]");
+        assert_eq!(criteria.required_capabilities.len(), 2);
+        assert_eq!(criteria.required_capabilities[0].item, "llama2");
+        assert_eq!(criteria.required_capabilities[1].item, "mistral");
 
         // Test model:llama2 syntax
         let criteria = ServiceSearchCriteria::parse("model:llama2");
-        assert!(criteria.sub_capability.is_some());
-        assert_eq!(criteria.sub_capability.as_ref().unwrap().cap_type, Some("model".to_string()));
-        assert_eq!(criteria.sub_capability.as_ref().unwrap().item, "llama2");
+        assert_eq!(criteria.required_capabilities.len(), 1);
+        assert_eq!(
+            criteria.required_capabilities[0].cap_type,
+            Some("model".to_string())
+        );
+        assert_eq!(criteria.required_capabilities[0].item, "llama2");
+
+        // Test model with multi-values
+        let criteria = ServiceSearchCriteria::parse("model:llama2,mistral");
+        assert_eq!(criteria.required_capabilities.len(), 2);
+        assert_eq!(
+            criteria.required_capabilities[0].cap_type,
+            Some("model".to_string())
+        );
+        assert_eq!(
+            criteria.required_capabilities[1].cap_type,
+            Some("model".to_string())
+        );
 
         // Test collection:embeddings syntax
         let criteria = ServiceSearchCriteria::parse("collection:embeddings");
-        assert!(criteria.sub_capability.is_some());
-        assert_eq!(criteria.sub_capability.as_ref().unwrap().cap_type, Some("collection".to_string()));
+        assert_eq!(criteria.required_capabilities.len(), 1);
+        assert_eq!(
+            criteria.required_capabilities[0].cap_type,
+            Some("collection".to_string())
+        );
     }
 
     #[test]
@@ -811,8 +994,18 @@ mod tests {
 
     #[test]
     fn test_has_sub_capability_filter() {
-        assert!(ServiceSearchCriteria::by_sub_capability(Some("model"), "llama2").has_sub_capability_filter());
-        assert!(ServiceSearchCriteria::by_name_with_sub_capability("ollama", "llama2").has_sub_capability_filter());
+        assert!(
+            ServiceSearchCriteria::by_sub_capability(Some("model"), "llama2")
+                .has_sub_capability_filter()
+        );
+        assert!(ServiceSearchCriteria::by_name_with_sub_capabilities(
+            "ollama",
+            vec![SubCapabilityFilter {
+                cap_type: None,
+                item: "llama2".to_string(),
+            }],
+        )
+        .has_sub_capability_filter());
         assert!(!ServiceSearchCriteria::by_name("mongodb").has_sub_capability_filter());
     }
 }

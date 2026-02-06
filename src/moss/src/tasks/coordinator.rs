@@ -12,23 +12,20 @@
 //!
 //! Extracted from main.rs for cleaner separation of concerns.
 
+use crate::domain::topology::{mark_stone_offline, upsert_from_chirp, TopologyCache};
+use crate::tasks::backfill_missing_guidance;
+use crate::tasks::network_monitor::{NetworkEvent, NetworkMonitor};
+use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
+use crate::{
+    adopt_existing_containers, auto_adoption_task, detect_capabilities_background,
+    ensure_offerings_index, health_monitor_task, infra, lantern_registration_loop, AppState,
+};
+use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
+use garden_common::infra::communications::p2p;
+use garden_common::storage::SeedBankInfo;
+use garden_common::{HardwareCapabilities, ServiceHealthStatus};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use garden_common::{HardwareCapabilities, ServiceHealthStatus};
-use garden_common::storage::SeedBankInfo;
-use garden_common::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
-use garden_common::infra::communications::p2p;
-use crate::domain::topology::{TopologyCache, upsert_from_chirp, mark_stone_offline};
-use crate::{
-    AppState,
-    adopt_existing_containers, ensure_offerings_index,
-    detect_capabilities_background, health_monitor_task, auto_adoption_task,
-    lantern_registration_loop,
-    infra,
-};
-use crate::tasks::backfill_missing_guidance;
-use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
-use crate::tasks::network_monitor::{NetworkMonitor, NetworkEvent};
 
 /// Start topology maintenance task
 ///
@@ -41,7 +38,8 @@ pub fn start_topology_maintenance(topology_cache: TopologyCache) {
 
         loop {
             interval.tick().await;
-            let (marked, evicted) = crate::domain::topology::maintain_topology(&topology_cache).await;
+            let (marked, evicted) =
+                crate::domain::topology::maintain_topology(&topology_cache).await;
             if marked > 0 || evicted > 0 {
                 tracing::debug!(
                     marked_offline = marked,
@@ -67,7 +65,8 @@ pub fn start_storage_maintenance(
 
         loop {
             interval.tick().await;
-            let pruned = crate::domain::storage_cache::prune_stale(&storage_cache, &topology_cache).await;
+            let pruned =
+                crate::domain::storage_cache::prune_stale(&storage_cache, &topology_cache).await;
             if pruned > 0 {
                 tracing::debug!(
                     pruned = pruned,
@@ -81,7 +80,7 @@ pub fn start_storage_maintenance(
 /// Start UDP discovery listener with topology cache integration
 ///
 /// Enables stone discovery via UDP broadcast.
-/// Handles discovery requests (chirp response), stone chirps (topology updates), 
+/// Handles discovery requests (chirp response), stone chirps (topology updates),
 /// goodbyes, and storage beacons (STORAGE-0003).
 /// Returns immediately after spawning the listener.
 pub async fn start_discovery_listener(
@@ -90,7 +89,9 @@ pub async fn start_discovery_listener(
     api_endpoint: String,
     topology_cache: TopologyCache,
     storage_cache: crate::domain::storage_cache::StorageCache,
-    _self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+    tools_cache: crate::domain::tools::ToolsCache,
+    tools_tx: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
+    self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
@@ -109,30 +110,34 @@ pub async fn start_discovery_listener(
                 return;
             }
         };
-        
+
         console.emit(ConsoleEvent::new(
             EventCategory::Network,
             EventStatus::Started,
-            format!("UDP listener on port {}", garden_common::ports::DISCOVERY_UDP),
+            format!(
+                "UDP listener on port {}",
+                garden_common::ports::DISCOVERY_UDP
+            ),
         ));
-        
+
         while let Some((announcement_type, payload, from_addr)) = all_events.recv().await {
             match announcement_type.as_str() {
                 garden_common::infra::communications::announcement_types::STONE_CHIRP => {
-                    let chirp: garden_common::TopologyEntry = match serde_json::from_value(payload) {
+                    let chirp: garden_common::TopologyEntry = match serde_json::from_value(payload)
+                    {
                         Ok(c) => c,
                         Err(e) => {
                             tracing::warn!(error = ?e, "Failed to parse chirp");
                             continue;
                         }
                     };
-                    
+
                     // Check if this is a NEW stone (not already in cache)
                     let is_new_stone = {
                         let cache = topology_cache.read().await;
                         !cache.contains_key(&chirp.stone_id)
                     };
-                    
+
                     tracing::debug!(
                         stone = %chirp.stone_name,
                         services = chirp.services.len(),
@@ -142,7 +147,7 @@ pub async fn start_discovery_listener(
                         is_new = is_new_stone,
                         "Stone chirp received, updating topology cache"
                     );
-                    
+
                     // Update topology cache with chirp data
                     upsert_from_chirp(&topology_cache, chirp.clone()).await;
 
@@ -163,12 +168,25 @@ pub async fn start_discovery_listener(
                         let local_stone_id = stone_id.clone();
                         let local_stone_name = stone_name.clone();
                         let local_endpoint = api_endpoint.clone();
+                        let local_entry = self_entry.clone();
+                        let local_tools_cache = tools_cache.clone();
                         tokio::spawn(async move {
+                            let resolved_endpoint = {
+                                let current = local_entry.read().await.endpoint.clone();
+                                if current.trim().is_empty() {
+                                    local_endpoint
+                                } else {
+                                    current
+                                }
+                            };
+
                             match crate::infra::storage::broadcast_if_has_storage(
                                 &local_stone_id,
                                 &local_stone_name,
-                                &local_endpoint,
-                            ).await {
+                                &resolved_endpoint,
+                            )
+                            .await
+                            {
                                 Ok(true) => {
                                     tracing::debug!(
                                         new_stone = %chirp.stone_name,
@@ -186,18 +204,41 @@ pub async fn start_discovery_listener(
                                     );
                                 }
                             }
+
+                            // TOOLS-0001: Broadcast current local tools snapshot for new stone.
+                            let snapshot_deltas = {
+                                let cache = local_tools_cache.read().await;
+                                cache.local_snapshot_for_beacon(&local_stone_id)
+                            };
+                            if !snapshot_deltas.is_empty() {
+                                if let Err(e) = crate::infra::broadcast_tools_beacon(
+                                    &local_stone_id,
+                                    &local_stone_name,
+                                    &resolved_endpoint,
+                                    snapshot_deltas,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        error = %e,
+                                        new_stone = %chirp.stone_name,
+                                        "Failed to broadcast tools beacon for new stone"
+                                    );
+                                }
+                            }
                         });
                     }
                 }
                 garden_common::infra::communications::announcement_types::STONE_GOODBYE => {
-                    let goodbye: garden_common::StoneGoodbyePayload = match serde_json::from_value(payload) {
-                        Ok(g) => g,
-                        Err(e) => {
-                            tracing::warn!(error = ?e, "Failed to parse goodbye");
-                            continue;
-                        }
-                    };
-                    
+                    let goodbye: garden_common::StoneGoodbyePayload =
+                        match serde_json::from_value(payload) {
+                            Ok(g) => g,
+                            Err(e) => {
+                                tracing::warn!(error = ?e, "Failed to parse goodbye");
+                                continue;
+                            }
+                        };
+
                     tracing::info!(
                         stone = %goodbye.stone_name,
                         from = %from_addr,
@@ -205,29 +246,69 @@ pub async fn start_discovery_listener(
                     );
                     // Mark stone as offline immediately (don't wait for timeout)
                     mark_stone_offline(&topology_cache, &goodbye.stone_id).await;
-                    
+
                     // STORAGE-0003: Remove from storage cache
-                    crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id).await;
+                    crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id)
+                        .await;
+
+                    // TOOLS-0001: Remove tool projections for offline stone.
+                    let removed = {
+                        let mut cache = tools_cache.write().await;
+                        cache.remove_stone_tools(&goodbye.stone_id)
+                    };
+                    for delta in removed {
+                        let _ = tools_tx.send(delta);
+                    }
                 }
                 garden_common::infra::communications::announcement_types::STORAGE_BEACON => {
                     // STORAGE-0003: Handle storage beacon from peer
-                    let beacon: garden_common::storage::StorageBeacon = match serde_json::from_value(payload) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            tracing::warn!(error = ?e, "Failed to parse storage beacon");
-                            continue;
-                        }
-                    };
-                    
+                    let beacon: garden_common::storage::StorageBeacon =
+                        match serde_json::from_value(payload) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                tracing::warn!(error = ?e, "Failed to parse storage beacon");
+                                continue;
+                            }
+                        };
+
                     tracing::debug!(
                         stone = %beacon.stone_name,
                         seed_banks = beacon.seed_banks.len(),
                         from = %from_addr,
                         "Storage beacon received, updating storage cache"
                     );
-                    
+
                     // Update storage cache
                     crate::domain::storage_cache::update_from_beacon(&storage_cache, beacon).await;
+                }
+                garden_common::infra::communications::announcement_types::TOOLS_BEACON => {
+                    let beacon: garden_common::tools::ToolsBeacon =
+                        match serde_json::from_value(payload) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                tracing::warn!(error = ?e, "Failed to parse tools beacon");
+                                continue;
+                            }
+                        };
+
+                    if beacon.stone_id == stone_id {
+                        continue;
+                    }
+
+                    tracing::debug!(
+                        stone = %beacon.stone_name,
+                        deltas = beacon.deltas.len(),
+                        from = %from_addr,
+                        "Tools beacon received, updating tools cache"
+                    );
+
+                    let applied = {
+                        let mut cache = tools_cache.write().await;
+                        cache.apply_remote_beacon(&beacon)
+                    };
+                    for delta in applied {
+                        let _ = tools_tx.send(delta);
+                    }
                 }
                 _ => {
                     // Ignore other announcement types (election events handled by election service, discovery handled by discovery_handler)
@@ -251,7 +332,7 @@ pub fn start_hardware_detection(
         console.emit(ConsoleEvent::new(
             EventCategory::System,
             EventStatus::Scanning,
-            "Hardware capabilities".to_string()
+            "Hardware capabilities".to_string(),
         ));
 
         detect_capabilities_background(stone_name, capabilities, console.clone(), state).await;
@@ -259,7 +340,7 @@ pub fn start_hardware_detection(
         console.emit(ConsoleEvent::new(
             EventCategory::System,
             EventStatus::Updated,
-            "Hardware capabilities (complete)".to_string()
+            "Hardware capabilities (complete)".to_string(),
         ));
     });
 }
@@ -273,7 +354,12 @@ pub fn start_registry_loader(state: AppState) {
         {
             let mut offerings = state.offerings.write().await;
             for offering in offerings.iter_mut().filter(|o| o.is_managed()) {
-                if !state.docker.zen_container_exists(&offering.name).await.unwrap_or(false) {
+                if !state
+                    .docker
+                    .zen_container_exists(&offering.name)
+                    .await
+                    .unwrap_or(false)
+                {
                     offering.status = garden_common::OfferingStatus::Stopped;
                     offering.health = ServiceHealthStatus::Offline;
                 }
@@ -284,13 +370,19 @@ pub fn start_registry_loader(state: AppState) {
         // Backfill missing guidance for services that were installed before guidance caching
         let backfilled = backfill_missing_guidance(&state).await;
         if backfilled > 0 {
-            tracing::info!(count = backfilled, "Backfilled guidance for existing services");
+            tracing::info!(
+                count = backfilled,
+                "Backfilled guidance for existing services"
+            );
         }
 
         // Backfill missing scheduled tasks for existing services
         let tasks_backfilled = backfill_missing_tasks(&state).await;
         if tasks_backfilled > 0 {
-            tracing::info!(count = tasks_backfilled, "Backfilled scheduled tasks for existing services");
+            tracing::info!(
+                count = tasks_backfilled,
+                "Backfilled scheduled tasks for existing services"
+            );
         }
 
         // Startup self-heal: adopt any existing zen-offering containers
@@ -308,7 +400,7 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
         console.emit(ConsoleEvent::new(
             EventCategory::Manifests,
             EventStatus::Scanning,
-            "Runtime templates".to_string()
+            "Runtime templates".to_string(),
         ));
 
         match ensure_offerings_index(&state, false).await {
@@ -322,7 +414,7 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
                     console.emit(ConsoleEvent::new(
                         EventCategory::Manifests,
                         EventStatus::Loaded,
-                        format!("{} manifests", idx.offerings.len())
+                        format!("{} manifests", idx.offerings.len()),
                     ));
                 }
             }
@@ -331,7 +423,7 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
                 console.emit(ConsoleEvent::new(
                     EventCategory::Manifests,
                     EventStatus::Invalid,
-                    "Catalog build failed".to_string()
+                    "Catalog build failed".to_string(),
                 ));
             }
         }
@@ -346,11 +438,7 @@ pub fn start_health_monitor(state: AppState) {
 }
 
 /// Start auto-adoption task if enabled
-pub fn start_auto_adoption(
-    state: AppState,
-    config: infra::MossConfig,
-    console: &ConsolePrinter,
-) {
+pub fn start_auto_adoption(state: AppState, config: infra::MossConfig, console: &ConsolePrinter) {
     let adoption_config = config.adoption();
     start_auto_adoption_with_config(state, adoption_config, console);
 }
@@ -426,7 +514,9 @@ pub async fn start_lantern_registration(
     let lantern_url = lantern_endpoint.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = lantern_registration_loop(reg_stone_id, reg_stone_name, reg_endpoint, lantern_url).await {
+        if let Err(e) =
+            lantern_registration_loop(reg_stone_id, reg_stone_name, reg_endpoint, lantern_url).await
+        {
             tracing::error!(error = ?e, "Lantern registration loop failed");
         }
     });
@@ -578,17 +668,22 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                     &state_persistence.stone_id,
                     &state_persistence.stone_name,
                     &endpoint,
-                ).await {
+                )
+                .await
+                {
                     tracing::debug!(
                         error = %e,
                         "Failed to update storage cache after mount recovery"
                     );
+                } else {
+                    state_persistence.refresh_local_tools_projection().await;
                 }
 
                 // Refresh seed bank cache for portrait/UI
                 match SeedBankRegistry::scan().await {
                     Ok(registry) => {
-                        let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                        let banks: Vec<SeedBankInfo> =
+                            registry.list().into_iter().cloned().collect();
                         let mut cache = state_persistence.seed_bank_cache.write().await;
                         *cache = banks;
                     }
@@ -619,7 +714,9 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
             match SeedBankRegistry::auto_mount_seed_banks_with_tracker(
                 Some(&tracker_hotplug),
                 Some(&state_hotplug.event_bus),
-            ).await {
+            )
+            .await
+            {
                 Ok(()) => {}
                 Err(e) => {
                     tracing::trace!(
@@ -634,15 +731,13 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                 Ok(registry) => {
                     let count = registry.list().len();
                     if count > 0 {
-                        tracing::trace!(
-                            seed_banks = count,
-                            "Hot-plug scan: seed banks detected"
-                        );
+                        tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
                     }
 
                     // Refresh seed bank cache for portrait/UI
                     {
-                        let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                        let banks: Vec<SeedBankInfo> =
+                            registry.list().into_iter().cloned().collect();
                         let mut cache = state_hotplug.seed_bank_cache.write().await;
                         *cache = banks;
                     }
@@ -654,11 +749,15 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                         &state_hotplug.stone_id,
                         &state_hotplug.stone_name,
                         &endpoint,
-                    ).await {
+                    )
+                    .await
+                    {
                         tracing::trace!(
                             error = %e,
                             "Failed to update storage cache during hot-plug scan"
                         );
+                    } else {
+                        state_hotplug.refresh_local_tools_projection().await;
                     }
                 }
                 Err(e) => {
@@ -695,14 +794,12 @@ fn start_seedbank_hotplug_detection_basic(state: AppState) {
                 Ok(registry) => {
                     let count = registry.list().len();
                     if count > 0 {
-                        tracing::trace!(
-                            seed_banks = count,
-                            "Hot-plug scan: seed banks detected"
-                        );
+                        tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
                     }
 
                     {
-                        let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                        let banks: Vec<SeedBankInfo> =
+                            registry.list().into_iter().cloned().collect();
                         let mut cache = state.seed_bank_cache.write().await;
                         *cache = banks;
                     }
@@ -714,11 +811,15 @@ fn start_seedbank_hotplug_detection_basic(state: AppState) {
                         &state.stone_id,
                         &state.stone_name,
                         &endpoint,
-                    ).await {
+                    )
+                    .await
+                    {
                         tracing::trace!(
                             error = %e,
                             "Failed to update storage cache during hot-plug scan"
                         );
+                    } else {
+                        state.refresh_local_tools_projection().await;
                     }
                 }
                 Err(e) => {
@@ -761,6 +862,8 @@ pub async fn start_all_background_tasks(
         api_endpoint.to_string(),
         state.topology_cache.clone(),
         state.storage_cache.clone(),
+        state.tools_cache.clone(),
+        state.tools_tx.clone(),
         state.self_entry.clone(),
         console.clone(),
         state.infrastructure_handlers.clone(),

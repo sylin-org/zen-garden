@@ -1,0 +1,270 @@
+use crate::domain::tools::{stream_event_type_for_delta, ToolQuery, ToolsSnapshotPayload};
+use crate::{error_response, AppState};
+use axum::{
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
+    response::sse::{Event, KeepAlive, Sse},
+    Json,
+};
+use futures_util::stream::{self, Stream, StreamExt};
+use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::tools::event_types;
+use garden_common::tools::{CapabilitySelector, ToolDelta, ToolState, ToolType};
+use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use std::time::Duration;
+use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ToolsQueryParams {
+    #[serde(default)]
+    pub tool_type: Option<String>,
+    #[serde(default)]
+    pub tool_fqid: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub capability: Option<String>,
+    #[serde(default)]
+    pub since: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ToolsSnapshotResponse {
+    pub cursor: u64,
+    pub tools: Vec<garden_common::tools::ToolProjection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replay: Vec<ToolDelta>,
+}
+
+pub async fn list_garden_tools_v1(
+    State(state): State<AppState>,
+    Query(query): Query<ToolsQueryParams>,
+) -> Result<Json<ApiResponse<ToolsSnapshotResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let filter = parse_query(&query)?;
+    let since = query.since.unwrap_or(0);
+
+    let (cursor, tools, replay) = {
+        let cache = state.tools_cache.read().await;
+        let (cursor, tools) = cache.snapshot(&filter);
+        let replay = if since > 0 {
+            cache.deltas_since(since, &filter)
+        } else {
+            Vec::new()
+        };
+        (cursor, tools, replay)
+    };
+
+    Ok(Json(ApiResponse::new(ToolsSnapshotResponse {
+        cursor,
+        tools,
+        replay,
+    })))
+}
+
+pub async fn stream_garden_tools_v1(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ToolsQueryParams>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<ApiErrorResponse>)>
+{
+    let filter = parse_query(&query)?;
+    let mut resume_cursor = query.since.unwrap_or(0);
+
+    let rx = state.tools_tx.subscribe();
+
+    let (snapshot_cursor, snapshot_tools, replay) = {
+        let cache = state.tools_cache.read().await;
+        if resume_cursor == 0 {
+            if let Some(last_event_id) = extract_last_event_id(&headers) {
+                resume_cursor = parse_resume_cursor(last_event_id, &cache);
+            }
+        }
+
+        let (cursor, tools) = cache.snapshot(&filter);
+        let replay = if resume_cursor > 0 {
+            cache.deltas_since(resume_cursor, &filter)
+        } else {
+            Vec::new()
+        };
+        (cursor, tools, replay)
+    };
+
+    let snapshot_payload = ToolsSnapshotPayload {
+        cursor: snapshot_cursor,
+        tools: snapshot_tools,
+    };
+    let snapshot_json = serde_json::to_string(&snapshot_payload).unwrap_or_else(|_| {
+        serde_json::json!({ "cursor": snapshot_cursor, "tools": [] }).to_string()
+    });
+
+    let snapshot_event = Event::default()
+        .id(snapshot_cursor.to_string())
+        .event(event_types::TOOLS_SNAPSHOT)
+        .data(snapshot_json);
+    let snapshot_stream = stream::once(async move { Ok(snapshot_event) });
+
+    let replay_filter = filter.clone();
+    let replay_stream = stream::iter(replay.into_iter().filter_map(move |delta| {
+        let replay_filter = replay_filter.clone();
+        delta_to_event(&delta, &replay_filter).map(Ok::<Event, Infallible>)
+    }));
+
+    let live_filter = filter.clone();
+    let live_stream = BroadcastStream::new(rx).filter_map(move |result| {
+        let live_filter = live_filter.clone();
+        async move {
+            match result {
+                Ok(delta) => {
+                    if delta.cursor <= snapshot_cursor {
+                        return None;
+                    }
+                    delta_to_event(&delta, &live_filter).map(Ok::<Event, Infallible>)
+                }
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "Tools stream receiver lagged");
+                    None
+                }
+            }
+        }
+    });
+
+    let heartbeat_stream =
+        IntervalStream::new(tokio::time::interval(Duration::from_secs(15))).map(move |_| {
+            let data = serde_json::json!({
+                "cursor": snapshot_cursor,
+                "timestamp": chrono::Utc::now(),
+            });
+            Ok::<Event, Infallible>(
+                Event::default()
+                    .event(event_types::TOOLS_HEARTBEAT)
+                    .data(data.to_string()),
+            )
+        });
+
+    let stream = stream::select(
+        snapshot_stream.chain(replay_stream).chain(live_stream),
+        heartbeat_stream,
+    );
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+fn parse_query(
+    query: &ToolsQueryParams,
+) -> Result<ToolQuery, (StatusCode, Json<ApiErrorResponse>)> {
+    let tool_type = match query.tool_type.as_deref() {
+        Some("offering") => Some(ToolType::Offering),
+        Some("seed-bank") => Some(ToolType::SeedBank),
+        Some(other) => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_TOOL_TYPE",
+                format!("Unsupported tool_type '{}'", other),
+                None,
+            ));
+        }
+        None => None,
+    };
+
+    let state = match query.state.as_deref() {
+        Some("ready") => Some(ToolState::Ready),
+        Some("degraded") => Some(ToolState::Degraded),
+        Some("unavailable") => Some(ToolState::Unavailable),
+        Some(other) => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_TOOL_STATE",
+                format!("Unsupported state '{}'", other),
+                None,
+            ));
+        }
+        None => None,
+    };
+
+    let capabilities = query
+        .capability
+        .as_deref()
+        .map(parse_capability_selectors)
+        .transpose()?;
+
+    Ok(ToolQuery {
+        tool_type,
+        tool_fqid: query
+            .tool_fqid
+            .as_deref()
+            .map(|fqid| fqid.trim().to_ascii_lowercase())
+            .filter(|fqid| !fqid.is_empty()),
+        state,
+        capabilities: capabilities.unwrap_or_default(),
+    })
+}
+
+fn parse_capability_selectors(
+    raw: &str,
+) -> Result<Vec<CapabilitySelector>, (StatusCode, Json<ApiErrorResponse>)> {
+    let mut parsed = Vec::new();
+    for token in raw.split(|c| c == ',' || c == '|') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let Some((cap_type, item)) = token.split_once(':') else {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_CAPABILITY_FILTER",
+                "capability must be '<type>:<item>' (comma-separated for multiple)".to_string(),
+                None,
+            ));
+        };
+        let cap_type = cap_type.trim().to_ascii_lowercase();
+        let item = item.trim().to_string();
+        if cap_type.is_empty() || item.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_CAPABILITY_FILTER",
+                "capability must be '<type>:<item>' (comma-separated for multiple)".to_string(),
+                None,
+            ));
+        }
+        parsed.push(CapabilitySelector { cap_type, item });
+    }
+
+    if parsed.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_CAPABILITY_FILTER",
+            "capability must include at least one '<type>:<item>' selector".to_string(),
+            None,
+        ));
+    }
+
+    Ok(parsed)
+}
+
+fn extract_last_event_id(headers: &HeaderMap) -> Option<&str> {
+    headers.get("last-event-id").and_then(|h| h.to_str().ok())
+}
+
+fn parse_resume_cursor(last_event_id: &str, cache: &crate::domain::tools::ToolsCacheInner) -> u64 {
+    if let Ok(parsed) = last_event_id.trim().parse::<u64>() {
+        return parsed;
+    }
+    cache.cursor_for_event_id(last_event_id).unwrap_or(0)
+}
+
+fn delta_to_event(delta: &ToolDelta, filter: &ToolQuery) -> Option<Event> {
+    if !filter.matches_delta(delta) {
+        return None;
+    }
+
+    let event_type = stream_event_type_for_delta(delta);
+    let payload = serde_json::to_string(delta).ok()?;
+
+    Some(
+        Event::default()
+            .id(delta.event_id.clone())
+            .event(event_type)
+            .data(payload),
+    )
+}

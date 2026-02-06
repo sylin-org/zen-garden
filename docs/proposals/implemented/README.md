@@ -2,6 +2,26 @@
 
 This directory contains proposals that have been fully implemented in the codebase.
 
+## Tools Domain (2026-02-06)
+
+Unified automation-grade tools projection and stream for offerings + seed banks, with event-driven wishful readiness and capability propagation.
+
+### Proposals
+1. **[../zen-garden-spec-tools-domain.md](../zen-garden-spec-tools-domain.md)** - Original specification
+   - Status: ✅ Implemented (greenfield)
+   - Implementation Date: 2026-02-06
+   - API: `GET /api/v1/garden/tools`, `GET /api/v1/garden/tools/stream`
+   - Beacon: `TOOLS_BEACON` (`tools_beacon`)
+   - CLI: `garden-rake find <query> wishfully` waits on tools stream readiness
+
+2. **[tools-domain-implementation.md](tools-domain-implementation.md)** - Implementation report
+   - Delivered module map, stream semantics, and validation results
+
+### Documentation
+- User guide: [../../guides/tools-domain-user-guide.md](../../guides/tools-domain-user-guide.md)
+
+---
+
 ## Intelligent Offering Placement (2026-01-23)
 
 The intelligent placement system was fully implemented, enabling automatic stone selection based on compatibility and resource scoring.
@@ -160,4 +180,4 @@ Active proposals awaiting implementation.
 
 ---
 
-**Last Updated**: 2026-01-24
+**Last Updated**: 2026-02-06

@@ -1,4 +1,4 @@
-﻿//! Infrastructure layer - I/O operations
+//! Infrastructure layer - I/O operations
 //!
 //! This layer contains all external I/O:
 //! - Communications (UDP P2P, mDNS)
@@ -14,10 +14,10 @@
 //!
 //! No business logic here - pure I/O Companions.
 
-pub mod companions;
 pub mod api_helpers;
 pub mod auth;
 pub mod ceremony_journal;
+pub mod companions;
 pub mod config;
 pub mod container;
 pub mod detection;
@@ -35,60 +35,65 @@ pub mod manifests;
 pub mod network;
 pub mod nurturing_store;
 pub mod persistence;
-pub mod task_store;
 pub mod process;
 pub mod secrets;
 pub mod service;
 pub mod storage;
+pub mod task_store;
+pub mod tools;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 
-pub use companions::CompanionRegistry;
-pub use api_helpers::{error_response, error_codes, require_docker};
+pub use api_helpers::{error_codes, error_response, require_docker};
 pub use auth::NoAuth;
-pub use config::{MossConfig, NetworkConfig, StaticIpPoolConfig, AdoptionConfig};
+pub use ceremony_journal::CeremonyJournal;
+pub use companions::CompanionRegistry;
+pub use config::{AdoptionConfig, MossConfig, NetworkConfig, StaticIpPoolConfig};
 pub use container::ContainerRuntime;
-pub use garden_common::infra::network::get_local_ip;
-pub use process::{kill_existing_moss_processes_graceful, check_moss_processes_exist, kill_existing_moss_processes};
-#[cfg(target_os = "windows")]
-pub use service::{install_windows_service, finalize_service_update, cleanup_after_service_update, spawn_windows_updater, cleanup_updater_process};
+pub use embedded::{
+    list_all_manifests, load_embedded_adopted_offerings, load_sw_manifests_with_overlay,
+    manifest_exists, read_manifest_overlay, AssetSource, EmbeddedCompanions, EmbeddedManifests,
+    ManifestSource,
+};
+pub use event_bus::{spawn_listener, EventBus, EventListener};
 pub use filesystem::FileSystem;
-pub use hardware::{detect_hardware, load_cached_capabilities, save_capabilities_cache, create_skeleton};
-pub use hardware_id::{generate_hardware_id, load_cached_hardware_id, save_hardware_id_cache};
-pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
+pub use garden_common::infra::archive::{
+    calculate_checksum, create_archive, extract_archive, verify_checksum, ArchiveInfo, Archiver,
+};
+pub use garden_common::infra::network::get_local_ip;
+pub use garden_common::infra::platform::{is_running_from_removable_media, shutdown_signal};
+pub use hardware::{
+    create_skeleton, detect_hardware, load_cached_capabilities, save_capabilities_cache,
+};
 #[cfg(target_os = "windows")]
 pub use hardware_id::is_first_run_windows;
-pub use manifests::{
-    ManifestRegistry,
-    Offering, OfferingRegistry, OfferingMetadata,
-    ManagedConfig, AdoptedConfig, BorrowedConfig,
-    HwManifests, HwEntry,
-};
-pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
-pub use persistence::{
-    load_offerings_cache, save_offerings_cache, load_or_generate_stone_id,
-    load_offerings, save_offerings,
-};
-pub use garden_common::infra::platform::{is_running_from_removable_media, shutdown_signal};
-pub use secrets::SecretsManager;
-pub use garden_common::infra::archive::{Archiver, ArchiveInfo, create_archive, extract_archive, calculate_checksum, verify_checksum};
-pub use ceremony_journal::CeremonyJournal;
-pub use harvest_store::HarvestStore;
+pub use hardware_id::{generate_hardware_id, load_cached_hardware_id, save_hardware_id_cache};
+pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
-pub use nurturing_store::NurturingStore;
-pub use task_store::{TaskStore, TaskRegistry};
-pub use embedded::{
-    EmbeddedManifests, EmbeddedCompanions,
-    read_manifest_overlay, manifest_exists, list_all_manifests,
-    load_sw_manifests_with_overlay, load_embedded_adopted_offerings,
-    AssetSource, ManifestSource,
-};
-pub use event_bus::{EventBus, EventListener, spawn_listener};
+pub use harvest_store::HarvestStore;
 pub use listeners::{ChirpListener, SeedBankCacheListener, SseEvent, SseListener, TimerListener};
-pub use network::{
-    NetworkPlatform, StaticIpApply,
-    detect_platform, select_ip_from_pool,
-    apply_static_from_pool, revert_to_dhcp,
-    load_network_state, save_network_state,
-    probe_ip_conflict, ProbeConfig,
+pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
+pub use manifests::{
+    AdoptedConfig, BorrowedConfig, HwEntry, HwManifests, ManagedConfig, ManifestRegistry, Offering,
+    OfferingMetadata, OfferingRegistry,
 };
+pub use network::{
+    apply_static_from_pool, detect_platform, load_network_state, probe_ip_conflict, revert_to_dhcp,
+    save_network_state, select_ip_from_pool, NetworkPlatform, ProbeConfig, StaticIpApply,
+};
+pub use nurturing_store::NurturingStore;
+pub use persistence::{
+    load_offerings, load_offerings_cache, load_or_generate_stone_id, save_offerings,
+    save_offerings_cache,
+};
+pub use process::{
+    check_moss_processes_exist, kill_existing_moss_processes, kill_existing_moss_processes_graceful,
+};
+pub use secrets::SecretsManager;
+#[cfg(target_os = "windows")]
+pub use service::{
+    cleanup_after_service_update, cleanup_updater_process, finalize_service_update,
+    install_windows_service, spawn_windows_updater,
+};
+pub use task_store::{TaskRegistry, TaskStore};
+pub use tools::broadcast_tools_beacon;

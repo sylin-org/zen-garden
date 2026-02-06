@@ -8,19 +8,18 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use garden_common::{
+    api_utils::ApiErrorResponse, offerings::parse_offering_fqn, CapabilityCollection, Offering,
+    OfferingMode, Ports, ServiceInfo, ServiceStatus,
+};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::Duration;
-use reqwest::Client;
 use urlencoding::encode;
-use garden_common::{
-    api_utils::ApiErrorResponse,
-    offerings::parse_offering_fqn,
-    CapabilityCollection, OfferingMode, ServiceInfo, ServiceStatus, Ports, Offering,
-};
-use serde::{Deserialize, Serialize};
 
 use crate::api::responses::ApiResponse;
-use crate::domain::{CapabilityExecutor, get_offering_port, topology};
+use crate::domain::{get_offering_port, topology, CapabilityExecutor};
 use crate::infra::manifests::get_capability_manifest;
 use crate::{error_response, AppState};
 
@@ -145,7 +144,10 @@ pub async fn list_offering_capabilities_v1(
         // Update in unified registry
         {
             let mut offerings = state.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering.offering_id) {
+            if let Some(o) = offerings
+                .iter_mut()
+                .find(|o| o.offering_id == offering.offering_id)
+            {
                 o.sub_capabilities = sub_caps;
             }
         }
@@ -163,7 +165,6 @@ pub async fn list_offering_capabilities_v1(
         suggestions: None,
     }))
 }
-
 
 /// Request body for adding a capability
 #[derive(Debug, Deserialize)]
@@ -291,26 +292,36 @@ pub async fn add_offering_capability_v1(
         error_response(
             StatusCode::NOT_FOUND,
             "NO_CAPABILITY_MANIFEST",
-            format!("No capability manifest found for offering '{}'.", service.offering),
+            format!(
+                "No capability manifest found for offering '{}'.",
+                service.offering
+            ),
             None,
         )
     })?;
 
     // Determine capability type
     let cap_type = request.cap_type.clone().unwrap_or_else(|| {
-        manifest.capabilities.first()
+        manifest
+            .capabilities
+            .first()
             .map(|c| c.cap_type.clone())
             .unwrap_or_else(|| "model".to_string())
     });
 
     // Find the capability definition
-    let cap_def = manifest.capabilities.iter()
+    let cap_def = manifest
+        .capabilities
+        .iter()
         .find(|c| c.cap_type == cap_type)
         .ok_or_else(|| {
             error_response(
                 StatusCode::BAD_REQUEST,
                 "UNKNOWN_CAPABILITY_TYPE",
-                format!("Capability type '{}' not found in manifest for '{}'.", cap_type, service.offering),
+                format!(
+                    "Capability type '{}' not found in manifest for '{}'.",
+                    cap_type, service.offering
+                ),
                 None,
             )
         })?;
@@ -320,7 +331,10 @@ pub async fn add_offering_capability_v1(
         return Err(error_response(
             StatusCode::NOT_IMPLEMENTED,
             "ADD_NOT_SUPPORTED",
-            format!("Adding capabilities of type '{}' is not supported for '{}'.", cap_type, service.offering),
+            format!(
+                "Adding capabilities of type '{}' is not supported for '{}'.",
+                cap_type, service.offering
+            ),
             None,
         ));
     }
@@ -345,7 +359,10 @@ pub async fn add_offering_capability_v1(
                 offering: service.name.clone(),
                 capability: request.name.clone(),
                 cap_type: cap_type.clone(),
-                message: format!("{} '{}' already exists for {}", cap_type, request.name, service.name),
+                message: format!(
+                    "{} '{}' already exists for {}",
+                    cap_type, request.name, service.name
+                ),
             },
             suggestions: None,
         }));
@@ -358,7 +375,10 @@ pub async fn add_offering_capability_v1(
                 offering: service.name.clone(),
                 capability: request.name.clone(),
                 cap_type: cap_type.clone(),
-                message: format!("{} '{}' can be added to {}", cap_type, request.name, service.name),
+                message: format!(
+                    "{} '{}' can be added to {}",
+                    cap_type, request.name, service.name
+                ),
             },
             suggestions: None,
         }));
@@ -369,13 +389,18 @@ pub async fn add_offering_capability_v1(
     {
         let jobs = state.jobs.read().await;
         for (job_id, job) in jobs.iter() {
-            if job_id.starts_with(&job_key) && matches!(job.status, JobStatus::Running | JobStatus::Pending) {
+            if job_id.starts_with(&job_key)
+                && matches!(job.status, JobStatus::Running | JobStatus::Pending)
+            {
                 return Ok(Json(ApiResponse {
                     data: AddCapabilityResponse::InProgress {
                         offering: service.name.clone(),
                         capability: request.name.clone(),
                         job_id: job_id.clone(),
-                        message: format!("Add operation already in progress for {} '{}'", cap_type, request.name),
+                        message: format!(
+                            "Add operation already in progress for {} '{}'",
+                            cap_type, request.name
+                        ),
                     },
                     suggestions: None,
                 }));
@@ -411,7 +436,8 @@ pub async fn add_offering_capability_v1(
             &offering_clone,
             &cap_type_clone,
             &cap_name_clone,
-        ).await;
+        )
+        .await;
     });
 
     tracing::info!(
@@ -467,36 +493,54 @@ pub async fn remove_offering_capability_v1(
         error_response(
             StatusCode::NOT_FOUND,
             "NO_CAPABILITY_MANIFEST",
-            format!("No capability manifest found for offering '{}'.", service.offering),
+            format!(
+                "No capability manifest found for offering '{}'.",
+                service.offering
+            ),
             None,
         )
     })?;
 
     // Determine capability type
     let cap_type = query.cap_type.as_deref().unwrap_or_else(|| {
-        manifest.capabilities.first()
+        manifest
+            .capabilities
+            .first()
             .map(|c| c.cap_type.as_str())
             .unwrap_or("model")
     });
 
     // Find the capability definition
-    let cap_def = manifest.capabilities.iter()
+    let cap_def = manifest
+        .capabilities
+        .iter()
         .find(|c| c.cap_type == cap_type)
         .ok_or_else(|| {
             error_response(
                 StatusCode::BAD_REQUEST,
                 "UNKNOWN_CAPABILITY_TYPE",
-                format!("Capability type '{}' not found in manifest for '{}'.", cap_type, service.offering),
+                format!(
+                    "Capability type '{}' not found in manifest for '{}'.",
+                    cap_type, service.offering
+                ),
                 None,
             )
         })?;
 
     // Check if remove operation is available
-    if cap_def.remove.as_ref().map(|r| !r.available).unwrap_or(true) {
+    if cap_def
+        .remove
+        .as_ref()
+        .map(|r| !r.available)
+        .unwrap_or(true)
+    {
         return Err(error_response(
             StatusCode::NOT_IMPLEMENTED,
             "REMOVE_NOT_SUPPORTED",
-            format!("Removing capabilities of type '{}' is not supported for '{}'.", cap_type, service.offering),
+            format!(
+                "Removing capabilities of type '{}' is not supported for '{}'.",
+                cap_type, service.offering
+            ),
             None,
         ));
     }
@@ -514,6 +558,24 @@ pub async fn remove_offering_capability_v1(
                 None,
             )
         })?;
+
+    if result.success {
+        crate::domain::tools::capability_orchestrator::record_capability_removed(
+            &state,
+            &service.name,
+            cap_type,
+            &capability_name,
+        )
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CAPABILITY_STATE_UPDATE_FAILED",
+                format!("Capability removed but state update failed: {}", e),
+                None,
+            )
+        })?;
+    }
 
     Ok(Json(ApiResponse {
         data: CapabilityMutationResponse {
@@ -683,7 +745,10 @@ pub async fn refresh_offering_capabilities_v1(
         error_response(
             StatusCode::NOT_FOUND,
             "NO_CAPABILITY_MANIFEST",
-            format!("No capability manifest found for offering '{}'.", service.offering),
+            format!(
+                "No capability manifest found for offering '{}'.",
+                service.offering
+            ),
             None,
         )
     })?;
@@ -764,7 +829,9 @@ pub async fn refresh_offering_capabilities_v1(
         let jobs = state.jobs.read().await;
         for (job_id, job) in jobs.iter() {
             // Check if this is a refresh job for the same offering and still running
-            if job_id.starts_with(&job_key) && matches!(job.status, JobStatus::Running | JobStatus::Pending) {
+            if job_id.starts_with(&job_key)
+                && matches!(job.status, JobStatus::Running | JobStatus::Pending)
+            {
                 let completed = job.completed.len();
                 let failed = job.failed.len();
                 let job_total = job.offerings.len(); // offerings holds capability names for refresh jobs
@@ -793,7 +860,10 @@ pub async fn refresh_offering_capabilities_v1(
     let job_id = format!("{}-{}", job_key, uuid::Uuid::now_v7());
 
     // For refresh jobs, we use offerings to store capability names for progress tracking
-    let capability_names: Vec<String> = capabilities_to_refresh.iter().map(|c| c.name.clone()).collect();
+    let capability_names: Vec<String> = capabilities_to_refresh
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
 
     let job = Job {
         id: job_id.clone(),
@@ -818,7 +888,8 @@ pub async fn refresh_offering_capabilities_v1(
             &job_id_clone,
             &offering_clone,
             cap_type_filter.as_deref(),
-        ).await;
+        )
+        .await;
     });
 
     tracing::info!(
@@ -902,7 +973,8 @@ pub async fn mirror_offering_capabilities_v1(
         .build()
         .unwrap_or_else(|_| Client::new());
 
-    let source_caps = fetch_remote_capabilities(&client, &from_endpoint, from, &offering_fqn).await?;
+    let source_caps =
+        fetch_remote_capabilities(&client, &from_endpoint, from, &offering_fqn).await?;
     let target_caps = fetch_remote_capabilities(&client, &to_endpoint, to, &offering_fqn).await?;
 
     let mut target_set: HashSet<(String, String)> = HashSet::new();
@@ -945,7 +1017,9 @@ pub async fn mirror_offering_capabilities_v1(
                 &key.0,
                 &key.1,
                 request.dry_run,
-            ).await {
+            )
+            .await
+            {
                 Ok(response) => match response {
                     AddCapabilityResponse::AlreadyExists { .. } => {
                         skipped += 1;
@@ -975,7 +1049,10 @@ pub async fn mirror_offering_capabilities_v1(
     let message = if request.dry_run {
         Some(format!("Dry run: {} capabilities would be mirrored", added))
     } else {
-        Some(format!("Mirror completed: {} added, {} skipped, {} failed", added, skipped, failed))
+        Some(format!(
+            "Mirror completed: {} added, {} skipped, {} failed",
+            added, skipped, failed
+        ))
     };
 
     Ok(Json(ApiResponse {
@@ -1054,22 +1131,22 @@ async fn fetch_remote_capabilities(
         return Err(error_response(
             http_status,
             code,
-            format!("Failed to fetch capabilities from '{}': {}", stone_name, message),
+            format!(
+                "Failed to fetch capabilities from '{}': {}",
+                stone_name, message
+            ),
             None,
         ));
     }
 
-    let api_response: ApiResponse<CapabilitiesResponse> = response
-        .json()
-        .await
-        .map_err(|e| {
-            error_response(
-                StatusCode::BAD_GATEWAY,
-                "REMOTE_PARSE_FAILED",
-                format!("Failed to parse capabilities from '{}': {}", stone_name, e),
-                None,
-            )
-        })?;
+    let api_response: ApiResponse<CapabilitiesResponse> = response.json().await.map_err(|e| {
+        error_response(
+            StatusCode::BAD_GATEWAY,
+            "REMOTE_PARSE_FAILED",
+            format!("Failed to parse capabilities from '{}': {}", stone_name, e),
+            None,
+        )
+    })?;
 
     Ok(api_response.data)
 }
@@ -1095,7 +1172,11 @@ async fn add_capability_to_stone(
         "dry_run": dry_run,
     });
 
-    let response = client.post(&url).json(&body).send().await
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
     if !response.status().is_success() {
@@ -1178,13 +1259,11 @@ async fn find_service_for_capability(
             let service = offering_to_service_info(&offering, state).await;
             Ok((service, mode))
         }
-        None => {
-            Err(error_response(
-                StatusCode::NOT_FOUND,
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' is not running on this stone.", offering_fqn),
-                None,
-            ))
-        }
+        None => Err(error_response(
+            StatusCode::NOT_FOUND,
+            "OFFERING_NOT_FOUND",
+            format!("Offering '{}' is not running on this stone.", offering_fqn),
+            None,
+        )),
     }
 }

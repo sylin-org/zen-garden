@@ -10,21 +10,22 @@
 //! - Emit events for progress tracking
 //! - Don't block the HTTP response
 
-use crate::{AppState, JobStatus};
-use crate::api::v1::events::{emit_job_progress, emit_job_started, emit_job_completed, emit_job_failed};
+use crate::api::v1::events::{
+    emit_job_completed, emit_job_failed, emit_job_progress, emit_job_started,
+};
 use crate::domain::events::OfferingEvent;
 use crate::domain::get_compiled_offering;
 use crate::domain::network::NetworkMode;
-use crate::infra::TaskStore;
 use crate::infra::config::MossConfig;
-use crate::infra::network::{load_network_state, apply_static_from_pool};
+use crate::infra::network::{apply_static_from_pool, load_network_state};
+use crate::infra::TaskStore;
+use crate::{AppState, JobStatus};
 use garden_common::console;
-use garden_common::templates::{TemplateContext, render_template};
+use garden_common::templates::{render_template, TemplateContext};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
-    offerings::parse_offering_fqn,
-    ManagedData, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
-    ServiceHealthStatus, Offering,
+    offerings::parse_offering_fqn, ManagedData, Offering, OfferingGuidance, OfferingLocation,
+    OfferingModeData, OfferingStatus, ServiceHealthStatus,
 };
 
 /// Substitute template variables in guidance markdown
@@ -187,12 +188,17 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
     let static_ip = static_ip_str.as_deref();
 
     // Log all manifests that have guidance templates
-    let manifests_with_guidance: Vec<(String, usize)> = state.manifest_registry.sw
+    let manifests_with_guidance: Vec<(String, usize)> = state
+        .manifest_registry
+        .sw
         .entries
         .iter()
         .filter(|(_, entry)| entry.guidance.is_some())
         .map(|(name, entry)| {
-            (name.clone(), entry.guidance.as_ref().map(|g| g.len()).unwrap_or(0))
+            (
+                name.clone(),
+                entry.guidance.as_ref().map(|g| g.len()).unwrap_or(0),
+            )
         })
         .collect();
 
@@ -205,7 +211,12 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 
     // First pass: collect offerings that need guidance
     // For backfilling, we use the manifest's ports since existing offerings may only have a single port stored
-    let offerings_needing_guidance: Vec<(String, String, String, std::collections::HashMap<String, (u16, u16)>)> = {
+    let offerings_needing_guidance: Vec<(
+        String,
+        String,
+        String,
+        std::collections::HashMap<String, (u16, u16)>,
+    )> = {
         let offerings = state.offerings.read().await;
         tracing::info!(
             offering_count = offerings.len(),
@@ -216,10 +227,14 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             .iter()
             .filter(|o| o.is_managed())
             .filter(|o| {
-                let has_guidance = o.managed_data()
+                let has_guidance = o
+                    .managed_data()
                     .map(|m| m.guidance.is_some())
                     .unwrap_or(false);
-                let manifest_has_guidance = state.manifest_registry.sw.get(&o.offering)
+                let manifest_has_guidance = state
+                    .manifest_registry
+                    .sw
+                    .get(&o.offering)
                     .map(|m| m.guidance.is_some())
                     .unwrap_or(false);
 
@@ -236,10 +251,18 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             })
             .filter_map(|o| {
                 // Get ports from the manifest template for proper template substitution
-                let ports = state.manifest_registry.sw.get(&o.offering)
+                let ports = state
+                    .manifest_registry
+                    .sw
+                    .get(&o.offering)
                     .and_then(|m| m.parse_template().ok())
                     .map(|t| t.ports)?;
-                Some((o.offering_id.clone(), o.name.clone(), o.offering.clone(), ports))
+                Some((
+                    o.offering_id.clone(),
+                    o.name.clone(),
+                    o.offering.clone(),
+                    ports,
+                ))
             })
             .collect()
     };
@@ -258,7 +281,8 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
     {
         let mut offerings = state.offerings.write().await;
         for (offering_id, name, offering_type, ports) in offerings_needing_guidance {
-            if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip) {
+            if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip)
+            {
                 if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
                     if let Some(ref mut managed) = o.managed_data_mut() {
                         managed.guidance = Some(guidance);
@@ -275,7 +299,10 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         if let Err(e) = state.persist_offerings().await {
             tracing::error!(error = ?e, "Failed to persist offerings after guidance backfill");
         } else {
-            tracing::info!(count = updated, "Guidance backfill complete, offerings persisted");
+            tracing::info!(
+                count = updated,
+                "Guidance backfill complete, offerings persisted"
+            );
         }
     }
 
@@ -332,20 +359,24 @@ pub async fn install_service_task(
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Started,
-        format!("Install {} (job: {})", offering, &job_id[..8])
+        format!("Install {} (job: {})", offering, &job_id[..8]),
     ));
 
     emit_job_started(state, job_id, offering, "install");
     tracing::info!(job_id, offering, "Starting service installation");
 
-    tracing::debug!(offering, offering_type, "Resolving compiled offering config");
+    tracing::debug!(
+        offering,
+        offering_type,
+        "Resolving compiled offering config"
+    );
     let compiled = match get_compiled_offering(state, offering_type).await {
         Ok(Some(o)) => o,
         Ok(None) => {
             state.console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Jobs,
                 console::EventStatus::Failed,
-                format!("Offering not found: {}", offering)
+                format!("Offering not found: {}", offering),
             ));
             emit_job_failed(state, job_id, offering, "Offering not found");
             // Remove Installing entry from registry
@@ -360,14 +391,21 @@ pub async fn install_service_task(
             return;
         }
         Err(e) => {
-            emit_job_failed(state, job_id, offering, &format!("Failed to read offerings index: {}", e));
+            emit_job_failed(
+                state,
+                job_id,
+                offering,
+                &format!("Failed to read offerings index: {}", e),
+            );
             // Remove Installing entry from registry
             remove_installing_entry(state, offering).await;
             let mut jobs = state.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
                 job.status = JobStatus::Failed;
-                job.failed
-                    .insert(offering.to_string(), format!("Offerings index error: {}", e));
+                job.failed.insert(
+                    offering.to_string(),
+                    format!("Offerings index error: {}", e),
+                );
                 job.completed_at = Some(std::time::SystemTime::now());
             }
             return;
@@ -383,17 +421,24 @@ pub async fn install_service_task(
         state.console.emit(console::ConsoleEvent::new(
             console::EventCategory::Jobs,
             console::EventStatus::Failed,
-            format!("Compatibility: {}", offering)
+            format!("Compatibility: {}", offering),
         ));
-        emit_job_failed(state, job_id, offering, &format!("Compatibility validation failed: {}", reason));
+        emit_job_failed(
+            state,
+            job_id,
+            offering,
+            &format!("Compatibility validation failed: {}", reason),
+        );
 
         // Remove Installing entry from registry
         remove_installing_entry(state, offering).await;
         let mut jobs = state.jobs.write().await;
         if let Some(job) = jobs.get_mut(job_id) {
             job.status = JobStatus::Failed;
-            job.failed
-                .insert(offering.to_string(), format!("Compatibility failed: {}", reason));
+            job.failed.insert(
+                offering.to_string(),
+                format!("Compatibility failed: {}", reason),
+            );
             job.completed_at = Some(std::time::SystemTime::now());
         }
         return;
@@ -447,7 +492,9 @@ pub async fn install_service_task(
                     // Just register as additional requester (no SSE - internal bookkeeping)
                     let is_first = network_state.add_requester(offering);
                     if !is_first {
-                        let existing_ip = network_state.mode.static_address()
+                        let existing_ip = network_state
+                            .mode
+                            .static_address()
                             .unwrap_or_else(|| "0.0.0.0".parse().unwrap());
                         tracing::info!(
                             offering = %offering,
@@ -456,7 +503,9 @@ pub async fn install_service_task(
                             "Registered as additional static IP requester"
                         );
                         // Save updated state with new requester
-                        if let Err(e) = crate::infra::network::save_network_state(&network_state).await {
+                        if let Err(e) =
+                            crate::infra::network::save_network_state(&network_state).await
+                        {
                             tracing::warn!(error = ?e, "Failed to save network state");
                         }
                     }
@@ -481,11 +530,12 @@ pub async fn install_service_task(
 
                             if compiled.network.requires_static_ip() {
                                 // Required - fail installation (SSE: error is meaningful)
-                                let error_msg = format!("Static IP required but assignment failed: {}", e);
+                                let error_msg =
+                                    format!("Static IP required but assignment failed: {}", e);
                                 state.console.emit(console::ConsoleEvent::new(
                                     console::EventCategory::Jobs,
                                     console::EventStatus::Failed,
-                                    format!("Static IP required: {}", offering)
+                                    format!("Static IP required: {}", offering),
                                 ));
                                 emit_job_failed(state, job_id, offering, &error_msg);
                                 remove_installing_entry(state, offering).await;
@@ -512,14 +562,15 @@ pub async fn install_service_task(
                     state.console.emit(console::ConsoleEvent::new(
                         console::EventCategory::Jobs,
                         console::EventStatus::Failed,
-                        format!("Static IP required: {}", offering)
+                        format!("Static IP required: {}", offering),
                     ));
                     emit_job_failed(state, job_id, offering, error_msg);
                     remove_installing_entry(state, offering).await;
                     let mut jobs = state.jobs.write().await;
                     if let Some(job) = jobs.get_mut(job_id) {
                         job.status = JobStatus::Failed;
-                        job.failed.insert(offering.to_string(), error_msg.to_string());
+                        job.failed
+                            .insert(offering.to_string(), error_msg.to_string());
                         job.completed_at = Some(std::time::SystemTime::now());
                     }
                     return;
@@ -539,7 +590,11 @@ pub async fn install_service_task(
         assigned_static_ip.as_deref(),
     );
     let image_full = compiled.image.clone();
-    let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
+    let image_version = image_full
+        .split(':')
+        .next_back()
+        .unwrap_or("latest")
+        .to_string();
 
     // Install via Docker
     emit_job_progress(
@@ -565,22 +620,34 @@ pub async fn install_service_task(
         state.console.emit(console::ConsoleEvent::new(
             console::EventCategory::Jobs,
             console::EventStatus::Failed,
-            format!("Install failed: {}", offering)
+            format!("Install failed: {}", offering),
         ));
-        emit_job_failed(state, job_id, offering, &format!("Installation failed: {}", e));
+        emit_job_failed(
+            state,
+            job_id,
+            offering,
+            &format!("Installation failed: {}", e),
+        );
         tracing::error!(job_id, offering, error = ?e, "Docker install failed");
         // Remove Installing entry from registry
         remove_installing_entry(state, offering).await;
         let mut jobs = state.jobs.write().await;
         if let Some(job) = jobs.get_mut(job_id) {
             job.status = JobStatus::Failed;
-            job.failed.insert(offering.to_string(), format!("Install failed: {}", e));
+            job.failed
+                .insert(offering.to_string(), format!("Install failed: {}", e));
             job.completed_at = Some(std::time::SystemTime::now());
         }
         return;
     }
 
-    emit_job_progress(state, "info", format!("Creating container for {}", offering), job_id, offering);
+    emit_job_progress(
+        state,
+        "info",
+        format!("Creating container for {}", offering),
+        job_id,
+        offering,
+    );
 
     // Update existing offering entry (created with Installing status before job started)
     // Change status from Installing to Running and clear job_id
@@ -642,7 +709,10 @@ pub async fn install_service_task(
     // Register scheduled tasks from manifest
     if !compiled.tasks.is_empty() {
         let task_store = TaskStore::new();
-        match task_store.register_tasks(&offering_id, offering, &compiled.tasks).await {
+        match task_store
+            .register_tasks(&offering_id, offering, &compiled.tasks)
+            .await
+        {
             Ok(count) if count > 0 => {
                 tracing::info!(
                     offering = %offering,
@@ -676,7 +746,7 @@ pub async fn install_service_task(
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Completed,
-        format!("Install {} (job: {})", offering, &job_id[..8])
+        format!("Install {} (job: {})", offering, &job_id[..8]),
     ));
 
     tracing::info!(job_id, offering, "Service installation completed");
@@ -726,10 +796,18 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Started,
-        format!("Batch install {} services (job: {})", offerings_count, &job_id[..8])
+        format!(
+            "Batch install {} services (job: {})",
+            offerings_count,
+            &job_id[..8]
+        ),
     ));
 
-    tracing::info!(job_id, count = offerings_count, "Starting batch installation");
+    tracing::info!(
+        job_id,
+        count = offerings_count,
+        "Starting batch installation"
+    );
 
     for offering in offerings {
         tracing::info!(job_id, offering, "Installing service");
@@ -762,8 +840,10 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             Err(e) => {
                 let mut jobs = state.jobs.write().await;
                 if let Some(job) = jobs.get_mut(job_id) {
-                    job.failed
-                        .insert(service_name.clone(), format!("Offerings index error: {}", e));
+                    job.failed.insert(
+                        service_name.clone(),
+                        format!("Offerings index error: {}", e),
+                    );
                 }
                 continue;
             }
@@ -783,8 +863,10 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             );
             let mut jobs = state.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
-                job.failed
-                    .insert(service_name.clone(), format!("Compatibility failed: {}", reason));
+                job.failed.insert(
+                    service_name.clone(),
+                    format!("Compatibility failed: {}", reason),
+                );
             }
             continue;
         }
@@ -799,7 +881,11 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             static_ip.as_deref(),
         );
         let image_full = compiled.image.clone();
-        let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
+        let image_version = image_full
+            .split(':')
+            .next_back()
+            .unwrap_or("latest")
+            .to_string();
 
         // Install via Docker
         let ports_for_docker = compiled.ports_vec();
@@ -818,7 +904,8 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             tracing::error!(job_id, service = %service_name, error = ?e, "Docker install failed");
             let mut jobs = state.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
-                job.failed.insert(service_name.clone(), format!("Install failed: {}", e));
+                job.failed
+                    .insert(service_name.clone(), format!("Install failed: {}", e));
             }
             continue;
         }
@@ -898,13 +985,22 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
                 state.console.emit(console::ConsoleEvent::new(
                     console::EventCategory::Jobs,
                     console::EventStatus::Failed,
-                    format!("Batch install {} failed, {} succeeded (job: {})", job.failed.len(), job.completed.len(), &job_id[..8])
+                    format!(
+                        "Batch install {} failed, {} succeeded (job: {})",
+                        job.failed.len(),
+                        job.completed.len(),
+                        &job_id[..8]
+                    ),
                 ));
             } else {
                 state.console.emit(console::ConsoleEvent::new(
                     console::EventCategory::Jobs,
                     console::EventStatus::Completed,
-                    format!("Batch install {} services (job: {})", offerings_count, &job_id[..8])
+                    format!(
+                        "Batch install {} services (job: {})",
+                        offerings_count,
+                        &job_id[..8]
+                    ),
                 ));
             }
         }
@@ -919,9 +1015,15 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 /// that was created before the installation job started.
 async fn remove_installing_entry(state: &AppState, offering: &str) {
     let mut offerings = state.offerings.write().await;
-    if let Some(pos) = offerings.iter().position(|o| o.name == offering && o.status == OfferingStatus::Installing) {
+    if let Some(pos) = offerings
+        .iter()
+        .position(|o| o.name == offering && o.status == OfferingStatus::Installing)
+    {
         offerings.remove(pos);
-        tracing::debug!(offering, "Removed Installing entry from offerings after failure");
+        tracing::debug!(
+            offering,
+            "Removed Installing entry from offerings after failure"
+        );
     }
     drop(offerings);
     let _ = state.persist_offerings().await;
@@ -972,7 +1074,7 @@ pub async fn refresh_capabilities_task(
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Started,
-        format!("Refresh capabilities {} (job: {})", offering, &job_id[..8])
+        format!("Refresh capabilities {} (job: {})", offering, &job_id[..8]),
     ));
 
     emit_job_started(state, job_id, offering, "refresh-capabilities");
@@ -981,7 +1083,10 @@ pub async fn refresh_capabilities_task(
     // Find the offering
     let (service, mode) = {
         let offerings = state.offerings.read().await;
-        match offerings.iter().find(|o| o.name.eq_ignore_ascii_case(offering)) {
+        match offerings
+            .iter()
+            .find(|o| o.name.eq_ignore_ascii_case(offering))
+        {
             Some(o) => {
                 let mode = o.mode();
                 let service = offering_to_service_info_for_refresh(o, state).await;
@@ -1021,7 +1126,10 @@ pub async fn refresh_capabilities_task(
 
     // Filter by type if specified
     let filtered_collections: Vec<_> = if let Some(cap_type_filter) = cap_type {
-        collections.into_iter().filter(|c| c.cap_type == cap_type_filter).collect()
+        collections
+            .into_iter()
+            .filter(|c| c.cap_type == cap_type_filter)
+            .collect()
     } else {
         collections
     };
@@ -1055,7 +1163,10 @@ pub async fn refresh_capabilities_task(
             offering,
         );
 
-        match executor.add_capability(&service, manifest, mode, cap_type_str, cap_name).await {
+        match executor
+            .add_capability(&service, manifest, mode, cap_type_str, cap_name)
+            .await
+        {
             Ok(result) if result.success => {
                 // Mark as completed
                 let mut jobs = state.jobs.write().await;
@@ -1103,20 +1214,34 @@ pub async fn refresh_capabilities_task(
         state.console.emit(console::ConsoleEvent::new(
             console::EventCategory::Jobs,
             console::EventStatus::Completed,
-            format!("Refreshed {} capabilities for {} (job: {})", succeeded, offering, &job_id[..8])
+            format!(
+                "Refreshed {} capabilities for {} (job: {})",
+                succeeded,
+                offering,
+                &job_id[..8]
+            ),
         ));
     } else {
         emit_job_progress(
             state,
             "warn",
-            format!("Refresh completed: {} succeeded, {} failed", succeeded, failed_count),
+            format!(
+                "Refresh completed: {} succeeded, {} failed",
+                succeeded, failed_count
+            ),
             job_id,
             offering,
         );
         state.console.emit(console::ConsoleEvent::new(
             console::EventCategory::Jobs,
             console::EventStatus::Completed,
-            format!("Refresh {}: {} ok, {} failed (job: {})", offering, succeeded, failed_count, &job_id[..8])
+            format!(
+                "Refresh {}: {} ok, {} failed (job: {})",
+                offering,
+                succeeded,
+                failed_count,
+                &job_id[..8]
+            ),
         ));
     }
 
@@ -1135,7 +1260,7 @@ async fn offering_to_service_info_for_refresh(
     state: &AppState,
 ) -> garden_common::ServiceInfo {
     use crate::domain::get_offering_port;
-    use garden_common::{ServiceInfo, ServiceStatus, Ports};
+    use garden_common::{Ports, ServiceInfo, ServiceStatus};
 
     let port = if offering.location.port > 0 {
         offering.location.port
@@ -1203,16 +1328,31 @@ pub async fn add_capability_task(
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Started,
-        format!("Add {} {} to {} (job: {})", cap_type, capability_name, offering, &job_id[..8.min(job_id.len())])
+        format!(
+            "Add {} {} to {} (job: {})",
+            cap_type,
+            capability_name,
+            offering,
+            &job_id[..8.min(job_id.len())]
+        ),
     ));
 
     emit_job_started(state, job_id, offering, "add-capability");
-    tracing::info!(job_id, offering, cap_type, capability_name, "Starting capability add");
+    tracing::info!(
+        job_id,
+        offering,
+        cap_type,
+        capability_name,
+        "Starting capability add"
+    );
 
     // Find the offering
     let (service, mode) = {
         let offerings = state.offerings.read().await;
-        match offerings.iter().find(|o| o.name.eq_ignore_ascii_case(offering)) {
+        match offerings
+            .iter()
+            .find(|o| o.name.eq_ignore_ascii_case(offering))
+        {
             Some(o) => {
                 let mode = o.mode();
                 let service = offering_to_service_info_for_refresh(o, state).await;
@@ -1249,8 +1389,33 @@ pub async fn add_capability_task(
         offering,
     );
 
-    match executor.add_capability(&service, manifest, mode, cap_type, capability_name).await {
+    match executor
+        .add_capability(&service, manifest, mode, cap_type, capability_name)
+        .await
+    {
         Ok(result) if result.success => {
+            if let Err(e) = crate::domain::tools::capability_orchestrator::record_capability_added(
+                state,
+                offering,
+                cap_type,
+                capability_name,
+            )
+            .await
+            {
+                let error = format!("Capability added but state update failed: {}", e);
+                emit_job_failed(state, job_id, offering, &error);
+                mark_job_failed(state, job_id, capability_name, &error).await;
+                tracing::error!(
+                    job_id,
+                    offering,
+                    cap_type,
+                    capability_name,
+                    error = %error,
+                    "Capability add state update failed"
+                );
+                return;
+            }
+
             // Mark as completed
             {
                 let mut jobs = state.jobs.write().await;
@@ -1265,10 +1430,22 @@ pub async fn add_capability_task(
             state.console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Jobs,
                 console::EventStatus::Completed,
-                format!("Added {} '{}' to {} (job: {})", cap_type, capability_name, offering, &job_id[..8.min(job_id.len())])
+                format!(
+                    "Added {} '{}' to {} (job: {})",
+                    cap_type,
+                    capability_name,
+                    offering,
+                    &job_id[..8.min(job_id.len())]
+                ),
             ));
 
-            tracing::info!(job_id, offering, cap_type, capability_name, "Capability add completed");
+            tracing::info!(
+                job_id,
+                offering,
+                cap_type,
+                capability_name,
+                "Capability add completed"
+            );
         }
         Ok(result) => {
             // Operation returned but reported failure
@@ -1279,7 +1456,13 @@ pub async fn add_capability_task(
             state.console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Jobs,
                 console::EventStatus::Failed,
-                format!("Failed to add {} '{}': {} (job: {})", cap_type, capability_name, error, &job_id[..8.min(job_id.len())])
+                format!(
+                    "Failed to add {} '{}': {} (job: {})",
+                    cap_type,
+                    capability_name,
+                    error,
+                    &job_id[..8.min(job_id.len())]
+                ),
             ));
 
             tracing::warn!(job_id, offering, cap_type, capability_name, error = %error, "Capability add failed");
@@ -1292,7 +1475,13 @@ pub async fn add_capability_task(
             state.console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Jobs,
                 console::EventStatus::Failed,
-                format!("Error adding {} '{}': {} (job: {})", cap_type, capability_name, error, &job_id[..8.min(job_id.len())])
+                format!(
+                    "Error adding {} '{}': {} (job: {})",
+                    cap_type,
+                    capability_name,
+                    error,
+                    &job_id[..8.min(job_id.len())]
+                ),
             ));
 
             tracing::error!(job_id, offering, cap_type, capability_name, error = %error, "Capability add error");

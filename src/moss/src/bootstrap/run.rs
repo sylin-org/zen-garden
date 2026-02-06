@@ -3,34 +3,47 @@
 //! Coordinates all startup phases and background tasks.
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::{
-    AppState, Job, JobStatus,
-    // Task coordination
-    start_lantern_registration,
-    start_discovery_listener, start_hardware_detection,
-    start_registry_loader, start_catalog_builder,
-    start_health_monitor, start_auto_adoption, start_auto_adoption_with_config,
-    install_batch_task,
-    // Network monitoring
-    NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
-    // Docker monitoring
-    DockerMonitor, DockerMonitorConfig,
-    // Bootstrap functions
-    load_preinstall_manifest,
-    router,
-    bind_server, run_server, ServerConfig,
-    connect_docker, init_capabilities, DockerConfig,
-    version_string,
-    // mDNS
-    mdns,
-    // Infrastructure
-    infra,
-};
+use super::config::DaemonConfig;
 #[cfg(target_os = "linux")]
 use crate::run_first_boot_initialization;
+use crate::{
+    bind_server,
+    connect_docker,
+    // Infrastructure
+    infra,
+    init_capabilities,
+    install_batch_task,
+    // Bootstrap functions
+    load_preinstall_manifest,
+    // mDNS
+    mdns,
+    router,
+    run_server,
+    start_auto_adoption,
+    start_auto_adoption_with_config,
+    start_catalog_builder,
+    start_discovery_listener,
+    start_hardware_detection,
+    start_health_monitor,
+    // Task coordination
+    start_lantern_registration,
+    start_registry_loader,
+    version_string,
+    AppState,
+    DockerConfig,
+    // Docker monitoring
+    DockerMonitor,
+    DockerMonitorConfig,
+    Job,
+    JobStatus,
+    NetworkEvent,
+    // Network monitoring
+    NetworkMonitor,
+    NetworkMonitorConfig,
+    ServerConfig,
+};
 use garden_common::console;
 use garden_common::offerings::parse_offering_fqn;
-use super::config::DaemonConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -70,10 +83,14 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Listener needs minimal dependencies: stone_id, stone_name, topology_cache
     // Self-entry will be progressively updated as boot continues
     let topology_cache = Arc::new(RwLock::new(std::collections::HashMap::new()));
-    
+
     // STORAGE-0003: Create storage cache for seed bank routing
     let storage_cache = crate::domain::storage_cache::new_storage_cache();
-    
+
+    // TOOLS-0001: Unified tools projection cache + stream channel
+    let tools_cache = crate::domain::tools::new_tools_cache();
+    let (tools_tx, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
+
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
         config.console_mode,
@@ -84,7 +101,11 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Uses overlay pattern: embedded assets first, filesystem overlays on top
     let manifests_dir = std::path::PathBuf::from(infra::runtime_manifests_dir());
     let hw_dir = manifests_dir.join("hw");
-    let hw_dir_opt = if hw_dir.exists() { Some(hw_dir.as_path()) } else { None };
+    let hw_dir_opt = if hw_dir.exists() {
+        Some(hw_dir.as_path())
+    } else {
+        None
+    };
 
     let manifest_registry = match infra::load_sw_manifests_with_overlay(&manifests_dir) {
         Ok(sw_manifests) => {
@@ -152,9 +173,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Create infrastructure handlers - wired to UDP pipeline from the start
-    let infrastructure_handlers = Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
-        Box::new(crate::domain::DockerRegistryHandler::new()),
-    ]));
+    let infrastructure_handlers =
+        Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
+            Box::new(crate::domain::DockerRegistryHandler::new()),
+        ]));
 
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
@@ -163,6 +185,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         storage_cache.clone(),
+        tools_cache.clone(),
+        tools_tx.clone(),
         self_entry.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),
@@ -204,7 +228,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
             .with_disconnect_retry(5)
             .with_connected_poll(30),
         subsystems.network.ready.clone(),
-    ).await;
+    )
+    .await;
 
     // Phase 2.5: Get MAC address for self entry
     let (_, mac_address) = garden_common::infra::network::get_local_ip_and_mac();
@@ -230,7 +255,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         entry.last_seen = chrono::Utc::now();
     }
     tracing::debug!(endpoint = %api_endpoint, mac = ?mac_address, "Self entry updated (health=initializing)");
-    
+
     // Auto-chirp: Network configuration complete
     {
         let entry = self_entry.read().await.clone();
@@ -251,7 +276,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         &stone_name,
         port,
         mac_for_mdns.as_deref(),
-        &current_ip,  // Gate: won't register if loopback
+        &current_ip, // Gate: won't register if loopback
     ) {
         Ok(handle) => Some(Arc::new(handle)),
         Err(e) => {
@@ -272,7 +297,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         use_static_host.is_some(),
         &network_monitor,
         Some(&console_printer),
-    ).await;
+    )
+    .await;
 
     emit_startup_events(&console_printer, &config);
 
@@ -288,7 +314,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
             .with_disconnect_retry(5)
             .with_connected_poll(30),
         subsystems.docker.ready.clone(),
-    ).await;
+    )
+    .await;
     tracing::debug!("Docker monitor started (5s retry, 30s poll)");
 
     // Phase 8: Create channels
@@ -310,7 +337,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         entry.last_seen = chrono::Utc::now();
     }
     tracing::debug!("Self entry updated with capabilities (health=thriving)");
-    
+
     // Auto-chirp: Capabilities complete
     {
         let entry = self_entry.read().await.clone();
@@ -349,17 +376,18 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
-    let nurturing_store = Arc::new(infra::NurturingStore::new(infra::HarvestStore::default_store()));
+    let nurturing_store = Arc::new(infra::NurturingStore::new(
+        infra::HarvestStore::default_store(),
+    ));
 
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
-    let election_service_placeholder = Arc::new(
-        crate::tasks::election_service::ElectionService::new(
+    let election_service_placeholder =
+        Arc::new(crate::tasks::election_service::ElectionService::new(
             stone_id.clone(),
             stone_name.clone(),
             Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
-        )
-    );
+        ));
 
     let state = AppState {
         stone_id: stone_id.clone(),
@@ -379,6 +407,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         api_port: port,
         topology_cache: topology_cache.clone(),
         storage_cache: storage_cache.clone(),
+        tools_cache: tools_cache.clone(),
+        tools_tx: tools_tx.clone(),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         ceremony_registry,
@@ -403,20 +433,20 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Phase 11.post: Update election service with proper state provider now that AppState exists
     // Note: No longer async - no socket binding (uses p2p transport)
     let state_for_election = Arc::new(state.clone());
-    let election_service_final = Arc::new(
-        crate::tasks::election_service::ElectionService::new(
-            stone_id.clone(),
-            stone_name.clone(),
-            Box::new(crate::tasks::state_provider::MossStateProvider::new(state_for_election)),
-        )
-    );
-    
+    let election_service_final = Arc::new(crate::tasks::election_service::ElectionService::new(
+        stone_id.clone(),
+        stone_name.clone(),
+        Box::new(crate::tasks::state_provider::MossStateProvider::new(
+            state_for_election,
+        )),
+    ));
+
     // Update the state's election_service
     let state = AppState {
         election_service: election_service_final.clone(),
         ..state
     };
-    
+
     tracing::info!("Election service initialized (using p2p transport)");
 
     // Phase 11.post2: Start election service listener (subscribes to p2p events)
@@ -429,7 +459,9 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Phase 11.post3: Start discovery handler (responds to discovery requests)
     let self_entry_for_discovery = state.self_entry.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::tasks::discovery_handler::start_discovery_handler(self_entry_for_discovery).await {
+        if let Err(e) =
+            crate::tasks::discovery_handler::start_discovery_handler(self_entry_for_discovery).await
+        {
             tracing::error!(error = ?e, "Discovery handler failed");
         }
     });
@@ -462,7 +494,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         // SeedBankCacheListener: Updates seed bank cache on storage events
         // This ensures portrait endpoint reads from cache without I/O
         let seed_bank_cache_listener = Arc::new(infra::SeedBankCacheListener::new(
-            state.seed_bank_cache.clone()
+            state.seed_bank_cache.clone(),
         ));
         let _seed_bank_handle = infra::spawn_listener(&event_bus, seed_bank_cache_listener);
 
@@ -479,7 +511,12 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Phase 12: Start background tasks
     // UDP listener already started in Phase 1
     // ManifestRegistry already loaded in Phase 10
-    start_hardware_detection(stone_name.clone(), capabilities_arc.clone(), console_printer.clone(), state.clone());
+    start_hardware_detection(
+        stone_name.clone(),
+        capabilities_arc.clone(),
+        console_printer.clone(),
+        state.clone(),
+    );
     start_registry_loader(state.clone());
     start_catalog_builder(state.clone(), console_printer.clone());
 
@@ -495,11 +532,20 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let companion_scan_state = state.clone();
     tokio::spawn(async move {
         // Get endpoint for Companion communication
-        let endpoint = companion_scan_state.self_entry.read().await.endpoint.clone();
-        match companion_scan_state.companion_registry.scan_and_autostart(&endpoint).await {
+        let endpoint = companion_scan_state
+            .self_entry
+            .read()
+            .await
+            .endpoint
+            .clone();
+        match companion_scan_state
+            .companion_registry
+            .scan_and_autostart(&endpoint)
+            .await
+        {
             Ok((registered, started)) => tracing::info!(
-                registered = registered, 
-                started = started, 
+                registered = registered,
+                started = started,
                 "Companion scan and auto-start complete"
             ),
             Err(e) => tracing::warn!(error = ?e, "Companion scan failed"),
@@ -554,7 +600,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     tokio::spawn(async move {
         // Wait for registry to load
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        
+
         // Use helper method to sync and chirp
         state_for_sync.sync_self_services(true).await;
         tracing::debug!("Initial service sync complete");
@@ -594,7 +640,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                             crate::domain::topology::upsert_from_chirp(
                                 &topology_cache_for_mdns,
                                 entry,
-                            ).await;
+                            )
+                            .await;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -611,62 +658,63 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
 
     // Phase 12: Active peer discovery (send discovery request at startup)
     tracing::info!("Discovering peer stones...");
-    
+
     // Subscribe to discovery responses before sending request
-    if let Ok(mut discovery_rx) = garden_common::infra::communications::p2p::subscribe_to_announcement(
-        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
-    ).await {
+    if let Ok(mut discovery_rx) =
+        garden_common::infra::communications::p2p::subscribe_to_announcement(
+            garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE,
+        )
+        .await
+    {
         // Send discovery request
         let request = garden_common::DiscoveryRequest {
             discover: "moss".to_string(),
             request_id: garden_common::ids::generate_guidv7(),
             requester: stone_id.clone(),
         };
-        
+
         if let Err(e) = garden_common::infra::communications::p2p::send_announcement(
             garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
-            &request
-        ).await {
+            &request,
+        )
+        .await
+        {
             tracing::warn!(error = ?e, "Failed to send discovery request");
         } else {
             // Collect responses for 3 seconds
-            let timeout_fut = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                async {
-                    let mut responses = Vec::new();
-                    while let Some((payload, _from_addr)) = discovery_rx.recv().await {
-                        if let Ok(response) = serde_json::from_value::<garden_common::DiscoveryResponse>(payload) {
-                            responses.push(response);
-                        }
+            let timeout_fut = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                let mut responses = Vec::new();
+                while let Some((payload, _from_addr)) = discovery_rx.recv().await {
+                    if let Ok(response) =
+                        serde_json::from_value::<garden_common::DiscoveryResponse>(payload)
+                    {
+                        responses.push(response);
                     }
-                    responses
                 }
-            );
-            
+                responses
+            });
+
             let discovered_peers = timeout_fut.await.unwrap_or_else(|_| Vec::new());
-            
+
             for peer in discovered_peers {
                 if let Some(peer_id) = peer.stone_id {
                     let entry = crate::domain::TopologyEntry {
                         stone_id: peer_id,
                         stone_name: peer.stone_name,
-                endpoint: peer.stone_endpoint,
-                moss_version: peer.moss_version,
-                services: vec![], // Discovery response doesn't include services yet
-                mac: None, // Will be populated by later chirps
-                health: garden_common::constants::STONE_INITIALIZING.to_string(),
-                capabilities: None,
-                status: garden_common::StoneStatus::Online,
-                discovered_at: chrono::Utc::now(),
-                last_seen: chrono::Utc::now(),
-                tags: vec![], // Will be populated by later chirps
-            };
-            crate::domain::topology::upsert_from_chirp(
-                &state.topology_cache,
-                entry,
-            ).await;
-        }
-    }
+                        endpoint: peer.stone_endpoint,
+                        moss_version: peer.moss_version,
+                        services: vec![], // Discovery response doesn't include services yet
+                        mac: None,        // Will be populated by later chirps
+                        health: garden_common::constants::STONE_INITIALIZING.to_string(),
+                        capabilities: None,
+                        status: garden_common::StoneStatus::Online,
+                        discovered_at: chrono::Utc::now(),
+                        last_seen: chrono::Utc::now(),
+                        tags: vec![], // Will be populated by later chirps
+                    };
+                    crate::domain::topology::upsert_from_chirp(&state.topology_cache, entry).await;
+                }
+            }
         }
     } else {
         tracing::warn!("Failed to subscribe to discovery responses");
@@ -693,7 +741,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                 Ok(event) => {
                     // Check if this is a service-related event that needs immediate sync
                     if matches!(&event, crate::domain::DomainEvent::Offering(_)) {
-                        tracing::debug!(event_type = event.event_type(), "Service event detected, syncing");
+                        tracing::debug!(
+                            event_type = event.event_type(),
+                            "Service event detected, syncing"
+                        );
                         state_for_events.sync_self_services(true).await;
                     }
                 }
@@ -714,7 +765,11 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         start_auto_adoption(state.clone(), cfg, &console_printer);
     } else {
         // No config file - use default adoption config (profile-aware)
-        start_auto_adoption_with_config(state.clone(), infra::AdoptionConfig::default(), &console_printer);
+        start_auto_adoption_with_config(
+            state.clone(),
+            infra::AdoptionConfig::default(),
+            &console_printer,
+        );
     }
 
     // Phase 17.5: Storage monitoring (Linux only)
@@ -728,9 +783,16 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
             // Scan for existing devices at startup
             match storage_monitor.scan_existing().await {
                 Ok(devices) => {
-                    tracing::info!("Scanned existing storage devices, found {} eligible", devices.len());
+                    tracing::info!(
+                        "Scanned existing storage devices, found {} eligible",
+                        devices.len()
+                    );
                     for device_info in devices {
-                        tracing::info!("Found existing device: {} ({} GB)", device_info.device, device_info.capacity_bytes / 1_000_000_000);
+                        tracing::info!(
+                            "Found existing device: {} ({} GB)",
+                            device_info.device,
+                            device_info.capacity_bytes / 1_000_000_000
+                        );
                     }
                 }
                 Err(e) => {
@@ -746,8 +808,11 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     {
         crate::tasks::coordinator::start_seedbank_resilient_mount_system(state.clone());
     }
-    crate::tasks::start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
-    
+    crate::tasks::start_storage_maintenance(
+        state.storage_cache.clone(),
+        state.topology_cache.clone(),
+    );
+
     // Populate storage_cache with local seed banks (cross-platform)
     // This makes storage_cache the unified view for both local and remote storage
     let endpoint = state.self_entry.read().await.endpoint.clone();
@@ -756,15 +821,24 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         &state.stone_id,
         &state.stone_name,
         &endpoint,
-    ).await {
+    )
+    .await
+    {
         tracing::warn!("Failed to populate local storage cache: {}", e);
     } else {
         let cache = state.storage_cache.read().await;
         tracing::info!(
             "Storage cache initialized with {} local seed banks",
-            cache.get_beacon(&state.stone_id).map(|b| b.seed_banks.len()).unwrap_or(0)
+            cache
+                .get_beacon(&state.stone_id)
+                .map(|b| b.seed_banks.len())
+                .unwrap_or(0)
         );
     }
+
+    // Initialize tools projection from restored offerings + local seed-banks.
+    // This emits initial tool.upsert deltas and announces them garden-wide.
+    state.refresh_local_tools_projection().await;
 
     // Phase 18: HTTP server
     tracing::info!("Setting up HTTP router with 200 MB body limit");
@@ -808,7 +882,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         Some(shutdown_callback),
         boot_banner,
         shutdown_banner,
-    ).await
+    )
+    .await
 }
 
 /// Start first-boot initialization task (Linux only)
@@ -827,12 +902,16 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
         const MAX_ATTEMPTS: u32 = 20;
 
         let _ = console::tty_write("");
-        let _ = console::display_wait("First-boot setup: Waiting for filesystem to become writable");
+        let _ =
+            console::display_wait("First-boot setup: Waiting for filesystem to become writable");
 
         for attempt in 1..=MAX_ATTEMPTS {
             match console::ensure_etc_writable().await {
                 Ok(true) => {
-                    tracing::info!(attempt, "Filesystem is writable, proceeding with first boot initialization");
+                    tracing::info!(
+                        attempt,
+                        "Filesystem is writable, proceeding with first boot initialization"
+                    );
                     let _ = console::display_success("Filesystem ready, starting configuration");
 
                     match run_first_boot_initialization(&init_stone_name, init_port).await {
@@ -843,8 +922,12 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
 
                             tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
                             let _ = console::tty_write("");
-                            let _ = console::display_success(&format!("? Stone configured as: {}", new_name));
-                            let _ = console::display_wait("Restarting to apply new configuration...");
+                            let _ = console::display_success(&format!(
+                                "? Stone configured as: {}",
+                                new_name
+                            ));
+                            let _ =
+                                console::display_wait("Restarting to apply new configuration...");
                             let _ = console::tty_write("");
 
                             // Exit so systemd restarts us with the new configuration
@@ -854,17 +937,23 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
                             tracing::error!(error = ?e, "First boot initialization failed");
                             let _ = console::display_error(&format!("Setup failed: {}", e));
                             if attempt < MAX_ATTEMPTS {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
+                                tokio::time::sleep(tokio::time::Duration::from_secs(
+                                    retry_delay_secs,
+                                ))
+                                .await;
                             }
                         }
                     }
                 }
                 Ok(false) | Err(_) => {
                     if attempt < MAX_ATTEMPTS {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs))
+                            .await;
                     } else {
                         tracing::error!("First boot initialization abandoned - filesystem never became writable");
-                        let _ = console::display_error("Setup abandoned - filesystem remained read-only");
+                        let _ = console::display_error(
+                            "Setup abandoned - filesystem remained read-only",
+                        );
                     }
                 }
             }
@@ -877,26 +966,26 @@ fn emit_startup_events(console_printer: &console::ConsolePrinter, config: &Daemo
     console_printer.emit(console::ConsoleEvent::new(
         console::EventCategory::System,
         console::EventStatus::Starting,
-        format!("Moss v{}", version_string())
+        format!("Moss v{}", version_string()),
     ));
 
     if config.file_config.is_some() {
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Config,
             console::EventStatus::Loaded,
-            "Configuration file".to_string()
+            "Configuration file".to_string(),
         ));
 
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Config,
             console::EventStatus::Merged,
-            "Priority: CLI > Env > Config > Defaults".to_string()
+            "Priority: CLI > Env > Config > Defaults".to_string(),
         ));
     } else {
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Config,
             console::EventStatus::NotFound,
-            "Using defaults".to_string()
+            "Using defaults".to_string(),
         ));
     }
 }
@@ -968,7 +1057,9 @@ async fn start_preinstall_handler(state: &AppState) {
                     JobStatus::Completed | JobStatus::Failed => {
                         drop(jobs); // Release lock
                         tracing::info!("Pre-install job finished, removing manifest");
-                        if let Err(e) = tokio::fs::remove_file("/home/stone/garden-moss-preinstall.json").await {
+                        if let Err(e) =
+                            tokio::fs::remove_file("/home/stone/garden-moss-preinstall.json").await
+                        {
                             tracing::warn!(error = ?e, "Failed to remove pre-install manifest");
                         } else {
                             tracing::info!("Pre-install manifest removed - system ready");
@@ -983,7 +1074,11 @@ async fn start_preinstall_handler(state: &AppState) {
         }
     });
 
-    tracing::info!("Pre-install job started: {} (check /api/jobs/{})", job_id, job_id);
+    tracing::info!(
+        "Pre-install job started: {} (check /api/jobs/{})",
+        job_id,
+        job_id
+    );
 }
 
 /// Start first-boot initialization task (Windows)
@@ -1090,7 +1185,12 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
 #[cfg(target_os = "windows")]
 async fn get_windows_dns_hostname() -> Option<String> {
     let output = tokio::process::Command::new("reg")
-        .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters", "/v", "Hostname"])
+        .args([
+            "query",
+            r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
+            "/v",
+            "Hostname",
+        ])
         .output()
         .await
         .ok()?;
@@ -1125,7 +1225,9 @@ async fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
 
     // Set Hostname
     let output = tokio::process::Command::new("reg")
-        .args(["add", tcpip_path, "/v", "Hostname", "/t", "REG_SZ", "/d", name, "/f"])
+        .args([
+            "add", tcpip_path, "/v", "Hostname", "/t", "REG_SZ", "/d", name, "/f",
+        ])
         .output()
         .await
         .context("Failed to execute reg.exe for Hostname")?;
@@ -1137,7 +1239,17 @@ async fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
 
     // Set NV Hostname (non-volatile, persists across boots)
     let output = tokio::process::Command::new("reg")
-        .args(["add", tcpip_path, "/v", "NV Hostname", "/t", "REG_SZ", "/d", name, "/f"])
+        .args([
+            "add",
+            tcpip_path,
+            "/v",
+            "NV Hostname",
+            "/t",
+            "REG_SZ",
+            "/d",
+            name,
+            "/f",
+        ])
         .output()
         .await
         .context("Failed to execute reg.exe for NV Hostname")?;

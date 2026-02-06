@@ -2,6 +2,22 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-06
+- **Tools Domain implemented (greenfield)** - normative automation-grade tools projection and stream
+  - New APIs: `GET /api/v1/garden/tools`, `GET /api/v1/garden/tools/stream`
+  - New inter-Moss announcement: `TOOLS_BEACON` (`tools_beacon`) for offerings + seed banks
+  - Unified `tool_fqid` identity (`{tool-type}:{fqid}`) with normalized tool projection and deltas
+  - Event-driven readiness for `garden-rake find ... wishfully` (offering and capability-aware flows)
+  - Capability state persistence + propagation through tools projection/beacons
+- **Documentation added for tools domain**
+  - Proposal status updated: `docs/proposals/zen-garden-spec-tools-domain.md`
+  - Implementation report: `docs/proposals/implemented/tools-domain-implementation.md`
+  - User guide: `docs/guides/tools-domain-user-guide.md`
+- **Capability wishful syntax and semantics refined**
+  - Canonical consumption format: `{offering}[{capability}[,{capability}...]]`
+  - Multi-capability wishful requests now supported in one query (AND semantics)
+  - `model/extension/module` treated as offering-local labels, not global nomenclature
+
 ## 2026-02-04
 - **Fixed P2P discovery selecting wrong network interface** - Hyper-V/WSL virtual adapters were being selected over physical LAN
   - Root cause: IP-range blocklisting (`192.168.224.x`) was incomplete and brittle

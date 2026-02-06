@@ -1,4 +1,4 @@
-﻿//! Application state shared across HTTP handlers
+//! Application state shared across HTTP handlers
 //!
 //! Holds all dependencies for moss daemon:
 //! - Offerings registry (Vec<Offering>)
@@ -15,16 +15,19 @@
 
 use crate::docker::DockerManager;
 use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
-use crate::infra::{CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent};
+use crate::infra::{
+    CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent,
+};
 use crate::mdns::MdnsHandle;
+use crate::tasks::NetworkMonitor;
 use garden_common::console::ConsolePrinter;
 use garden_common::storage::{SeedBankInfo, StorageDetectedInfo};
+use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
-use crate::tasks::NetworkMonitor;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -50,14 +53,12 @@ pub struct Job {
 }
 
 // Offerings types moved to domain/offerings.rs
-pub use crate::domain::{
-    CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
-};
+pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndexCache};
 
 // Offering types (unified)
 pub use garden_common::{
-    Offering, OfferingModeData, ManagedData, AdoptedData, BorrowedData,
-    OfferingStatus, OfferingLocation, OfferingMode,
+    AdoptedData, BorrowedData, ManagedData, Offering, OfferingLocation, OfferingMode,
+    OfferingModeData, OfferingStatus,
 };
 
 /// Application state for HTTP handlers
@@ -119,6 +120,12 @@ pub struct AppState {
     /// Storage routing cache for seed banks across stones (STORAGE-0003)
     pub storage_cache: crate::domain::storage_cache::StorageCache,
 
+    /// Unified tools projection cache (offerings + seed-banks)
+    pub tools_cache: crate::domain::tools::ToolsCache,
+
+    /// Tools stream broadcast channel (normative automation stream)
+    pub tools_tx: tokio::sync::broadcast::Sender<ToolDelta>,
+
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
 
@@ -127,7 +134,6 @@ pub struct AppState {
     pub mdns_handle: Option<Arc<MdnsHandle>>,
 
     // === Ceremony Infrastructure ===
-
     /// Active ceremony registry (in-memory state)
     pub ceremony_registry: Arc<CeremonyRegistry>,
 
@@ -160,7 +166,6 @@ pub struct AppState {
     // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).
     // Endpoints MUST NOT perform I/O - they read from these caches only.
     // Background tasks are responsible for keeping caches fresh.
-
     /// Cached seed bank information (updated on storage events + periodic refresh)
     /// Background task: storage_monitor (events) + health_monitor (disk usage refresh)
     pub seed_bank_cache: Arc<RwLock<Vec<SeedBankInfo>>>,
@@ -176,7 +181,6 @@ pub struct AppState {
     // === Notification Registry ===
     // Subsystems register their state (opportunity/attention) here.
     // Tags are compiled and included in topology chirps for cross-stone awareness.
-
     /// Notification registry for cross-stone awareness tags
     /// Background tasks set/clear notifications, chirp task compiles to tags.
     /// See: garden_common::notifications for source keys and tag types.
@@ -265,7 +269,74 @@ impl AppState {
     /// Reads the current offerings and saves to disk atomically.
     pub async fn persist_offerings(&self) -> anyhow::Result<()> {
         let offerings = self.offerings.read().await;
-        crate::infra::save_offerings(&offerings).await
+        crate::infra::save_offerings(&offerings).await?;
+        drop(offerings);
+
+        // Offerings persistence is the canonical mutation boundary for offering state.
+        // Reconcile the tools projection immediately so automation consumers get
+        // deterministic updates without polling.
+        self.refresh_local_tools_projection().await;
+
+        Ok(())
+    }
+
+    /// Reconcile local tools projection and publish resulting deltas.
+    ///
+    /// This is the single entry point for publishing local tool updates.
+    pub async fn refresh_local_tools_projection(&self) {
+        let projections = crate::domain::tools::projector::project_local_tools(self).await;
+        let deltas = {
+            let mut cache = self.tools_cache.write().await;
+            cache.reconcile_local(&self.stone_id, projections)
+        };
+
+        self.publish_tool_deltas(deltas, true).await;
+    }
+
+    /// Ingest remote tools beacon and publish resulting stream deltas locally.
+    pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
+        let deltas = {
+            let mut cache = self.tools_cache.write().await;
+            cache.apply_remote_beacon(&beacon)
+        };
+
+        self.publish_tool_deltas(deltas, false).await;
+    }
+
+    /// Remove all projected tools for a stone (goodbye/offline path).
+    pub async fn remove_tools_for_stone(&self, stone_id: &str) {
+        let deltas = {
+            let mut cache = self.tools_cache.write().await;
+            cache.remove_stone_tools(stone_id)
+        };
+        self.publish_tool_deltas(deltas, false).await;
+    }
+
+    async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
+        if deltas.is_empty() {
+            return;
+        }
+
+        for delta in &deltas {
+            let _ = self.tools_tx.send(delta.clone());
+        }
+
+        if broadcast_beacon {
+            let endpoint = self.self_entry.read().await.endpoint.clone();
+            if endpoint.trim().is_empty() {
+                return;
+            }
+            if let Err(e) = crate::infra::broadcast_tools_beacon(
+                &self.stone_id,
+                &self.stone_name,
+                &endpoint,
+                deltas,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "Failed to broadcast tools beacon");
+            }
+        }
     }
 
     /// Sync self_entry services and tags from offerings and notifications
@@ -288,7 +359,10 @@ impl AppState {
             entry.last_seen = chrono::Utc::now();
         }
 
-        tracing::debug!(count = offerings.len(), "Synced self_entry services from offerings");
+        tracing::debug!(
+            count = offerings.len(),
+            "Synced self_entry services from offerings"
+        );
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.self_entry.read().await.clone();
@@ -306,7 +380,10 @@ impl AppState {
         offering.touch();
         {
             let mut offerings = self.offerings.write().await;
-            if let Some(pos) = offerings.iter().position(|o| o.offering_id == offering.offering_id) {
+            if let Some(pos) = offerings
+                .iter()
+                .position(|o| o.offering_id == offering.offering_id)
+            {
                 offerings[pos] = offering;
             } else {
                 offerings.push(offering);
@@ -379,7 +456,9 @@ impl AppState {
 
     /// Get managed offerings only
     pub async fn get_managed_offerings(&self) -> Vec<Offering> {
-        self.offerings.read().await
+        self.offerings
+            .read()
+            .await
             .iter()
             .filter(|o| o.is_managed())
             .cloned()
@@ -388,7 +467,9 @@ impl AppState {
 
     /// Get adopted offerings only
     pub async fn get_adopted_offerings(&self) -> Vec<Offering> {
-        self.offerings.read().await
+        self.offerings
+            .read()
+            .await
             .iter()
             .filter(|o| o.is_adopted())
             .cloned()
@@ -397,7 +478,9 @@ impl AppState {
 
     /// Get borrowed offerings only
     pub async fn get_borrowed_offerings(&self) -> Vec<Offering> {
-        self.offerings.read().await
+        self.offerings
+            .read()
+            .await
             .iter()
             .filter(|o| o.is_borrowed())
             .cloned()
@@ -406,7 +489,9 @@ impl AppState {
 
     /// Find offering by instance name (FQN)
     pub async fn find_offering(&self, name: &str) -> Option<Offering> {
-        self.offerings.read().await
+        self.offerings
+            .read()
+            .await
             .iter()
             .find(|o| o.name.eq_ignore_ascii_case(name))
             .cloned()
@@ -414,7 +499,9 @@ impl AppState {
 
     /// Find offering by ID
     pub async fn find_offering_by_id(&self, offering_id: &str) -> Option<Offering> {
-        self.offerings.read().await
+        self.offerings
+            .read()
+            .await
             .iter()
             .find(|o| o.offering_id == offering_id)
             .cloned()

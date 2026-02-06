@@ -32,6 +32,10 @@ curl http://localhost:7185/api/v1/stone/offerings/ollama/capabilities
 
 ## Concepts
 
+### Naming Rule
+
+`capability` is the protocol-level term. Offering-specific labels such as `model`, `extension`, or `module` are manifest aliases for display and UX only.
+
 ### What are Sub-Capabilities?
 
 Sub-capabilities represent dynamic, runtime features of an offering:
@@ -139,6 +143,9 @@ Use `rake find` to discover services that have specific capabilities:
 # Find ollama instances that have the llama2 model
 rake find ollama[llama2]
 
+# Find ollama instances that have BOTH models
+rake find ollama[llama2,mistral]
+
 # Find any service with a specific model (garden-wide)
 rake find model:llama2
 
@@ -154,6 +161,7 @@ rake find ollama[mistral] --format uri
 | Syntax | Example | Description |
 |--------|---------|-------------|
 | `name[item]` | `ollama[llama2]` | Find offering with specific capability |
+| `name[item1,item2]` | `ollama[llama2,mistral]` | Find offering with all listed capabilities (AND) |
 | `model:item` | `model:llama2` | Find any service with model |
 | `cap:item` | `cap:embeddings` | Generic capability search (any type) |
 
@@ -462,5 +470,6 @@ ollama pull llama2
 ## See Also
 
 - [Offering Modes](./offering-services.md) - Understanding managed, adopted, and borrowed modes
+- [Tools Domain User Guide](./tools-domain-user-guide.md) - Normative tools snapshot/stream and event-driven capability readiness
 - [Automation Guide](./automation.md) - Using capabilities in automation scripts
 - [Detection Guide](./adoption-detection-vs-control.md) - How adoption detection works

@@ -8,19 +8,24 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use std::collections::HashSet;
+use std::time::Duration;
+use reqwest::Client;
+use urlencoding::encode;
 use garden_common::{
     api_utils::ApiErrorResponse,
+    offerings::parse_offering_fqn,
     CapabilityCollection, OfferingMode, ServiceInfo, ServiceStatus, Ports, Offering,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::api::responses::ApiResponse;
-use crate::domain::{CapabilityExecutor, get_offering_port};
+use crate::domain::{CapabilityExecutor, get_offering_port, topology};
 use crate::infra::manifests::get_capability_manifest;
 use crate::{error_response, AppState};
 
 /// Response for capability listing
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CapabilitiesResponse {
     /// Offering name
     pub offering: String,
@@ -72,12 +77,22 @@ pub async fn list_offering_capabilities_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
 ) -> Result<Json<ApiResponse<CapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_fqn = parse_offering_fqn(&offering_name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", offering_name, e),
+            None,
+        )
+    })?;
+    let offering_fqn = offering_fqn.fqn();
+
     // Find the offering in unified registry
     let (offering, mode) = {
         let offerings = state.offerings.read().await;
         let found = offerings
             .iter()
-            .find(|o| o.offering.to_lowercase() == offering_name.to_lowercase())
+            .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn))
             .cloned();
 
         match found {
@@ -89,7 +104,7 @@ pub async fn list_offering_capabilities_v1(
                 return Err(error_response(
                     StatusCode::NOT_FOUND,
                     "OFFERING_NOT_FOUND",
-                    format!("Offering '{}' is not running on this stone. Use 'rake list' or 'rake adopted' to see offerings.", offering_name),
+                    format!("Offering '{}' is not running on this stone. Use 'rake list' or 'rake adopted' to see offerings.", offering_fqn),
                     None,
                 ));
             }
@@ -141,7 +156,7 @@ pub async fn list_offering_capabilities_v1(
 
     Ok(Json(ApiResponse {
         data: CapabilitiesResponse {
-            offering: service.offering.clone(),
+            offering: service.name.clone(),
             mode,
             capabilities,
         },
@@ -183,7 +198,7 @@ pub struct CapabilityMutationResponse {
 }
 
 /// Response for add capability operation (job-based)
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status")]
 pub enum AddCapabilityResponse {
     /// Capability already exists
@@ -327,10 +342,10 @@ pub async fn add_offering_capability_v1(
     if exists {
         return Ok(Json(ApiResponse {
             data: AddCapabilityResponse::AlreadyExists {
-                offering: service.offering.clone(),
+                offering: service.name.clone(),
                 capability: request.name.clone(),
                 cap_type: cap_type.clone(),
-                message: format!("{} '{}' already exists for {}", cap_type, request.name, service.offering),
+                message: format!("{} '{}' already exists for {}", cap_type, request.name, service.name),
             },
             suggestions: None,
         }));
@@ -340,24 +355,24 @@ pub async fn add_offering_capability_v1(
     if request.dry_run {
         return Ok(Json(ApiResponse {
             data: AddCapabilityResponse::DryRun {
-                offering: service.offering.clone(),
+                offering: service.name.clone(),
                 capability: request.name.clone(),
                 cap_type: cap_type.clone(),
-                message: format!("{} '{}' can be added to {}", cap_type, request.name, service.offering),
+                message: format!("{} '{}' can be added to {}", cap_type, request.name, service.name),
             },
             suggestions: None,
         }));
     }
 
     // Case 3: Check for existing running add job for this capability
-    let job_key = format!("add-capability-{}-{}", service.offering, request.name);
+    let job_key = format!("add-capability-{}-{}", service.name, request.name);
     {
         let jobs = state.jobs.read().await;
         for (job_id, job) in jobs.iter() {
             if job_id.starts_with(&job_key) && matches!(job.status, JobStatus::Running | JobStatus::Pending) {
                 return Ok(Json(ApiResponse {
                     data: AddCapabilityResponse::InProgress {
-                        offering: service.offering.clone(),
+                        offering: service.name.clone(),
                         capability: request.name.clone(),
                         job_id: job_id.clone(),
                         message: format!("Add operation already in progress for {} '{}'", cap_type, request.name),
@@ -386,7 +401,7 @@ pub async fn add_offering_capability_v1(
     // Spawn background task
     let state_clone = state.clone();
     let job_id_clone = job_id.clone();
-    let offering_clone = service.offering.clone();
+    let offering_clone = service.name.clone();
     let cap_name_clone = request.name.clone();
     let cap_type_clone = cap_type.clone();
     tokio::spawn(async move {
@@ -400,7 +415,7 @@ pub async fn add_offering_capability_v1(
     });
 
     tracing::info!(
-        offering = %service.offering,
+        offering = %service.name,
         capability = %request.name,
         cap_type = %cap_type,
         job_id = %job_id,
@@ -409,10 +424,10 @@ pub async fn add_offering_capability_v1(
 
     Ok(Json(ApiResponse {
         data: AddCapabilityResponse::Started {
-            offering: service.offering.clone(),
+            offering: service.name.clone(),
             capability: request.name.clone(),
             job_id,
-            message: format!("Adding {} '{}' to {}", cap_type, request.name, service.offering),
+            message: format!("Adding {} '{}' to {}", cap_type, request.name, service.name),
         },
         suggestions: None,
     }))
@@ -579,6 +594,43 @@ pub struct CapabilityToRefresh {
     pub cap_type: String,
 }
 
+/// Request body for mirroring capabilities between stones
+#[derive(Debug, Deserialize)]
+pub struct MirrorCapabilitiesRequest {
+    /// Source stone name
+    pub from: String,
+    /// Destination stone name
+    pub to: String,
+    /// If true, only report what would be mirrored
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Failure details for a mirrored capability
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MirrorCapabilityFailure {
+    pub name: String,
+    pub cap_type: String,
+    pub error: String,
+}
+
+/// Response for mirror capabilities operation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MirrorCapabilitiesResponse {
+    pub offering: String,
+    pub from: String,
+    pub to: String,
+    pub added: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub total: usize,
+    pub dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<MirrorCapabilityFailure>,
+}
+
 /// POST /api/v1/stone/offerings/:name/capabilities/refresh
 ///
 /// Refresh/update all capabilities for an offering (e.g., update all Ollama models to latest).
@@ -686,9 +738,9 @@ pub async fn refresh_offering_capabilities_v1(
         let type_label = request.cap_type.as_deref().unwrap_or("capabilities");
         return Ok(Json(ApiResponse {
             data: RefreshCapabilitiesResponse::NoUpdates {
-                offering: service.offering.clone(),
+                offering: service.name.clone(),
                 cap_type: request.cap_type.clone(),
-                message: format!("No {} found for {}", type_label, service.offering),
+                message: format!("No {} found for {}", type_label, service.name),
             },
             suggestions: None,
         }));
@@ -698,7 +750,7 @@ pub async fn refresh_offering_capabilities_v1(
     if request.dry_run {
         return Ok(Json(ApiResponse {
             data: RefreshCapabilitiesResponse::DryRun {
-                offering: service.offering.clone(),
+                offering: service.name.clone(),
                 capabilities: capabilities_to_refresh,
                 total,
             },
@@ -707,7 +759,7 @@ pub async fn refresh_offering_capabilities_v1(
     }
 
     // Case 3: Check for existing running refresh job for this offering
-    let job_key = format!("refresh-capabilities-{}", service.offering);
+    let job_key = format!("refresh-capabilities-{}", service.name);
     {
         let jobs = state.jobs.read().await;
         for (job_id, job) in jobs.iter() {
@@ -724,7 +776,7 @@ pub async fn refresh_offering_capabilities_v1(
 
                 return Ok(Json(ApiResponse {
                     data: RefreshCapabilitiesResponse::InProgress {
-                        offering: service.offering.clone(),
+                        offering: service.name.clone(),
                         job_id: job_id.clone(),
                         progress_percent: progress,
                         completed,
@@ -758,7 +810,7 @@ pub async fn refresh_offering_capabilities_v1(
     // Spawn background task
     let state_clone = state.clone();
     let job_id_clone = job_id.clone();
-    let offering_clone = service.offering.clone();
+    let offering_clone = service.name.clone();
     let cap_type_filter = request.cap_type.clone();
     tokio::spawn(async move {
         crate::tasks::refresh_capabilities_task(
@@ -770,7 +822,7 @@ pub async fn refresh_offering_capabilities_v1(
     });
 
     tracing::info!(
-        offering = %service.offering,
+        offering = %service.name,
         job_id = %job_id,
         total = total,
         "Capabilities refresh job started"
@@ -778,13 +830,289 @@ pub async fn refresh_offering_capabilities_v1(
 
     Ok(Json(ApiResponse {
         data: RefreshCapabilitiesResponse::Started {
-            offering: service.offering.clone(),
+            offering: service.name.clone(),
             job_id,
             total,
             message: format!("Refresh started for {} capabilities", total),
         },
         suggestions: None,
     }))
+}
+
+/// POST /api/v1/stone/offerings/:name/capabilities/mirror
+///
+/// Mirror capabilities from one stone to another for the same offering instance.
+/// The tended stone orchestrates by querying source and target, then adding missing
+/// capabilities on the destination.
+pub async fn mirror_offering_capabilities_v1(
+    State(state): State<AppState>,
+    Path(offering_name): Path<String>,
+    Json(request): Json<MirrorCapabilitiesRequest>,
+) -> Result<Json<ApiResponse<MirrorCapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_fqn = parse_offering_fqn(&offering_name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", offering_name, e),
+            None,
+        )
+    })?;
+    let offering_fqn = offering_fqn.fqn();
+
+    let from = request.from.trim();
+    let to = request.to.trim();
+
+    if from.is_empty() || to.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "MIRROR_REQUIRES_STONES",
+            "Both 'from' and 'to' stones are required".to_string(),
+            None,
+        ));
+    }
+
+    if from.eq_ignore_ascii_case(to) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "MIRROR_SAME_STONE",
+            "Source and destination stones must be different".to_string(),
+            None,
+        ));
+    }
+
+    let from_endpoint = resolve_stone_endpoint(&state, from).await.ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "STONE_NOT_FOUND",
+            format!("Stone '{}' not found in topology cache", from),
+            None,
+        )
+    })?;
+    let to_endpoint = resolve_stone_endpoint(&state, to).await.ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "STONE_NOT_FOUND",
+            format!("Stone '{}' not found in topology cache", to),
+            None,
+        )
+    })?;
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| Client::new());
+
+    let source_caps = fetch_remote_capabilities(&client, &from_endpoint, from, &offering_fqn).await?;
+    let target_caps = fetch_remote_capabilities(&client, &to_endpoint, to, &offering_fqn).await?;
+
+    let mut target_set: HashSet<(String, String)> = HashSet::new();
+    for collection in &target_caps.capabilities {
+        for item in &collection.items {
+            target_set.insert((collection.cap_type.clone(), item.name.clone()));
+        }
+    }
+
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+    let mut total = 0usize;
+    let mut failures: Vec<MirrorCapabilityFailure> = Vec::new();
+
+    for collection in &source_caps.capabilities {
+        let cap_type = collection.cap_type.clone();
+        for item in &collection.items {
+            let key = (cap_type.clone(), item.name.clone());
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            total += 1;
+
+            if target_set.contains(&key) {
+                skipped += 1;
+                continue;
+            }
+
+            if request.dry_run {
+                added += 1;
+                continue;
+            }
+
+            match add_capability_to_stone(
+                &client,
+                &to_endpoint,
+                &offering_fqn,
+                &key.0,
+                &key.1,
+                request.dry_run,
+            ).await {
+                Ok(response) => match response {
+                    AddCapabilityResponse::AlreadyExists { .. } => {
+                        skipped += 1;
+                    }
+                    AddCapabilityResponse::DryRun { .. } => {
+                        added += 1;
+                    }
+                    AddCapabilityResponse::InProgress { .. } => {
+                        added += 1;
+                    }
+                    AddCapabilityResponse::Started { .. } => {
+                        added += 1;
+                    }
+                },
+                Err(error) => {
+                    failed += 1;
+                    failures.push(MirrorCapabilityFailure {
+                        name: key.1.clone(),
+                        cap_type: key.0.clone(),
+                        error,
+                    });
+                }
+            }
+        }
+    }
+
+    let message = if request.dry_run {
+        Some(format!("Dry run: {} capabilities would be mirrored", added))
+    } else {
+        Some(format!("Mirror completed: {} added, {} skipped, {} failed", added, skipped, failed))
+    };
+
+    Ok(Json(ApiResponse {
+        data: MirrorCapabilitiesResponse {
+            offering: offering_fqn,
+            from: from.to_string(),
+            to: to.to_string(),
+            added,
+            skipped,
+            failed,
+            total,
+            dry_run: request.dry_run,
+            message,
+            failures,
+        },
+        suggestions: None,
+    }))
+}
+
+async fn resolve_stone_endpoint(state: &AppState, stone_name: &str) -> Option<String> {
+    if stone_name.eq_ignore_ascii_case(&state.stone_name) {
+        let entry = state.self_entry.read().await;
+        if entry.endpoint.is_empty() {
+            Some(format!("http://127.0.0.1:{}", state.api_port))
+        } else {
+            Some(entry.endpoint.clone())
+        }
+    } else {
+        topology::get_stone_by_name(&state.topology_cache, stone_name)
+            .await
+            .map(|entry| entry.endpoint)
+    }
+}
+
+async fn fetch_remote_capabilities(
+    client: &Client,
+    endpoint: &str,
+    stone_name: &str,
+    offering: &str,
+) -> Result<CapabilitiesResponse, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_path = encode(offering);
+    let url = format!(
+        "{}/api/v1/stone/offerings/{}/capabilities",
+        endpoint.trim_end_matches('/'),
+        offering_path
+    );
+
+    let response = client.get(&url).send().await.map_err(|e| {
+        error_response(
+            StatusCode::BAD_GATEWAY,
+            "REMOTE_UNREACHABLE",
+            format!("Failed to reach stone '{}': {}", stone_name, e),
+            None,
+        )
+    })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        let message = serde_json::from_str::<ApiErrorResponse>(&body)
+            .map(|err| err.error.message)
+            .unwrap_or_else(|_| body);
+
+        let code = if status.as_u16() == StatusCode::NOT_FOUND.as_u16() {
+            "OFFERING_NOT_FOUND"
+        } else {
+            "REMOTE_ERROR"
+        };
+
+        let http_status = if status.as_u16() == StatusCode::NOT_FOUND.as_u16() {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+
+        return Err(error_response(
+            http_status,
+            code,
+            format!("Failed to fetch capabilities from '{}': {}", stone_name, message),
+            None,
+        ));
+    }
+
+    let api_response: ApiResponse<CapabilitiesResponse> = response
+        .json()
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::BAD_GATEWAY,
+                "REMOTE_PARSE_FAILED",
+                format!("Failed to parse capabilities from '{}': {}", stone_name, e),
+                None,
+            )
+        })?;
+
+    Ok(api_response.data)
+}
+
+async fn add_capability_to_stone(
+    client: &Client,
+    endpoint: &str,
+    offering: &str,
+    cap_type: &str,
+    capability: &str,
+    dry_run: bool,
+) -> Result<AddCapabilityResponse, String> {
+    let offering_path = encode(offering);
+    let url = format!(
+        "{}/api/v1/stone/offerings/{}/capabilities",
+        endpoint.trim_end_matches('/'),
+        offering_path
+    );
+
+    let body = serde_json::json!({
+        "name": capability,
+        "type": cap_type,
+        "dry_run": dry_run,
+    });
+
+    let response = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        let message = serde_json::from_str::<ApiErrorResponse>(&text)
+            .map(|err| err.error.message)
+            .unwrap_or_else(|_| text);
+        return Err(format!("{}: {}", status, message));
+    }
+
+    let api_response: ApiResponse<AddCapabilityResponse> = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse add response: {}", e))?;
+
+    Ok(api_response.data)
 }
 
 /// Convert Offering to ServiceInfo for capability executor compatibility
@@ -826,11 +1154,21 @@ async fn find_service_for_capability(
     state: &AppState,
     offering_name: &str,
 ) -> Result<(ServiceInfo, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_fqn = parse_offering_fqn(offering_name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", offering_name, e),
+            None,
+        )
+    })?;
+    let offering_fqn = offering_fqn.fqn();
+
     // Find in unified registry
     let offerings = state.offerings.read().await;
     let found = offerings
         .iter()
-        .find(|o| o.offering.to_lowercase() == offering_name.to_lowercase())
+        .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn))
         .cloned();
     drop(offerings);
 
@@ -844,7 +1182,7 @@ async fn find_service_for_capability(
             Err(error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
-                format!("Offering '{}' is not running on this stone.", offering_name),
+                format!("Offering '{}' is not running on this stone.", offering_fqn),
                 None,
             ))
         }

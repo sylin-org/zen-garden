@@ -72,6 +72,24 @@ pub fn sanitize_name(input: &str) -> SanitizeResult {
     SanitizeResult::new(cleaned, input)
 }
 
+/// Sanitize a service or resource name allowing a single colon separator
+///
+/// - Trims whitespace
+/// - Converts to lowercase
+/// - Removes characters not in [a-z0-9_:-]
+/// - Limits length to MAX_NAME_LENGTH
+pub fn sanitize_name_allow_colon(input: &str) -> SanitizeResult {
+    let cleaned: String = input
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == ':')
+        .take(MAX_NAME_LENGTH)
+        .collect();
+
+    SanitizeResult::new(cleaned, input)
+}
+
 /// Sanitize a category or tag value
 ///
 /// - Trims whitespace
@@ -198,6 +216,19 @@ mod tests {
         // Name with special chars
         let result = sanitize_name("my service!");
         assert_eq!(result.value, "myservice");
+        assert!(result.was_modified);
+    }
+
+    #[test]
+    fn test_sanitize_name_allow_colon() {
+        let result = sanitize_name_allow_colon("ollama:dev");
+        assert_eq!(result.value, "ollama:dev");
+
+        let result = sanitize_name_allow_colon("My-Service:Dev");
+        assert_eq!(result.value, "my-service:dev");
+
+        let result = sanitize_name_allow_colon("bad name!");
+        assert_eq!(result.value, "badname");
         assert!(result.was_modified);
     }
 

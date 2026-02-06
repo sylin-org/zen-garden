@@ -38,6 +38,7 @@ Services in Zen Garden follow a simple lifecycle managed by Garden-Rake CLI:
 
 - **Offering**: Service template (e.g., mongodb.yml defines how to deploy MongoDB)
 - **Service**: Running instance of an offering (e.g., `mongodb` container on stone-01)
+- **Instance (FQN)**: Named service identity (e.g., `mongodb:dev`, default instance = `mongodb`)
 
 ### Native vs Agnostic
 
@@ -147,6 +148,9 @@ garden-rake list --all
 ```bash
 # Install MongoDB on local Stone
 garden-rake offer mongodb
+
+# Install a named instance (multi-instance)
+garden-rake offer mongodb:dev
 
 # Install on specific Stone
 garden-rake offer mongodb --at stone-01

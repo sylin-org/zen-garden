@@ -9,6 +9,7 @@ Sub-capabilities are runtime-discovered features within offerings. For example, 
 | **List** | Implemented | `rake capabilities <offering>` | `GET .../capabilities` |
 | **Add** | Implemented | `rake capabilities add <offering> <name>` | `POST .../capabilities` |
 | **Remove** | Implemented | `rake capabilities remove <offering> <name>` | `DELETE .../capabilities/:name` |
+| **Mirror** | Implemented | `rake capabilities <offering> mirror from <stone> to <stone>` | `POST .../capabilities/mirror` |
 
 ## Quick Start
 
@@ -21,6 +22,9 @@ rake capabilities add ollama llama3
 
 # Remove a capability
 rake capabilities remove ollama phi
+
+# Mirror capabilities between stones (same offering instance)
+rake capabilities ollama mirror from stone-01 to stone-02
 
 # Via API
 curl http://localhost:7185/api/v1/stone/offerings/ollama/capabilities
@@ -52,10 +56,11 @@ Sub-capabilities represent dynamic, runtime features of an offering:
 
 ```bash
 # Basic usage
-rake capabilities <offering>
+rake capabilities <offering[:instance]>
 
 # Examples
 rake capabilities ollama
+rake capabilities ollama:dev
 rake capabilities postgresql
 rake capabilities redis
 
@@ -96,7 +101,7 @@ POSTGRESQL CAPABILITIES (managed)
 
 ```bash
 # Add a capability (e.g., pull a model)
-rake capabilities add <offering> <name>
+rake capabilities add <offering[:instance]> <name>
 
 # Examples
 rake capabilities add ollama llama3
@@ -108,13 +113,14 @@ rake capabilities add ollama llama3 --type model
 
 # Target a specific stone
 rake capabilities add ollama llama3 --at my-stone
+rake capabilities add ollama:dev llama3 --at my-stone
 ```
 
 ### Remove Capability
 
 ```bash
 # Remove a capability
-rake capabilities remove <offering> <name>
+rake capabilities remove <offering[:instance]> <name>
 
 # Examples
 rake capabilities remove ollama phi
@@ -122,6 +128,7 @@ rake capabilities remove ollama llama2:7b
 
 # Target a specific stone
 rake capabilities remove ollama phi --at my-stone
+rake capabilities remove ollama:dev phi --at my-stone
 ```
 
 ### Find by Capability
@@ -157,7 +164,7 @@ rake find ollama[mistral] --format uri
 **Endpoint**: `GET /api/v1/stone/offerings/:name/capabilities`
 
 **Parameters**:
-- `name` (path): Offering name (e.g., "ollama", "postgresql")
+- `name` (path): Offering FQN (e.g., "ollama", "ollama:dev")
 - `refresh` (query, optional): Force fresh discovery, bypass cache
 
 **Example Request**:
@@ -214,7 +221,7 @@ curl -s http://localhost:7185/api/v1/stone/offerings/ollama/capabilities
 **Endpoint**: `POST /api/v1/stone/offerings/:name/capabilities`
 
 **Parameters**:
-- `name` (path): Offering name (e.g., "ollama")
+- `name` (path): Offering FQN (e.g., "ollama", "ollama:dev")
 
 **Request Body**:
 ```json
@@ -247,7 +254,7 @@ curl -X POST http://localhost:7185/api/v1/stone/offerings/ollama/capabilities \
 **Endpoint**: `DELETE /api/v1/stone/offerings/:name/capabilities/:capability`
 
 **Parameters**:
-- `name` (path): Offering name (e.g., "ollama")
+- `name` (path): Offering FQN (e.g., "ollama", "ollama:dev")
 - `capability` (path): Capability name to remove (e.g., "llama3")
 - `type` (query, optional): Capability type
 
@@ -275,6 +282,29 @@ curl -X DELETE http://localhost:7185/api/v1/stone/offerings/ollama/capabilities/
 | `GET /api/v1/stone/offerings/adopted` | List adopted offerings |
 | `GET /api/v1/stone/offerings/adoptable` | List offerings available for adoption |
 | `POST /api/v1/stone/offerings/:name/adopt` | Manually adopt an offering |
+
+### Mirror Capabilities
+
+**Endpoint**: `POST /api/v1/stone/offerings/:name/capabilities/mirror`
+
+**Request Body**:
+```json
+{
+  "from": "stone-01",
+  "to": "stone-02",
+  "dry_run": false
+}
+```
+
+**Example CLI**:
+```bash
+garden-rake capabilities ollama mirror from stone-01 to stone-02
+garden-rake capabilities ollama:dev mirror from stone-01 to stone-02
+```
+
+**Notes**:
+- `name` is the offering FQN (instance identity)
+- `:` must be URL-encoded when used directly in URLs (`ollama%3Adev`)
 
 ## Offering Modes
 

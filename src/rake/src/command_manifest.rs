@@ -711,9 +711,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
             CommandParam {
                 name: "action",
-                zen_syntax: "[add|remove] <name>",
+                zen_syntax: "[add|remove|refresh|mirror] <args>",
                 normative_syntax: None,
-                description: "Action: add or remove capability",
+                description: "Action: add, remove, refresh, or mirror capabilities",
                 required: false,
             },
             CommandParam {
@@ -739,6 +739,11 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 description: "Remove a model",
                 zen_syntax: Some("garden-rake capabilities remove ollama phi"),
                 normative_syntax: Some("garden-rake services capabilities remove ollama phi"),
+            },
+            CommandExample {
+                description: "Mirror capabilities between stones",
+                zen_syntax: Some("garden-rake capabilities ollama mirror from stone-01 to stone-02"),
+                normative_syntax: Some("garden-rake services capabilities mirror ollama from stone-01 to stone-02"),
             },
         ],
         see_also: vec!["offer", "status"],

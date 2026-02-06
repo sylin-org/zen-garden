@@ -404,11 +404,11 @@ impl AppState {
             .collect()
     }
 
-    /// Find offering by name or offering type
+    /// Find offering by instance name (FQN)
     pub async fn find_offering(&self, name: &str) -> Option<Offering> {
         self.offerings.read().await
             .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(name) || o.offering.eq_ignore_ascii_case(name))
+            .find(|o| o.name.eq_ignore_ascii_case(name))
             .cloned()
     }
 

@@ -9,6 +9,7 @@ use crate::docker::DockerManager;
 use crate::domain::harvest::{HarvestManifest, VolumeArchive};
 use crate::infra::HarvestStore;
 use garden_common::infra::archive;
+use garden_common::offerings::parse_offering_fqn;
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -35,7 +36,10 @@ pub async fn create_harvest(
     source_stone: &str,
     commit_image: bool,
 ) -> Result<HarvestManifest> {
-    let container_name = format!("zen-offering-{}", offering);
+    let fqn = parse_offering_fqn(offering)
+        .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering, e))?;
+    let encoded_offering = fqn.encoded_for_container();
+    let container_name = crate::docker::zen_offering_container_name(offering)?;
 
     // Get current image
     let original_image = docker
@@ -54,7 +58,7 @@ pub async fn create_harvest(
 
     // Commit container image if requested
     if commit_image {
-        let repo = format!("zen-harvest/{}", offering);
+        let repo = format!("zen-harvest/{}", encoded_offering);
         let tag = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
 
         let image_id = docker

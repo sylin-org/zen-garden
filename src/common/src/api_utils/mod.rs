@@ -15,7 +15,7 @@ pub use errors::{ApiErrorResponse, error_response, internal_error, not_found, ba
 pub use responses::ApiResponse;
 pub use sse::{SseEvent, sse_stream};
 pub use sanitize::{
-    sanitize_query, sanitize_name, sanitize_tag, sanitize_path_segment,
+    sanitize_query, sanitize_name, sanitize_name_allow_colon, sanitize_tag, sanitize_path_segment,
     is_suspicious, validate_name, SanitizeResult,
     MAX_QUERY_LENGTH, MAX_NAME_LENGTH, MAX_TAG_LENGTH,
 };

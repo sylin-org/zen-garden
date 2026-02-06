@@ -47,6 +47,24 @@ pub const MOSS_SERVICE: &str = "garden-moss.service";
 pub const LANTERN_SERVICE: &str = "garden-lantern.service";
 
 // ============================================================================
+// Offering Naming
+// ============================================================================
+
+/// Separator for offering fully-qualified instance names (FQN).
+/// Example: "ollama:dev"
+pub const OFFERING_FQN_SEPARATOR: char = ':';
+
+/// Prefix for managed offering containers.
+pub const OFFERING_CONTAINER_PREFIX: &str = "zen-offering-";
+
+/// Container-safe separator for offering FQN instance names.
+/// Example: "ollama:dev" -> "ollama--dev"
+pub const OFFERING_FQN_CONTAINER_SEPARATOR: &str = "--";
+
+/// Reserved instance name for adopted (native) offerings.
+pub const OFFERING_ADOPTED_INSTANCE: &str = "adopted";
+
+// ============================================================================
 // File System Paths
 // ============================================================================
 

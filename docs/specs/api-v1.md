@@ -2,7 +2,7 @@
 audience: [developer, operator, maintainer]
 doc_type: spec
 status: current
-last_verified: 2026-01-19
+last_verified: 2026-02-06
 canonical: true
 note: "Formal ADR documenting dual-layer API architecture."
 ---
@@ -39,8 +39,8 @@ Both layers access the same data but present different views optimized for diffe
 GET  /api/v1/offerings                     # List all offerings (available + installed)
 GET  /api/v1/offerings?state=available     # Filter: available to install
 GET  /api/v1/offerings?state=installed     # Filter: planted offerings
-GET  /api/v1/offerings/{name}              # Offering details + compatibility
-GET  /api/v1/offerings/{name}/manifest     # Raw YAML definition
+GET  /api/v1/offerings/{name}              # Offering details + compatibility (FQN accepted; instance ignored)
+GET  /api/v1/offerings/{name}/manifest     # Raw YAML definition (FQN accepted; instance ignored)
 ```
 
 **GET /api/v1/offerings response:**
@@ -176,7 +176,7 @@ POST /api/v1/stone/companions/refresh        # Rescan Companion directory
 
 ```http
 GET /api/v1/services/manifests             # List all service manifests
-GET /api/v1/services/{name}/manifest       # Get specific manifest YAML
+GET /api/v1/services/{name}/manifest       # Get specific manifest YAML (FQN accepted; instance ignored)
 ```
 
 **GET /api/v1/services/manifests response:**
@@ -206,7 +206,7 @@ GET /api/v1/services/{name}/manifest       # Get specific manifest YAML
 
 ```http
 GET    /api/v1/services                    # List services (container-level details)
-GET    /api/v1/services/{name}             # Service details (full technical view)
+GET    /api/v1/services/{name}             # Service details (full technical view, name = FQN)
 GET    /api/v1/services/{name}/logs        # Stream logs (SSE)
 POST   /api/v1/services                    # Install (full Docker control)
 POST   /api/v1/services/{name}:restart     # Restart service
@@ -262,6 +262,30 @@ POST   /api/v1/services:refresh            # Refresh manifests
     "command": ["mongo", "--eval", "db.adminCommand('ping')"],
     "interval_seconds": 30
   }
+}
+```
+
+---
+
+### Capabilities API (Offerings)
+
+**Target:** Capability discovery and management for offering instances  
+**Path param** `name` accepts FQN (URL-encode `:` as `%3A`)
+
+```http
+GET    /api/v1/stone/offerings/{name}/capabilities
+POST   /api/v1/stone/offerings/{name}/capabilities
+DELETE /api/v1/stone/offerings/{name}/capabilities/{capability}
+POST   /api/v1/stone/offerings/{name}/capabilities/refresh
+POST   /api/v1/stone/offerings/{name}/capabilities/mirror
+```
+
+**Mirror request:**
+```json
+{
+  "from": "stone-01",
+  "to": "stone-02",
+  "dry_run": false
 }
 ```
 

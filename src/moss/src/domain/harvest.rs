@@ -11,6 +11,7 @@
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use garden_common::offerings::parse_offering_fqn;
 
 /// Harvest identifier (format: "{offering}-{timestamp}")
 pub type HarvestId = String;
@@ -64,9 +65,12 @@ impl HarvestManifest {
         // Use timestamp + random suffix to ensure unique IDs
         let now = Utc::now();
         let random_suffix: u16 = rand::thread_rng().gen();
+        let safe_offering = parse_offering_fqn(offering)
+            .map(|fqn| fqn.encoded_for_container())
+            .unwrap_or_else(|_| offering.to_string());
         let id = format!(
             "{}-{}-{:04x}",
-            offering,
+            safe_offering,
             now.format("%Y%m%dT%H%M%S"),
             random_suffix
         );

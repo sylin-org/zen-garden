@@ -1328,6 +1328,7 @@ dependencies = [
  "tracing-subscriber",
  "udev",
  "url",
+ "urlencoding",
  "uuid",
  "walkdir",
  "windows 0.52.0",

@@ -1230,7 +1230,7 @@ async fn test_deployment_profile_detection() {
 
 #[tokio::test]
 async fn test_namespace_collision_handling() {
-    // Test that both mongodb@managed and mongodb@adopted can coexist
+    // Test that both mongodb and mongodb:adopted can coexist
 }
 ```
 
@@ -1306,7 +1306,7 @@ common/
 │   ├── postgres.yaml
 │   └── custom-service.yaml
 ├── adopted/                     # NEW - runtime adoption state
-│   └── ollama@adopted.json
+│   └── ollama:adopted.json
 └── secrets/                     # NEW - encrypted credentials
     └── nas@borrowed.cred
 ```

@@ -726,7 +726,7 @@ mod tests {
         let criteria = ServiceSearchCriteria::by_name("mongodb");
 
         assert!(matches_criteria(&criteria, "mongodb", "mongodb", "database", &[], &[]));
-        assert!(matches_criteria(&criteria, "zen-offering-mongodb", "mongodb", "database", &[], &[]));
+        assert!(matches_criteria(&criteria, "mongodb:dev", "mongodb", "database", &[], &[]));
         assert!(!matches_criteria(&criteria, "redis", "redis", "cache", &[], &[]));
     }
 

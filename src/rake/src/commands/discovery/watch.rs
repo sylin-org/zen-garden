@@ -135,10 +135,11 @@ async fn watch_offering_logs(
     offering: &str,
     timestamps: bool,
 ) -> anyhow::Result<()> {
+    let offering_path = urlencoding::encode(offering);
     let url = format!(
         "{}/api/v1/stone/services/{}/logs{}",
         endpoint.trim_end_matches('/'),
-        offering,
+        offering_path,
         if timestamps { "?timestamps=true" } else { "" }
     );
 

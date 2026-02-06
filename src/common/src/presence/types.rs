@@ -58,3 +58,22 @@ pub struct ClientNotification {
     pub from_host: Option<String>,  // Hostname or IP
     pub message: Option<String>,    // Optional display message
 }
+
+/// Payload for stone.load.updated events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoneLoadUpdatedPayload {
+    #[serde(default, alias = "cpu")]
+    pub cpu_percent: f64,
+    #[serde(default, alias = "memory")]
+    pub memory_percent: f64,
+}
+
+/// Payload for stone.health.changed events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoneHealthChangedPayload {
+    pub health: String,
+    #[serde(default)]
+    pub cpu_percent: f64,
+    #[serde(default)]
+    pub memory_percent: f64,
+}

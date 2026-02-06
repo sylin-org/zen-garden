@@ -30,8 +30,9 @@ impl UprootCommand {
 #[async_trait]
 impl Command for UprootCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+        let service_path = urlencoding::encode(&self.service);
         // First check if the service exists before prompting
-        let check_url = ctx.api_v1_url(&format!("stone/services/{}", self.service))?;
+        let check_url = ctx.api_v1_url(&format!("stone/services/{}", service_path))?;
         let check_response = ctx.client.get(&check_url).send().await?;
 
         if check_response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -72,7 +73,7 @@ impl Command for UprootCommand {
             println!();
         }
 
-        let url = ctx.api_v1_url(&format!("stone/services/{}/destroy", self.service))?;
+        let url = ctx.api_v1_url(&format!("stone/services/{}/destroy", service_path))?;
         let response = ctx.client.post(&url).send().await?;
         let status = response.status();
 

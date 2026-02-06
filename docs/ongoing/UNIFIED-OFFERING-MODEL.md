@@ -678,9 +678,9 @@ Current `SwEntry` may be renamed to `OfferingManifest` in a future phase to alig
 ### Field Naming Conventions
 
 In `UnifiedOffering`:
-- **`name`**: Instance identifier (e.g., `"my-mongodb"`, `"ollama@adopted"`)
+- **`name`**: Instance identifier (e.g., `"my-mongodb"`, `"ollama:adopted"`)
 - **`offering`**: Template/manifest type (e.g., `"mongodb"`, `"ollama"`)
 
-For adopted services, the naming convention is `"{offering}@adopted"` to distinguish from managed instances.
+For adopted services, the naming convention is `"{offering}:adopted"` to distinguish from managed instances.
 
 For borrowed services, `name` and `offering` are typically the same since there's no manifest template.

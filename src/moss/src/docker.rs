@@ -12,9 +12,36 @@ use std::net::TcpListener;
 use std::pin::Pin;
 use std::sync::Arc;
 use garden_common::manifests::get_ports_catalog;
+use garden_common::offerings::parse_offering_fqn;
 use garden_common::types::{PortConflictHandler, PortRemediation};
 use garden_common::{ServiceHealthStatus, ServiceStatus};
 use garden_common::console::{self, ConsolePrinter};
+use garden_common::constants::{OFFERING_CONTAINER_PREFIX, OFFERING_FQN_CONTAINER_SEPARATOR};
+
+pub fn zen_offering_container_name(offering_name: &str) -> Result<String> {
+    let fqn = parse_offering_fqn(offering_name)
+        .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering_name, e))?;
+    Ok(format!("{}{}", OFFERING_CONTAINER_PREFIX, fqn.encoded_for_container()))
+}
+
+pub fn decode_zen_offering_container_name(container_name: &str) -> Option<String> {
+    let trimmed = container_name.trim_start_matches('/');
+    let suffix = trimmed.strip_prefix(OFFERING_CONTAINER_PREFIX)?;
+    Some(decode_offering_container_suffix(suffix))
+}
+
+fn decode_offering_container_suffix(encoded: &str) -> String {
+    if let Some((offering, instance)) = encoded.split_once(OFFERING_FQN_CONTAINER_SEPARATOR) {
+        format!(
+            "{}{}{}",
+            offering,
+            garden_common::constants::OFFERING_FQN_SEPARATOR,
+            instance
+        )
+    } else {
+        encoded.to_string()
+    }
+}
 
 // ============================================================================
 // Port Availability and Remediation (Catalog-Driven)
@@ -300,7 +327,7 @@ impl DockerManager {
 
     /// Stop a service container
     pub async fn stop_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
@@ -329,7 +356,7 @@ impl DockerManager {
 
     /// Start a service container
     pub async fn start_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
@@ -376,7 +403,7 @@ impl DockerManager {
 
         // Prefix container name with "zen-offering-" to identify as Zen Garden offering
         // Note: zen-companion-* prefix is reserved for sidecars/companion containers
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
 
         // Check if container already exists
         if self.container_exists(&container_name).await? {
@@ -486,7 +513,7 @@ impl DockerManager {
         }
         tracing::info!(service = %name, "Removing service via Docker API");
 
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
 
         if !self.container_exists(&container_name).await? {
             anyhow::bail!("Container '{}' does not exist", container_name);
@@ -533,7 +560,7 @@ impl DockerManager {
         volumes: Vec<(String, String)>,
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<()> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
@@ -589,13 +616,13 @@ impl DockerManager {
 
     /// Check if a zen-offering container exists for the given offering name
     pub async fn zen_container_exists(&self, offering: &str) -> Result<bool> {
-        let container_name = format!("zen-offering-{}", offering);
+        let container_name = zen_offering_container_name(offering)?;
         self.container_exists(&container_name).await
     }
 
     /// Get the Docker image string for a zen-offering container (e.g., "mongo:7")
     pub async fn get_service_image(&self, name: &str) -> Result<String> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         let inspect = self
             .docker
             .inspect_container(&container_name, None::<InspectContainerOptions>)
@@ -610,7 +637,7 @@ impl DockerManager {
     /// Get the actual running image ID/SHA for a container (not the tag reference)
     /// Returns the full SHA256 like "sha256:abcd1234..." that identifies the actual image
     pub async fn get_service_image_id(&self, name: &str) -> Result<String> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         let inspect = self
             .docker
             .inspect_container(&container_name, None::<InspectContainerOptions>)
@@ -679,7 +706,7 @@ impl DockerManager {
 
     /// Get the status of a service by checking its Docker container
     pub async fn get_service_status(&self, name: &str) -> Result<ServiceStatus> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         
         let inspect = self
             .docker
@@ -704,7 +731,7 @@ impl DockerManager {
 
     /// Get the health status of a service by checking its Docker container health
     pub async fn get_service_health(&self, name: &str) -> Result<ServiceHealthStatus> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         
         let inspect = self
             .docker
@@ -735,10 +762,10 @@ impl DockerManager {
         Ok(ServiceHealthStatus::Healthy)
     }
 
-    /// List all zen-offering-prefixed containers
+    /// List all zen-offering-prefixed containers (decoded to offering FQNs)
     /// Note: Does not include zen-companion-* sidecars
     pub async fn list_zen_containers(&self) -> Result<Vec<String>> {
-        let filters = HashMap::from([("name".to_string(), vec!["zen-offering-".to_string()])]);
+        let filters = HashMap::from([("name".to_string(), vec![OFFERING_CONTAINER_PREFIX.to_string()])]);
         let options = ListContainersOptions {
             all: true,
             filters,
@@ -757,11 +784,7 @@ impl DockerManager {
                 c.names.and_then(|names| {
                     names.into_iter().find_map(|n| {
                         let trimmed = n.trim_start_matches('/');
-                        if trimmed.starts_with("zen-offering-") {
-                            Some(trimmed.strip_prefix("zen-offering-").unwrap_or(trimmed).to_string())
-                        } else {
-                            None
-                        }
+                        decode_zen_offering_container_name(trimmed)
                     })
                 })
             })
@@ -812,7 +835,7 @@ impl DockerManager {
 
     /// Get resource metrics for a specific container
     pub async fn get_container_stats(&self, name: &str) -> Result<garden_common::ContainerResources> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         
         let stats = self
             .docker
@@ -920,7 +943,16 @@ impl DockerManager {
         name: &str,
         timestamps: bool,
     ) -> Pin<Box<dyn Stream<Item = Result<LogLine>> + Send + 'static>> {
-        let container_name = format!("zen-offering-{}", name);
+        let name_owned = name.to_string();
+        let container_name = match zen_offering_container_name(&name_owned) {
+            Ok(value) => value,
+            Err(e) => {
+                let err_msg = format!("Invalid offering name '{}': {}", name_owned, e);
+                return Box::pin(async_stream::stream! {
+                    yield Err(anyhow::anyhow!("{}", err_msg));
+                });
+            }
+        };
         let docker = self.docker.clone();
         
         Box::pin(async_stream::stream! {
@@ -1026,7 +1058,7 @@ impl DockerManager {
     ///
     /// Returns a list of (host_path, container_path) tuples for all bind mounts.
     pub async fn get_container_volumes(&self, name: &str) -> Result<Vec<(String, String)>> {
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
         let info = self
             .docker
             .inspect_container(&container_name, None::<InspectContainerOptions>)
@@ -1064,7 +1096,7 @@ impl DockerManager {
     ) -> Result<(i64, String)> {
         use bollard::exec::{CreateExecOptions, StartExecResults};
 
-        let container_name = format!("zen-offering-{}", name);
+        let container_name = zen_offering_container_name(name)?;
 
         tracing::debug!(
             container = %container_name,

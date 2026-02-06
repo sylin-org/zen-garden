@@ -126,7 +126,10 @@ enum Commands {
         after_long_help = "Examples:\n  \
         garden-rake capabilities ollama              # List Ollama models\n  \
         garden-rake capabilities add ollama llama3  # Pull llama3 model\n  \
-        garden-rake capabilities remove ollama phi  # Remove phi model"
+        garden-rake capabilities remove ollama phi  # Remove phi model\n  \
+        garden-rake capabilities ollama mirror from stone-02\n  \
+        garden-rake capabilities ollama mirror to stone-02\n  \
+        garden-rake capabilities ollama mirror from stone-01 to stone-02"
     )]
     Capabilities {
         /// Subcommand (add, remove) or none for list
@@ -1111,6 +1114,14 @@ enum CapabilitiesAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Mirror capabilities from one stone to another
+    Mirror {
+        /// Offering name
+        offering: String,
+        /// Mirror args: from <stone> and/or to <stone>
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1450,7 +1461,15 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
         // === CAPABILITIES ===
         "capabilities" => {
             args.push("capabilities".to_string());
-            args.extend(parsed.args.clone());
+            if parsed.args.len() >= 2 && parsed.args[1] == "mirror" {
+                let offering = parsed.args[0].clone();
+                let rest = parsed.args[2..].to_vec();
+                args.push("mirror".to_string());
+                args.push(offering);
+                args.extend(rest);
+            } else {
+                args.extend(parsed.args.clone());
+            }
         }
 
         // === LOCAL/META COMMANDS ===
@@ -1761,6 +1780,10 @@ async fn async_main() -> anyhow::Result<()> {
                 }
                 Some(CapabilitiesAction::Refresh { offering, cap_type, dry_run }) => {
                     let cmd = commands::discovery::RefreshCapabilitiesCommand::new(offering, cap_type, dry_run, quiet_mode);
+                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                }
+                Some(CapabilitiesAction::Mirror { offering, args }) => {
+                    let cmd = commands::discovery::MirrorCapabilitiesCommand::new(offering, args, quiet_mode);
                     dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
                 }
                 None => {

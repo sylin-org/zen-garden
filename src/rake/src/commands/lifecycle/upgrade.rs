@@ -58,10 +58,11 @@ impl Command for UpgradeCommand {
 
                 for svc in service_list {
                     if let Some(name) = svc.get("name").and_then(|n| n.as_str()) {
+                        let name_path = urlencoding::encode(name);
                         let nourish_url = format!(
                             "{}/api/v1/stone/services/{}/nourish",
                             endpoint.trim_end_matches('/'),
-                            name
+                            name_path
                         );
                         let response = ctx.client.post(&nourish_url).send().await?;
 
@@ -105,10 +106,11 @@ impl Command for UpgradeCommand {
             }
         } else if let Some(svc_name) = &self.service {
             // v1 API: POST /api/v1/stone/services/:service/nourish
+            let name_path = urlencoding::encode(svc_name);
             let url = format!(
                 "{}/api/v1/stone/services/{}/nourish",
                 endpoint.trim_end_matches('/'),
-                svc_name
+                name_path
             );
             let response = ctx.client.post(url).send().await?;
             let status = response.status();

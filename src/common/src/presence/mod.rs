@@ -6,4 +6,12 @@
 pub mod types;
 pub mod event_types;
 
-pub use types::{PresenceSnapshot, StoneState, OfferingState, EventFilter, ClientNotification};
+pub use types::{
+    PresenceSnapshot,
+    StoneState,
+    OfferingState,
+    EventFilter,
+    ClientNotification,
+    StoneLoadUpdatedPayload,
+    StoneHealthChangedPayload,
+};

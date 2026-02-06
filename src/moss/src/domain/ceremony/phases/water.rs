@@ -24,8 +24,6 @@ pub async fn execute(
     harvest_id: Option<&str>,
     auto_rollback: bool,
 ) -> Result<()> {
-    let container_name = format!("zen-offering-{}", offering);
-
     tracing::info!(offering, "Starting water phase");
 
     // Step 1: Start the container
@@ -39,7 +37,7 @@ pub async fn execute(
 
     // Step 2: Wait for health
     let timeout = Duration::from_secs(DEFAULT_HEALTH_TIMEOUT_SECS);
-    let healthy = wait_for_health(state, &container_name, timeout).await;
+    let healthy = wait_for_health(state, offering, timeout).await;
 
     if healthy {
         tracing::info!(offering, "Service is healthy - water phase completed");
@@ -78,7 +76,7 @@ pub async fn execute(
 
         // Verify rollback succeeded
         let rollback_healthy =
-            wait_for_health(state, &container_name, Duration::from_secs(60)).await;
+            wait_for_health(state, offering, Duration::from_secs(60)).await;
 
         if rollback_healthy {
             anyhow::bail!(
@@ -101,18 +99,18 @@ pub async fn execute(
 /// Wait for container to become healthy
 ///
 /// Polls health status until healthy or timeout expires.
-async fn wait_for_health(state: &AppState, container_name: &str, timeout: Duration) -> bool {
+async fn wait_for_health(state: &AppState, offering: &str, timeout: Duration) -> bool {
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_secs(HEALTH_POLL_INTERVAL_SECS);
 
     while start.elapsed() < timeout {
-        match state.docker.get_service_health(container_name).await {
+        match state.docker.get_service_health(offering).await {
             Ok(health) => {
                 if health == garden_common::ServiceHealthStatus::Healthy {
                     return true;
                 }
                 tracing::debug!(
-                    container = container_name,
+                    offering = offering,
                     health = ?health,
                     elapsed = ?start.elapsed(),
                     "Waiting for health..."
@@ -120,7 +118,7 @@ async fn wait_for_health(state: &AppState, container_name: &str, timeout: Durati
             }
             Err(e) => {
                 tracing::debug!(
-                    container = container_name,
+                    offering = offering,
                     error = %e,
                     "Health check error, retrying..."
                 );

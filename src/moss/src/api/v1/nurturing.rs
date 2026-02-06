@@ -40,6 +40,7 @@ use crate::tasks::{
 };
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
+use garden_common::offerings::parse_offering_fqn;
 
 /// Request for creating a snapshot
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -87,11 +88,12 @@ pub async fn get_offering_slots(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> Result<Json<ApiResponse<Option<OfferingSlots>>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering by name to get the offering_id
     let offering_id = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name == offering || o.offering_id == offering)
+            .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
@@ -129,16 +131,17 @@ pub async fn create_snapshot(
     Path(offering): Path<String>,
     Json(request): Json<CreateSnapshotRequest>,
 ) -> Result<Json<ApiResponse<NurturingResult>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let (offering_id, offering_name) = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name == offering)
+            .find(|o| o.name == offering_lookup)
             .map(|o| (o.offering_id.clone(), o.name.clone()))
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering),
+                format!("Offering '{}' not found in registry", offering_lookup),
                 None,
             ))?
     };
@@ -147,7 +150,7 @@ pub async fn create_snapshot(
         return Err(crate::infra::error_response(
             StatusCode::BAD_REQUEST,
             "NO_OFFERING_ID",
-            format!("Offering '{}' has no offering_id - please restart moss to migrate", offering),
+            format!("Offering '{}' has no offering_id - please restart moss to migrate", offering_lookup),
             None,
         ));
     }
@@ -191,16 +194,17 @@ pub async fn restore_snapshot(
     Path(offering): Path<String>,
     Json(request): Json<RestoreRequest>,
 ) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let offering_id = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name == offering)
+            .find(|o| o.name == offering_lookup)
             .map(|o| o.offering_id.clone())
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering),
+                format!("Offering '{}' not found in registry", offering_lookup),
                 None,
             ))?
     };
@@ -221,14 +225,14 @@ pub async fn restore_snapshot(
     };
 
     tracing::info!(
-        offering = %offering,
+        offering = %offering_lookup,
         offering_id = %offering_id,
         slot = ?slot,
         "Restoring from nurturing snapshot"
     );
 
     // Stop the service first
-    if let Err(e) = state.docker.stop_service(&offering, Some(&state.console)).await {
+    if let Err(e) = state.docker.stop_service(&offering_lookup, Some(&state.console)).await {
         tracing::warn!(error = ?e, "Failed to stop service before restore (continuing anyway)");
     }
 
@@ -246,7 +250,7 @@ pub async fn restore_snapshot(
     ))?;
 
     // Start the service
-    if let Err(e) = state.docker.start_service(&offering, Some(&state.console)).await {
+    if let Err(e) = state.docker.start_service(&offering_lookup, Some(&state.console)).await {
         return Err(crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "START_FAILED",
@@ -269,11 +273,12 @@ pub async fn delete_nurturing(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let offering_id = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name == offering || o.offering_id == offering)
+            .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
@@ -326,16 +331,17 @@ pub async fn replicate_to_seed_bank(
     Path(offering): Path<String>,
     Json(request): Json<ReplicateRequest>,
 ) -> Result<Json<ApiResponse<ReplicationResult>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let offering_entry = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name == offering || o.offering_id == offering)
+            .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .cloned()
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering),
+                format!("Offering '{}' not found in registry", offering_lookup),
                 None,
             ))?
     };
@@ -428,16 +434,17 @@ pub async fn restore_from_seed_bank(
     Path(offering): Path<String>,
     Json(request): Json<RestoreRemoteRequest>,
 ) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let (offering_id, offering_name) = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name == offering || o.offering_id == offering)
+            .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .map(|o| (o.offering_id.clone(), o.name.clone()))
             .ok_or_else(|| crate::infra::error_response(
                 StatusCode::NOT_FOUND,
                 "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering),
+                format!("Offering '{}' not found in registry", offering_lookup),
                 None,
             ))?
     };
@@ -495,6 +502,10 @@ pub async fn restore_from_seed_bank(
     }))
 }
 
+fn normalize_offering_for_lookup(offering: &str) -> Option<String> {
+    parse_offering_fqn(offering).ok().map(|fqn| fqn.fqn())
+}
+
 // ============================================================================
 // Timer Trigger Endpoints
 // ============================================================================
@@ -512,12 +523,13 @@ pub async fn trigger_offering_nurturing(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> Result<Json<ApiResponse<NurturingWorkflowResult>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     tracing::info!(
-        offering = %offering,
+        offering = %offering_lookup,
         "Nurturing trigger received"
     );
 
-    let result = trigger_nurturing(&state, &offering).await
+    let result = trigger_nurturing(&state, &offering_lookup).await
         .map_err(|e| crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "NURTURING_WORKFLOW_FAILED",

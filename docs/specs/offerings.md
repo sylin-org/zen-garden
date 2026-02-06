@@ -8,13 +8,14 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Taxonomy and Query Recommendations](#taxonomy-and-query-recommendations)
-3. [Offering Registry Structure](#offering-registry-structure)
-4. [Native vs Agnostic Services](#native-vs-agnostic-services)
-5. [Service Discovery](#service-discovery)
-6. [Template Format](#template-format)
-7. [Validation Rules](#validation-rules)
-8. [Agnostic Data API](#agnostic-data-api)
+2. [Offering Instances (FQN)](#offering-instances-fqn)
+3. [Taxonomy and Query Recommendations](#taxonomy-and-query-recommendations)
+4. [Offering Registry Structure](#offering-registry-structure)
+5. [Native vs Agnostic Services](#native-vs-agnostic-services)
+6. [Service Discovery](#service-discovery)
+7. [Template Format](#template-format)
+8. [Validation Rules](#validation-rules)
+9. [Agnostic Data API](#agnostic-data-api)
 
 ---
 
@@ -35,6 +36,22 @@ Offerings declare which protocols they support. Resolution matches protocols to 
 - **Query-based:** Discover services by intent, not exact name
 - **Protocol-aware:** Match by wire format (s3) or by software (minio)
 - **Compatibility-aware:** Match offerings to Stone hardware automatically
+
+---
+
+## Offering Instances (FQN)
+
+Zen Garden separates **offering type** from **instance identity** using a fully-qualified name (FQN):
+
+```
+offering[:instance]
+```
+
+- `ollama` → default instance
+- `ollama:dev` → named instance
+
+The FQN is used for service identity (registry, APIs, containers). The offering type is still used for manifest lookup and compatibility.  
+See [offering-fqn.md](offering-fqn.md) for full rules and encoding details.
 
 ---
 

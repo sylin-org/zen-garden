@@ -59,7 +59,7 @@ pub async fn reconcile_services(
     for offering in existing {
         let in_registry = {
             let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name == offering || o.offering == offering)
+            offerings.iter().any(|o| o.name == offering)
         };
 
         if in_registry {

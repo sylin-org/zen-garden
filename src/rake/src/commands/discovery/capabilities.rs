@@ -6,7 +6,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use anyhow::Context;
+use anyhow::{Context, bail};
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
 use garden_common::ui::rendering::{self as ui};
@@ -41,7 +41,8 @@ impl CapabilitiesCommand {
 #[async_trait]
 impl Command for CapabilitiesCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities", self.offering))?;
+        let offering_path = urlencoding::encode(&self.offering);
+        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities", offering_path))?;
         let response = ctx.client.get(&url).send().await?;
 
         // Check for error status
@@ -232,7 +233,8 @@ impl Command for AddCapabilityCommand {
             self.offering
         );
 
-        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities", self.offering))?;
+        let offering_path = urlencoding::encode(&self.offering);
+        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities", offering_path))?;
         let request_body = AddCapabilityRequest {
             name: self.name.clone(),
             cap_type: self.cap_type.clone(),
@@ -360,9 +362,10 @@ impl Command for RemoveCapabilityCommand {
             self.offering
         );
 
+        let offering_path = urlencoding::encode(&self.offering);
         let mut url = ctx.api_v1_url(&format!(
             "stone/offerings/{}/capabilities/{}",
-            self.offering,
+            offering_path,
             urlencoding::encode(&self.name)
         ))?;
 
@@ -477,6 +480,41 @@ pub struct RefreshCapabilitiesRequest {
     pub dry_run: bool,
 }
 
+/// Request body for mirroring capabilities
+#[derive(Debug, Serialize)]
+pub struct MirrorCapabilitiesRequest {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Failure details when mirroring capabilities
+#[derive(Debug, Deserialize)]
+pub struct MirrorCapabilityFailure {
+    pub name: String,
+    pub cap_type: String,
+    pub error: String,
+}
+
+/// Response from mirror capabilities endpoint
+#[derive(Debug, Deserialize)]
+pub struct MirrorCapabilitiesResponse {
+    pub offering: String,
+    pub from: String,
+    pub to: String,
+    pub added: usize,
+    pub skipped: usize,
+    #[serde(default)]
+    pub failed: usize,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub failures: Vec<MirrorCapabilityFailure>,
+}
+
 /// Refresh/update all capabilities for an offering
 pub struct RefreshCapabilitiesCommand {
     /// Offering name
@@ -487,6 +525,26 @@ pub struct RefreshCapabilitiesCommand {
     pub dry_run: bool,
     /// Quiet mode
     pub quiet_mode: bool,
+}
+
+/// Mirror capabilities from one stone to another
+pub struct MirrorCapabilitiesCommand {
+    /// Offering name
+    pub offering: String,
+    /// Raw mirror args (from/to pairs)
+    pub args: Vec<String>,
+    /// Quiet mode
+    pub quiet_mode: bool,
+}
+
+impl MirrorCapabilitiesCommand {
+    pub fn new(offering: String, args: Vec<String>, quiet_mode: bool) -> Self {
+        Self {
+            offering,
+            args,
+            quiet_mode,
+        }
+    }
 }
 
 impl RefreshCapabilitiesCommand {
@@ -511,7 +569,8 @@ impl Command for RefreshCapabilitiesCommand {
             self.offering
         );
 
-        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities/refresh", self.offering))?;
+        let offering_path = urlencoding::encode(&self.offering);
+        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities/refresh", offering_path))?;
         let request_body = RefreshCapabilitiesRequest {
             cap_type: self.cap_type.clone(),
             dry_run: self.dry_run,
@@ -645,4 +704,134 @@ impl Command for RefreshCapabilitiesCommand {
     fn name(&self) -> &'static str {
         "capabilities-refresh"
     }
+}
+
+#[async_trait]
+impl Command for MirrorCapabilitiesCommand {
+    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+        let (from_arg, to_arg) = parse_mirror_targets(&self.args)?;
+        let local_stone = ctx.stone_name.clone();
+
+        let from = match from_arg {
+            Some(value) => value,
+            None => local_stone.clone().ok_or_else(|| {
+                anyhow::anyhow!("Mirror requires a source stone. Use 'from <stone>' or tend a stone first.")
+            })?,
+        };
+
+        let to = match to_arg {
+            Some(value) => value,
+            None => local_stone.ok_or_else(|| {
+                anyhow::anyhow!("Mirror requires a destination stone. Use 'to <stone>' or tend a stone first.")
+            })?,
+        };
+
+        if from == to {
+            bail!("Mirror source and destination are the same ('{}').", from);
+        }
+
+        println!(
+            "{} Mirroring capabilities for {} ({} → {})...",
+            ui::status_indicator("info", ctx.term.supports_color),
+            self.offering,
+            from,
+            to
+        );
+
+        let offering_path = urlencoding::encode(&self.offering);
+        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities/mirror", offering_path))?;
+        let request_body = MirrorCapabilitiesRequest {
+            from: from.clone(),
+            to: to.clone(),
+            dry_run: false,
+        };
+
+        let response = ctx.client.post(&url).json(&request_body).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+
+            if let Ok(error) = serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body) {
+                eprintln!(
+                    "{} {}",
+                    ui::status_indicator("error", ctx.term.supports_color),
+                    error.error.message
+                );
+                return Ok(());
+            }
+
+            anyhow::bail!("Request failed with status {}: {}", status, body);
+        }
+
+        let api_response: ApiResponse<MirrorCapabilitiesResponse> = response
+            .json()
+            .await
+            .context("Failed to parse mirror response")?;
+
+        let data = api_response.data;
+
+        if let Some(message) = &data.message {
+            println!("  {}", message);
+        }
+
+        println!("  Offering: {}", data.offering);
+        println!("  From:     {}", data.from);
+        println!("  To:       {}", data.to);
+        println!("  Added:    {}", data.added);
+        println!("  Skipped:  {}", data.skipped);
+        if data.failed > 0 {
+            println!("  Failed:   {}", data.failed);
+        }
+
+        if !data.failures.is_empty() {
+            println!();
+            println!("{}", ui::section_header("FAILURES", &ctx.term));
+            for failure in &data.failures {
+                println!("  {} {}: {}", failure.cap_type, failure.name, failure.error);
+            }
+        }
+
+        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "capabilities-mirror"
+    }
+}
+
+fn parse_mirror_targets(args: &[String]) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let mut from = None;
+    let mut to = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "from" => {
+                i += 1;
+                if i >= args.len() {
+                    bail!("'from' requires a stone name");
+                }
+                from = Some(args[i].clone());
+            }
+            "to" => {
+                i += 1;
+                if i >= args.len() {
+                    bail!("'to' requires a stone name");
+                }
+                to = Some(args[i].clone());
+            }
+            other => {
+                bail!("Unexpected token '{}' in mirror command. Use 'from <stone>' and/or 'to <stone>'.", other);
+            }
+        }
+        i += 1;
+    }
+
+    if from.is_none() && to.is_none() {
+        bail!("Mirror requires a source or destination stone.");
+    }
+
+    Ok((from, to))
 }

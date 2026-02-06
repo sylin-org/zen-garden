@@ -29,6 +29,7 @@ use crate::{
 #[cfg(target_os = "linux")]
 use crate::run_first_boot_initialization;
 use garden_common::console;
+use garden_common::offerings::parse_offering_fqn;
 use super::config::DaemonConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -914,11 +915,20 @@ async fn start_preinstall_handler(state: &AppState) {
         manifest.offerings.len()
     );
 
-    // Validate all offerings exist before creating job
-    let invalid_offerings: Vec<_> = manifest.offerings.iter()
-        .filter(|o| state.manifest_registry.sw.get(o).is_none())
-        .cloned()
-        .collect();
+    // Validate all offerings exist before creating job (supports FQN)
+    let mut invalid_offerings = Vec::new();
+    for offering in &manifest.offerings {
+        match parse_offering_fqn(offering) {
+            Ok(fqn) => {
+                if state.manifest_registry.sw.get(&fqn.offering).is_none() {
+                    invalid_offerings.push(offering.clone());
+                }
+            }
+            Err(_) => {
+                invalid_offerings.push(offering.clone());
+            }
+        }
+    }
 
     if !invalid_offerings.is_empty() {
         tracing::error!(

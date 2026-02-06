@@ -109,17 +109,17 @@ garden-rake release mongodb        # Remove/unadopt
 // When both managed and adopted "mongodb" exist:
 OfferingRegistry {
     "mongodb": vec![
-        OfferingRef { id: "mongodb@managed", mode: Managed },
-        OfferingRef { id: "mongodb@adopted", mode: Adopted },
+        OfferingRef { id: "mongodb", mode: Managed },
+        OfferingRef { id: "mongodb:adopted", mode: Adopted },
     ],
-    "mongodb@managed": OfferingRef { id: "mongodb@managed", mode: Managed },
-    "mongodb@adopted": OfferingRef { id: "mongodb@adopted", mode: Adopted },
+    "mongodb": OfferingRef { id: "mongodb", mode: Managed },
+    "mongodb:adopted": OfferingRef { id: "mongodb:adopted", mode: Adopted },
 }
 ```
 
 **Query behavior**:
 - `garden-rake observe mongodb` → Returns **both** (user chooses)
-- `garden-rake observe mongodb@adopted` → Returns specific instance
+- `garden-rake observe mongodb:adopted` → Returns specific instance
 - `garden-rake rest mongodb` → **Interactive prompt** if ambiguous
 
 **Interactive prompt example**:
@@ -127,11 +127,11 @@ OfferingRegistry {
 $ garden-rake rest mongodb
 
 Multiple 'mongodb' offerings found:
-  1. mongodb@managed (localhost:27017, container)
-  2. mongodb@adopted (localhost:5432, native process)
+  1. mongodb (localhost:27017, container)
+  2. mongodb:adopted (localhost:5432, native process)
 
 Which offering? [1/2]: 1
-Resting mongodb@managed...
+Resting mongodb...
 ```
 
 ---
@@ -169,7 +169,7 @@ pub enum AdoptedControlLevel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Offering {
-    pub id: String,                    // "mongodb@managed", "redis@adopted"
+    pub id: String,                    // "mongodb", "redis:adopted"
     pub name: String,                  // "mongodb", "redis"
     pub mode: OfferingMode,
     pub status: OfferingStatus,
@@ -748,7 +748,7 @@ GET /api/v1/offerings?mode=managed       # Only managed
 {
   "offerings": [
     {
-      "id": "ollama@adopted",
+      "id": "ollama:adopted",
       "name": "ollama",
       "mode": "adopted",
       "status": "running",
@@ -761,7 +761,7 @@ GET /api/v1/offerings?mode=managed       # Only managed
       "detected_at": "2026-01-21T10:30:00Z"
     },
     {
-      "id": "postgres@managed",
+      "id": "postgres",
       "name": "postgres",
       "mode": "managed",
       "status": "running",
@@ -896,7 +896,7 @@ pub fn generate_connection_payload(offering: &Offering) -> Result<serde_json::Va
 **Example API Response** (generated from template above):
 
 ```http
-GET /api/v1/offerings/postgres@adopted/connection
+GET /api/v1/offerings/postgres:adopted/connection
 {
   "connection_string": "postgresql://admin:secret@localhost:5432/mydb",
   "host": "localhost",

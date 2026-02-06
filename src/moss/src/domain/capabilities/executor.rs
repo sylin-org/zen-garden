@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::process::Command;
+use crate::docker::zen_offering_container_name;
 
 /// Context for capability execution
 ///
@@ -72,6 +73,19 @@ impl CapabilityExecutor {
         Self
     }
 
+    fn build_context(&self, service: &ServiceInfo, mode: OfferingMode) -> Result<ExecutorContext> {
+        let container_name = match mode {
+            OfferingMode::Managed => Some(zen_offering_container_name(&service.name)?),
+            _ => None,
+        };
+
+        Ok(ExecutorContext {
+            mode,
+            container_name,
+            port: service.ports.native,
+        })
+    }
+
     /// List capabilities for an offering using its manifest
     ///
     /// # Arguments
@@ -90,11 +104,7 @@ impl CapabilityExecutor {
         let mut collections = Vec::new();
 
         // Build execution context with templating variables
-        let context = ExecutorContext {
-            mode,
-            container_name: Some(format!("zen-offering-{}", service.name)),
-            port: service.ports.native,
-        };
+        let context = self.build_context(service, mode)?;
 
         // Execute list command for each capability type
         for cap_config in &manifest.capabilities {
@@ -169,11 +179,7 @@ impl CapabilityExecutor {
             .with_context(|| "No commands defined for add operation")?;
 
         // Build context
-        let context = ExecutorContext {
-            mode,
-            container_name: Some(format!("zen-offering-{}", service.name)),
-            port: service.ports.native,
-        };
+        let context = self.build_context(service, mode)?;
 
         // Get and template command
         let command = self.get_command(commands, &context)?;
@@ -265,11 +271,7 @@ impl CapabilityExecutor {
             .with_context(|| "No commands defined for remove operation")?;
 
         // Build context
-        let context = ExecutorContext {
-            mode,
-            container_name: Some(format!("zen-offering-{}", service.name)),
-            port: service.ports.native,
-        };
+        let context = self.build_context(service, mode)?;
 
         // Get and template command
         let command = self.get_command(commands, &context)?;
@@ -369,11 +371,7 @@ impl CapabilityExecutor {
         };
 
         // Build context
-        let context = ExecutorContext {
-            mode,
-            container_name: Some(format!("zen-offering-{}", service.name)),
-            port: service.ports.native,
-        };
+        let context = self.build_context(service, mode)?;
 
         // Get local version/digest
         let local_version = if let Some(local_cmd) = &check_config.local_command {
@@ -457,11 +455,7 @@ impl CapabilityExecutor {
             .with_context(|| format!("Unknown capability type: {}", cap_type))?;
 
         // Build context
-        let context = ExecutorContext {
-            mode,
-            container_name: Some(format!("zen-offering-{}", service.name)),
-            port: service.ports.native,
-        };
+        let context = self.build_context(service, mode)?;
 
         // Try upgrade config first, fall back to add config
         let (commands, timeout) = if let Some(upgrade_config) = &cap_config.upgrade {

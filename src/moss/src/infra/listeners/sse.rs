@@ -10,7 +10,7 @@ use garden_common::{
     SSE_LEVEL_INFO,
     EVENT_DEPLOYED, EVENT_STARTED, EVENT_STOPPED, EVENT_REMOVED,
     EVENT_DESTROYED, EVENT_UPDATED, EVENT_RENAMED, EVENT_HEALTH_CHANGED,
-    presence::event_types,
+    presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload},
 };
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -111,17 +111,19 @@ impl SseEvent {
                 }))
             }
             StoneEvent::HealthChanged { health, cpu_percent, memory_percent, .. } => {
-                Some(serde_json::json!({
-                    "health": health,
-                    "cpu_percent": cpu_percent,
-                    "memory_percent": memory_percent,
-                }))
+                let payload = StoneHealthChangedPayload {
+                    health: health.clone(),
+                    cpu_percent: *cpu_percent,
+                    memory_percent: *memory_percent,
+                };
+                serde_json::to_value(payload).ok()
             }
             StoneEvent::LoadUpdated { cpu_percent, memory_percent, .. } => {
-                Some(serde_json::json!({
-                    "cpu_percent": cpu_percent,
-                    "memory_percent": memory_percent,
-                }))
+                let payload = StoneLoadUpdatedPayload {
+                    cpu_percent: *cpu_percent,
+                    memory_percent: *memory_percent,
+                };
+                serde_json::to_value(payload).ok()
             }
             StoneEvent::NetworkReady { ip, interface, .. } => {
                 Some(serde_json::json!({

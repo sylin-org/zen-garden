@@ -33,7 +33,8 @@ impl RouseCommand {
 #[async_trait]
 impl Command for RouseCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url(&format!("admin/stone/{}/wake", self.stone_name))?;
+        let stone_path = urlencoding::encode(&self.stone_name);
+        let url = ctx.api_v1_url(&format!("admin/stone/{}/wake", stone_path))?;
 
         println!(
             "{}{} Rousing {}...",

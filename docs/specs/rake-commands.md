@@ -273,7 +273,11 @@ Lists validated offerings by category.
 garden-rake offer <name>
 ```
 
-Installs when `<name>` matches a known offering.
+Installs when `<name>` matches a known offering. `<name>` supports instance FQN:
+
+```bash
+garden-rake offer ollama:dev
+```
 
 **Query recommendations:**
 
@@ -300,6 +304,23 @@ garden-rake offer database,document
 
 # Cross-stone search with preferences
 garden-rake offer vector --at anywhere --prefer ssd
+```
+
+#### Capabilities
+
+```bash
+# List capabilities for an offering instance
+garden-rake capabilities <offering[:instance]>
+
+# Add/remove capabilities
+garden-rake capabilities add <offering[:instance]> <name> [--type <cap_type>]
+garden-rake capabilities remove <offering[:instance]> <name> [--type <cap_type>]
+
+# Refresh capabilities (job-based)
+garden-rake capabilities refresh <offering[:instance]> [--type <cap_type>]
+
+# Mirror capabilities between stones (Moss orchestrates)
+garden-rake capabilities <offering[:instance]> mirror from <stone-01> to <stone-02>
 ```
 
 #### Remove

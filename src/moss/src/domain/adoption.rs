@@ -13,6 +13,7 @@ use crate::domain::{
 };
 use crate::docker::DockerManager;
 use crate::infra::ManifestRegistry;
+use garden_common::offerings::parse_offering_fqn;
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     ManagedData, Offering, OfferingGuidance, OfferingLocation, OfferingModeData,
@@ -43,8 +44,13 @@ pub async fn adopt_offering_container(
     offering: &str,
     stone_name: &str,
 ) -> anyhow::Result<Option<Offering>> {
+    let fqn = parse_offering_fqn(offering)
+        .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering, e))?;
+    let offering_name = fqn.fqn();
+    let offering_type = fqn.offering.clone();
+
     // Only adopt if the offering maps to a known template (valid manifest/template).
-    let entry = match manifest_registry.sw.get(offering) {
+    let entry = match manifest_registry.sw.get(&offering_type) {
         Some(e) => e,
         None => return Ok(None),
     };
@@ -73,16 +79,16 @@ pub async fn adopt_offering_container(
     }
 
     let service_status = docker
-        .get_service_status(offering)
+        .get_service_status(&offering_name)
         .await
         .unwrap_or(garden_common::ServiceStatus::Unknown);
     let mut health = docker
-        .get_service_health(offering)
+        .get_service_health(&offering_name)
         .await
         .unwrap_or(ServiceHealthStatus::Offline);
 
     let actual_image = docker
-        .get_service_image(offering)
+        .get_service_image(&offering_name)
         .await
         .unwrap_or_else(|_| "<unknown>".to_string());
     let expected_image = template.image.clone();
@@ -113,8 +119,8 @@ pub async fn adopt_offering_container(
         }
         content = content
             .replace("{{server-name}}", stone_name)
-            .replace("{{offering}}", offering)
-            .replace("{{name}}", offering);
+            .replace("{{offering}}", &offering_type)
+            .replace("{{name}}", &offering_name);
 
         // Build variables map for API consumers
         let mut variables = std::collections::HashMap::new();
@@ -125,8 +131,8 @@ pub async fn adopt_offering_container(
             }
         }
         variables.insert("server-name".to_string(), stone_name.to_string());
-        variables.insert("offering".to_string(), offering.to_string());
-        variables.insert("name".to_string(), offering.to_string());
+        variables.insert("offering".to_string(), offering_type.to_string());
+        variables.insert("name".to_string(), offering_name.to_string());
 
         OfferingGuidance { content, variables }
     });
@@ -144,8 +150,8 @@ pub async fn adopt_offering_container(
 
     let adopted = Offering {
         offering_id: generate_guidv7(),
-        name: offering.to_string(),
-        offering: offering.to_string(),
+        name: offering_name,
+        offering: offering_type,
         version,
         status,
         health,
@@ -207,7 +213,7 @@ pub async fn adopt_existing_containers(
     for offering in existing {
         let already = {
             let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name == offering || o.offering == offering)
+            offerings.iter().any(|o| o.name == offering)
         };
         if already {
             continue;

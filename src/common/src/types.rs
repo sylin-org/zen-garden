@@ -1162,7 +1162,7 @@ pub struct Offering {
     /// Unique identifier (GUIDv7) - generated for all modes
     pub offering_id: String,
 
-    /// Instance name (e.g., "my-mongodb", "ollama@adopted")
+    /// Instance name (e.g., "my-mongodb", "ollama:adopted")
     pub name: String,
 
     /// Offering type/template name (e.g., "mongodb", "ollama")

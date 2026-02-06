@@ -67,10 +67,10 @@ pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
     };
 
     // Extract keywords and filter out from args
-    let (keywords, filtered_args) = extract_keywords(&args[1..], &style)?;
+    let (keywords, filtered_args) = extract_keywords(&args[1..], &style, first_arg)?;
 
     // Validate: no mixing of zen positional keywords with normative flags
-    if style == CommandStyle::Normative && has_zen_keywords(&args) {
+    if style == CommandStyle::Normative && has_zen_keywords(&args, first_arg) {
         return Err(anyhow!(
             "Cannot mix normative syntax with zen positional keywords. Use either:\n  \
              Zen:       {} {} quietly\n  \
@@ -147,14 +147,15 @@ fn is_normative_verb(verb: &str) -> bool {
 }
 
 /// Check if args contain zen positional keywords
-fn has_zen_keywords(args: &[String]) -> bool {
+fn has_zen_keywords(args: &[String], verb: &str) -> bool {
     args.iter().any(|arg| {
-        matches!(arg.as_str(), "on" | "at" | "from" | "quietly" | "fresh" | "until" | "somewhere" | "wishfully")
+        matches!(arg.as_str(), "on" | "at" | "quietly" | "fresh" | "until" | "somewhere" | "wishfully")
+            || (verb == "borrow" && arg == "from")
     })
 }
 
 /// Extract positional keywords from args
-fn extract_keywords(args: &[String], style: &CommandStyle) -> Result<(ParsedKeywords, Vec<String>)> {
+fn extract_keywords(args: &[String], style: &CommandStyle, verb: &str) -> Result<(ParsedKeywords, Vec<String>)> {
     let mut keywords = ParsedKeywords::default();
     let mut filtered_args = Vec::new();
     let mut i = 0;
@@ -173,7 +174,7 @@ fn extract_keywords(args: &[String], style: &CommandStyle) -> Result<(ParsedKeyw
                 keywords.on_stone = Some(args[i].clone());
             }
             // "from" for borrow command
-            "from" if *style == CommandStyle::Zen => {
+            "from" if *style == CommandStyle::Zen && verb == "borrow" => {
                 // Next arg is URL
                 i += 1;
                 if i >= args.len() {
@@ -257,6 +258,21 @@ mod tests {
         assert_eq!(parsed.verb, "borrow");
         assert_eq!(parsed.args, vec!["redis"]);
         assert_eq!(parsed.keywords.from_url, Some("redis://cache:6379".to_string()));
+    }
+
+    #[test]
+    fn test_zen_non_borrow_keeps_from() {
+        let args = vec![
+            "capabilities".to_string(),
+            "ollama".to_string(),
+            "mirror".to_string(),
+            "from".to_string(),
+            "stone-02".to_string(),
+        ];
+        let parsed = parse_args(args).unwrap();
+        assert_eq!(parsed.verb, "capabilities");
+        assert_eq!(parsed.args, vec!["ollama", "mirror", "from", "stone-02"]);
+        assert!(parsed.keywords.from_url.is_none());
     }
 
     #[test]

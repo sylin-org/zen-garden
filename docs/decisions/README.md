@@ -65,6 +65,10 @@ canonical: true
   - **Status**: Accepted
   - **Rationale**: Categorization scheme for service offerings
   - **Impact**: Organized service catalog (data, cache, compute, ai, storage, messaging, web)
+- **[OFFER-0003](OFFER-0003-offering-fqn.md)**: Offering Fully-Qualified Names (FQN)
+  - **Status**: Accepted (2026-02-06)
+  - **Rationale**: Separate offering type from instance identity
+  - **Impact**: Multi-instance support, consistent naming across APIs and containers
 
 ### Rake (CLI)
 - **[RAKE-0010](RAKE-0010-tending-cached-endpoint-resolution.md)**: Cached Endpoint Resolution
@@ -244,7 +248,7 @@ Once an ADR is **Accepted**:
 
 ## ADR Statistics
 
-- **Total ADRs**: 9
+- **Total ADRs**: 10
 - **By Status**:
   - Accepted: 9
   - Proposed: 0
@@ -256,7 +260,7 @@ Once an ADR is **Accepted**:
   - Lantern: 1
   - Metrics: 1
   - Moss: 3
-  - Offerings: 1
+  - Offerings: 2
   - Rake: 1
 
 ---
@@ -267,6 +271,6 @@ Once an ADR is **Accepted**:
 
 ---
 
-**Last Updated**: February 4, 2026
+**Last Updated**: February 6, 2026
 **Maintained By**: Architecture Team
 **Review Cycle**: As needed (updated when ADRs added/changed)

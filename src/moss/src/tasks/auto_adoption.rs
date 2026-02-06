@@ -185,7 +185,12 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
 
                     let adopted_offering = garden_common::Offering {
                         offering_id: garden_common::utils::ids::generate_guidv7(),
-                        name: format!("{}@adopted", manifest.name),
+                        name: format!(
+                            "{}{}{}",
+                            manifest.name,
+                            garden_common::constants::OFFERING_FQN_SEPARATOR,
+                            garden_common::constants::OFFERING_ADOPTED_INSTANCE
+                        ),
                         offering: manifest.name.clone(),
                         version: result.version.unwrap_or_else(|| "unknown".to_string()),
                         status: garden_common::OfferingStatus::Running,

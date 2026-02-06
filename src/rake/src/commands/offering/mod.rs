@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use garden_common::{CliFormatter, GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo};
+use garden_common::offerings::parse_offering_fqn;
 use crate::command_manifest::cmd;
 use crate::commands::Command;
 use crate::context::CommandContext;
@@ -186,7 +187,7 @@ async fn fetch_offering_info_json(
     offering: &str,
 ) -> Result<serde_json::Value> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let path = format!("/api/v1/stone/offerings/{}", offering);
+    let path = format!("/api/v1/stone/offerings/{}", urlencoding::encode(offering));
     let response = moss.get_raw(&path).await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -396,7 +397,7 @@ async fn print_offering_info(
     offering: &str,
 ) -> Result<()> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let path = format!("/api/v1/stone/offerings/{}", offering);
+    let path = format!("/api/v1/stone/offerings/{}", urlencoding::encode(offering));
     let response = moss.get_raw(&path).await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -1137,8 +1138,13 @@ impl OfferCommand {
         endpoint: &str,
         name: &str,
     ) -> bool {
+        let offering_type = match parse_offering_fqn(name) {
+            Ok(fqn) => fqn.offering,
+            Err(_) => return false,
+        };
+
         if let Ok(offerings) = fetch_offerings(client, endpoint).await {
-            offerings.iter().any(|o| o.name == name)
+            offerings.iter().any(|o| o.name == offering_type)
         } else {
             false
         }
@@ -1188,12 +1194,16 @@ impl Command for OfferCommand {
             }
             OfferAction::Install { name } => {
                 let endpoint = ctx.endpoint.as_ref().expect("endpoint required for install");
+                let offering_fqn = parse_offering_fqn(name)
+                    .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", name, e))?;
+                let service_name = offering_fqn.fqn();
+                let offering_type = offering_fqn.offering.clone();
                 // Check if service is already installed
                 let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
                 if let Ok(response) = ctx.client.get(&services_url).send().await {
                     if let Ok(json) = response.json::<serde_json::Value>().await {
                         let services: Vec<ServiceInfo> = serde_json::from_value(json.get("data").cloned().unwrap_or(json)).unwrap_or_default();
-                        if let Some(existing) = services.iter().find(|s| s.offering == *name) {
+                        if let Some(existing) = services.iter().find(|s| s.name == service_name) {
                             let status_str = format!("{:?}", existing.status).to_lowercase();
                             let status_icon = ui::status_indicator(&status_str, term.supports_color);
 
@@ -1221,7 +1231,7 @@ impl Command for OfferCommand {
                 // POST /api/v1/stone/services with JSON body
                 let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
                 let payload = serde_json::json!({
-                    "offering": name,
+                    "offering": service_name,
                     "ports": [],
                     "environment": {}
                 });
@@ -1236,7 +1246,7 @@ impl Command for OfferCommand {
                             let fmt = CliFormatter::new();
                             let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
-                            let service_name = body.get("service").and_then(|v| v.as_str()).unwrap_or(name);
+                            let response_service_name = body.get("service").and_then(|v| v.as_str()).unwrap_or(&service_name);
                             let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("create");
                             let api_status = body.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
                             let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
@@ -1245,8 +1255,8 @@ impl Command for OfferCommand {
                             // mongodb      [pending create]
                             println!();
                             let status_text = format!("[{} {}]", api_status, action);
-                            let padding = 16usize.saturating_sub(service_name.len());
-                            println!("{}{}{}{}", indent, service_name, " ".repeat(padding), status_text);
+                            let padding = 16usize.saturating_sub(response_service_name.len());
+                            println!("{}{}{}{}", indent, response_service_name, " ".repeat(padding), status_text);
                             println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
 
                             // Extract job_id from message if present
@@ -1261,7 +1271,7 @@ impl Command for OfferCommand {
                             };
 
                             if let Some(job_id) = job_id {
-                                stream_job_progress(&ctx.client, endpoint, &job_id, service_name, self.quiet_mode).await?;
+                                stream_job_progress(&ctx.client, endpoint, &job_id, response_service_name, self.quiet_mode).await?;
                             } else if message.contains("Adopted") {
                                 println!("{}{} Service already exists (adopted)", indent, ui::status_indicator("ok", term.supports_color));
                                 println!("{}{}", indent, message);
@@ -1314,7 +1324,7 @@ impl Command for OfferCommand {
                             }
 
                             if code == garden_common::error_codes::COMPATIBILITY_FAILED {
-                                let derived_query = print_alternatives_for_failed_install(&ctx.client, endpoint, name, &self.prefer)
+                                let derived_query = print_alternatives_for_failed_install(&ctx.client, endpoint, &offering_type, &self.prefer)
                                     .await
                                     .ok()
                                     .flatten();

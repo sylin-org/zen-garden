@@ -16,6 +16,8 @@ use crate::api::suggestions::{generate_suggestions, SuggestionContext};
 use crate::{error_response, AppState};
 use garden_common::{
     api_utils::ApiErrorResponse,
+    constants::{OFFERING_ADOPTED_INSTANCE, OFFERING_FQN_SEPARATOR},
+    offerings::parse_offering_fqn,
     AdoptedControlLevel, AdoptedData, BorrowedData, OfferingLocation,
     OfferingModeData, OfferingStatus, ServiceHealthStatus, Offering,
 };
@@ -83,25 +85,41 @@ pub async fn adopt_offering_v1(
     headers: HeaderMap,
     Json(req): Json<AdoptOfferingRequest>,
 ) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_fqn = parse_offering_fqn(&offering).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", offering, e),
+            None,
+        )
+    })?;
+    let offering_type = offering_fqn.offering.clone();
+    let adopted_name = format!(
+        "{}{}{}",
+        offering_type,
+        OFFERING_FQN_SEPARATOR,
+        OFFERING_ADOPTED_INSTANCE
+    );
+
     // Check if already adopted
     {
         let offerings = state.offerings.read().await;
-        if offerings.iter().any(|o| o.offering == offering && o.is_adopted()) {
+        if offerings.iter().any(|o| o.offering == offering_type && o.is_adopted()) {
             return Err(error_response(
                 StatusCode::CONFLICT,
                 "ALREADY_ADOPTED",
-                format!("Offering '{}' is already adopted", offering),
+                format!("Offering '{}' is already adopted", offering_type),
                 None,
             ));
         }
     }
 
     // Find offering definition
-    let offering_def = state.manifest_registry.get_offering(&offering)
+    let offering_def = state.manifest_registry.get_offering(&offering_type)
         .ok_or_else(|| error_response(
             StatusCode::NOT_FOUND,
             "OFFERING_NOT_FOUND",
-            format!("Offering '{}' not found", offering),
+            format!("Offering '{}' not found", offering_type),
             None,
         ))?;
 
@@ -110,7 +128,7 @@ pub async fn adopt_offering_v1(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "NOT_ADOPTABLE",
-            format!("Offering '{}' does not support adopted mode", offering),
+            format!("Offering '{}' does not support adopted mode", offering_type),
             None,
         ));
     }
@@ -129,7 +147,7 @@ pub async fn adopt_offering_v1(
         return Err(error_response(
             StatusCode::NOT_FOUND,
             "NOT_DETECTED",
-            format!("Offering '{}' not detected on this system", offering),
+            format!("Offering '{}' not detected on this system", offering_type),
             None,
         ));
     }
@@ -157,8 +175,8 @@ pub async fn adopt_offering_v1(
 
     let unified = Offering {
         offering_id: generate_guidv7(),
-        name: format!("{}@adopted", offering),
-        offering: offering.clone(),
+        name: adopted_name,
+        offering: offering_type.clone(),
         version: detection_result.version.unwrap_or_else(|| "unknown".to_string()),
         status: OfferingStatus::Running,
         health: ServiceHealthStatus::Healthy,
@@ -232,10 +250,20 @@ pub async fn unadopt_offering_v1(
     Path(offering): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let offering_fqn = parse_offering_fqn(&offering).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", offering, e),
+            None,
+        )
+    })?;
+    let offering_name = offering_fqn.fqn();
+
     // Find the offering to remove
     let found = {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.offering == offering && o.is_adopted()).cloned()
+        offerings.iter().find(|o| o.name == offering_name && o.is_adopted()).cloned()
     };
 
     match found {
@@ -249,7 +277,7 @@ pub async fn unadopt_offering_v1(
             return Err(error_response(
                 StatusCode::NOT_FOUND,
                 "NOT_ADOPTED",
-                format!("Offering '{}' is not currently adopted", offering),
+                format!("Offering '{}' is not currently adopted", offering_name),
                 None,
             ));
         }
@@ -259,7 +287,7 @@ pub async fn unadopt_offering_v1(
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
-        data: format!("Offering '{}' unadopted successfully", offering),
+        data: format!("Offering '{}' unadopted successfully", offering_name),
         suggestions,
     }))
 }

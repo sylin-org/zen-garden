@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
-use garden_common::presence::event_types;
+use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -266,11 +266,7 @@ impl EventHandler for FireflyEventHandler {
 
             // Stone health changed - update health and maybe trigger override
             event_types::STONE_HEALTH_CHANGED => {
-                #[derive(Deserialize)]
-                struct HealthEvent {
-                    health: String,
-                }
-                if let Ok(evt) = serde_json::from_str::<HealthEvent>(&event.data) {
+                if let Ok(evt) = serde_json::from_str::<StoneHealthChangedPayload>(&event.data) {
                     tracing::info!(health = %evt.health, "Stone health changed");
 
                     // For OLED: Send health command
@@ -295,25 +291,22 @@ impl EventHandler for FireflyEventHandler {
 
             // Stone load updated - update tempo / metrics
             event_types::STONE_LOAD_UPDATED => {
-                #[derive(Deserialize)]
-                struct LoadEvent {
-                    #[serde(default)]
-                    cpu: f64,
-                    #[serde(default)]
-                    memory: f64,
-                }
-                if let Ok(evt) = serde_json::from_str::<LoadEvent>(&event.data) {
+                if let Ok(evt) = serde_json::from_str::<StoneLoadUpdatedPayload>(&event.data) {
                     // For OLED: Send metrics update
                     if device_type == FireflyDeviceType::Esp8266Oled {
                         let ctx = self.context.read().await;
-                        self.send_oled_metrics(evt.cpu, evt.memory, ctx.uptime_seconds);
+                        self.send_oled_metrics(
+                            evt.cpu_percent,
+                            evt.memory_percent,
+                            ctx.uptime_seconds,
+                        );
                     }
 
                     let mut ctx = self.context.write().await;
-                    ctx.load = ((evt.cpu + evt.memory) / 200.0) as f32;
+                    ctx.load = ((evt.cpu_percent + evt.memory_percent) / 200.0) as f32;
                     ctx.load = ctx.load.clamp(0.0, 1.0);
-                    ctx.cpu_percent = evt.cpu as u8;
-                    ctx.memory_percent = evt.memory as u8;
+                    ctx.cpu_percent = evt.cpu_percent as u8;
+                    ctx.memory_percent = evt.memory_percent as u8;
                 }
             }
 

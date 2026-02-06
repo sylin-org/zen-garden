@@ -22,6 +22,7 @@ use garden_common::console;
 use garden_common::templates::{TemplateContext, render_template};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
+    offerings::parse_offering_fqn,
     ManagedData, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
     ServiceHealthStatus, Offering,
 };
@@ -299,18 +300,26 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 /// # Parameters
 /// - `state`: Application state (cloned, cheap due to Arc)
 /// - `job_id`: Job ID for tracking
-/// - `offering`: Offering name to install
+/// - `offering_type`: Offering template name to install
+/// - `service_name`: Fully-qualified service name (FQN)
 ///
 /// # Example
 /// ```rust,ignore
 /// let state_clone = state.clone();
 /// let job_id = job_id.to_string();
-/// let offering = offering.to_string();
+/// let offering_type = offering.to_string();
+/// let service_name = offering.to_string();
 /// tokio::spawn(async move {
-///     install_service_task(&state_clone, &job_id, &offering).await;
+///     install_service_task(&state_clone, &job_id, &offering_type, &service_name).await;
 /// });
 /// ```
-pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str) {
+pub async fn install_service_task(
+    state: &AppState,
+    job_id: &str,
+    offering_type: &str,
+    service_name: &str,
+) {
+    let offering = service_name;
     // Update job status to Running
     {
         let mut jobs = state.jobs.write().await;
@@ -329,8 +338,8 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
     emit_job_started(state, job_id, offering, "install");
     tracing::info!(job_id, offering, "Starting service installation");
 
-    tracing::debug!(offering, "Resolving compiled offering config");
-    let compiled = match get_compiled_offering(state, offering).await {
+    tracing::debug!(offering, offering_type, "Resolving compiled offering config");
+    let compiled = match get_compiled_offering(state, offering_type).await {
         Ok(Some(o)) => o,
         Ok(None) => {
             state.console.emit(console::ConsoleEvent::new(
@@ -522,7 +531,13 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
 
     // Extract values before install_service consumes compiled
     let native_port = compiled.default_host_port();
-    let guidance = build_guidance(state, offering, offering, &compiled.ports, assigned_static_ip.as_deref());
+    let guidance = build_guidance(
+        state,
+        offering,
+        offering_type,
+        &compiled.ports,
+        assigned_static_ip.as_deref(),
+    );
     let image_full = compiled.image.clone();
     let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
 
@@ -587,7 +602,7 @@ pub async fn install_service_task(state: &AppState, job_id: &str, offering: &str
             let unified = Offering {
                 offering_id: new_id.clone(),
                 name: offering.to_string(),
-                offering: offering.to_string(),
+                offering: offering_type.to_string(),
                 version: image_version.clone(),
                 status: OfferingStatus::Running,
                 health: ServiceHealthStatus::Healthy,
@@ -719,13 +734,28 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
     for offering in offerings {
         tracing::info!(job_id, offering, "Installing service");
 
-        let compiled = match get_compiled_offering(state, &offering).await {
+        let offering_fqn = match parse_offering_fqn(&offering) {
+            Ok(fqn) => fqn,
+            Err(e) => {
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.failed
+                        .insert(offering.clone(), format!("Invalid offering name: {}", e));
+                }
+                continue;
+            }
+        };
+
+        let service_name = offering_fqn.fqn();
+        let offering_type = offering_fqn.offering.clone();
+
+        let compiled = match get_compiled_offering(state, &offering_type).await {
             Ok(Some(o)) => o,
             Ok(None) => {
                 let mut jobs = state.jobs.write().await;
                 if let Some(job) = jobs.get_mut(job_id) {
                     job.failed
-                        .insert(offering.clone(), "Offering not found".to_string());
+                        .insert(service_name.clone(), "Offering not found".to_string());
                 }
                 continue;
             }
@@ -733,7 +763,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
                 let mut jobs = state.jobs.write().await;
                 if let Some(job) = jobs.get_mut(job_id) {
                     job.failed
-                        .insert(offering.clone(), format!("Offerings index error: {}", e));
+                        .insert(service_name.clone(), format!("Offerings index error: {}", e));
                 }
                 continue;
             }
@@ -745,18 +775,29 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
                 .reason
                 .clone()
                 .unwrap_or_else(|| "Incompatible".to_string());
-            tracing::error!(job_id, offering, reason = %reason, "Compatibility validation failed");
+            tracing::error!(
+                job_id,
+                service = %service_name,
+                reason = %reason,
+                "Compatibility validation failed"
+            );
             let mut jobs = state.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
                 job.failed
-                    .insert(offering.clone(), format!("Compatibility failed: {}", reason));
+                    .insert(service_name.clone(), format!("Compatibility failed: {}", reason));
             }
             continue;
         }
 
         // Extract values before install_service consumes compiled
         let native_port = compiled.default_host_port();
-        let guidance = build_guidance(state, &offering, &offering, &compiled.ports, static_ip.as_deref());
+        let guidance = build_guidance(
+            state,
+            &service_name,
+            &offering_type,
+            &compiled.ports,
+            static_ip.as_deref(),
+        );
         let image_full = compiled.image.clone();
         let image_version = image_full.split(':').next_back().unwrap_or("latest").to_string();
 
@@ -765,7 +806,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         if let Err(e) = state
             .docker
             .install_service(
-                &offering,
+                &service_name,
                 &compiled.image,
                 ports_for_docker,
                 compiled.environment,
@@ -774,10 +815,10 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             )
             .await
         {
-            tracing::error!(job_id, offering, error = ?e, "Docker install failed");
+            tracing::error!(job_id, service = %service_name, error = ?e, "Docker install failed");
             let mut jobs = state.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
-                job.failed.insert(offering.clone(), format!("Install failed: {}", e));
+                job.failed.insert(service_name.clone(), format!("Install failed: {}", e));
             }
             continue;
         }
@@ -786,8 +827,8 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let offering_id = generate_guidv7();
         let unified = Offering {
             offering_id: offering_id.clone(),
-            name: offering.clone(),
-            offering: offering.clone(),
+            name: service_name.clone(),
+            offering: offering_type.to_string(),
             version: image_version,
             status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,
@@ -809,7 +850,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 
         {
             let mut offerings = state.offerings.write().await;
-            if let Some(existing) = offerings.iter_mut().find(|o| o.name == offering) {
+            if let Some(existing) = offerings.iter_mut().find(|o| o.name == service_name) {
                 *existing = unified;
             } else {
                 offerings.push(unified);
@@ -824,7 +865,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
         state.event_bus.emit(OfferingEvent::deployed(
             &offering_id,
-            &offering,
+            &service_name,
             state.stone_name(),
             &image_full,
         ));
@@ -833,11 +874,11 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         {
             let mut jobs = state.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
-                job.completed.push(offering.clone());
+                job.completed.push(service_name.clone());
             }
         }
 
-        tracing::info!(job_id, offering, "Service installed");
+        tracing::info!(job_id, service = %service_name, "Service installed");
     }
 
     // Mark job as completed (or failed if some services failed)
@@ -940,7 +981,7 @@ pub async fn refresh_capabilities_task(
     // Find the offering
     let (service, mode) = {
         let offerings = state.offerings.read().await;
-        match offerings.iter().find(|o| o.offering.to_lowercase() == offering.to_lowercase()) {
+        match offerings.iter().find(|o| o.name.eq_ignore_ascii_case(offering)) {
             Some(o) => {
                 let mode = o.mode();
                 let service = offering_to_service_info_for_refresh(o, state).await;
@@ -1171,7 +1212,7 @@ pub async fn add_capability_task(
     // Find the offering
     let (service, mode) = {
         let offerings = state.offerings.read().await;
-        match offerings.iter().find(|o| o.offering.to_lowercase() == offering.to_lowercase()) {
+        match offerings.iter().find(|o| o.name.eq_ignore_ascii_case(offering)) {
             Some(o) => {
                 let mode = o.mode();
                 let service = offering_to_service_info_for_refresh(o, state).await;

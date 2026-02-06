@@ -11,7 +11,7 @@ use axum::{
 };
 use crate::api::responses::ApiResponse;
 use garden_common::offerings::{
-    OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
+    parse_offering_fqn, OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -135,9 +135,20 @@ pub async fn get_offering_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, Json<ApiResponse<serde_json::Value>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+    let offering_fqn = parse_offering_fqn(&name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", name, e),
+            None,
+        )
+    })?;
+    let service_name = offering_fqn.fqn();
+    let offering_type = offering_fqn.offering.clone();
+
     // Check if installed
     let offerings_guard = state.offerings.read().await;
-    if let Some(offering) = offerings_guard.iter().find(|o| o.name == name) {
+    if let Some(offering) = offerings_guard.iter().find(|o| o.name == service_name) {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse {
@@ -164,7 +175,7 @@ pub async fn get_offering_v1(
         )
     })?;
     
-    if let Some(offering) = offerings_index.offerings.iter().find(|o| o.name == name) {
+    if let Some(offering) = offerings_index.offerings.iter().find(|o| o.name == offering_type) {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse {
@@ -201,7 +212,17 @@ pub async fn get_offering_manifest_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
-    match state.manifest_registry.sw.get(&name) {
+    let offering_fqn = parse_offering_fqn(&name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", name, e),
+            None,
+        )
+    })?;
+    let offering_type = offering_fqn.offering;
+
+    match state.manifest_registry.sw.get(&offering_type) {
         Some(entry) => {
             let yaml = entry.managed.as_ref()
                 .map(|m| m.snippet_yaml.clone())
@@ -210,11 +231,11 @@ pub async fn get_offering_manifest_v1(
         }
         None => {
             let mut details = HashMap::new();
-            details.insert("name".to_string(), serde_json::json!(name));
+            details.insert("name".to_string(), serde_json::json!(offering_type));
             Err(error_response(
                 StatusCode::NOT_FOUND,
                 error_codes::TEMPLATE_NOT_FOUND,
-                format!("Manifest for '{}' not found", name),
+                format!("Manifest for '{}' not found", offering_type),
                 Some(details),
             ))
         }
@@ -525,4 +546,3 @@ fn offering_relevance_score(tokens: &[String], offering: &crate::domain::offerin
     }
     score
 }
-

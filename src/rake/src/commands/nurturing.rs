@@ -120,12 +120,13 @@ impl Command for RestoreLocalCommand {
             .endpoint
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for restore command"))?;
+        let offering_path = urlencoding::encode(&self.offering);
 
         // First, show what would be restored (dry-run info)
         let slots_url = format!(
             "{}/api/v1/stone/nurturing/{}",
             endpoint.trim_end_matches('/'),
-            self.offering
+            offering_path
         );
         let slots_response = ctx.client.get(&slots_url).send().await?;
 
@@ -213,7 +214,7 @@ impl Command for RestoreLocalCommand {
         let restore_url = format!(
             "{}/api/v1/stone/nurturing/{}/restore",
             endpoint.trim_end_matches('/'),
-            self.offering
+            offering_path
         );
 
         let body = serde_json::json!({
@@ -295,10 +296,11 @@ impl Command for RestoreRemoteCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for restore command"))?;
 
         // Get list of remote snapshots from seed bank
+        let seed_bank_path = urlencoding::encode(&self.seed_bank);
         let remote_url = format!(
             "{}/api/v1/stone/nurturing/remote/{}",
             endpoint.trim_end_matches('/'),
-            self.seed_bank
+            seed_bank_path
         );
         let remote_response = ctx.client.get(&remote_url).send().await?;
 
@@ -409,10 +411,11 @@ impl Command for RestoreRemoteCommand {
             self.seed_bank
         );
 
+        let offering_path = urlencoding::encode(&self.offering);
         let restore_url = format!(
             "{}/api/v1/stone/nurturing/{}/restore-remote",
             endpoint.trim_end_matches('/'),
-            self.offering
+            offering_path
         );
 
         let body = serde_json::json!({
@@ -592,10 +595,11 @@ impl NurturingStatusCommand {
         use garden_common::ui::rendering as ui;
 
         // Get local slots
+        let offering_path = urlencoding::encode(offering);
         let slots_url = format!(
             "{}/api/v1/stone/nurturing/{}",
             endpoint.trim_end_matches('/'),
-            offering
+            offering_path
         );
         let slots_response = ctx.client.get(&slots_url).send().await?;
 
@@ -667,7 +671,7 @@ impl NurturingStatusCommand {
                                 let remote_url = format!(
                                     "{}/api/v1/stone/nurturing/remote/{}",
                                     endpoint.trim_end_matches('/'),
-                                    bank_name
+                                    urlencoding::encode(bank_name)
                                 );
 
                                 if let Ok(remote_resp) = ctx.client.get(&remote_url).send().await {
@@ -759,13 +763,14 @@ impl Command for NurturingListCommand {
         );
 
         let mut total_count = 0;
+        let offering_path = urlencoding::encode(&self.offering);
 
         // Local backups
         if !self.remote_only {
             let slots_url = format!(
                 "{}/api/v1/stone/nurturing/{}",
                 endpoint.trim_end_matches('/'),
-                self.offering
+                offering_path
             );
 
             if let Ok(resp) = ctx.client.get(&slots_url).send().await {
@@ -858,7 +863,7 @@ impl Command for NurturingListCommand {
                         let remote_url = format!(
                             "{}/api/v1/stone/nurturing/remote/{}",
                             endpoint.trim_end_matches('/'),
-                            bank_name
+                            urlencoding::encode(bank_name)
                         );
 
                         if let Ok(remote_resp) = ctx.client.get(&remote_url).send().await {
@@ -956,10 +961,11 @@ impl Command for NurturingTriggerCommand {
                 offering
             );
 
+            let offering_path = urlencoding::encode(offering);
             let url = format!(
                 "{}/api/v1/nurturing/{}/trigger",
                 endpoint.trim_end_matches('/'),
-                offering
+                offering_path
             );
 
             let response = ctx

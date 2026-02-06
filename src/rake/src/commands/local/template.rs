@@ -121,10 +121,11 @@ async fn list_templates(client: &reqwest::Client, endpoint: &str) -> anyhow::Res
 /// Show details for a specific template
 async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> anyhow::Result<()> {
     let term = ui::TerminalInfo::detect();
+    let name_path = urlencoding::encode(name);
     let url = format!(
         "{}/api/v1/stone/services/{}/manifest",
         endpoint.trim_end_matches('/'),
-        name
+        name_path
     );
     let response = client.get(&url).send().await?;
 

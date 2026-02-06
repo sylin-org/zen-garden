@@ -23,7 +23,13 @@ pub mod watch;
 
 pub use adopted::AdoptedCommand;
 pub use borrowed::BorrowedCommand;
-pub use capabilities::{CapabilitiesCommand, AddCapabilityCommand, RemoveCapabilityCommand, RefreshCapabilitiesCommand};
+pub use capabilities::{
+    CapabilitiesCommand,
+    AddCapabilityCommand,
+    RemoveCapabilityCommand,
+    RefreshCapabilitiesCommand,
+    MirrorCapabilitiesCommand,
+};
 pub use config::ConfigCommand;
 pub use find::{FindCommand, FindOutputFormat};
 pub use list::ListCommand;

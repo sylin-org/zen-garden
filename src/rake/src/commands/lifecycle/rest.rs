@@ -24,7 +24,8 @@ impl RestCommand {
 #[async_trait]
 impl Command for RestCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let url = ctx.api_v1_url(&format!("stone/services/{}/rest", self.service))?;
+        let service_path = urlencoding::encode(&self.service);
+        let url = ctx.api_v1_url(&format!("stone/services/{}/rest", service_path))?;
         let response = ctx.client.post(&url).send().await?;
         let status = response.status();
 

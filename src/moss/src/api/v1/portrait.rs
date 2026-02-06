@@ -31,6 +31,12 @@ pub struct PortraitIdentity {
     pub version: String,
     pub color: String,
     pub endpoint: String,
+    /// Operating system family ("windows", "linux", "macos")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_family: Option<String>,
+    /// Friendly OS version/details (e.g., "Debian 13", "11 Pro")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
     /// System (stone) uptime - how long the machine has been running
     pub uptime: String,
     /// Moss daemon uptime - how long the daemon has been running
@@ -148,6 +154,12 @@ pub struct HorizonStone {
     pub endpoint: String,
     pub health: String,
     pub color: String,
+    /// Operating system family ("windows", "linux", "macos")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_family: Option<String>,
+    /// Friendly OS version/details (e.g., "Debian 13", "11 Pro")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
     /// Number of CPU cores (if known)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_cores: Option<usize>,
@@ -201,6 +213,89 @@ fn derive_stone_color(stone_id: &str) -> String {
     let hash = hasher.finish();
     let hue = (hash % 360) as u16;
     format!("hsl({}, 55%, 50%)", hue)
+}
+
+/// Parse normalized OS family and friendly version from runtime OS text.
+///
+/// Examples:
+/// - "windows/Windows 11 Pro" -> "windows"
+/// - "linux/Ubuntu 24.04" -> "linux"
+/// - "darwin/macOS 15" -> "macos"
+fn os_info_from_runtime(runtime_os: &str) -> (Option<String>, Option<String>) {
+    let raw = runtime_os.trim();
+    if raw.is_empty() {
+        return (None, None);
+    }
+
+    let family_raw = raw
+        .split('/')
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .to_ascii_lowercase();
+    if family_raw.is_empty() {
+        return (None, None);
+    }
+
+    let family = match family_raw.as_str() {
+        "windows" | "win32" | "win" => "windows".to_string(),
+        "linux" | "gnu/linux" => "linux".to_string(),
+        "macos" | "darwin" | "osx" | "mac" => "macos".to_string(),
+        other => other.to_string(),
+    };
+
+    let version = raw
+        .split_once('/')
+        .map(|(_, details)| details.trim())
+        .filter(|details| !details.is_empty())
+        .and_then(|details| normalize_os_details(&family, details));
+
+    (Some(family), version)
+}
+
+fn normalize_os_details(family: &str, details: &str) -> Option<String> {
+    let mut value = details.trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+
+    match family {
+        "windows" => {
+            let lower = value.to_ascii_lowercase();
+            if lower.starts_with("microsoft ") {
+                value = value[10..].trim().to_string();
+            }
+            let lower = value.to_ascii_lowercase();
+            if lower.starts_with("windows ") {
+                value = value[8..].trim().to_string();
+            }
+
+            if value.is_empty() {
+                return None;
+            }
+            Some(value)
+        }
+        "linux" => {
+            // Keep distro + version while removing noisy qualifiers.
+            value = value
+                .replace("GNU/Linux", "")
+                .replace("gnu/linux", "")
+                .replace("Linux", "")
+                .replace("linux", "");
+
+            if let Some(idx) = value.find('(') {
+                value.truncate(idx);
+            }
+
+            let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+            if compact.is_empty() {
+                None
+            } else {
+                Some(compact)
+            }
+        }
+        _ => Some(value),
+    }
 }
 
 /// Format sub-capabilities into a compact display string.
@@ -279,16 +374,23 @@ pub async fn get_portrait_data(
         garden_common::utils::format_uptime(secs)
     };
 
-    // Get hardware manufacturer/model from capabilities
-    let (manufacturer, model) = {
+    // Get hardware manufacturer/model and local OS info from capabilities
+    let (manufacturer, model, os_family, os_version) = {
         let caps = state.capabilities.read().await;
         if let Some(ref c) = *caps {
+            let (os_family, os_version) = c
+                .runtime
+                .as_ref()
+                .map(|runtime| os_info_from_runtime(&runtime.os))
+                .unwrap_or((None, None));
             (
                 c.hardware.system_manufacturer.clone(),
                 c.hardware.system_product.clone(),
+                os_family,
+                os_version,
             )
         } else {
-            (None, None)
+            (None, None, None, None)
         }
     };
 
@@ -299,6 +401,8 @@ pub async fn get_portrait_data(
         version: cli::VERSION.to_string(),
         color: stone_color,
         endpoint,
+        os_family,
+        os_version,
         uptime,
         moss_uptime,
         manufacturer,
@@ -459,6 +563,10 @@ pub async fn get_portrait_data(
                 let caps = entry.capabilities.as_ref();
                 let cpu_cores = caps.map(|c| c.hardware.cpu.cores);
                 let memory_gb = caps.map(|c| c.hardware.memory.total_mb / 1024);
+                let (os_family, os_version) = caps
+                    .and_then(|c| c.runtime.as_ref())
+                    .map(|runtime| os_info_from_runtime(&runtime.os))
+                    .unwrap_or((None, None));
                 let manufacturer = caps.and_then(|c| c.hardware.system_manufacturer.clone());
                 let model = caps.and_then(|c| c.hardware.system_product.clone());
                 let service_count = entry.services.len();
@@ -472,6 +580,8 @@ pub async fn get_portrait_data(
                     endpoint: entry.endpoint.clone(),
                     health: entry.health.clone(),
                     color: derive_stone_color(&entry.stone_id),
+                    os_family,
+                    os_version,
                     cpu_cores,
                     memory_gb,
                     service_count,

@@ -77,6 +77,8 @@
         .name { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
         .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; margin-top: 0.25rem; }
         .endpoint { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--accent-sage); text-decoration: none; }
+        .endpoint-divider { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--stone-400); }
+        .endpoint-os { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--stone-600); }
         .hardware-model { font-size: 0.8rem; color: var(--stone-400); font-style: italic; margin-top: 0.25rem; }
 
         /* At a Glance */
@@ -209,6 +211,22 @@
         .horizon-stone { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; }
         .horizon-color { width: 3px; height: 1.25rem; border-radius: 1px; }
         .horizon-name { font-size: 0.9rem; text-decoration: none; color: var(--stone-900); }
+        .horizon-os {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.08rem 0.42rem;
+            border-radius: 999px;
+            border: 1px solid rgba(128, 128, 128, 0.25);
+            font-family: ui-monospace, monospace;
+            font-size: 0.63rem;
+            letter-spacing: 0.03em;
+            color: var(--stone-600);
+            background: rgba(255, 255, 255, 0.35);
+            white-space: nowrap;
+            text-transform: none;
+        }
+        .horizon-os.windows { border-color: rgba(66, 133, 244, 0.45); color: #2b5cb8; }
+        .horizon-os.linux { border-color: rgba(66, 160, 133, 0.45); color: #1f6f57; }
         .horizon-spacer { flex-grow: 1; }
         .horizon-hints { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); }
         .horizon-tags { display: inline-flex; gap: 0.25rem; margin-left: 0.5rem; font-size: 0.8rem; }
@@ -341,6 +359,8 @@
                 <h1 class="name" id="name">Loading...</h1>
                 <div class="meta">
                     <a class="endpoint" id="endpoint" href="#"></a>
+                    <span class="endpoint-divider hidden" id="endpoint-divider">·</span>
+                    <span class="endpoint-os hidden" id="endpoint-os"></span>
                 </div>
                 <div class="hardware-model" id="hardware-model"></div>
             </div>
@@ -701,6 +721,24 @@
 
     function $(id) { return document.getElementById(id); }
 
+    function osFamilyLabel(osFamily) {
+        const family = (osFamily || '').toLowerCase();
+        if (family === 'windows') return 'Windows';
+        if (family === 'linux') return 'Linux';
+        if (family === 'macos') return 'macOS';
+        return '';
+    }
+
+    function formatOsText(osFamily, osVersion, bracketFamily) {
+        const family = osFamilyLabel(osFamily);
+        const version = (osVersion || '').trim();
+        if (!family) return '';
+        if (bracketFamily) {
+            return version ? `[${family}] ${version}` : `[${family}]`;
+        }
+        return version ? `${family} ${version}` : family;
+    }
+
     // Minimal markdown parser for guidance content
     // Supports: headers (#, ##, ###), bold (**), code (`), code blocks (```), lists (- or *), links [text](url)
     function parseMarkdown(md) {
@@ -953,6 +991,18 @@
             $('name').textContent = id.name || 'Unknown';
             $('endpoint').textContent = id.endpoint || '';
             $('endpoint').href = id.endpoint || '#';
+            const endpointDivider = $('endpoint-divider');
+            const endpointOs = $('endpoint-os');
+            const endpointOsText = formatOsText(id.os_family, id.os_version, false);
+            if (endpointOsText) {
+                endpointDivider.classList.remove('hidden');
+                endpointOs.classList.remove('hidden');
+                endpointOs.textContent = endpointOsText;
+            } else {
+                endpointDivider.classList.add('hidden');
+                endpointOs.classList.add('hidden');
+                endpointOs.textContent = '';
+            }
             $('stone-uptime').textContent = id.uptime || '—';
             $('moss-uptime').textContent = id.moss_uptime || '—';
             $('version').textContent = 'Moss v' + (id.version || '?');
@@ -1202,6 +1252,11 @@
                 hasAttention ? '<span class="attention-icon" title="Needs attention">⚠</span>' : ''
             ].filter(Boolean).join('');
             const sprout = s.has_seed_banks ? '<span class="horizon-sprout" title="Seed bank connected">🌱</span>' : '';
+            const osFamily = (s.os_family || '').toLowerCase();
+            const osText = formatOsText(s.os_family, s.os_version, true);
+            const osBadge = osText
+                ? `<span class="horizon-os ${osFamily}" title="OS: ${osText}">${osText}</span>`
+                : '';
 
             return `
             <div class="horizon-stone" role="listitem">
@@ -1216,6 +1271,7 @@
                 <span class="horizon-hints">${svcDots}</span>
                 <div class="horizon-status">
                     <div class="dot ${healthDot}"></div>
+                    ${osBadge}
                     <span>${s.health}</span>
                 </div>
             </div>`;

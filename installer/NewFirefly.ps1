@@ -103,6 +103,28 @@ function Write-Step {
     Write-Host $Message
 }
 
+function Confirm-Action {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+        [bool]$DefaultYes = $true
+    )
+
+    if ($Force) {
+        Write-Step "$Message (auto-yes: -Force)" "OK"
+        return $true
+    }
+
+    $suffix = if ($DefaultYes) { "[Y/n]" } else { "[y/N]" }
+    $answer = Read-Host "  $Message $suffix"
+
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        return $DefaultYes
+    }
+
+    return @("y", "yes") -contains $answer.Trim().ToLowerInvariant()
+}
+
 function Initialize-Cache {
     if (-not (Test-Path $script:Config.CacheDir)) {
         New-Item -ItemType Directory -Path $script:Config.CacheDir -Force | Out-Null
@@ -219,6 +241,83 @@ function Install-RP2040Firmware {
     Write-Step "Firefly firmware installed" "OK"
 }
 
+function Wait-RP2040Volume {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [int]$TimeoutSec = 30
+    )
+
+    for ($i = 0; $i -lt $TimeoutSec; $i++) {
+        $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq $Label } | Select-Object -First 1
+        if ($vol -and $vol.DriveLetter) {
+            return "$($vol.DriveLetter):"
+        }
+        Start-Sleep -Seconds 1
+    }
+
+    return $null
+}
+
+function Refresh-RP2040ComPort {
+    $rp = @(Get-ConnectedDevices | Where-Object { $_["Type"] -eq "RP2040" -and $_["ComPort"] }) | Select-Object -First 1
+    if ($rp) { return $rp["ComPort"] }
+    return $null
+}
+
+function Install-RP2040FromCurrentState {
+    param([hashtable]$Device)
+
+    $cpDrive = $Device["CircuitPyDrive"]
+
+    if (-not $cpDrive) {
+        $bootDrive = $Device["BootloaderDrive"]
+
+        if (-not $bootDrive) {
+            Write-Step "RP2040 bootloader drive (RPI-RP2) not detected" "WARN"
+            Write-Host "       To install Firefly, put the RP2040 in BOOT mode (hold BOOT while reconnecting USB)." -ForegroundColor Gray
+
+            if ($Force) {
+                Write-Step "Waiting for BOOT mode drive..." "WAIT"
+            } else {
+                $next = Read-Host "       Press Enter when ready, or type 'skip' to cancel"
+                if ($next -match '^\s*skip\s*$') {
+                    Write-Step "Installation skipped by user" "WARN"
+                    return $false
+                }
+            }
+
+            $bootDrive = Wait-RP2040Volume -Label "RPI-RP2" -TimeoutSec 45
+            if (-not $bootDrive) {
+                Write-Step "Timed out waiting for RPI-RP2 drive" "FAIL"
+                return $false
+            }
+            $Device["BootloaderDrive"] = $bootDrive
+        }
+
+        Write-Step "Bootloader mode at $bootDrive" "OK"
+        Install-RP2040Runtime -Drive $bootDrive
+        Write-Step "Waiting for CircuitPython..." "WAIT"
+        $cpDrive = Wait-RP2040Volume -Label "CIRCUITPY" -TimeoutSec 45
+        if (-not $cpDrive) {
+            Write-Step "Timed out waiting for CIRCUITPY drive" "FAIL"
+            return $false
+        }
+        $Device["CircuitPyDrive"] = $cpDrive
+    }
+
+    Write-Step "CircuitPython at $cpDrive" "OK"
+    Install-RP2040Firmware -Drive $cpDrive
+    Start-Sleep -Seconds 3
+
+    $freshPort = Refresh-RP2040ComPort
+    if ($freshPort) {
+        $Device["ComPort"] = $freshPort
+    }
+
+    return $true
+}
+
 function Test-RP2040Connection {
     param([string]$Port)
     $serial = $null
@@ -275,12 +374,8 @@ function Invoke-RP2040Handler {
         Write-Step "Bootloader mode at $($Device['BootloaderDrive'])" "OK"
         Install-RP2040Runtime -Drive $Device["BootloaderDrive"]
         Write-Step "Waiting for CircuitPython..." "WAIT"
-        Start-Sleep -Seconds 3
-        for ($i = 0; $i -lt 30; $i++) {
-            $drv = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.FileSystemLabel -eq "CIRCUITPY" }
-            if ($drv) { $Device["CircuitPyDrive"] = "$($drv.DriveLetter):"; break }
-            Start-Sleep -Seconds 1
-        }
+        $drv = Wait-RP2040Volume -Label "CIRCUITPY" -TimeoutSec 30
+        if ($drv) { $Device["CircuitPyDrive"] = $drv }
     }
 
     if ($Device["CircuitPyDrive"]) {
@@ -304,6 +399,29 @@ function Invoke-RP2040Handler {
             )
         } elseif ($test.Success) {
             Write-Step "Device responds but not Firefly firmware" "WARN"
+            $shouldInstall = Confirm-Action -Message "Install Firefly firmware on this RP2040 now?"
+            if ($shouldInstall) {
+                $installed = Install-RP2040FromCurrentState -Device $Device
+                if ($installed -and $Device["ComPort"]) {
+                    $post = Test-RP2040Connection -Port $Device["ComPort"]
+                    if ($post.Success -and $post.IsFirefly) {
+                        Write-Step "Firefly responding after install!" "OK"
+                        Invoke-RP2040VisualTest -Port $Device["ComPort"]
+                        Write-Panel -Title "RP2040-Matrix Firefly Ready!" -Color "Green" -Lines @(
+                            "Installation complete."
+                            ""
+                            "Device: Waveshare RP2040-Matrix"
+                            "Port: $($Device['ComPort'])"
+                            ""
+                            "Commands: F,r,g,b / A,rainbow / T,healthy / C"
+                        )
+                    } else {
+                        Write-Step "Installed, but Firefly did not respond on serial yet" "WARN"
+                    }
+                } elseif ($installed) {
+                    Write-Step "Firmware installed. Reconnect and re-run to verify serial commands." "WARN"
+                }
+            }
         } else {
             Write-Step "Communication failed" "WARN"
         }

@@ -3,7 +3,7 @@
 //! Provides reusable functions for resolving service connection URIs.
 //! Supports hostname-first resolution with IP fallback for resilience.
 
-use garden_common::manifests::get_category_registry;
+use garden_common::manifests::{get_category_registry, ConnectionProfile};
 use serde::{Deserialize, Serialize};
 
 /// Resolved connection information for a service
@@ -23,7 +23,7 @@ pub struct ResolvedConnection {
 
 /// Default connection templates by protocol
 ///
-/// Used when offering manifest doesn't specify a connection_template.
+/// Used when offering manifest doesn't specify a connection profile.
 pub fn default_template(protocol: &str) -> String {
     match protocol.to_lowercase().as_str() {
         "mongodb" => "mongodb://{host}:{port}".to_string(),
@@ -45,13 +45,20 @@ pub fn default_template(protocol: &str) -> String {
 /// Example: `mongodb://{host}:{port}` -> `mongodb`
 pub fn protocol_from_template(template: &str) -> Option<String> {
     let trimmed = template.trim();
-    let scheme_end = trimmed.find("://")?;
-    let scheme = trimmed[..scheme_end].trim().to_ascii_lowercase();
-    if scheme.is_empty() || !is_literal_uri_scheme(&scheme) {
-        None
-    } else {
-        Some(scheme)
+    if let Some(scheme_end) = trimmed.find("://") {
+        let scheme = trimmed[..scheme_end].trim().to_ascii_lowercase();
+        if !scheme.is_empty() && is_literal_uri_scheme(&scheme) {
+            return Some(scheme);
+        }
     }
+
+    // Some manifests provide structured templates (for example JSON blobs)
+    // that embed URLs instead of being raw URI templates.
+    if let Some(scheme) = find_embedded_uri_scheme(trimmed) {
+        return Some(scheme);
+    }
+
+    None
 }
 
 fn is_literal_uri_scheme(scheme: &str) -> bool {
@@ -66,53 +73,124 @@ fn is_literal_uri_scheme(scheme: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
 }
 
-/// Infer protocol using manifest metadata (connection template + category).
+fn is_scheme_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.'
+}
+
+fn find_embedded_uri_scheme(template: &str) -> Option<String> {
+    let mut search_from = 0usize;
+    while search_from < template.len() {
+        let rel = template[search_from..].find("://")?;
+        let scheme_end = search_from + rel;
+
+        let mut scheme_start = scheme_end;
+        while scheme_start > 0 {
+            let ch = template.as_bytes()[scheme_start - 1] as char;
+            if is_scheme_char(ch) {
+                scheme_start -= 1;
+            } else {
+                break;
+            }
+        }
+
+        let candidate = template[scheme_start..scheme_end].trim().to_ascii_lowercase();
+        if is_literal_uri_scheme(&candidate) {
+            return Some(candidate);
+        }
+
+        search_from = scheme_end + 3;
+    }
+
+    None
+}
+
+/// Infer protocol using manifest metadata (connection profile + category).
 ///
 /// Priority:
-/// 1. `connection_template` scheme when present
-/// 2. category `default_protocol` from category registry
+/// 1. `connection.protocol` when present
+/// 2. `connection.uri_template` scheme when present
+/// 3. category connection profile (protocol or uri_template)
 /// 3. `"tcp"` fallback with warning
 pub fn infer_protocol_from_manifest_metadata(
     offering_name: &str,
     category: &str,
-    connection_template: Option<&str>,
+    connection: Option<&ConnectionProfile>,
 ) -> String {
-    if let Some(template) = connection_template {
-        if let Some(protocol) = protocol_from_template(template) {
-            return protocol;
+    if let Some(conn) = connection {
+        if let Some(protocol) = conn.protocol.as_deref() {
+            if !protocol.trim().is_empty() {
+                return protocol.trim().to_string();
+            }
+        }
+        if let Some(template) = conn.uri_template.as_deref() {
+            if let Some(protocol) = protocol_from_template(template) {
+                return protocol;
+            }
         }
     }
 
-    get_category_registry()
-        .default_protocol(category)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                offering = %offering_name,
-                category = %category,
-                "No protocol found in manifest or category, using 'tcp'"
-            );
-            "tcp".to_string()
-        })
+    if let Some(category_conn) = get_category_registry().connection(category) {
+        if let Some(protocol) = category_conn.protocol.as_deref() {
+            if !protocol.trim().is_empty() {
+                return protocol.trim().to_string();
+            }
+        }
+        if let Some(template) = category_conn.uri_template.as_deref() {
+            if let Some(protocol) = protocol_from_template(template) {
+                return protocol;
+            }
+        }
+    }
+
+    tracing::warn!(
+        offering = %offering_name,
+        category = %category,
+        "No protocol found in manifest or category, using 'tcp'"
+    );
+    "tcp".to_string()
+}
+
+/// Select the best URI template from offering or category connection profiles.
+pub fn select_uri_template(
+    connection: Option<&ConnectionProfile>,
+    category: &str,
+) -> Option<String> {
+    if let Some(conn) = connection {
+        if let Some(template) = conn.uri_template.as_deref() {
+            if !template.trim().is_empty() {
+                return Some(template.to_string());
+            }
+        }
+    }
+
+    if let Some(category_conn) = get_category_registry().connection(category) {
+        if let Some(template) = category_conn.uri_template.as_deref() {
+            if !template.trim().is_empty() {
+                return Some(template.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 /// Infer protocol from offering category and name
 ///
 /// Infer protocol from offering manifest or category registry
 ///
-/// Looks up offering's connection_template to determine protocol,
-/// falls back to category default_protocol, then "tcp" as last resort.
+/// Looks up offering's connection profile to determine protocol,
+/// falls back to category defaults, then "tcp" as last resort.
 pub async fn infer_protocol(
     offering_name: &str,
     category: &str,
     state: &crate::app_state::AppState,
 ) -> String {
-    let connection_template = state
+    let connection = state
         .manifest_registry
         .get_offering(offering_name)
-        .and_then(|offering| offering.connection_template.as_deref());
+        .and_then(|offering| offering.connection.as_ref());
 
-    infer_protocol_from_manifest_metadata(offering_name, category, connection_template)
+    infer_protocol_from_manifest_metadata(offering_name, category, connection)
 }
 
 /// Extract IP address from endpoint URL
@@ -332,6 +410,15 @@ mod tests {
             Some("https".to_string())
         );
         assert_eq!(protocol_from_template("{protocol}://{host}:{port}"), None);
+        assert_eq!(
+            protocol_from_template(
+                r#"{
+  "base_url": "http://{{ host }}:{{ port }}",
+  "tags_url": "http://{{ host }}:{{ port }}/api/tags"
+}"#
+            ),
+            Some("http".to_string())
+        );
         assert_eq!(protocol_from_template(""), None);
     }
 
@@ -346,11 +433,26 @@ mod tests {
     }
 
     #[test]
+    fn test_find_embedded_uri_scheme() {
+        assert_eq!(
+            find_embedded_uri_scheme(r#"{ "endpoint": "nats://{host}:{port}" }"#),
+            Some("nats".to_string())
+        );
+        assert_eq!(find_embedded_uri_scheme("{protocol}://{host}:{port}"), None);
+        assert_eq!(find_embedded_uri_scheme("no uri here"), None);
+    }
+
+    #[test]
     fn test_infer_protocol_from_manifest_metadata_prefers_template() {
+        let profile = ConnectionProfile {
+            protocol: None,
+            uri_template: Some("mongodb://{host}:{port}".to_string()),
+            endpoints: std::collections::BTreeMap::new(),
+        };
         let protocol = infer_protocol_from_manifest_metadata(
             "mongodb",
             "data",
-            Some("mongodb://{host}:{port}"),
+            Some(&profile),
         );
         assert_eq!(protocol, "mongodb");
     }

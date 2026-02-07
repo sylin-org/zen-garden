@@ -22,14 +22,16 @@ pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
         };
         let (tool_state, ready) = offering_readiness(offering);
 
-        let (protocol, connection_template) =
+        let (protocol, uri_template) =
             if let Some(manifest) = state.manifest_registry.get_offering(&offering.offering) {
                 let protocol = connection::infer_protocol_from_manifest_metadata(
                     &offering.offering,
                     &manifest.category,
-                    manifest.connection_template.as_deref(),
+                    manifest.connection.as_ref(),
                 );
-                (protocol, manifest.connection_template.as_deref())
+                let template =
+                    connection::select_uri_template(manifest.connection.as_ref(), &manifest.category);
+                (protocol, template)
             } else {
                 let location_protocol = offering.location.protocol.trim().to_ascii_lowercase();
                 if location_protocol.is_empty() {
@@ -45,7 +47,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
                 &endpoint,
                 offering.location.port,
                 &protocol,
-                connection_template,
+                uri_template.as_deref(),
             );
             Some(ToolConnection {
                 protocol: resolved.protocol,

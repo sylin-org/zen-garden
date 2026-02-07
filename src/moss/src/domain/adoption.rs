@@ -152,7 +152,7 @@ pub async fn adopt_offering_container(
     let protocol = connection::infer_protocol_from_manifest_metadata(
         &offering_type,
         &entry.category,
-        entry.connection_template.as_deref(),
+        entry.connection.as_ref(),
     );
 
     let adopted = Offering {

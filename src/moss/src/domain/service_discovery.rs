@@ -295,11 +295,11 @@ pub async fn find_local_services(
         }
 
         // Get offering metadata (category, tags)
-        let (category, tags, connection_template) = offerings_index
+        let (category, tags) = offerings_index
             .as_ref()
             .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
-            .map(|o| (o.category.clone(), o.tags.clone(), None::<String>)) // TODO: Add connection_template to CompiledOffering
-            .unwrap_or_else(|| (offering.offering.clone(), vec![], None));
+            .map(|o| (o.category.clone(), o.tags.clone()))
+            .unwrap_or_else(|| (offering.offering.clone(), vec![]));
 
         // Check if matches criteria
         if !matches_criteria(
@@ -317,12 +317,19 @@ pub async fn find_local_services(
         let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
         let port = offering.location.port;
 
+        let connection_profile = state
+            .manifest_registry
+            .get_offering(&offering.offering)
+            .and_then(|entry| entry.connection.as_ref());
+        let uri_template =
+            connection::select_uri_template(connection_profile, &category);
+
         let conn = connection::resolve_connection(
             &state.stone_name,
             &format!("http://127.0.0.1:{}", state.api_port),
             port,
             &protocol,
-            connection_template.as_deref(),
+            uri_template.as_deref(),
         );
 
         results.push(FoundService {
@@ -357,22 +364,29 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
 
     for offering in offerings.iter() {
         // Get offering metadata (category, tags)
-        let (category, tags, connection_template) = offerings_index
+        let (category, tags) = offerings_index
             .as_ref()
             .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
-            .map(|o| (o.category.clone(), o.tags.clone(), None::<String>))
-            .unwrap_or_else(|| (offering.offering.clone(), vec![], None));
+            .map(|o| (o.category.clone(), o.tags.clone()))
+            .unwrap_or_else(|| (offering.offering.clone(), vec![]));
 
         // Resolve connection
         let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
         let port = offering.location.port;
+
+        let connection_profile = state
+            .manifest_registry
+            .get_offering(&offering.offering)
+            .and_then(|entry| entry.connection.as_ref());
+        let uri_template =
+            connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
             &state.stone_name,
             &format!("http://127.0.0.1:{}", state.api_port),
             port,
             &protocol,
-            connection_template.as_deref(),
+            uri_template.as_deref(),
         );
 
         services.push(FoundService {
@@ -484,13 +498,19 @@ async fn find_services_in_topology_cache(
 
             // Get port from offering manifest
             let port = get_offering_port(&svc.offering, state).await;
+            let connection_profile = state
+                .manifest_registry
+                .get_offering(&svc.offering)
+                .and_then(|entry| entry.connection.as_ref());
+            let uri_template =
+                connection::select_uri_template(connection_profile, &svc.category);
 
             let conn = connection::resolve_connection(
                 &stone.stone_name,
                 &stone.endpoint,
                 port,
                 &protocol,
-                None,
+                uri_template.as_deref(),
             );
 
             results.push(FoundService {
@@ -622,13 +642,19 @@ async fn fetch_remote_services(
         // Infer protocol and resolve connection
         let category = service.offering.clone(); // Use offering as category fallback
         let protocol = connection::infer_protocol(&service.offering, &category, state).await;
+        let connection_profile = state
+            .manifest_registry
+            .get_offering(&service.offering)
+            .and_then(|entry| entry.connection.as_ref());
+        let uri_template =
+            connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
             &stone.stone_name,
             &stone.endpoint,
             service.ports.native,
             &protocol,
-            None,
+            uri_template.as_deref(),
         );
 
         results.push(FoundService {

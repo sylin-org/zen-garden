@@ -1,9 +1,19 @@
-﻿{
+{
   "name": "postgresql",
   "description": "PostgreSQL relational database with pgvector extension",
   "category": "data",
-  "tags": ["database", "relational", "sql", "vector", "embeddings"],
+  "tags": [
+    "database",
+    "relational",
+    "sql",
+    "vector",
+    "embeddings"
+  ],
   "port": 5432,
-  "connection_template": "postgresql://{host}:{port}",
-  "volumes": ["postgres-data"]
+  "volumes": [
+    "postgres-data"
+  ],
+  "connection": {
+    "uri_template": "postgresql://{host}:{port}"
+  }
 }

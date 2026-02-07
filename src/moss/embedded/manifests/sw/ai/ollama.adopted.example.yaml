@@ -57,10 +57,11 @@ control:
   level: monitor  # Can't reliably start/stop native service cross-platform
   health_check_url: http://localhost:11434/api/tags
 
-# Connection template (for services that need to connect to Ollama)
-connection_template: |
-  {
-    "base_url": "http://{{ host }}:{{ port }}",
-    "api_endpoint": "http://{{ host }}:{{ port }}/api",
-    "models_endpoint": "http://{{ host }}:{{ port }}/api/tags"
-  }
+# Connection profile (for services that need to connect to Ollama)
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    api: "/api"
+    models: "/api/tags"

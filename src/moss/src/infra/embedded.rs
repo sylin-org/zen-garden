@@ -384,6 +384,15 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
                         if sw_entry.compatibility.is_none() && existing.compatibility.is_some() {
                             sw_entry.compatibility = existing.compatibility.clone();
                         }
+                        if sw_entry.connection.is_none()
+                            && existing.connection.is_some()
+                        {
+                            sw_entry.connection = existing.connection.clone();
+                            tracing::debug!(
+                                offering = %offering_name,
+                                "Preserved embedded connection profile during filesystem overlay"
+                            );
+                        }
                         // Preserve metadata fields if filesystem didn't provide them
                         if sw_entry.metadata.description.is_none() && existing.metadata.description.is_some() {
                             sw_entry.metadata.description = existing.metadata.description.clone();
@@ -462,7 +471,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
 /// Vec of Offering definitions
 pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
     use garden_common::manifests::{
-        AdoptedConfig, OfferingMetadata,
+        AdoptedConfig, ConnectivityConfig, OfferingMetadata,
         OsDetectionRules, ControlConfig, HealthConfig,
     };
     use garden_common::types::AdoptedControlLevel;
@@ -480,7 +489,9 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         control: Option<ControlConfig>,
         default_control_level: Option<AdoptedControlLevel>,
         health_check: Option<HealthConfig>,
-        connection_template: Option<String>,
+        guidance: Option<String>,
+        connectivity: Option<ConnectivityConfig>,
+        connection: Option<garden_common::manifests::ConnectionProfile>,
     }
 
     let mut offerings = Vec::new();
@@ -513,6 +524,11 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
             continue;
         };
 
+        // Try to load adopted guidance file (if present)
+        let guidance_path = path_str.replace(".adopted.yaml", ".adopted.guidance.md");
+        let guidance_content = EmbeddedManifests::get_string(&guidance_path)
+            .map(|md| garden_common::manifests::offering::strip_markdown_frontmatter(&md));
+
         match serde_yaml::from_str::<AdoptedFile>(&content) {
             Ok(file) => {
                 let offering = Offering {
@@ -524,6 +540,8 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                         control: file.control,
                         default_control_level: file.default_control_level.unwrap_or_default(),
                         health_check: file.health_check,
+                        guidance: file.guidance.or(guidance_content),
+                        connectivity: file.connectivity,
                     }),
                     borrowed: None,
                     metadata: OfferingMetadata {
@@ -536,7 +554,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     },
                     compatibility: None,
                     guidance: None,
-                    connection_template: file.connection_template,
+                    connection: file.connection,
                 };
 
                 tracing::debug!(
@@ -567,6 +585,8 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_embedded_manifests_list() {
@@ -600,5 +620,35 @@ mod tests {
 
         // Verify ollama is loaded
         assert!(offerings.iter().any(|o| o.name == "ollama"), "Ollama should be in adopted offerings");
+    }
+
+    #[test]
+    fn test_overlay_preserves_embedded_connection_when_missing_in_fs() {
+        let temp = TempDir::new().unwrap();
+        let data_dir = temp.path().join("sw").join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+
+        // Overlay snippet without frontmatter connection. The merge should keep
+        // embedded mongodb connection profile.
+        fs::write(
+            data_dir.join("mongodb.snippet.yaml"),
+            "services:\n  mongodb:\n    image: mongodb:latest\n    ports:\n      default: [27017, 27017]\n",
+        )
+        .unwrap();
+        fs::write(
+            data_dir.join("mongodb.frontmatter.json"),
+            r#"{"name":"mongodb","description":"FS override","category":"data","tags":["database"],"port":27017}"#,
+        )
+        .unwrap();
+
+        let registry = load_sw_manifests_with_overlay(temp.path()).unwrap();
+        let mongodb = registry.get("mongodb").expect("embedded mongodb should exist");
+        assert_eq!(
+            mongodb
+                .connection
+                .as_ref()
+                .and_then(|c| c.uri_template.as_deref()),
+            Some("mongodb://{host}:{port}")
+        );
     }
 }

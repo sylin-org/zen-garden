@@ -1,12 +1,26 @@
-﻿{
+{
   "name": "elasticsearch",
   "description": "Elasticsearch search and analytics engine (AGPL/SSPL licensed)",
   "category": "search",
-  "tags": ["search", "database", "document", "analytics", "full-text", "vector"],
-  "ports": [9200, 9300],
+  "tags": [
+    "search",
+    "database",
+    "document",
+    "analytics",
+    "full-text",
+    "vector"
+  ],
+  "ports": [
+    9200,
+    9300
+  ],
   "port": 9200,
-  "connection_template": "http://{host}:{port}",
   "transport_port": 9300,
-  "volumes": ["elasticsearch-data"],
-  "requires_sysctl": "vm.max_map_count=262144"
+  "volumes": [
+    "elasticsearch-data"
+  ],
+  "requires_sysctl": "vm.max_map_count=262144",
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  }
 }

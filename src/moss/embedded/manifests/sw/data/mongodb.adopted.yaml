@@ -1,0 +1,167 @@
+---
+# MongoDB Adopted Mode Manifest
+# Detects and manages native MongoDB installations.
+#
+# Security note: Exposing MongoDB on LAN requires authentication and network hardening.
+# Use connectivity enforcement only if your deployment is secured.
+
+name: mongodb
+description: MongoDB NoSQL database (native installation)
+category: data
+modes:
+  - adopted
+tags:
+  - database
+  - nosql
+  - mongodb
+  - mongo
+
+# Detection rules (multi-layered approach, OS-specific)
+detection:
+  windows:
+    # Rule 1: Installation detection
+    - method: command
+      config:
+        command: mongod --version
+        expected_pattern: "db version v?([0-9]+\\.[0-9]+\\.[0-9]+)"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    # Rule 2: Running detection (port listening)
+    - method: command
+      config:
+        command: netstat -an
+        expected_pattern: ":27017\\s+LISTENING"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  linux:
+    # Rule 1: Installation detection
+    - method: command
+      config:
+        command: mongod --version
+        expected_pattern: "db version v?([0-9]+\\.[0-9]+\\.[0-9]+)"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    # Rule 2: Running detection (port listening)
+    - method: command
+      config:
+        command: ss -ltn
+        expected_pattern: ":27017"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  macos:
+    # Rule 1: Installation detection
+    - method: command
+      config:
+        command: mongod --version
+        expected_pattern: "db version v?([0-9]+\\.[0-9]+\\.[0-9]+)"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    # Rule 2: Running detection (port listening)
+    - method: command
+      config:
+        command: lsof -nP -iTCP:27017 -sTCP:LISTEN
+        expected_pattern: "LISTEN"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+# Control configuration (read-only by default)
+control:
+  level: monitor
+
+# Connectivity enforcement (LAN access)
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 5
+
+  windows:
+    checks:
+      # Ensure bound to all interfaces
+      - method: command
+        config:
+          command: 'powershell -Command "(Get-NetTCPConnection -LocalPort {{port}} -State Listen | Select-Object -First 1 -ExpandProperty LocalAddress)"'
+          expected_pattern: "(0\\.0\\.0\\.0|::)"
+          expected_exit_code: 0
+      # Ensure reachable over LAN from local host
+      - method: command
+        config:
+          command: 'powershell -Command "(Test-NetConnection -ComputerName {{lan_ip}} -Port {{port}}).TcpTestSucceeded"'
+          expected_pattern: "True"
+          expected_exit_code: 0
+    ensure:
+      # Update config to bind on all interfaces
+      - command: 'powershell -Command "$root=Join-Path $env:ProgramFiles ''MongoDB\\Server''; $cfg=$null; if(Test-Path $root){ $dirs=Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending; foreach($d in $dirs){ foreach($c in @(''bin\\mongod.cfg'',''bin\\mongod.conf'',''mongod.cfg'',''mongod.conf'')){ $p=Join-Path $d.FullName $c; if(Test-Path $p){$cfg=$p; break}} if($cfg){break}} }; if($cfg){ $raw=Get-Content $cfg -Raw; if($raw -match ''(?m)^\\s*bindIpAll:''){ $raw=$raw -replace ''(?m)^\\s*bindIpAll:.*'',''  bindIpAll: true'' } elseif($raw -match ''(?m)^\\s*bindIp:''){ $raw=$raw -replace ''(?m)^\\s*bindIp:.*'',''  bindIpAll: true'' } elseif($raw -match ''(?m)^net:\\s*$''){ $raw=$raw -replace ''(?m)^net:\\s*$'',''net:`n  bindIpAll: true'' } else { $raw += \"`nnet:`n  bindIpAll: true`n\" }; Set-Content -Path $cfg -Value $raw }"'
+        continue_on_error: true
+      # Open firewall
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''MongoDB {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+      # Restart service or process
+      - command: 'powershell -Command "$svc=Get-Service -Name ''MongoDB'' -ErrorAction SilentlyContinue; if(!$svc){$svc=Get-Service -Name ''mongod'' -ErrorAction SilentlyContinue}; if($svc){Restart-Service -Name $svc.Name -ErrorAction SilentlyContinue} else {Get-Process -Name ''mongod'' -ErrorAction SilentlyContinue | Stop-Process -Force; $root=Join-Path $env:ProgramFiles ''MongoDB\\Server''; $cfg=$null; if(Test-Path $root){ $dirs=Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending; foreach($d in $dirs){ foreach($c in @(''bin\\mongod.cfg'',''bin\\mongod.conf'',''mongod.cfg'',''mongod.conf'')){ $p=Join-Path $d.FullName $c; if(Test-Path $p){$cfg=$p; break}} if($cfg){break}} }; if($cfg){ Start-Process -FilePath ''mongod'' -ArgumentList \"--config `\"$cfg`\"\" -WindowStyle Hidden } }"'
+        continue_on_error: true
+
+  linux:
+    checks:
+      # Ensure bound to all interfaces
+      - method: command
+        config:
+          command: "ss -ltn | grep -E '(0.0.0.0|\\[::\\]):{{port}}'"
+          expected_exit_code: 0
+      # Ensure reachable over LAN from local host
+      - method: command
+        config:
+          command: "bash -c \"cat < /dev/null > /dev/tcp/{{lan_ip}}/{{port}}\""
+          expected_exit_code: 0
+    ensure:
+      # Update config to bind on all interfaces
+      - command: "sudo sh -c 'for cfg in /etc/mongod.conf /etc/mongodb.conf; do [ -f \"$cfg\" ] || continue; if grep -q \"^[[:space:]]*bindIpAll:\" \"$cfg\"; then sed -i \"s/^[[:space:]]*bindIpAll:.*/  bindIpAll: true/\" \"$cfg\"; elif grep -q \"^[[:space:]]*bindIp:\" \"$cfg\"; then sed -i \"s/^[[:space:]]*bindIp:.*/  bindIpAll: true/\" \"$cfg\"; elif grep -q \"^net:\" \"$cfg\"; then sed -i \"/^net:/a\\  bindIpAll: true\" \"$cfg\"; else printf \"\\nnet:\\n  bindIpAll: true\\n\" >> \"$cfg\"; fi; done'"
+        continue_on_error: true
+      # Restart service
+      - command: "sudo systemctl restart mongod"
+        continue_on_error: true
+      - command: "sudo systemctl restart mongodb"
+        continue_on_error: true
+      # Open firewall
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --permanent --add-port={{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --reload"
+        continue_on_error: true
+
+  macos:
+    checks:
+      # Ensure bound to all interfaces
+      - method: command
+        config:
+          command: "lsof -nP -iTCP:{{port}} -sTCP:LISTEN | grep -E '(\\*|0.0.0.0|::):{{port}}'"
+          expected_exit_code: 0
+      # Ensure reachable over LAN from local host
+      - method: command
+        config:
+          command: "nc -z -G 2 {{lan_ip}} {{port}}"
+          expected_exit_code: 0
+    ensure:
+      # Update config to bind on all interfaces (Homebrew locations)
+      - command: "sudo sh -c 'for cfg in /usr/local/etc/mongod.conf /opt/homebrew/etc/mongod.conf; do [ -f \"$cfg\" ] || continue; perl -0777 -i -pe \"if (/^\\\\s*bindIpAll:/m) { s/^\\\\s*bindIpAll:.*/  bindIpAll: true/m; } elsif (/^\\\\s*bindIp:/m) { s/^\\\\s*bindIp:.*/  bindIpAll: true/m; } elsif (/^\\\\s*net:\\\\s*$/m) { s/^\\\\s*net:\\\\s*$/net:\\n  bindIpAll: true/m; } else { $_ .= \\\"\\\\nnet:\\\\n  bindIpAll: true\\\\n\\\"; }\" \"$cfg\"; done'"
+        continue_on_error: true
+      # Restart Homebrew service if available
+      - command: "brew services restart mongodb-community"
+        continue_on_error: true
+      # Fallback: restart mongod manually
+      - command: "pkill mongod"
+        continue_on_error: true
+      - command: "mongod --config /usr/local/etc/mongod.conf --fork"
+        continue_on_error: true
+      - command: "mongod --config /opt/homebrew/etc/mongod.conf --fork"
+        continue_on_error: true

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
+use crate::manifests::connection::ConnectionProfile;
 
 /// Category configuration loaded from category.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,12 +22,9 @@ pub struct CategoryConfig {
     /// Categories this category encompasses (e.g., "database" includes "cache")
     #[serde(default)]
     pub parent_of: Vec<String>,
-    /// Default connection protocol for services in this category
+    /// Connection defaults for services in this category
     #[serde(default)]
-    pub default_protocol: Option<String>,
-    /// Default connection URI template
-    #[serde(default)]
-    pub connection_template: Option<String>,
+    pub connection: Option<ConnectionProfile>,
     /// Default tags for offerings in this category
     #[serde(default)]
     pub tags: Vec<String>,
@@ -112,18 +110,9 @@ impl CategoryRegistry {
         false
     }
 
-    /// Get default protocol for a category
-    pub fn default_protocol(&self, category: &str) -> Option<&str> {
-        self.categories
-            .get(category)
-            .and_then(|c| c.default_protocol.as_deref())
-    }
-
-    /// Get connection template for a category
-    pub fn connection_template(&self, category: &str) -> Option<&str> {
-        self.categories
-            .get(category)
-            .and_then(|c| c.connection_template.as_deref())
+    /// Get connection profile for a category
+    pub fn connection(&self, category: &str) -> Option<&ConnectionProfile> {
+        self.categories.get(category).and_then(|c| c.connection.as_ref())
     }
 }
 
@@ -233,8 +222,11 @@ mod tests {
             description: "Databases".to_string(),
             aliases: vec!["database".to_string(), "db".to_string()],
             parent_of: vec!["cache".to_string(), "search".to_string()],
-            default_protocol: Some("tcp".to_string()),
-            connection_template: None,
+            connection: Some(ConnectionProfile {
+                protocol: Some("tcp".to_string()),
+                uri_template: None,
+                endpoints: std::collections::BTreeMap::new(),
+            }),
             tags: vec![],
         });
 
@@ -243,8 +235,11 @@ mod tests {
             description: "Caching".to_string(),
             aliases: vec!["caching".to_string()],
             parent_of: vec![],
-            default_protocol: Some("redis".to_string()),
-            connection_template: Some("redis://{host}:{port}".to_string()),
+            connection: Some(ConnectionProfile {
+                protocol: Some("redis".to_string()),
+                uri_template: Some("redis://{host}:{port}".to_string()),
+                endpoints: std::collections::BTreeMap::new(),
+            }),
             tags: vec![],
         });
 
@@ -260,7 +255,17 @@ mod tests {
         assert!(!registry.token_matches("cache", "data")); // not reverse
 
         // Test default protocol
-        assert_eq!(registry.default_protocol("data"), Some("tcp"));
-        assert_eq!(registry.default_protocol("cache"), Some("redis"));
+        assert_eq!(
+            registry
+                .connection("data")
+                .and_then(|c| c.protocol.as_deref()),
+            Some("tcp")
+        );
+        assert_eq!(
+            registry
+                .connection("cache")
+                .and_then(|c| c.protocol.as_deref()),
+            Some("redis")
+        );
     }
 }

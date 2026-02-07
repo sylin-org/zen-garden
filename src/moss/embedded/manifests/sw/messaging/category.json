@@ -2,7 +2,19 @@
   "$schema": "../category.schema.json",
   "name": "messaging",
   "description": "Message brokers and event streaming platforms",
-  "aliases": ["mq", "queue", "broker", "events", "streaming"],
-  "default_protocol": "tcp",
-  "tags": ["messaging", "async", "events"]
+  "aliases": [
+    "mq",
+    "queue",
+    "broker",
+    "events",
+    "streaming"
+  ],
+  "tags": [
+    "messaging",
+    "async",
+    "events"
+  ],
+  "connection": {
+    "protocol": "tcp"
+  }
 }

@@ -24,9 +24,11 @@
 //! ├── metadata: OfferingMetadata          # UI display info
 //! ├── compatibility: Option<CompatibilityRules>
 //! ├── guidance: Option<String>            # User documentation
-//! └── connection_template: Option<String> # Service mesh
+//! └── connection: Option<ConnectionProfile> # Connection profile
 //! ```
 
+use crate::manifests::connection::ConnectionProfile;
+use crate::manifests::connectivity::ConnectivityConfig;
 use crate::manifests::detection::{ControlConfig, HealthConfig, LocationConfig, OsDetectionRules};
 use crate::types::AdoptedControlLevel;
 use crate::{CompatibilityRules, OfferingMode, TaskDefinition};
@@ -119,6 +121,14 @@ pub struct AdoptedConfig {
     /// Health check for adopted service
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub health_check: Option<HealthConfig>,
+
+    /// User-facing guidance for adopted mode
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub guidance: Option<String>,
+
+    /// Connectivity enforcement rules (LAN access, firewall, binding)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub connectivity: Option<ConnectivityConfig>,
 }
 
 /// Borrowed mode: external service announcement
@@ -314,8 +324,8 @@ pub struct Offering {
     /// User-facing guidance documentation (markdown)
     pub guidance: Option<String>,
 
-    /// Connection template for dependent services (Tera format)
-    pub connection_template: Option<String>,
+    /// Connection profile for dependent services
+    pub connection: Option<ConnectionProfile>,
 }
 
 impl Offering {
@@ -354,6 +364,13 @@ impl Offering {
     /// Get control config for adopted mode
     pub fn get_control_config(&self) -> Option<&ControlConfig> {
         self.adopted.as_ref().and_then(|a| a.control.as_ref())
+    }
+
+    /// Get connectivity config for adopted mode
+    pub fn get_connectivity_config(&self) -> Option<&ConnectivityConfig> {
+        self.adopted
+            .as_ref()
+            .and_then(|a| a.connectivity.as_ref())
     }
 
     /// Get description
@@ -625,9 +642,8 @@ impl OfferingRegistry {
                     // Merge with existing or insert new
                     if let Some(existing) = registry.get_mut(offering_name) {
                         existing.adopted = offering.adopted;
-                        existing.connection_template = offering
-                            .connection_template
-                            .or(existing.connection_template.clone());
+                        existing.connection =
+                            offering.connection.or(existing.connection.clone());
                     } else {
                         registry.upsert(offering);
                     }
@@ -647,7 +663,7 @@ impl OfferingRegistry {
 
         // Load optional files
         let compatibility = Self::load_compatibility(dir, name);
-        let (metadata, connection_template) =
+        let (metadata, connection) =
             Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None));
         let guidance = Self::load_guidance(dir, name);
 
@@ -667,7 +683,7 @@ impl OfferingRegistry {
             metadata,
             compatibility,
             guidance,
-            connection_template,
+            connection,
         })
     }
 
@@ -691,7 +707,7 @@ impl OfferingRegistry {
             metadata: manifest.metadata.unwrap_or_default(),
             compatibility: manifest.compatibility,
             guidance: manifest.guidance,
-            connection_template: manifest.connection_template,
+            connection: manifest.connection,
         })
     }
 
@@ -704,6 +720,7 @@ impl OfferingRegistry {
 
         let adopted_file: AdoptedFile = serde_yaml::from_str(content)
             .with_context(|| format!("Failed to parse: {}", adopted_path.display()))?;
+        let guidance = Self::load_adopted_guidance(dir, name);
 
         Ok(Offering {
             name: adopted_file.name.unwrap_or_else(|| name.to_string()),
@@ -716,6 +733,8 @@ impl OfferingRegistry {
                 control: adopted_file.control,
                 default_control_level: adopted_file.default_control_level.unwrap_or_default(),
                 health_check: adopted_file.health_check,
+                guidance: adopted_file.guidance.or(guidance),
+                connectivity: adopted_file.connectivity,
             }),
             borrowed: None,
             metadata: OfferingMetadata {
@@ -728,7 +747,7 @@ impl OfferingRegistry {
             },
             compatibility: None,
             guidance: None,
-            connection_template: adopted_file.connection_template,
+            connection: adopted_file.connection,
         })
     }
 
@@ -743,7 +762,10 @@ impl OfferingRegistry {
         })
     }
 
-    fn load_metadata(dir: &Path, name: &str) -> Option<(OfferingMetadata, Option<String>)> {
+    fn load_metadata(
+        dir: &Path,
+        name: &str,
+    ) -> Option<(OfferingMetadata, Option<ConnectionProfile>)> {
         let path = dir.join(format!("{}.frontmatter.json", name));
         if !path.exists() {
             return None;
@@ -763,12 +785,23 @@ impl OfferingRegistry {
                     documentation: fm.documentation,
                     port: fm.port,
                 };
-                (metadata, fm.connection_template)
+                (metadata, fm.connection)
             })
     }
 
     fn load_guidance(dir: &Path, name: &str) -> Option<String> {
         let path = dir.join(format!("{}.guidance.md", name));
+        if !path.exists() {
+            return None;
+        }
+        std::fs::read_to_string(&path).ok().map(|md| {
+            let md = crate::utils::strings::strip_bom(&md);
+            strip_markdown_frontmatter(md)
+        })
+    }
+
+    fn load_adopted_guidance(dir: &Path, name: &str) -> Option<String> {
+        let path = dir.join(format!("{}.adopted.guidance.md", name));
         if !path.exists() {
             return None;
         }
@@ -802,7 +835,7 @@ impl OfferingRegistry {
             .map(crate::utils::strings::strip_bom)
             .and_then(|yaml| serde_yaml::from_str(yaml).ok());
 
-        let (metadata, connection_template) = frontmatter_content
+        let (metadata, connection) = frontmatter_content
             .map(crate::utils::strings::strip_bom)
             .and_then(|json| serde_json::from_str::<FrontmatterFile>(json).ok())
             .map(|fm| {
@@ -814,7 +847,7 @@ impl OfferingRegistry {
                     documentation: fm.documentation,
                     port: fm.port,
                 };
-                (metadata, fm.connection_template)
+                (metadata, fm.connection)
             })
             .unwrap_or((OfferingMetadata::default(), None));
 
@@ -835,7 +868,7 @@ impl OfferingRegistry {
             metadata,
             compatibility,
             guidance,
-            connection_template,
+            connection,
         })
     }
 }
@@ -855,7 +888,7 @@ struct ManifestFile {
     metadata: Option<OfferingMetadata>,
     compatibility: Option<CompatibilityRules>,
     guidance: Option<String>,
-    connection_template: Option<String>,
+    connection: Option<ConnectionProfile>,
 }
 
 /// Adopted-only file format (.adopted.yaml)
@@ -870,7 +903,9 @@ struct AdoptedFile {
     control: Option<ControlConfig>,
     default_control_level: Option<AdoptedControlLevel>,
     health_check: Option<HealthConfig>,
-    connection_template: Option<String>,
+    guidance: Option<String>,
+    connectivity: Option<ConnectivityConfig>,
+    connection: Option<ConnectionProfile>,
 }
 
 /// Frontmatter file format (.frontmatter.json)
@@ -882,11 +917,11 @@ struct FrontmatterFile {
     homepage: Option<String>,
     documentation: Option<String>,
     port: Option<u16>,
-    connection_template: Option<String>,
+    connection: Option<ConnectionProfile>,
 }
 
 /// Strip YAML frontmatter from markdown content
-fn strip_markdown_frontmatter(content: &str) -> String {
+pub fn strip_markdown_frontmatter(content: &str) -> String {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return content.to_string();
@@ -965,7 +1000,7 @@ mod tests {
             metadata: OfferingMetadata::default(),
             compatibility: None,
             guidance: None,
-            connection_template: None,
+            connection: None,
         };
 
         assert!(offering.supports_mode(&OfferingMode::Managed));
@@ -991,7 +1026,7 @@ mod tests {
             metadata: OfferingMetadata::default(),
             compatibility: None,
             guidance: None,
-            connection_template: None,
+            connection: None,
         });
 
         registry.upsert(Offering {
@@ -1007,12 +1042,14 @@ mod tests {
                 control: None,
                 default_control_level: AdoptedControlLevel::default(),
                 health_check: None,
+                guidance: None,
+                connectivity: None,
             }),
             borrowed: None,
             metadata: OfferingMetadata::default(),
             compatibility: None,
             guidance: None,
-            connection_template: None,
+            connection: None,
         });
 
         assert_eq!(registry.by_mode(&OfferingMode::Managed).len(), 1);
@@ -1021,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frontmatter_connection_template_propagates() {
+    fn test_frontmatter_connection_propagates() {
         let temp = TempDir::new().unwrap();
         let cat_dir = temp.path().join("data");
         fs::create_dir_all(&cat_dir).unwrap();
@@ -1033,14 +1070,17 @@ mod tests {
         .unwrap();
         fs::write(
             cat_dir.join("mongodb.frontmatter.json"),
-            r#"{"description":"MongoDB","port":27017,"connection_template":"mongodb://{host}:{port}"}"#,
+            r#"{"description":"MongoDB","port":27017,"connection":{"uri_template":"mongodb://{host}:{port}"}}"#,
         )
         .unwrap();
 
         let registry = OfferingRegistry::load(temp.path()).unwrap();
         let mongo = registry.get("mongodb").unwrap();
         assert_eq!(
-            mongo.connection_template.as_deref(),
+            mongo
+                .connection
+                .as_ref()
+                .and_then(|c| c.uri_template.as_deref()),
             Some("mongodb://{host}:{port}")
         );
     }

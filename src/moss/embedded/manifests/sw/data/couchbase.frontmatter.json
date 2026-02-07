@@ -1,9 +1,18 @@
-﻿{
+{
   "name": "couchbase",
   "description": "Couchbase NoSQL database",
   "category": "data",
-  "tags": ["database", "document", "nosql", "cache"],
+  "tags": [
+    "database",
+    "document",
+    "nosql",
+    "cache"
+  ],
   "port": 8091,
-  "connection_template": "couchbase://{host}:{port}",
-  "volumes": ["couchbase-data"]
+  "volumes": [
+    "couchbase-data"
+  ],
+  "connection": {
+    "uri_template": "couchbase://{host}:{port}"
+  }
 }

@@ -2,8 +2,21 @@
   "$schema": "../category.schema.json",
   "name": "vector",
   "description": "Vector databases for embeddings and semantic search",
-  "aliases": ["vectordb", "vector-db", "embeddings", "embedding", "similarity"],
-  "default_protocol": "http",
-  "connection_template": "http://{host}:{port}",
-  "tags": ["vector", "ai", "embeddings", "search"]
+  "aliases": [
+    "vectordb",
+    "vector-db",
+    "embeddings",
+    "embedding",
+    "similarity"
+  ],
+  "tags": [
+    "vector",
+    "ai",
+    "embeddings",
+    "search"
+  ],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
 }

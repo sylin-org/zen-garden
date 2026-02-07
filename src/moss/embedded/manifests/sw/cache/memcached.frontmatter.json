@@ -2,8 +2,15 @@
   "name": "memcached",
   "description": "Memcached distributed memory caching system",
   "category": "cache",
-  "tags": ["cache", "inmemory", "keyvalue", "distributed"],
+  "tags": [
+    "cache",
+    "inmemory",
+    "keyvalue",
+    "distributed"
+  ],
   "port": 11211,
-  "connection_template": "memcached://{host}:{port}",
-  "volumes": []
+  "volumes": [],
+  "connection": {
+    "uri_template": "memcached://{host}:{port}"
+  }
 }

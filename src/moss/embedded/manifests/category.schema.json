@@ -26,13 +26,25 @@
       "items": { "type": "string" },
       "default": []
     },
-    "default_protocol": {
-      "type": "string",
-      "description": "Default connection protocol for services in this category"
-    },
-    "connection_template": {
-      "type": "string",
-      "description": "Default connection URI template (uses {host}, {port}, {protocol} placeholders)"
+    "connection": {
+      "type": "object",
+      "description": "Default connection profile for services in this category",
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "description": "Default connection protocol for services in this category"
+        },
+        "uri_template": {
+          "type": "string",
+          "description": "Default connection URI template (uses {host}, {port}, {protocol} placeholders)"
+        },
+        "endpoints": {
+          "type": "object",
+          "description": "Named endpoint paths relative to the base URI",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
     },
     "tags": {
       "type": "array",

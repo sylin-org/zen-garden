@@ -2,8 +2,18 @@
   "name": "mariadb",
   "description": "MariaDB relational database (MySQL-compatible, GPL licensed)",
   "category": "data",
-  "tags": ["database", "relational", "sql", "mysql-compatible", "acid"],
+  "tags": [
+    "database",
+    "relational",
+    "sql",
+    "mysql-compatible",
+    "acid"
+  ],
   "port": 3306,
-  "connection_template": "mysql://{host}:{port}",
-  "volumes": ["mariadb-data"]
+  "volumes": [
+    "mariadb-data"
+  ],
+  "connection": {
+    "uri_template": "mysql://{host}:{port}"
+  }
 }

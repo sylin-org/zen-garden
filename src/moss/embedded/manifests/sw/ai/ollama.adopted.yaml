@@ -155,12 +155,87 @@ control:
   # Health check URL (used for all control levels)
   health_check_url: http://localhost:11434/api/tags
 
-# Connection template (for services that need to connect to Ollama)
-connection_template: |
-  {
-    "base_url": "http://{{ host }}:{{ port }}",
-    "api_endpoint": "http://{{ host }}:{{ port }}/api",
-    "generate_endpoint": "http://{{ host }}:{{ port }}/api/generate",
-    "embeddings_endpoint": "http://{{ host }}:{{ port }}/api/embeddings",
-    "models_endpoint": "http://{{ host }}:{{ port }}/api/tags"
-  }
+# Connectivity enforcement (LAN access)
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 5
+
+  windows:
+    checks:
+      - method: command
+        config:
+          command: 'powershell -Command "$ip=''{{lan_ip}}''; $ok=(Get-NetTCPConnection -LocalPort {{port}} -State Listen | Where-Object { $_.LocalAddress -eq ''0.0.0.0'' -or $_.LocalAddress -eq $ip } | Select-Object -First 1); if($ok){''True''} else {''False''}"'
+          expected_pattern: "True"
+          expected_exit_code: 0
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/api/tags"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      # Stop service or process to avoid stale binds
+      - command: 'powershell -Command "$svc=Get-Service -Name ''Ollama'' -ErrorAction SilentlyContinue; if($svc){Stop-Service -Name ''Ollama'' -ErrorAction SilentlyContinue}; Get-Process -Name ''ollama'' -ErrorAction SilentlyContinue | Stop-Process -Force"'
+        continue_on_error: true
+      # Start Ollama with explicit host binding to LAN
+      - command: 'powershell -Command "$exe=$null; $candidates=@(\"$env:LOCALAPPDATA\\Programs\\Ollama\\ollama.exe\",\"$env:ProgramFiles\\Ollama\\ollama.exe\"); foreach($p in $candidates){ if(Test-Path $p){$exe=$p; break} }; if(-not $exe){$exe=''ollama''}; Start-Process -FilePath $exe -ArgumentList \"serve --host 0.0.0.0:{{port}}\" -WindowStyle Hidden"'
+        continue_on_error: true
+      # Persist environment for future restarts
+      - command: 'powershell -Command "$env:OLLAMA_HOST=''0.0.0.0:{{port}}''; setx OLLAMA_HOST ''0.0.0.0:{{port}}'' | Out-Null; setx /M OLLAMA_HOST ''0.0.0.0:{{port}}'' | Out-Null"'
+        continue_on_error: true
+      # Open firewall
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''Ollama {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  linux:
+    checks:
+      - method: command
+        config:
+          command: "ss -ltn | grep -E '(0.0.0.0|\\[::\\]):{{port}}'"
+          expected_exit_code: 0
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/api/tags"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: "sudo mkdir -p /etc/systemd/system/ollama.service.d"
+        continue_on_error: true
+      - command: "sudo sh -c \"printf '[Service]\\nEnvironment=OLLAMA_HOST=0.0.0.0:{{port}}\\n' > /etc/systemd/system/ollama.service.d/override.conf\""
+        continue_on_error: true
+      - command: "sudo systemctl daemon-reload"
+        continue_on_error: true
+      - command: "sudo systemctl restart ollama"
+        continue_on_error: true
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --permanent --add-port={{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --reload"
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: command
+        config:
+          command: "lsof -nP -iTCP:{{port}} -sTCP:LISTEN | grep -E '(\\*|0.0.0.0|::):{{port}}'"
+          expected_exit_code: 0
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/api/tags"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: "launchctl setenv OLLAMA_HOST 0.0.0.0:{{port}}"
+        continue_on_error: true
+
+# Connection profile (for services that need to connect to Ollama)
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    api: "/api"
+    generate: "/api/generate"
+    embeddings: "/api/embeddings"
+    models: "/api/tags"

@@ -6,6 +6,8 @@
 pub mod capabilities;
 pub mod category;
 pub mod ceremony;
+pub mod connection;
+pub mod connectivity;
 pub mod detection;
 pub mod hw;
 pub mod offering;
@@ -41,6 +43,12 @@ pub use ceremony::{
     RollbackConfig,
 };
 
+pub use connectivity::{
+    ConnectivityConfig,
+    ConnectivityRules,
+    CommandAction as ConnectivityCommandAction,
+};
+
 // Re-export manifest loaders
 pub use hw::{HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR};
 pub use ports::{get_ports_catalog, init_ports_catalog, init_ports_catalog_from_str, load_ports_catalog};
@@ -53,6 +61,8 @@ pub use offering::{
     ServiceTemplate, TemplateInfo, runtime_manifests_dir,
     NetworkRequirements, StaticIpPreference,
 };
+
+pub use connection::ConnectionProfile;
 
 // Capability Manifest Schema
 pub use capabilities::{

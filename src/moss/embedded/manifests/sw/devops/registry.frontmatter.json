@@ -2,10 +2,25 @@
   "name": "registry",
   "description": "Private Docker container registry - CNCF graduated OCI Distribution implementation (Apache 2.0)",
   "category": "devops",
-  "tags": ["docker", "container", "registry", "oci", "images", "container-registry", "distribution", "cncf"],
+  "tags": [
+    "docker",
+    "container",
+    "registry",
+    "oci",
+    "images",
+    "container-registry",
+    "distribution",
+    "cncf"
+  ],
   "port": 5000,
-  "ports": [5000],
-  "volumes": ["registry-data"],
-  "connection_template": "http://{host}:{port}/v2/",
-  "minimum_memory_mb": 64
+  "ports": [
+    5000
+  ],
+  "volumes": [
+    "registry-data"
+  ],
+  "minimum_memory_mb": 64,
+  "connection": {
+    "uri_template": "http://{host}:{port}/v2/"
+  }
 }

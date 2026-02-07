@@ -1,9 +1,17 @@
-﻿{
+{
   "name": "mongodb",
   "description": "MongoDB NoSQL database",
   "category": "data",
-  "tags": ["database", "document", "nosql"],
+  "tags": [
+    "database",
+    "document",
+    "nosql"
+  ],
   "port": 27017,
-  "connection_template": "mongodb://{host}:{port}",
-  "volumes": ["mongo-data"]
+  "volumes": [
+    "mongo-data"
+  ],
+  "connection": {
+    "uri_template": "mongodb://{host}:{port}"
+  }
 }

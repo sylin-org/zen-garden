@@ -2,8 +2,20 @@
   "$schema": "../category.schema.json",
   "name": "proxy",
   "description": "Reverse proxies, load balancers, and API gateways",
-  "aliases": ["gateway", "load-balancer", "lb", "ingress", "reverse-proxy"],
-  "default_protocol": "http",
-  "connection_template": "http://{host}:{port}",
-  "tags": ["proxy", "networking", "routing"]
+  "aliases": [
+    "gateway",
+    "load-balancer",
+    "lb",
+    "ingress",
+    "reverse-proxy"
+  ],
+  "tags": [
+    "proxy",
+    "networking",
+    "routing"
+  ],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
 }

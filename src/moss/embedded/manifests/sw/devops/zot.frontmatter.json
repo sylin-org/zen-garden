@@ -2,10 +2,26 @@
   "name": "zot",
   "description": "Lightweight OCI-native container registry with built-in pull-through cache and deduplication (Apache 2.0, Linux Foundation)",
   "category": "devops",
-  "tags": ["docker", "container", "registry", "oci", "images", "container-registry", "pull-through", "cache", "dedup"],
+  "tags": [
+    "docker",
+    "container",
+    "registry",
+    "oci",
+    "images",
+    "container-registry",
+    "pull-through",
+    "cache",
+    "dedup"
+  ],
   "port": 5000,
-  "ports": [5000],
-  "volumes": ["zot-data"],
-  "connection_template": "http://{host}:{port}/v2/",
-  "minimum_memory_mb": 64
+  "ports": [
+    5000
+  ],
+  "volumes": [
+    "zot-data"
+  ],
+  "minimum_memory_mb": 64,
+  "connection": {
+    "uri_template": "http://{host}:{port}/v2/"
+  }
 }

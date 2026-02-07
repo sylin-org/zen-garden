@@ -22,6 +22,11 @@ trigger: post_install
 Essential info here...
 ```
 
+### Mode-Specific Guidance
+
+- Managed offerings use `name.guidance.md`
+- Adopted offerings use `name.adopted.guidance.md`
+
 **Important:** Use exactly ONE `#` title (H1). This title is extracted and displayed as the collapsible panel header in the UI. Use `##` for all other sections.
 
 ### Frontmatter

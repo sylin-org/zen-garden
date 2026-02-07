@@ -8,7 +8,7 @@
 
 use crate::api::responses::ApiResponse;
 use crate::api::suggestions::{generate_suggestions, SuggestionContext};
-use crate::domain::connection;
+use crate::domain::{connection, ConnectivityOrchestrator, ConnectivityStatus};
 use crate::{error_response, AppState};
 use axum::{
     extract::{Path, State},
@@ -167,7 +167,7 @@ pub async fn adopt_offering_v1(
     let offering_protocol = connection::infer_protocol_from_manifest_metadata(
         &offering_type,
         &offering_def.category,
-        offering_def.connection_template.as_deref(),
+        offering_def.connection.as_ref(),
     );
     let location = OfferingLocation {
         host: req
@@ -177,6 +177,27 @@ pub async fn adopt_offering_v1(
         port: req.port.unwrap_or_else(|| offering_def.default_host_port()),
         protocol: offering_protocol,
         agnostic_port: None,
+    };
+
+    let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
+    let connectivity_outcome = connectivity
+        .ensure_connectivity(offering_def, Some(&location), &state.stone_name)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                offering = %offering_type,
+                error = %e,
+                "Connectivity enforcement failed"
+            );
+            crate::domain::ConnectivityOutcome {
+                status: ConnectivityStatus::Failed,
+                details: format!("Connectivity enforcement error: {}", e),
+            }
+        });
+    let health = if connectivity_outcome.is_ok() {
+        ServiceHealthStatus::Healthy
+    } else {
+        ServiceHealthStatus::Degraded
     };
 
     let control_level = req
@@ -190,6 +211,14 @@ pub async fn adopt_offering_v1(
         })
         .unwrap_or_default();
 
+    let guidance = crate::tasks::build_adopted_guidance(
+        &state,
+        &adopted_name,
+        &offering_type,
+        location.port,
+        None,
+    );
+
     // Get control config from adopted mode
     let control = offering_def.get_control_config();
 
@@ -201,7 +230,7 @@ pub async fn adopt_offering_v1(
             .version
             .unwrap_or_else(|| "unknown".to_string()),
         status: OfferingStatus::Running,
-        health: ServiceHealthStatus::Healthy,
+        health,
         sub_capabilities: Vec::new(), // Populated by capabilities discovery task
         location,
         mode_data: OfferingModeData::Adopted(AdoptedData {
@@ -210,6 +239,7 @@ pub async fn adopt_offering_v1(
             stop_command: control.as_ref().and_then(|c| c.stop_command.clone()),
             restart_command: control.as_ref().and_then(|c| c.restart_command.clone()),
             health_check_url: control.as_ref().and_then(|c| c.health_check_url.clone()),
+            guidance,
             container_name: None,
             detected_at: chrono::Utc::now(),
         }),

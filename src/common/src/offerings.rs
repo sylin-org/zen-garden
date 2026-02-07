@@ -267,7 +267,7 @@ mod fqn_tests {
 
     #[test]
     fn parse_offering_fqn_rejects_invalid_chars() {
-        let err = parse_offering_fqn("olla@ma").unwrap_err();
+        let err = parse_offering_fqn("olla$ma").unwrap_err();
         assert!(err.message.contains("invalid characters"));
     }
 

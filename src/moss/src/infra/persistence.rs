@@ -4,6 +4,7 @@
 //! All persistence uses temp file + rename for atomic writes.
 
 use anyhow::Result;
+use garden_common::offerings::parse_offering_fqn;
 use std::path::PathBuf;
 
 /// Get offerings cache file path
@@ -23,7 +24,15 @@ pub async fn load_offerings() -> Result<Vec<garden_common::Offering>> {
 
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => {
-            let offerings: Vec<garden_common::Offering> = serde_json::from_str(&content)?;
+            let mut offerings: Vec<garden_common::Offering> = serde_json::from_str(&content)?;
+            let normalized = normalize_offering_identities(&mut offerings);
+            if normalized > 0 {
+                tracing::warn!(
+                    normalized,
+                    "Normalized legacy offering identities while loading from disk"
+                );
+                save_offerings(&offerings).await?;
+            }
             tracing::info!(count = offerings.len(), "Loaded offerings from disk");
             Ok(offerings)
         }
@@ -46,6 +55,133 @@ pub async fn save_offerings(offerings: &[garden_common::Offering]) -> Result<()>
     Ok(())
 }
 
+fn normalize_offering_identities(offerings: &mut [garden_common::Offering]) -> usize {
+    let mut normalized = 0usize;
+    for offering in offerings {
+        if normalize_offering_identity(offering) {
+            normalized = normalized.saturating_add(1);
+        }
+    }
+    normalized
+}
+
+fn normalize_offering_identity(offering: &mut garden_common::Offering) -> bool {
+    let mut changed = false;
+    let mut offering_from_name: Option<String> = None;
+
+    if let Some(canonical_name) = normalize_legacy_fqn(&offering.name) {
+        if offering.name != canonical_name {
+            offering.name = canonical_name;
+            changed = true;
+        }
+        offering_from_name = parse_offering_fqn(&offering.name)
+            .ok()
+            .map(|fqn| fqn.offering);
+    }
+
+    if let Some(offering_type) = offering_from_name {
+        if !offering.offering.eq_ignore_ascii_case(&offering_type) {
+            offering.offering = offering_type;
+            changed = true;
+        }
+    }
+
+    if let Some(canonical_type) = normalize_legacy_type(&offering.offering) {
+        if !offering.offering.eq_ignore_ascii_case(&canonical_type) {
+            offering.offering = canonical_type;
+            changed = true;
+        }
+    }
+
+    if changed {
+        return true;
+    }
+
+    if offering.name.contains('@') {
+        tracing::warn!(
+            name = %offering.name,
+            "Found legacy offering name but could not normalize it"
+        );
+    }
+
+    false
+}
+
+fn normalize_legacy_fqn(name: &str) -> Option<String> {
+    if !name.contains('@') {
+        return None;
+    }
+
+    let candidate = name.replace('@', ":");
+    parse_offering_fqn(&candidate).ok().map(|fqn| fqn.fqn())
+}
+
+fn normalize_legacy_type(offering_type: &str) -> Option<String> {
+    if !(offering_type.contains('@') || offering_type.contains(':')) {
+        return None;
+    }
+
+    let candidate = offering_type.replace('@', ":");
+    parse_offering_fqn(&candidate)
+        .ok()
+        .map(|fqn| fqn.offering)
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::*;
+    use garden_common::{
+        AdoptedControlLevel, AdoptedData, Offering, OfferingLocation, OfferingModeData,
+        OfferingStatus, ServiceHealthStatus,
+    };
+
+    fn sample_offering(name: &str, offering_type: &str) -> Offering {
+        Offering {
+            offering_id: "test-id".to_string(),
+            name: name.to_string(),
+            offering: offering_type.to_string(),
+            version: "unknown".to_string(),
+            status: OfferingStatus::Running,
+            health: ServiceHealthStatus::Healthy,
+            sub_capabilities: Vec::new(),
+            location: OfferingLocation {
+                host: "localhost".to_string(),
+                port: 11434,
+                protocol: "http".to_string(),
+                agnostic_port: None,
+            },
+            mode_data: OfferingModeData::Adopted(AdoptedData {
+                control_level: AdoptedControlLevel::Monitor,
+                start_command: None,
+                stop_command: None,
+                restart_command: None,
+                health_check_url: None,
+                guidance: None,
+                container_name: None,
+                detected_at: chrono::Utc::now(),
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn normalize_legacy_name_with_at() {
+        let mut offerings = vec![sample_offering("ollama@adopted", "ollama")];
+        let normalized = normalize_offering_identities(&mut offerings);
+        assert_eq!(normalized, 1);
+        assert_eq!(offerings[0].name, "ollama:adopted");
+        assert_eq!(offerings[0].offering, "ollama");
+    }
+
+    #[test]
+    fn normalize_legacy_type_with_at() {
+        let mut offerings = vec![sample_offering("ollama:adopted", "ollama@adopted")];
+        let normalized = normalize_offering_identities(&mut offerings);
+        assert_eq!(normalized, 1);
+        assert_eq!(offerings[0].offering, "ollama");
+    }
+}
 // ============================================================================
 // Offerings Cache
 // ============================================================================

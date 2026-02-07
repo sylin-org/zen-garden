@@ -635,7 +635,7 @@ pub async fn get_portrait_guidance(
     use axum::response::Response;
     use axum::body::Body;
 
-    // Collect all guidance from installed offerings (managed only)
+    // Collect all guidance from installed offerings (managed + adopted)
     let guidance_sections: Vec<(String, String)> = {
         let offerings = state.offerings.read().await;
         offerings
@@ -643,6 +643,7 @@ pub async fn get_portrait_guidance(
             .filter_map(|o| {
                 o.managed_data()
                     .and_then(|m| m.guidance.as_ref())
+                    .or_else(|| o.adopted_data().and_then(|a| a.guidance.as_ref()))
                     .map(|g| (o.name.clone(), g.content.clone()))
             })
             .collect()

@@ -18,6 +18,7 @@ pub mod capabilities;
 pub mod ceremony;
 pub mod compatibility;
 pub mod connection;
+pub mod connectivity;
 pub mod constraints;
 pub mod events;
 pub mod harvest;
@@ -45,6 +46,7 @@ pub use compatibility::{
     validate_binary_architecture, CompatCheckCapabilities, CompatibilityDecision,
     CompiledCompatibility,
 };
+pub use connectivity::{ConnectivityOrchestrator, ConnectivityOutcome, ConnectivityStatus};
 pub use connection::{
     build_hostname, default_template, extract_ip, infer_protocol, resolve_connection, resolve_uris,
     ResolvedConnection,

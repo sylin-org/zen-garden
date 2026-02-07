@@ -11,7 +11,7 @@
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
 use crate::domain::connection;
-use crate::domain::DetectionOrchestrator;
+use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, DetectionOrchestrator};
 use crate::infra::config::AdoptionConfig;
 use crate::AppState;
 use garden_common::{OfferingMode, ServiceHealthStatus};
@@ -54,6 +54,7 @@ use std::time::Instant;
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
     // Keep orchestrator persistent across scans to maintain stability tracking
     let orchestrator = DetectionOrchestrator::new(state.docker.clone());
+    let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
 
     // Track elapsed time for schedule phases
     let start_time = Instant::now();
@@ -106,6 +107,25 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                 // Run detection to check if still available
                 match orchestrator.detect(manifest).await {
                     Ok(result) if result.detected => {
+                        let connectivity_outcome = connectivity
+                            .ensure_connectivity(
+                                manifest,
+                                Some(&offering.location),
+                                &state.stone_name,
+                            )
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(
+                                    offering = %offering.offering,
+                                    error = %e,
+                                    "Connectivity enforcement failed"
+                                );
+                                crate::domain::ConnectivityOutcome {
+                                    status: ConnectivityStatus::Failed,
+                                    details: format!("Connectivity enforcement error: {}", e),
+                                }
+                            });
+
                         // Offering is available
                         if offering.health != ServiceHealthStatus::Healthy {
                             tracing::info!(
@@ -122,6 +142,18 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                                     garden_common::console::EventStatus::Healthy,
                                     format!("{} is back online", offering.offering),
                                 ));
+                        }
+
+                        if !connectivity_outcome.is_ok()
+                            && offering.health == ServiceHealthStatus::Healthy
+                        {
+                            tracing::warn!(
+                                offering = %offering.offering,
+                                details = %connectivity_outcome.details,
+                                "Connectivity checks failed for adopted offering"
+                            );
+                            offering.health = ServiceHealthStatus::Degraded;
+                            state_changed = true;
                         }
                     }
                     Ok(_) | Err(_) => {
@@ -186,7 +218,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                     let protocol = connection::infer_protocol_from_manifest_metadata(
                         &manifest.name,
                         &manifest.category,
-                        manifest.connection_template.as_deref(),
+                        manifest.connection.as_ref(),
                     );
                     let location = garden_common::OfferingLocation {
                         host: "localhost".to_string(),
@@ -197,6 +229,39 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
 
                     // Get control config from adopted mode
                     let control = manifest.get_control_config();
+
+                    let connectivity_outcome = connectivity
+                        .ensure_connectivity(manifest, Some(&location), &state.stone_name)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                offering = %manifest.name,
+                                error = %e,
+                                "Connectivity enforcement failed"
+                            );
+                            crate::domain::ConnectivityOutcome {
+                                status: ConnectivityStatus::Failed,
+                                details: format!("Connectivity enforcement error: {}", e),
+                            }
+                        });
+                    let health = if connectivity_outcome.is_ok() {
+                        ServiceHealthStatus::Healthy
+                    } else {
+                        ServiceHealthStatus::Degraded
+                    };
+
+                    let guidance = crate::tasks::build_adopted_guidance(
+                        &state,
+                        &format!(
+                            "{}{}{}",
+                            manifest.name,
+                            garden_common::constants::OFFERING_FQN_SEPARATOR,
+                            garden_common::constants::OFFERING_ADOPTED_INSTANCE
+                        ),
+                        &manifest.name,
+                        location.port,
+                        None,
+                    );
 
                     let adopted_offering = garden_common::Offering {
                         offering_id: garden_common::utils::ids::generate_guidv7(),
@@ -209,7 +274,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                         offering: manifest.name.clone(),
                         version: result.version.unwrap_or_else(|| "unknown".to_string()),
                         status: garden_common::OfferingStatus::Running,
-                        health: ServiceHealthStatus::Healthy,
+                        health,
                         sub_capabilities: Vec::new(), // Populated by capabilities discovery task
                         location,
                         mode_data: garden_common::OfferingModeData::Adopted(
@@ -225,6 +290,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
                                 health_check_url: control
                                     .as_ref()
                                     .and_then(|c| c.health_check_url.clone()),
+                                guidance,
                                 container_name: None,
                                 detected_at: chrono::Utc::now(),
                             },

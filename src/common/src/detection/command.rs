@@ -142,6 +142,13 @@ pub async fn detect_by_command(
                 error_kind = ?e.kind(),
                 "Command execution failed"
             );
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return Ok(DetectionResult {
+                    detected: false,
+                    version: None,
+                    details: format!("Program '{}' not found", program),
+                });
+            }
             anyhow::bail!("Failed to execute command '{}': {}", command, e);
         }
     };
@@ -283,8 +290,8 @@ mod tests {
             expected_exit_code: None,
         };
 
-        let result = detect_by_command(&config, Duration::from_secs(5)).await;
-        assert!(result.is_err());
+        let result = detect_by_command(&config, Duration::from_secs(5)).await.unwrap();
+        assert!(!result.detected);
     }
 
     #[tokio::test]

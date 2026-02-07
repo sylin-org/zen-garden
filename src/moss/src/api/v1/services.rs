@@ -43,7 +43,10 @@ fn offering_to_service_info(o: &Offering) -> ServiceInfo {
         resources: o.managed_data().and_then(|m| m.resources.clone()),
         job_id: o.managed_data().and_then(|m| m.job_id.clone()),
         sub_capabilities: o.sub_capabilities.clone(),
-        guidance: o.managed_data().and_then(|m| m.guidance.clone()),
+        guidance: o
+            .managed_data()
+            .and_then(|m| m.guidance.clone())
+            .or_else(|| o.adopted_data().and_then(|a| a.guidance.clone())),
     }
 }
 
@@ -373,7 +376,7 @@ pub async fn create_service_v1(
             state
                 .manifest_registry
                 .get_offering(&offering_type)
-                .and_then(|entry| entry.connection_template.as_deref()),
+                .and_then(|entry| entry.connection.as_ref()),
         );
         let installing_offering = Offering {
             offering_id: generate_guidv7(),

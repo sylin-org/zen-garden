@@ -53,6 +53,8 @@ fn substitute_guidance_templates(
     ctx.set("server-name", stone_name);
     ctx.set("offering", offering);
     ctx.set("name", name);
+    ctx.set("os", std::env::consts::OS);
+    ctx.set("arch", std::env::consts::ARCH);
 
     // Set port variables: "default" → {{port}}, others → {{<name>-port}}
     for (port_name, (host_port, _)) in ports {
@@ -153,6 +155,8 @@ pub fn build_guidance(
     variables.insert("server-name".to_string(), state.stone_name.clone());
     variables.insert("offering".to_string(), offering.to_string());
     variables.insert("name".to_string(), name.to_string());
+    variables.insert("os".to_string(), std::env::consts::OS.to_string());
+    variables.insert("arch".to_string(), std::env::consts::ARCH.to_string());
     if let Some(ip) = static_ip {
         variables.insert("static-ip".to_string(), ip.to_string());
     }
@@ -162,6 +166,46 @@ pub fn build_guidance(
         content_len = content.len(),
         "build_guidance: successfully built guidance"
     );
+
+    Some(OfferingGuidance { content, variables })
+}
+
+/// Build guidance for adopted offerings (uses adopted guidance template)
+pub fn build_adopted_guidance(
+    state: &AppState,
+    name: &str,
+    offering: &str,
+    port: u16,
+    static_ip: Option<&str>,
+) -> Option<OfferingGuidance> {
+    let manifest = state.manifest_registry.sw.get(offering)?;
+    let template = manifest
+        .adopted
+        .as_ref()
+        .and_then(|a| a.guidance.as_ref())?;
+
+    let mut ports = std::collections::HashMap::new();
+    ports.insert("default".to_string(), (port, port));
+
+    let content = substitute_guidance_templates(
+        template,
+        name,
+        offering,
+        &ports,
+        &state.stone_name,
+        static_ip,
+    );
+
+    let mut variables = std::collections::HashMap::new();
+    variables.insert("port".to_string(), port.to_string());
+    variables.insert("server-name".to_string(), state.stone_name.clone());
+    variables.insert("offering".to_string(), offering.to_string());
+    variables.insert("name".to_string(), name.to_string());
+    variables.insert("os".to_string(), std::env::consts::OS.to_string());
+    variables.insert("arch".to_string(), std::env::consts::ARCH.to_string());
+    if let Some(ip) = static_ip {
+        variables.insert("static-ip".to_string(), ip.to_string());
+    }
 
     Some(OfferingGuidance { content, variables })
 }
@@ -193,12 +237,23 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         .sw
         .entries
         .iter()
-        .filter(|(_, entry)| entry.guidance.is_some())
+        .filter(|(_, entry)| {
+            entry.guidance.is_some()
+                || entry
+                    .adopted
+                    .as_ref()
+                    .and_then(|a| a.guidance.as_ref())
+                    .is_some()
+        })
         .map(|(name, entry)| {
-            (
-                name.clone(),
-                entry.guidance.as_ref().map(|g| g.len()).unwrap_or(0),
-            )
+            let managed_len = entry.guidance.as_ref().map(|g| g.len()).unwrap_or(0);
+            let adopted_len = entry
+                .adopted
+                .as_ref()
+                .and_then(|a| a.guidance.as_ref())
+                .map(|g| g.len())
+                .unwrap_or(0);
+            (name.clone(), managed_len.max(adopted_len))
         })
         .collect();
 
@@ -267,13 +322,44 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             .collect()
     };
 
-    if offerings_needing_guidance.is_empty() {
+    let offerings_needing_adopted_guidance: Vec<(String, String, String, u16)> = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .filter(|o| o.is_adopted())
+            .filter(|o| {
+                let has_guidance = o
+                    .adopted_data()
+                    .map(|a| a.guidance.is_some())
+                    .unwrap_or(false);
+                let manifest_has_guidance = state
+                    .manifest_registry
+                    .sw
+                    .get(&o.offering)
+                    .and_then(|m| m.adopted.as_ref())
+                    .and_then(|a| a.guidance.as_ref())
+                    .is_some();
+                !has_guidance && manifest_has_guidance
+            })
+            .map(|o| {
+                (
+                    o.offering_id.clone(),
+                    o.name.clone(),
+                    o.offering.clone(),
+                    o.location.port,
+                )
+            })
+            .collect()
+    };
+
+    if offerings_needing_guidance.is_empty() && offerings_needing_adopted_guidance.is_empty() {
         tracing::info!("Backfill: no offerings need guidance");
         return 0;
     }
 
     tracing::info!(
-        count = offerings_needing_guidance.len(),
+        managed = offerings_needing_guidance.len(),
+        adopted = offerings_needing_adopted_guidance.len(),
         "Backfilling missing guidance for offerings"
     );
 
@@ -288,6 +374,20 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
                         managed.guidance = Some(guidance);
                         updated += 1;
                         tracing::debug!(offering = %name, "Backfilled guidance");
+                    }
+                }
+            }
+        }
+
+        for (offering_id, name, offering_type, port) in offerings_needing_adopted_guidance {
+            if let Some(guidance) =
+                build_adopted_guidance(state, &name, &offering_type, port, static_ip)
+            {
+                if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                    if let Some(ref mut adopted) = o.adopted_data_mut() {
+                        adopted.guidance = Some(guidance);
+                        updated += 1;
+                        tracing::debug!(offering = %name, "Backfilled adopted guidance");
                     }
                 }
             }
@@ -588,7 +688,7 @@ pub async fn install_service_task(
         state
             .manifest_registry
             .get_offering(offering_type)
-            .and_then(|entry| entry.connection_template.as_deref()),
+            .and_then(|entry| entry.connection.as_ref()),
     );
     let guidance = build_guidance(
         state,
@@ -888,7 +988,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             state
                 .manifest_registry
                 .get_offering(&offering_type)
-                .and_then(|entry| entry.connection_template.as_deref()),
+                .and_then(|entry| entry.connection.as_ref()),
         );
         let guidance = build_guidance(
             state,
@@ -1306,7 +1406,10 @@ async fn offering_to_service_info_for_refresh(
         resources: offering.managed_data().and_then(|m| m.resources.clone()),
         job_id: offering.managed_data().and_then(|m| m.job_id.clone()),
         sub_capabilities: offering.sub_capabilities.clone(),
-        guidance: offering.managed_data().and_then(|m| m.guidance.clone()),
+        guidance: offering
+            .managed_data()
+            .and_then(|m| m.guidance.clone())
+            .or_else(|| offering.adopted_data().and_then(|a| a.guidance.clone())),
     }
 }
 

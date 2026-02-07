@@ -10,7 +10,7 @@ use axum::{
 };
 use garden_common::{
     api_utils::ApiErrorResponse, offerings::parse_offering_fqn, CapabilityCollection, Offering,
-    OfferingMode, Ports, ServiceInfo, ServiceStatus,
+    OfferingMode, OfferingStatus, Ports, ServiceInfo, ServiceStatus,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -76,39 +76,7 @@ pub async fn list_offering_capabilities_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
 ) -> Result<Json<ApiResponse<CapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&offering_name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
-            "INVALID_OFFERING_NAME",
-            format!("Invalid offering name '{}': {}", offering_name, e),
-            None,
-        )
-    })?;
-    let offering_fqn = offering_fqn.fqn();
-
-    // Find the offering in unified registry
-    let (offering, mode) = {
-        let offerings = state.offerings.read().await;
-        let found = offerings
-            .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn))
-            .cloned();
-
-        match found {
-            Some(o) => {
-                let mode = o.mode();
-                (o, mode)
-            }
-            None => {
-                return Err(error_response(
-                    StatusCode::NOT_FOUND,
-                    "OFFERING_NOT_FOUND",
-                    format!("Offering '{}' is not running on this stone. Use 'rake list' or 'rake adopted' to see offerings.", offering_fqn),
-                    None,
-                ));
-            }
-        }
-    };
+    let (offering, mode) = resolve_offering_for_capability(&state, &offering_name).await?;
 
     // Convert to ServiceInfo for the capability executor (which still uses ServiceInfo)
     let service = offering_to_service_info(&offering, &state).await;
@@ -1226,7 +1194,10 @@ async fn offering_to_service_info(offering: &Offering, state: &AppState) -> Serv
         resources: offering.managed_data().and_then(|m| m.resources.clone()),
         job_id: offering.managed_data().and_then(|m| m.job_id.clone()),
         sub_capabilities: offering.sub_capabilities.clone(),
-        guidance: offering.managed_data().and_then(|m| m.guidance.clone()),
+        guidance: offering
+            .managed_data()
+            .and_then(|m| m.guidance.clone())
+            .or_else(|| offering.adopted_data().and_then(|a| a.guidance.clone())),
     }
 }
 
@@ -1235,7 +1206,17 @@ async fn find_service_for_capability(
     state: &AppState,
     offering_name: &str,
 ) -> Result<(ServiceInfo, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(offering_name).map_err(|e| {
+    let (offering, mode) = resolve_offering_for_capability(state, offering_name).await?;
+    let service = offering_to_service_info(&offering, state).await;
+    Ok((service, mode))
+}
+
+async fn resolve_offering_for_capability(
+    state: &AppState,
+    offering_name: &str,
+) -> Result<(Offering, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
+    let normalized = normalize_offering_selector(offering_name);
+    let offering_fqn = parse_offering_fqn(&normalized).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -1243,27 +1224,93 @@ async fn find_service_for_capability(
             None,
         )
     })?;
-    let offering_fqn = offering_fqn.fqn();
+    let offering_fqn_str = offering_fqn.fqn();
 
-    // Find in unified registry
     let offerings = state.offerings.read().await;
-    let found = offerings
-        .iter()
-        .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn))
-        .cloned();
-    drop(offerings);
 
-    match found {
-        Some(offering) => {
-            let mode = offering.mode();
-            let service = offering_to_service_info(&offering, state).await;
-            Ok((service, mode))
-        }
-        None => Err(error_response(
+    // If instance is explicitly provided, require exact match.
+    if offering_fqn.instance.is_some() {
+        let found = offerings
+            .iter()
+            .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn_str))
+            .cloned();
+        return match found {
+            Some(offering) => Ok((offering.clone(), offering.mode())),
+            None => Err(error_response(
+                StatusCode::NOT_FOUND,
+                "OFFERING_NOT_FOUND",
+                format!(
+                    "Offering '{}' is not running on this stone.",
+                    offering_fqn_str
+                ),
+                None,
+            )),
+        };
+    }
+
+    // If a default instance exists (exact offering name), prefer it.
+    if let Some(default_instance) = offerings
+        .iter()
+        .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn_str))
+        .cloned()
+    {
+        return Ok((default_instance.clone(), default_instance.mode()));
+    }
+
+    // Otherwise, match by offering type.
+    let matches: Vec<Offering> = offerings
+        .iter()
+        .filter(|o| o.offering.eq_ignore_ascii_case(&offering_fqn.offering))
+        .cloned()
+        .collect();
+
+    if matches.is_empty() {
+        return Err(error_response(
             StatusCode::NOT_FOUND,
             "OFFERING_NOT_FOUND",
-            format!("Offering '{}' is not running on this stone.", offering_fqn),
+            format!(
+                "Offering '{}' is not running on this stone.",
+                offering_fqn.offering
+            ),
             None,
-        )),
+        ));
     }
+
+    // Prefer a single running instance when multiple exist.
+    let running: Vec<Offering> = matches
+        .iter()
+        .cloned()
+        .filter(|o| o.status == OfferingStatus::Running)
+        .collect();
+
+    let selected = if running.len() == 1 {
+        running
+    } else {
+        matches.clone()
+    };
+
+    if selected.len() == 1 {
+        let offering = selected.into_iter().next().unwrap();
+        return Ok((offering.clone(), offering.mode()));
+    }
+
+    let candidates: Vec<String> = selected.iter().map(|o| o.name.clone()).collect();
+    Err(error_response(
+        StatusCode::CONFLICT,
+        "OFFERING_AMBIGUOUS",
+        format!(
+            "Offering '{}' matches multiple instances: {}",
+            offering_fqn.offering,
+            candidates.join(", ")
+        ),
+        None,
+    ))
+}
+
+fn normalize_offering_selector(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.contains('@') {
+        return trimmed.replace('@', ":");
+    }
+    trimmed.to_string()
 }

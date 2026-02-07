@@ -1363,6 +1363,10 @@ pub struct AdoptedData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub health_check_url: Option<String>,
 
+    /// Cached post-adoption guidance (if available)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub guidance: Option<OfferingGuidance>,
+
     /// Container name if adopted from a container
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_name: Option<String>,

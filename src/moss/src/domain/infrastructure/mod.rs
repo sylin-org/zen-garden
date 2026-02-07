@@ -181,7 +181,7 @@ impl InfrastructureHandlerRegistry {
                 tracing::info!(
                     handler = handler.name(),
                     instances = instance_count,
-                    offerings = ?instances.iter().map(|i| format!("{}@{}", i.offering, i.stone_name)).collect::<Vec<_>>(),
+                    offerings = ?instances.iter().map(|i| format!("{} on {}", i.offering, i.stone_name)).collect::<Vec<_>>(),
                     "Infrastructure handler: found matching instances"
                 );
             }

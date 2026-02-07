@@ -1,4 +1,4 @@
-﻿# Service Offerings Specification
+# Service Offerings Specification
 
 **Purpose:** Technical specification for service templates, taxonomy, and query-based recommendations.  
 **Audience:** Developers implementing offering system, operators creating custom offerings.
@@ -482,4 +482,4 @@ Response:
 - **Moss daemon specification:** [moss-daemon-lifecycle.md](moss-daemon-lifecycle.md)
 - **Rake CLI specification:** [rake-commands.md](rake-commands.md)
 - **Discovery protocol:** [discovery.md](discovery.md)
-- **Creating custom offerings:** [../guides/offering-services.md](../guides/offering-services.md)
+- **Creating custom offerings:** [../guides/offering-lifecycle.md](../guides/offering-lifecycle.md)

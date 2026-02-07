@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to Zen Garden will be documented in this file.
 
@@ -10,9 +10,9 @@ All notable changes to Zen Garden will be documented in this file.
   - Event-driven readiness for `garden-rake find ... wishfully` (offering and capability-aware flows)
   - Capability state persistence + propagation through tools projection/beacons
 - **Documentation added for tools domain**
-  - Proposal status updated: `docs/proposals/zen-garden-spec-tools-domain.md`
-  - Implementation report: `docs/proposals/implemented/tools-domain-implementation.md`
-  - User guide: `docs/guides/tools-domain-user-guide.md`
+  - Proposal status updated: `docs/proposals/moss-tools-domain.md`
+  - Implementation report: `docs/archive/proposals/tools-domain-implementation.md`
+  - User guide: `docs/guides/tools-domain.md`
 - **Capability wishful syntax and semantics refined**
   - Canonical consumption format: `{offering}[{capability}[,{capability}...]]`
   - Multi-capability wishful requests now supported in one query (AND semantics)
@@ -24,13 +24,13 @@ All notable changes to Zen Garden will be documented in this file.
   - Solution: MAC OUI-based detection using IEEE-assigned vendor prefixes
   - Switched from `if-addrs` to `network-interface` crate (provides MAC addresses)
   - Known virtual OUIs: Hyper-V (`00:15:5D`), VMware (`00:50:56`), VirtualBox (`08:00:27`), Docker (`02:42`), QEMU/KVM (`52:54:00`), Xen (`00:16:3E`)
-  - Detection hierarchy: MAC OUI (primary) → interface name patterns (secondary) → Docker 172.17.x.x (tertiary)
+  - Detection hierarchy: MAC OUI (primary) â†’ interface name patterns (secondary) â†’ Docker 172.17.x.x (tertiary)
   - Decision: [COMM-0003](decisions/COMM-0003-virtual-adapter-detection.md)
 - **Fixed deploy.ps1 interface selection** - Added filtering for Hyper-V (`192.168.224+`), WSL, Docker Desktop ranges
   - Added priority tiers: `192.168.0-15.x` (priority 1) over higher subnets
 - **Restored Windows-specific stone naming theme** - Platform-aware name generation
-  - Linux: Nature theme (64×64 = 4,096 names): `stone-golden-summit`, `stone-crystal-forest`
-  - Windows: Stained glass/clarity theme (64×64 = 4,096 names): `stone-pellucid-clarity`, `stone-crystalline-prism`
+  - Linux: Nature theme (64Ã—64 = 4,096 names): `stone-golden-summit`, `stone-crystal-forest`
+  - Windows: Stained glass/clarity theme (64Ã—64 = 4,096 names): `stone-pellucid-clarity`, `stone-crystalline-prism`
   - Windows theme evokes cathedral windows, light, transparency, and sacred spaces
   - Shared `generate_unique_name_from_dictionary()` helper for both platforms
 - **Restored Windows first-boot DNS hostname setup** - Accidentally removed in commit 313e269
@@ -52,13 +52,13 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-02
 - **Unified Offering Model (Greenfield Refactor)** - merged dual-collection manifest system into single `Offering` struct
-  - `SwEntry` + `OfferingManifest` → unified `Offering` with mode-as-configuration
+  - `SwEntry` + `OfferingManifest` â†’ unified `Offering` with mode-as-configuration
   - Mode support now derived from `Option<ManagedConfig>`, `Option<AdoptedConfig>`, `Option<BorrowedConfig>`
   - `OfferingRegistry` replaces `SwManifests`, `OfferingMetadata` replaces `SwFrontmatter`
   - Removed all 6 legacy type aliases (clean codebase, no backwards compatibility shims)
 - **File renames to align with content**:
-  - `common/manifests/sw.rs` → `offering.rs` (contains `Offering` model)
-  - `common/manifests/offering.rs` → `detection.rs` (contains detection types for adopted mode)
+  - `common/manifests/sw.rs` â†’ `offering.rs` (contains `Offering` model)
+  - `common/manifests/offering.rs` â†’ `detection.rs` (contains detection types for adopted mode)
 - **Removed legacy code from ManifestRegistry**:
   - Deleted `offering_manifests` HashMap field
   - Removed `get_offering_manifest()`, `add_offering_manifest()`, `add_offering_manifests()`, `load_legacy_offering_manifests()`
@@ -73,7 +73,7 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-01-29
 - **Package Structure v2.0** - Simplified to mirror target filesystem exactly
-  - Package now has just `bin/` (→ /usr/local/bin) and `lib/` (→ /var/lib) folders
+  - Package now has just `bin/` (â†’ /usr/local/bin) and `lib/` (â†’ /var/lib) folders
   - Deploy is now two `cp -r` operations instead of multiple conditional blocks
   - Removed `dependencies` block from dist.json (Companions install deps at runtime)
   - Updated `moss-update-helper.sh` and `NewStone.ps1` to use new structure
@@ -107,7 +107,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Local seed banks are self-registered into storage_cache at startup
   - Remote banks populate via STORAGE_BEACON announcements
   - `/api/v1/stone/storage` now returns `garden_banks` field with all known banks across garden
-  - Storage API can easily route requests: local bank → local functions, remote bank → proxy to owning stone
+  - Storage API can easily route requests: local bank â†’ local functions, remote bank â†’ proxy to owning stone
   - Added `update_local_storage_cache()` and `update_and_broadcast()` helpers to beacon module
 - **API Surface Reorganization (Greenfield)** - clean semantic separation of stone-local vs garden-wide endpoints
   - All stone-local operations now under `/api/v1/stone/*`:
@@ -158,7 +158,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Updated 15+ documentation files for consistency with proposal specs
 
 ## 2026-01-27
-- **Portrait at-a-glance panel** - Hero now shows stone uptime (🪨), Moss uptime (🌿), and offerings status dots
+- **Portrait at-a-glance panel** - Hero now shows stone uptime (ðŸª¨), Moss uptime (ðŸŒ¿), and offerings status dots
   - Added `moss_uptime` field to PortraitIdentity API response
   - Stone uptime = system uptime (how long machine running), Moss uptime = daemon uptime
   - Offerings glance shows count by status: running (green), stopped (gray), error (red)
@@ -182,9 +182,9 @@ All notable changes to Zen Garden will be documented in this file.
   - Type definitions: TypeScript interfaces for all API types (discovery, services, hardware, topology)
   - Troubleshooting guide: firewall, multicast, multi-homed systems (WSL/Hyper-V), slow discovery
 - **Documentation consistency fixes** - updated 6 docs with correct ports and election delay formula
-  - Ports: 3001→7185 (Moss), 3004→7184 (discovery), 3000→7186 (Lantern), 3002→7186 (Lantern)
+  - Ports: 3001â†’7185 (Moss), 3004â†’7184 (discovery), 3000â†’7186 (Lantern), 3002â†’7186 (Lantern)
   - Election delay: corrected `* 10` (0-2550ms) to `* 30` (0-7650ms) per implementation
-  - Updated format string: `stone_name + request_id` → `election:{stone_id}:{request_id}`
+  - Updated format string: `stone_name + request_id` â†’ `election:{stone_id}:{request_id}`
   - Affected: discovery.md, moss-daemon-lifecycle.md, rake-commands.md, config.md, connection-strings.md, glossary.md, ports.md
 - **garden-companion-sdk crate** - shared infrastructure for Companions (DDD/SoC)
   - Created `src/companion-sdk/` with CommandHandler trait, CompanionRuntime, SSE client
@@ -208,7 +208,7 @@ All notable changes to Zen Garden will be documented in this file.
 - **Companion port ledger system** - Moss-managed persistent port assignments (base 7187, range 7187-7199)
   - Created PortLedger: load/save to `{data_dir}/companion-ports.json`, incremental assignment from base 7187
   - Moss passes `--port {assigned}` to Companions during both `--dump-commands` and runtime startup
-  - Command routing: Rake → Moss:7185/api/v1/stone/companions/{id}/command → Companion:{assigned_port}/command
+  - Command routing: Rake â†’ Moss:7185/api/v1/stone/companions/{id}/command â†’ Companion:{assigned_port}/command
   - Removed computed port logic from command_manifest, Cricket now requires port from Moss
   - Tested end-to-end: Cricket assigned 7187, plays audio via `hey tell cricket play stone-online`
 - **Companion registry & service discovery** - Companions auto-discovered via `--dump-commands` protocol
@@ -219,7 +219,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Updated Rake hey.rs: fetches CommandManifest from Moss, displays rich help with examples
   - Cricket now implements `--dump-commands` (6 commands: select, volume, list, show, play, stop)
 - **Cricket audio Companion implemented** - full Companion framework and Cricket crate with 180 CC0 samples
-  - Expanded audio library: 42 → 180 samples (5x growth, emphasis on notifications as requested)
+  - Expanded audio library: 42 â†’ 180 samples (5x growth, emphasis on notifications as requested)
   - Added garden_common::Companion module: CompanionCommandRequest/Response, CompanionManifest types
   - Added Moss endpoints: GET /api/v1/stone/companions, POST /api/v1/stone/presence/command
   - Created garden-cricket crate: 4-channel mixer (rodio), tune system (zen-garden/mr-robot/lo-fi-ops)
@@ -244,11 +244,11 @@ All notable changes to Zen Garden will be documented in this file.
   - All storage data now from live metrics (30s refresh), no stale boot-time usage percentages
   - Handles hot-swap drives naturally (storage inventory refreshes every 30s)
   - Fixed observe/status commands: removed stale static storage display, replaced by live /metrics endpoint (future work)
-- Fixed Windows self-update cleanup: corrected temp filename (garden-moss-new.exe → garden-moss-temp.exe) with logging
+- Fixed Windows self-update cleanup: corrected temp filename (garden-moss-new.exe â†’ garden-moss-temp.exe) with logging
 - Fixed 38 manifest snippet files: converted port format from strings to tuples ([host, container])
 - Fixed ServiceConfig struct: changed ports from Vec<String> to Vec<(u16, u16)> for direct tuple deserialization
 - **Implemented Windows self-update (Phase 1)**: spawn-temp-process pattern for package-based updates
-  - Added `spawn_windows_updater()` to copy moss → garden-moss-temp.exe and spawn --finalize-update
+  - Added `spawn_windows_updater()` to copy moss â†’ garden-moss-temp.exe and spawn --finalize-update
   - Updated deploy_stone_v1 API to call Windows updater before shutdown
   - Added `--cleanup-updater` CLI flag for post-update cleanup
   - Added `cleanup_updater_process()` to remove temp binary after successful update
@@ -257,7 +257,7 @@ All notable changes to Zen Garden will be documented in this file.
 - Windows self-update implementation designed: spawn-temp-process pattern with transaction log, rollback safety, automatic recovery
 - Windows deployment analysis complete: identified missing self-update mechanism (Linux has systemd ExecStartPre scripts, Windows had none)
 - Added UDP message deduplication in p2p.rs - GUIDv7 msg_id with 5s TTL cache to prevent duplicate processing from multicast/broadcast multi-path delivery
-- Added `docs/reference/cost-analysis.md` - realistic cost comparison: Zen Garden on 3× Dell Wyse 5070s vs AWS/Azure (~90% savings)
+- Added `docs/reference/cost-analysis.md` - realistic cost comparison: Zen Garden on 3Ã— Dell Wyse 5070s vs AWS/Azure (~90% savings)
 - Added `docs/philosophy/staying-focused.md` - north star document to prevent scope creep and maintain focus on core mission (e-waste reclamation, small business ownership, removing barriers)
 - **Documentation cleanup**: Removed all Tier 2/Deep Pond references from foundational documentation
 - Rewrote POND-0001 protocol spec: removed certificates, resurrection, individual revocation (Tier 2 features)
@@ -289,420 +289,19 @@ All notable changes to Zen Garden will be documented in this file.
 - Fixed topology cache accumulating duplicate stone entries with different IDs
 
 ## Unreleased (Rake UI/UX Improvements)
-- Added progressive discovery display - stones appear as discovered with response times, not after timeout
-- Added streaming progress updates for container installations via SSE polling (500ms interval, 5min timeout)
-- Changed status indicators to garden vitality language: `[thriving]`, `[dormant]`, `[needs attention]` (was `[OK]`, `[stopped]`, `[ERROR]`)
+- Progressive discovery display â€” stones appear as discovered with response times
+- Streaming progress updates for container installations via SSE polling
+- Garden vitality language: `[thriving]`, `[dormant]`, `[needs attention]`
 - Standardized spatial prepositions: "on" (hosting), "at" (targeting), "present on" (topology)
-- Added wall-clock timestamps `[HH:MM:SS]` to Watch command for timeline correlation
-- Added confirmation prompts to destructive operations (remove, uproot) with `--force` bypass
-- Deprecated `status` command (use `observe` or `tend` instead) - will be removed in future release
-- **BREAKING**: Removed `context` command (use `tend` instead for same functionality)
-- **BREAKING**: Changed `discover_all_moss()` to callback-based streaming API instead of returning `Vec<String>`
-
-## Technical Debt / Architecture
-- Added `if-addrs = "0.13"` dependency for network interface enumeration
-- Refactored p2p.rs (~1000 lines) - complete rewrite of UDP transport layer
-- Added P2P transport singleton pattern to prevent port conflicts (all UDP via centralized subsystem)
-- Added `NetworkInterface::compute_broadcast()` for correct directed broadcast calculation (supports /16, /20, /24, etc.)
-- Changed `UDP_SENDER` static to `UDP_SENDERS` vec for per-interface sockets
-- Changed `create_reusable_udp_socket()` to `create_multicast_receiver()` with multicast group joins on all interfaces
-- Added 5 unit tests for broadcast computation and virtual interface detection
-
-## Environment Variables
-- `DISCOVERY_PORT` - UDP port for discovery (default: 7184)
-- `DISCOVERY_MCAST_GROUP` - Multicast group address (default: 239.255.42.99)
-- `DISCOVERY_ENABLE_BCAST_FALLBACK` - Enable directed broadcast fallback (default: true)
-- `DISCOVERY_ENABLE_LIMITED_BCAST` - Enable 255.255.255.255 fallback (default: false)
+- Wall-clock timestamps `[HH:MM:SS]` in Watch command
+- Confirmation prompts for destructive operations with `--force` bypass
+- Deprecated `status` command (use `observe` or `tend` instead)
+- **BREAKING**: Removed `context` command (use `tend` instead)
+- **BREAKING**: Changed `discover_all_moss()` to callback-based streaming API
 
 ---
 
-For detailed implementation reports, see:
-- [docs/discovery-transport.md](discovery-transport.md) - Multicast-first design
-- [docs/ARCHITECTURE-REFERENCE.md](ARCHITECTURE-REFERENCE.md) - Discovery transport section
-- [decisions/COMM-0001-p2p-transport-singleton.md](decisions/COMM-0001-p2p-transport-singleton.md)
-- [decisions/COMM-0002-p2p-pipeline-spec.md](decisions/COMM-0002-p2p-pipeline-spec.md)  
-
----
-
-## Summary
-
-Successfully implemented multicast-first UDP discovery transport to solve multi-homed Windows 11 discovery failures. The refactoring maintains backward compatibility while adding robust multicast support with fallbacks.
-
----
-
-## What Changed
-
-### Core Transport Strategy
-
-**Before**: Limited broadcast to `255.255.255.255:7184`
-- Single sender socket bound to `0.0.0.0:0`
-- Broadcast to `255.255.255.255`
-- Failed on multi-homed Windows (WSL/Hyper-V Companions)
-
-**After**: Multicast-first with directed broadcast fallback
-1. **Primary**: Multicast to `239.255.42.99:7184` (TTL=1)
-2. **Secondary**: Directed broadcast per subnet (e.g., `192.168.47.255` for /20)
-3. **Tertiary**: Limited broadcast `255.255.255.255` (disabled by default)
-
-### Implementation Details
-
-#### Configuration (`DiscoveryConfig`)
-
-New environment variables for runtime configuration:
-
-```bash
-# UDP port for discovery (default: 7184)
-DISCOVERY_PORT=7184
-
-# Multicast group address (default: 239.255.42.99)
-DISCOVERY_MCAST_GROUP=239.255.42.99
-
-# Enable directed broadcast fallback (default: true)
-DISCOVERY_ENABLE_BCAST_FALLBACK=true
-
-# Enable 255.255.255.255 fallback (default: false)
-DISCOVERY_ENABLE_LIMITED_BCAST=false
-```
-
-#### Interface Enumeration
-
-**Function**: `enumerate_eligible_interfaces()`
-
-Filters network interfaces to exclude:
-- Loopback (`127.x.x.x`)
-- Link-local (`169.254.x.x`)
-- Virtual Companions:
-  - **Name patterns**: `veth`, `virbr`, `docker`, `br-`, `vmnet`, `vboxnet`, `hyperv`, `wsl`
-  - **Docker bridge**: `172.17.x.x`
-
-Returns list of physical interfaces with:
-- Interface name (e.g., `eth0`, `Wi-Fi`)
-- IPv4 address
-- Netmask (for broadcast computation)
-- Computed broadcast address
-
-#### Broadcast Computation
-
-**Function**: `NetworkInterface::compute_broadcast()`
-
-Correctly computes directed broadcast for any CIDR block:
-
-| Network | IP | Netmask | Broadcast |
-|---------|-----|---------|-----------|
-| /24 | 192.168.1.10 | 255.255.255.0 | 192.168.1.255 |
-| /20 | 192.168.32.10 | 255.255.240.0 | 192.168.47.255 |
-| /16 | 10.0.5.100 | 255.255.0.0 | 10.0.255.255 |
-
-**Algorithm**: `broadcast = ip | ~netmask` (bitwise OR with inverted netmask)
-
-#### Sender Architecture
-
-**Before**: Single `UDP_SENDER` static
-```rust
-static UDP_SENDER: OnceCell<Arc<UdpSocket>> = OnceCell::const_new();
-```
-
-**After**: Per-interface sender sockets
-```rust
-static UDP_SENDERS: OnceCell<Arc<Vec<InterfaceSender>>> = OnceCell::const_new();
-
-struct InterfaceSender {
-    interface: NetworkInterface,
-    socket: Arc<UdpSocket>,
-}
-```
-
-**Socket binding**:
-- Binds to **specific interface IP** (not `0.0.0.0`)
-- Sets `SO_BROADCAST` enabled
-- Sets multicast TTL = 1 (LAN-only)
-- Sets multicast interface via `set_multicast_if_v4()`
-
-**Send logic** (per announcement):
-1. For each interface:
-   - Send to multicast group `239.255.42.99:7184`
-   - If `DISCOVERY_ENABLE_BCAST_FALLBACK=true`: Send to directed broadcast (e.g., `192.168.47.255:7184`)
-2. If all sends failed and `DISCOVERY_ENABLE_LIMITED_BCAST=true`: Send to `255.255.255.255:7184`
-
-#### Receiver Architecture
-
-**Before**: Binds `0.0.0.0:7184` with broadcast enabled
-
-**After**: Binds `0.0.0.0:7184` + joins multicast on all eligible interfaces
-
-**Function**: `create_multicast_receiver()`
-
-1. Creates UDP socket with `SO_REUSEADDR` + `SO_BROADCAST`
-2. Binds to `0.0.0.0:7184`
-3. Calls `join_multicast_v4(mcast_group, interface_ip)` for each physical interface
-4. Windows: Disables `SIO_UDP_CONNRESET` (ICMP port unreachable handling)
-
----
-
-## Testing
-
-### Unit Tests
-
-All tests pass (5 total):
-
-```rust
-✅ test_compute_broadcast_slash_24  // 192.168.1.10 → 192.168.1.255
-✅ test_compute_broadcast_slash_20  // 192.168.32.10 → 192.168.47.255
-✅ test_compute_broadcast_slash_16  // 10.0.5.100 → 10.0.255.255
-✅ test_is_virtual_interface        // veth, docker, vmnet detection
-✅ test_discovery_config_defaults   // Env var configuration
-```
-
-**Full test suite**: 324 tests passed (196 common + 10 lantern + 106 moss + 13 rake + doc tests)
-
-### Integration Testing
-
-**Tested on**:
-- Windows 11 (leo-main, multi-homed with WSL/Hyper-V)
-- Linux stones (stone-coral-prairie, stone-crystal-forest)
-
-**Results**:
-```
-✅ Multicast discovery successful
-✅ All stones discovered (Windows + Linux)
-✅ Cross-platform compatibility verified
-✅ No regressions in existing functionality
-```
-
-**Output**:
-```
-stone-coral-prairie     [thriving] [tended]  192.168.1.135
-stone-crystal-forest    [thriving]           192.168.1.197
-leo-main                [thriving]           192.168.1.166
-```
-
----
-
-## Files Changed
-
-### Modified
-
-1. **`src/common/Cargo.toml`**
-   - Added: `if-addrs = "0.13"` dependency
-
-2. **`src/common/src/infra/communications/p2p.rs`** (~1000 lines, complete rewrite)
-   - Version: 2026-01-25 (multicast-first implementation)
-   - Added: `DiscoveryConfig` struct with env var loading
-   - Added: `NetworkInterface` struct for interface management
-   - Added: `enumerate_eligible_interfaces()` with virtual Companion filtering
-   - Added: `is_virtual_interface()` detection heuristics
-   - Added: `NetworkInterface::compute_broadcast()` for directed broadcast
-   - Changed: `UDP_SENDER` → `UDP_SENDERS` (per-interface sockets)
-   - Changed: `send_udp_packet()` to multicast + directed broadcast strategy
-   - Changed: `create_reusable_udp_socket()` → `create_multicast_receiver()` with multicast joins
-   - Added: `create_interface_sender()` for per-interface socket creation
-   - Added: 5 unit tests
-
-3. **`docs/ARCHITECTURE-REFERENCE.md`**
-   - Added: "Discovery Transport (Multicast-First)" section
-   - Documented: Configuration, strategy, virtual Companion detection
-   - Referenced: `discovery-transport.md` design doc
-
-4. **`src/moss/src/domain/topology.rs`**
-   - Changed: `OFFLINE_THRESHOLD_SECS` from 90s to **45s** (1.5 chirp cycles)
-   - Reason: Stones chirp every 30s, so 45s tolerates 1 missed chirp
-   - Impact: Faster offline detection, cleaner topology cache
-
-5. **`src/moss/src/tasks/coordinator.rs`**
-   - Added: `start_topology_maintenance()` function
-   - Spawns background task that runs every **30 seconds**
-   - Calls `maintain_topology()` to mark stale stones offline and evict old entries
-   - Integrated into `start_all_background_tasks()`
-   - Logs maintenance actions (marked offline, evicted) at debug level
-
-6. **`src/moss/src/tasks/mod.rs`**
-   - Exported: `start_topology_maintenance` function
-
-7. **`installer/deploy.ps1`** (lines 350-365)
-   - Changed: Discovery now sends to **both** multicast and broadcast
-   - Primary: Multicast to `239.255.42.99:7184`
-   - Fallback: Limited broadcast to `255.255.255.255:7184` (for older moss versions)
-   - Updated status message to show both send counts
-
-### Created (Previously)
-
-4. **`docs/discovery-transport.md`** (400+ lines)
-   - Complete design documentation
-   - Problem statement, solution, rationale
-   - Configuration, security, troubleshooting
-
-5. **`docs/p2p-refactoring-plan.md`**
-   - Implementation tracking
-   - Phase-based approach
-
-### Backed Up
-
-6. **`src/common/src/infra/communications/p2p.rs.backup`**
-   - Original limited broadcast implementation preserved
-
----
-
-## Why This Matters
-
-### Problem Solved
-
-**Before**: On Windows 11 with WSL/Hyper-V:
-```
-[Moss sends to 255.255.255.255]
-    ↓
-OS routes through default interface
-    ↓
-Default interface = vEthernet (WSL)  ← WRONG!
-    ↓
-Packet egresses virtual Companion
-    ↓
-Physical NIC never receives packet
-    ↓
-Discovery fails ❌
-```
-
-**After**: With multicast:
-```
-[Moss sends to 239.255.42.99]
-    ↓
-Per-interface socket bound to 192.168.1.166
-    ↓
-Multicast interface set explicitly
-    ↓
-Packet egresses physical NIC (Wi-Fi/Ethernet)
-    ↓
-Receiver joins multicast on 192.168.1.166
-    ↓
-Discovery succeeds ✅
-```
-
-### Benefits
-
-1. **Reliability**: Explicit interface control prevents OS routing ambiguity
-2. **Scalability**: Organization-local multicast (239.255.42.99) supports up to 65,535 concurrent gardens
-3. **Flexibility**: Fallback strategies handle edge cases (multicast disabled, non-multicast-capable switches)
-4. **Security**: TTL=1 prevents multicast routing beyond LAN gateway
-5. **Compatibility**: Works on Windows, Linux, macOS with heterogeneous network configurations
-
----
-
-## Configuration Examples
-
-### Default (Recommended)
-
-No configuration needed. Uses multicast + directed broadcast:
-
-```bash
-# All defaults
-DISCOVERY_PORT=7184
-DISCOVERY_MCAST_GROUP=239.255.42.99
-DISCOVERY_ENABLE_BCAST_FALLBACK=true
-DISCOVERY_ENABLE_LIMITED_BCAST=false
-```
-
-### Multicast-Only (Strict)
-
-Disable all broadcast fallbacks:
-
-```bash
-DISCOVERY_MCAST_GROUP=239.255.42.99
-DISCOVERY_ENABLE_BCAST_FALLBACK=false
-DISCOVERY_ENABLE_LIMITED_BCAST=false
-```
-
-### Legacy Compatibility (Last Resort)
-
-Re-enable limited broadcast for old networks:
-
-```bash
-DISCOVERY_ENABLE_LIMITED_BCAST=true
-```
-
-**Warning**: Limited broadcast (`255.255.255.255`) fails on multi-homed systems. Use only if multicast is blocked by network infrastructure.
-
----
-
-## Performance Impact
-
-### Memory
-
-**Before**: 1 sender socket (`UDP_SENDER`)  
-**After**: N sender sockets (1 per physical interface)
-
-Typical overhead: **3-5 sockets** (home networks) vs. **1 socket**  
-Memory increase: **~20 KB per interface** (negligible)
-
-### CPU
-
-**Before**: 1 broadcast packet per announcement  
-**After**: 2N packets per announcement (N multicast + N directed broadcast)
-
-Typical overhead: **6 packets** vs. **1 packet** (3 interfaces × 2 strategies)  
-Announcement frequency: **~1/second** (STONE_CHIRP debounced to 100ms)
-
-**Impact**: Negligible CPU/network load increase
-
-### Latency
-
-**Before**: ~1ms to send  
-**After**: ~2-3ms to send (N sockets)
-
-**Impact**: Imperceptible (discovery timeout is 3 seconds)
-
----
-
-## Backward Compatibility
-
-✅ **API unchanged**: All existing code continues to work
-- `subscribe_to_announcement(type)` - unchanged
-- `send_announcement(type, payload)` - unchanged
-- Debouncing behavior - unchanged
-
-✅ **Wire protocol unchanged**: `UdpAnnouncement` envelope format preserved
-
-✅ **Interop**: Multicast-capable stones can discover and be discovered by older stones via directed broadcast fallback
-
----
-
-## Future Work (Optional)
-
-1. **IPv6 support**: Currently IPv4-only
-2. **Dynamic interface monitoring**: Detect hotplug network adapters (USB Ethernet, VPN connect/disconnect)
-3. **Metrics**: Track multicast vs. broadcast send counts for troubleshooting
-4. **Adaptive TTL**: Increase TTL to 2-3 for campus/enterprise networks (requires security review)
-5. **Multicast snooping**: Coordinate with managed switches for IGMP optimization
-
----
-
-## References
-
-- **Design**: [docs/discovery-transport.md](discovery-transport.md)
-- **Architecture**: [docs/ARCHITECTURE-REFERENCE.md](ARCHITECTURE-REFERENCE.md) (Discovery Transport section)
-- **Decisions**:
-  - [COMM-0001: P2P Transport Singleton](decisions/COMM-0001-p2p-transport-singleton.md)
-  - [COMM-0002: P2P Pipeline Spec](decisions/COMM-0002-p2p-pipeline-spec.md)
-
----
-
-## Verification Checklist
-
-- [x] Compiles without errors (`cargo build --release`)
-- [x] Unit tests pass (5/5 P2P + 324 total)
-- [x] Discovery works on Windows 11 (WSL/Hyper-V present)
-- [x] Discovery works on Linux stones
-- [x] Cross-platform interop verified
-- [x] Configuration via environment variables works
-- [x] Virtual Companion detection filters correctly
-- [x] Broadcast computation handles /16, /20, /24 networks
-- [x] Documentation updated (ARCHITECTURE-REFERENCE.md)
-- [x] Design doc complete (discovery-transport.md)
-- [x] No regressions in existing functionality
-- [x] Topology maintenance task runs every 30s
-- [x] Offline threshold reduced to 45s (faster cleanup)
-- [x] deploy.ps1 uses multicast + broadcast fallback
-
----
-
-**Status**: Production-ready ✅  
-**Version**: 0.1.202601252313  
-**Build Date**: 2026-01-25 23:13
+See also:
+- [Discovery Transport spec](specs/discovery-transport.md)
+- [Topology Cache spec](specs/topology-cache.md)
+- [COMM-0004: Multicast-First Discovery](decisions/COMM-0004-multicast-first-discovery.md)

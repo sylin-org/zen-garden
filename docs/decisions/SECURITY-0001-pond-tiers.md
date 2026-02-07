@@ -24,7 +24,7 @@ Zen Garden serves two distinct security environments:
 - Tier 2 must satisfy security auditors (audit logs, multi-sig, defense in depth)
 - Common foundation (don't build two separate systems)
 
-**Source:** [SECURITY-SPEC.md § Security Tiers](../SECURITY-SPEC.md#security-tiers)
+**Source:** [Security Overview](../security/overview.md)
 
 ## Decision
 

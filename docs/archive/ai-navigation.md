@@ -1,4 +1,4 @@
-﻿# AI Index - Zen Garden Documentation
+# AI Index - Zen Garden Documentation
 
 **Purpose**: AI-friendly navigation layer for canonical documentation  
 **Last Updated**: 2026-01-19  
@@ -27,7 +27,7 @@ These documents are the single source of truth for their respective topics. When
 
 ### Operational Documentation
 - **[README.md](../README.md)** - Central navigation hub: quick start paths, audience-specific routes (visitor/operator/developer/contributor/security/AI), canonical source table
-- **[hardware.md](../guides/hardware.md)** - Stone hardware guide: e-waste reframing, tier system ($0-30, $30-100, $100-250), service-to-hardware matching, environmental impact
+- **[hardware.md](../guides/stone-hardware.md)** - Stone hardware guide: e-waste reframing, tier system ($0-30, $30-100, $100-250), service-to-hardware matching, environmental impact
 - **[roadmap.md](../ops/roadmap.md)** - Implementation timeline: Phase 0 (protocol specs ZGP-001 to ZGP-005, Q1 2026), Phase 1 (Python prototype, Q2 2026), Phase 2 (Rust/C# production, Q3-Q4 2026)
 
 ### Configuration & Infrastructure
@@ -288,7 +288,7 @@ These documents are the single source of truth for their respective topics. When
 
 ### Hardware & Setup
 
-**Hardware Selection**: [hardware.md](../guides/hardware.md) (tier system: $0-30, $30-100, $100-250)  
+**Hardware Selection**: [hardware.md](../guides/stone-hardware.md) (tier system: $0-30, $30-100, $100-250)  
 **USB Installer**: [STONE-INSTALLATION-FLOW.md](STONE-INSTALLATION-FLOW.md), installer/NewStone.ps1  
 **First Boot**: [FIRST-BOOT.md](FIRST-BOOT.md)  
 **Installation Modes**: [INSTALLATION-MODES.md](INSTALLATION-MODES.md)  

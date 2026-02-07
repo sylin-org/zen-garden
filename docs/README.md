@@ -48,11 +48,11 @@ Step-by-step instructions for operators:
 | Guide | Description |
 |-------|-------------|
 | [First Stone](guides/first-stone.md) | Set up your first Stone from hardware to running service |
-| [Hardware Selection](guides/hardware.md) | Choose appropriate hardware for different workloads |
-| [Managing Offerings](guides/offering-services.md) | Plant, upgrade, rest, wake, and take away services |
-| [Tools Domain User Guide](guides/tools-domain-user-guide.md) | Build adapter/client automation on the normative tools snapshot + stream APIs |
-| [Using Companions](guides/Companions.md) | Control Cricket, Firefly, and OLED Companions for physical presence |
-| [Creating Tunes](guides/how-to-create-a-tune.md) | Write YAML configurations for Cricket audio Companion |
+| [Hardware Selection](guides/stone-hardware.md) | Choose appropriate hardware for different workloads |
+| [Managing Offerings](guides/offering-lifecycle.md) | Plant, upgrade, rest, wake, and take away services |
+| [Tools Domain User Guide](guides/tools-domain.md) | Build adapter/client automation on the normative tools snapshot + stream APIs |
+| [Using Companions](guides/companion-overview.md) | Control Cricket, Firefly, and OLED Companions for physical presence |
+| [Creating Tunes](guides/cricket-tune-authoring.md) | Write YAML configurations for Cricket audio Companion |
 | [Companion Development](guides/companion-development.md) | Build custom Companions in any language |
 | [Troubleshooting](guides/troubleshooting.md) | Common problems and solutions |
 
@@ -70,10 +70,15 @@ Technical specifications for implementers:
 | [Service Offerings](specs/offerings.md) | Template format, taxonomy, query system |
 | [Security](specs/security.md) | Pond mTLS, certificate management, threat model |
 | [HTTP API](specs/api-v1.md) | REST endpoints, Companion management, request/response formats |
-| [Companion Command Protocol](specs/Companion-COMMAND-PROTOCOL.md) | Synchronous command flow, port assignment, timeout handling |
-| [Companion Service Registry](specs/Companion-SERVICE-REGISTRY.md) | Discovery protocol, manifest format, lifecycle management |
-| [Hey-Tell Syntax](specs/HEY-TELL-SYNTAX.md) | Rake command grammar for Companion control |
-| [Cricket Specification](specs/CRICKET-SPEC.md) | Audio Companion implementation, 4-channel mixer, tune system |
+| [Companion Command Protocol](specs/companion-command-protocol.md) | Synchronous command flow, port assignment, timeout handling |
+| [Companion Service Registry](specs/companion-service-registry.md) | Discovery protocol, manifest format, lifecycle management |
+| [Hey-Tell Syntax](specs/hey-tell-syntax.md) | Rake command grammar for Companion control |
+| [Cricket Specification](specs/cricket-spec.md) | Audio Companion implementation, 4-channel mixer, tune system |
+| [Discovery Transport](specs/discovery-transport.md) | Multicast-first transport with directed broadcast fallback |
+| [Topology Cache](specs/topology-cache.md) | Stone liveness tracking, offline detection, cache eviction |
+| [Nourishment V0](specs/nourishment-v0-spec.md) | Software and firmware update checking and execution |
+| [Seed Bank Onboarding](specs/STORAGE-0001-seed-bank-onboarding.md) | Storage device preparation and lifecycle |
+| [Distributed Election](specs/ELECTION-0001-distributed-election.md) | Tended stone election protocol |
 
 ---
 
@@ -89,6 +94,8 @@ Quick lookup for operators and developers:
 | [Service Catalog](reference/offerings.md) | Available service templates |
 | [Configuration](reference/config.md) | moss.toml configuration settings |
 | [Driver Specification](reference/driver-specification.md) | Client library implementation guide |
+| [S3 API Reference](reference/s3-api-reference.md) | S3-compatible object storage gateway |
+| [Cost Analysis](reference/cost-analysis.md) | Self-hosted vs cloud cost comparison |
 
 ---
 
@@ -126,9 +133,20 @@ Architecture Decision Records (ADRs) documenting design choices:
   - [Dual-Layer API](decisions/API-0001-dual-layer-api.md) — Why admin/service split
   - [Stateless Moss](decisions/STATE-0001-stateless-moss.md) — No persistent state
   - [Single mDNS Service Type](decisions/MDNS-0001-single-service-type.md) — Discovery simplicity
+  - [SoC/DDD Architecture](decisions/ARCH-0001-soc-ddd-architecture.md) — Domain/infra/API separation
+  - [Offering Modes](decisions/OFFER-0005-offering-modes.md) — Managed, Adopted, Borrowed
+  - [Multicast-First Discovery](decisions/COMM-0004-multicast-first-discovery.md) — Why multicast over broadcast
 
 ---
 
 ## Glossary
 
 **[glossary.md](glossary.md)** — Essential terms: Stone, Moss, Rake, Lantern, Pond, Offering
+
+---
+
+## Contributing to Docs
+
+**[DOCUMENTATION.md](DOCUMENTATION.md)** — Style guide, naming conventions, and templates
+
+Every document has a voice: guides are instructional, specs are declarative, ADRs are historical. Read the style guide before writing or editing documentation.

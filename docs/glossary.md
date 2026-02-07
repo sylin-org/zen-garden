@@ -20,7 +20,7 @@
 **Garden** - Logical collection of Stones working together as distributed infrastructure. Example: "My home lab Garden has 3 Stones running MongoDB, Redis, and MinIO."
 
 **Stone** - Physical device running Garden-Moss daemon. Any laptop, desktop, Raspberry Pi, or thin client can be a Stone. Offers services to apps via automatic discovery.  
-→ See: [guides/hardware.md](guides/hardware.md)
+→ See: [guides/stone-hardware.md](guides/stone-hardware.md)
 
 **Moss** - Daemon service running on each Stone (port 7185). Manages Docker Compose services, announces via mDNS, responds to management commands from Rake.  
 → See: [specs/moss-daemon-lifecycle.md](specs/moss-daemon-lifecycle.md)
@@ -29,7 +29,7 @@
 → See: [specs/rake-commands.md](specs/rake-commands.md)
 
 **Companion** - Service running on a Stone that extends Moss capabilities. Companions communicate with Moss via HTTP command protocol and receive Stone presence events via SSE. Examples: Cricket (audio), Firefly (LEDs), OLED (display).  
-→ See: [specs/Companion-COMMAND-PROTOCOL.md](specs/Companion-COMMAND-PROTOCOL.md)
+→ See: [specs/Companion-COMMAND-PROTOCOL.md](specs/companion-command-protocol.md)
 
 **Cricket** - Audio Companion providing 4-channel mixer (foreground/midground/ambient/background) and tune system for sonifying Stone presence events. Uses 180 CC0-licensed samples for event-to-audio mapping.  
 → See: [decisions/CRICKET-0001-audio-Companion-spec.md](decisions/CRICKET-0001-audio-Companion-spec.md)
@@ -57,7 +57,7 @@
 **Native Service** - Database/service running on its native protocol. Examples: MongoDB on port 27017, Redis on 6379, PostgreSQL on 5432. Apps connect using standard drivers.
 
 **Agnostic Sidecar** - HTTP REST API wrapping a native service (port 8080+). Provides protocol-agnostic access for clients that can't use native drivers.  
-→ See: [specs/api-design.md](specs/api-design.md)
+→ See: [specs/api-v1.md](specs/api-v1.md)
 
 **Set** - Logical namespace for application data (maps to database/schema/prefix). Example: `zen-garden:mongodb/production` connects to MongoDB's `production` database.
 
@@ -123,19 +123,19 @@
 **Companion** - Extensible service running on a Stone that adds capabilities beyond core service management. Companions receive Stone presence events via SSE and execute commands via HTTP. Port assignments managed by Moss via persistent ledger (base 7187, range 7187-7199).
 
 **Command Manifest** - JSON document describing Companion commands, parameters, and examples. Generated via `--dump-commands` protocol during Companion registration. Format includes command names, descriptions, parameter schemas, and usage examples.  
-→ See: [specs/Companion-SERVICE-REGISTRY.md](specs/Companion-SERVICE-REGISTRY.md)
+→ See: [specs/Companion-SERVICE-REGISTRY.md](specs/companion-service-registry.md)
 
 **Port Ledger** - Persistent JSON file (`{data_dir}/companion-ports.json`) mapping Companion IDs to assigned ports. Moss assigns ports incrementally starting from 7187, ensuring no conflicts between Companions or restarts.  
-→ See: [ARCHITECTURE-REFERENCE.md](ARCHITECTURE-REFERENCE.md)
+→ See: [reference/ports.md](reference/ports.md)
 
 **Hey-Tell Command** - Rake command syntax for Companion control: `garden-rake hey tell {Companion} {command} [args]`. Examples: `hey tell cricket play stone-online`, `hey tell cricket volume 50`.  
-→ See: [specs/HEY-TELL-SYNTAX.md](specs/HEY-TELL-SYNTAX.md)
+→ See: [specs/HEY-TELL-SYNTAX.md](specs/hey-tell-syntax.md)
 
 **Cricket Companion** - Audio Companion providing 4-channel mixer and tune system. Maps Stone presence events (stone-online, service-started, etc.) to audio samples with configurable channels, volume, and looping. Includes 180 CC0 samples from Freesound.org.  
 → See: [decisions/CRICKET-0001-audio-Companion-spec.md](decisions/CRICKET-0001-audio-Companion-spec.md)
 
 **Tune** - YAML configuration file mapping Stone presence events to audio samples. Specifies channel assignment (foreground/midground/ambient/background), volume, looping, debounce timing. Example: `zen-tech` tune sonifies infrastructure operations.  
-→ See: [guides/how-to-create-a-tune.md](guides/how-to-create-a-tune.md)
+→ See: [guides/cricket-tune-authoring.md](guides/cricket-tune-authoring.md)
 
 **Mixer** - 4-channel audio system in Cricket providing layered soundscapes. Channels: foreground (alerts), midground (notifications), ambient (background loops), background (continuous ambiance). Supports simultaneous playback with per-channel volume control.
 
@@ -162,7 +162,7 @@
 → See: [decisions/BUILD-0001-versioning.md](decisions/BUILD-0001-versioning.md)
 
 **E-waste** - Repurposed obsolete hardware. Zen Garden's mission is to reduce the 62M tonnes/year of electronic waste by making old devices productive again.  
-→ See: [mission.md](mission.md)
+→ See: [philosophy/humanist-infrastructure.md](philosophy/humanist-infrastructure.md)
 
 **Cordon** - Mark Stone as "do not schedule new services" (existing services continue). Used when hardware is flaky (overheating, disk errors).
 
@@ -194,5 +194,4 @@
 
 ---
 
-**Last Updated**: 2026-01-18  
-**Related**: [concepts/overview.md](concepts/overview.md), [specs/technical.md](specs/technical.md), [mission.md](mission.md)
+**Related**: [philosophy/](philosophy/), [specs/](specs/), [reference/](reference/)

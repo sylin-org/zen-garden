@@ -215,10 +215,9 @@ redis_health=degraded
 
 ## References
 
-- **Technical spec:** [technical.md § mDNS Discovery](../specs/technical.md#mdns-discovery)
-- **Protocol reference:** [REFERENCE.md § mDNS Service Announcement](../REFERENCE.md#mdns-service-announcement)
-- **TXT record schema:** [REFERENCE.md § TXT Record Schema](../REFERENCE.md#txt-record-schema)
-- **Understanding doc:** [UNDERSTANDING.md § Discovery Protocol](../UNDERSTANDING.md#discovery-protocol)
+- **Discovery spec:** [Discovery Protocol](../specs/discovery.md)
+- **Discovery transport:** [Discovery Transport](../specs/discovery-transport.md)
+- **Components:** [Components](../reference/components.md)
 
 ## Standards Compliance
 

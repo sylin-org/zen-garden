@@ -11,7 +11,7 @@
 The term "pebble" was used for two unrelated concepts in Zen Garden:
 
 1. **Security artifact**: Encrypted file containing Pond CA keypair (`/var/lib/zen-garden/pebble.enc`)
-2. **Device type**: Proposed Android-based lightweight compute nodes (see `proposals/pebble-android.md`)
+2. **Device type**: Proposed Android-based lightweight compute nodes (see `proposals/stone-pebble-android-tier.md`)
 
 This created semantic collision causing:
 - **Tab completion ambiguity**: `garden-rake place peb<TAB>` - which one?

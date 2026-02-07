@@ -121,4 +121,4 @@ Remove `used_percent` from `StorageDevice`, keep separate inventory.
 
 - [src/common/src/metrics/system.rs](../../src/common/src/metrics/system.rs) - Metrics collection
 - [src/moss/src/tasks/metrics_collector.rs](../../src/moss/src/tasks/metrics_collector.rs) - Collection task
-- [ARCHITECTURE-REFERENCE.md](../ARCHITECTURE-REFERENCE.md) - Platform paths and metrics
+- [Components](../reference/components.md) - Platform paths and metrics

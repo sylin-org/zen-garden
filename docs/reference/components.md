@@ -1,4 +1,4 @@
-﻿# Architecture
+# Architecture
 
 **High-level system architecture - component relationships and communication flows**
 
@@ -44,7 +44,7 @@ Any laptop, desktop, Raspberry Pi, or thin client running Garden-Moss daemon. St
 - Thin client → Redis Stone (2GB RAM, low power)
 - Old desktop → Storage Stone (2TB HDD, repurposed)
 
-→ See: [guides/hardware.md](../guides/hardware.md)
+→ See: [guides/stone-hardware.md](../guides/stone-hardware.md)
 
 ### Garden-Moss Daemon
 

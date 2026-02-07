@@ -230,7 +230,7 @@ UDP 239.255.42.99:7184 (multicast) or 255.255.255.255:7184 (broadcast fallback)
 }
 ```
 
-> **Note:** Zen Garden uses multicast-first transport. See [discovery-transport.md](../discovery-transport.md) for details on multi-homed system support.
+> **Note:** Zen Garden uses multicast-first transport. See [discovery-transport.md](discovery-transport.md) for details on multi-homed system support.
 
 **2. All Moss daemons calculate election delay:**
 

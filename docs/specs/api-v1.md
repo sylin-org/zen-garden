@@ -163,7 +163,7 @@ POST /api/v1/stone/companions/refresh        # Rescan Companion directory
 **Reference:**
 - [Companion-COMMAND-PROTOCOL.md](Companion-COMMAND-PROTOCOL.md)
 - [Companion-SERVICE-REGISTRY.md](Companion-SERVICE-REGISTRY.md)
-- [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md)
+- [HEY-TELL-SYNTAX.md](hey-tell-syntax.md)
 
 ---
 

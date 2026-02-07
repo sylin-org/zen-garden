@@ -1,4 +1,4 @@
-﻿# Container Collision Avoidance
+# Container Collision Avoidance
 
 **Audience**: Developers, SREs  
 **Scenario**: Windows/Linux/macOS machines with both Docker and native services  
@@ -352,4 +352,4 @@ Solutions:
 
 - [OFFER-0002](../decisions/OFFER-0002-container-namespace-collision.md) - Architecture decision
 - [OFFER-0001](../decisions/OFFER-0001-taxonomy.md) - Offering taxonomy (Managed/Adopted/Borrowed)
-- [offering-services.md](offering-services.md) - How to plant/manage offerings
+- [offering-lifecycle.md](offering-lifecycle.md) - How to plant/manage offerings

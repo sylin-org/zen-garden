@@ -1204,10 +1204,4 @@ enum AuditEvent {
 
 ---
 
-## Revision History
-
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 0.1.0 | 2026-01-26 | Leo Botinelly | Initial draft |
-| 0.2.0 | 2026-01-26 | Leo Botinelly | Security review: Changed baptism from broadcast to unicast. Added Design Decisions section. |
-| 0.3.0 | 2026-01-26 | Leo Botinelly | Removed Tier 2 references. Foundational spec now describes implemented features only. See SECURITY-0004 for deferral rationale. |
+> Design rationale: [SECURITY-0001](../decisions/SECURITY-0001-pond-tiers.md), [SECURITY-0004](../decisions/SECURITY-0004-tier2-deferral.md)

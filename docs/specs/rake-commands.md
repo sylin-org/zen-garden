@@ -1,4 +1,4 @@
-﻿# Garden-Rake CLI Specification
+# Garden-Rake CLI Specification
 
 **Purpose:** Technical specification for the Rake CLI tool - discovery, commands, output formatting.  
 **Audience:** Developers implementing Rake, operators understanding command behavior.
@@ -255,7 +255,7 @@ Forwards command to Companion via Moss. Examples:
 4. Companion executes, returns `{"success": bool, "output": string}`
 5. Rake displays output or error message
 
-**Reference:** [HEY-TELL-SYNTAX.md](HEY-TELL-SYNTAX.md)
+**Reference:** [HEY-TELL-SYNTAX.md](hey-tell-syntax.md)
 
 #### Offer
 
@@ -615,4 +615,4 @@ async fn execute_on_all_stones(operation: Operation) -> Result<()> {
 - **Moss daemon specification:** [moss-daemon-lifecycle.md](moss-daemon-lifecycle.md)
 - **Service offerings:** [offerings.md](offerings.md)
 - **Discovery protocol:** [discovery.md](discovery.md)
-- **User guides:** [../guides/offering-services.md](../guides/offering-services.md)
+- **User guides:** [../guides/offering-lifecycle.md](../guides/offering-lifecycle.md)

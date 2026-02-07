@@ -68,5 +68,5 @@ Use `/api/v1/storage/s3/*` for the canonical S3 gateway.
 
 ## References
 
-- [S3-API-REFERENCE.md](../reference/S3-API-REFERENCE.md)
+- [S3-API-REFERENCE.md](../reference/s3-api-reference.md)
 - [STORAGE-0001](STORAGE-0001-seed-bank-live-scan.md)

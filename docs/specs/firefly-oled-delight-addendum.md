@@ -1,4 +1,4 @@
-# Firefly OLED - Delight Addendum
+﻿# Firefly OLED - Delight Addendum
 
 **Version**: 1.1.0
 **Date**: 2026-02-03
@@ -523,4 +523,3 @@ Moss SSE Stream → Firefly Companion → Serial Commands → ESP8266 → Displa
 ---
 
 **Document Status**: Design Accepted
-**Last Updated**: 2026-02-03

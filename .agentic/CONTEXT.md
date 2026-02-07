@@ -117,6 +117,19 @@ src/
 
 ---
 
+## Documentation
+
+**Style guide**: `docs/DOCUMENTATION.md` (read before writing docs)
+
+Key rules:
+- **Guides/Specs/Reference** = current state only (present tense, no history)
+- **ADRs** = historical decisions (past tense, immutable after acceptance)
+- **Litmus test**: "If I deleted all ADRs, would every guide still make sense?" (must be YES)
+- **Naming**: `lowercase-kebab-case.md` (UPPERCASE only for README/CHANGELOG/CONTRIBUTING)
+- **Red flags**: Never use "What Changed", "Before/After", "We switched" in guides or specs
+
+Templates: `docs/templates/`
+
 ## Changelog Maintenance
 
 **File**: `docs/CHANGELOG.md` (single source of truth)
@@ -124,6 +137,8 @@ src/
 Add entry for: new features, breaking changes, architectural refactorings, user-visible bug fixes.
 
 Skip entry for: typo fixes, formatting, internal refactoring, test-only changes.
+
+Keep entries concise (3-5 lines). Link to ADRs and specs for details.
 
 ---
 

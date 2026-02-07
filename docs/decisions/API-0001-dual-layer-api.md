@@ -23,7 +23,7 @@ Zen Garden serves two distinct user populations with different needs:
 - Must maintain consistency (no divergent state between layers)
 - Backward compatibility required (API v1 stable)
 
-**Source:** [API-V1-DUAL-LAYER-DESIGN.md](../API-V1-DUAL-LAYER-DESIGN.md)
+**Source:** [API v1 Spec](../specs/api-v1.md)
 
 ## Decision
 
@@ -141,10 +141,8 @@ POST /api/v1/services          # Install with full Docker control
 
 ## References
 
-- **Canonical spec:** [API-V1-DUAL-LAYER-DESIGN.md](../API-V1-DUAL-LAYER-DESIGN.md)
-- **Related:** [V1-IMPLEMENTATION-COMPLETE.md](../V1-IMPLEMENTATION-COMPLETE.md) (v1 completion summary)
-- **Migration guide:** [CLI-V1-MIGRATION.md](../CLI-V1-MIGRATION.md)
-- **Async operations:** [ASYNC-JOB-API.md](../ASYNC-JOB-API.md)
+- **API spec:** [specs/api-v1.md](../specs/api-v1.md)
+- **Release notes:** [ops/release-notes.md](../ops/release-notes.md)
 
 ## Versioning
 

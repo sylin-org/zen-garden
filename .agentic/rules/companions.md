@@ -35,5 +35,5 @@ impl CommandHandler for MyHandler {
 ```
 
 ## Reference
-- Spec: `docs/specs/companion-COMMAND-PROTOCOL.md`
+- Spec: `docs/specs/companion-command-protocol.md`
 - Guide: `docs/guides/companion-development.md`

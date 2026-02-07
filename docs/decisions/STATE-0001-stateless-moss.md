@@ -21,7 +21,7 @@ Moss daemon maintains a **Stone registry** (topology of other Stones in the gard
 - Simplicity preferred (no database dependency)
 - Eventual consistency acceptable (home lab scale)
 
-**Source:** [TECHNICAL-SPEC.md § State Management](../TECHNICAL-SPEC.md#concurrency-and-state-management), [decisions/MOSS-0001-persistent-registry-and-adoption.md](MOSS-0001-persistent-registry-and-adoption.md)
+**Source:** [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md), [MOSS-0001](MOSS-0001-persistent-registry-and-adoption.md)
 
 ## Decision
 
@@ -174,10 +174,10 @@ If fast-sync fails (Lantern unreachable, all probes timeout), Moss relies on UDP
 
 ## References
 
-- **Technical spec:** [TECHNICAL-SPEC.md § Moss Startup Fast-Sync](../TECHNICAL-SPEC.md#moss-startup-fast-sync)
-- **Related decision:** [MOSS-0001-persistent-registry-and-adoption.md](MOSS-0001-persistent-registry-and-adoption.md)
-- **Discovery spec:** [TECHNICAL-SPEC.md § mDNS Discovery](../TECHNICAL-SPEC.md#mdns-discovery)
-- **Lantern API:** [REFERENCE.md § Lantern HTTP API](../REFERENCE.md#lantern-http-api)
+- **Moss lifecycle:** [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md)
+- **Related decision:** [MOSS-0001](MOSS-0001-persistent-registry-and-adoption.md)
+- **Discovery spec:** [Discovery Protocol](../specs/discovery.md)
+- **Components:** [Components](../reference/components.md)
 
 ## Trade-Offs Summary
 

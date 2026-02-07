@@ -3,7 +3,7 @@
 **Status**: Accepted
 **Date**: 2026-01-29
 **Deciders**: Architecture Team
-**Related**: [Firefly Specification](../proposals/firefly.md), Companion SDK
+**Related**: [Firefly Specification](../proposals/companion-firefly-led.md), Companion SDK
 
 ---
 
@@ -290,7 +290,7 @@ V0 is complete when:
 
 ## References
 
-- [Firefly Specification](../proposals/firefly.md) - Full visual design spec
+- [Firefly Specification](../proposals/companion-firefly-led.md) - Full visual design spec
 - [Companion Development Guide](../guides/companion-development.md) - Moss Companion protocol
 - [Waveshare RP2040-Matrix Wiki](https://www.waveshare.com/wiki/RP2040-Matrix)
 - [CircuitPython NeoPixel Guide](https://learn.adafruit.com/circuitpython-essentials/circuitpython-neopixel)

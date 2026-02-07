@@ -148,7 +148,7 @@ _Electricity cost: US national average $0.12/kWh. Actual rates vary $0.08-0.30/k
 
 ## AWS Bridge: Future Value Proposition
 
-The proposed [AWS Bridge](../proposals/zen-garden-spec-aws-bridge.md) offering would provide AWS-compatible APIs backed by local services:
+The proposed [AWS Bridge](../proposals/garden-aws-bridge.md) offering would provide AWS-compatible APIs backed by local services:
 
 | AWS Service     | Bridge Backend      | Status   |
 | --------------- | ------------------- | -------- |
@@ -412,5 +412,5 @@ The trade-off is manual failover and single-site limitations—acceptable for ma
 ## Related Documentation
 
 - [Staying Focused](../philosophy/staying-focused.md) - Project mission and user focus
-- [AWS Bridge Proposal](../proposals/zen-garden-spec-aws-bridge.md) - Cloud API compatibility
-- [Architecture Reference](../ARCHITECTURE-REFERENCE.md) - Technical overview
+- [AWS Bridge Proposal](../proposals/garden-aws-bridge.md) - Cloud API compatibility
+- [Components](components.md) - Technical overview

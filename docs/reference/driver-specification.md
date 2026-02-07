@@ -1550,9 +1550,9 @@ Map technical health to human-friendly terms:
 
 | Document | Purpose |
 |----------|---------|
-| [ARCHITECTURE-REFERENCE.md](../ARCHITECTURE-REFERENCE.md) | Internal development guide |
-| [discovery-transport.md](../discovery-transport.md) | Multicast transport details |
+| [Components](components.md) | Internal development guide |
+| [discovery-transport.md](../specs/discovery-transport.md) | Multicast transport details |
 | [api-v1.md](../specs/api-v1.md) | Complete API specification |
-| [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md) | Companion integration |
+| [companion-command-protocol.md](../specs/companion-command-protocol.md) | Companion integration |
 | [connection-strings.md](connection-strings.md) | Connection string resolution |
 | [glossary.md](../glossary.md) | Terminology reference |

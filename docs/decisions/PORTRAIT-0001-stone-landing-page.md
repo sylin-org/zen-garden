@@ -292,5 +292,5 @@ Companions like Cricket could display a small indicator in the stone's color, cr
 
 - [Zen Garden Philosophy: Joy in Infrastructure](../philosophy/joy-in-infrastructure.md)
 - [Zen Garden Philosophy: Metaphor as Architecture](../philosophy/metaphor-as-architecture.md)
-- [PRESENCE-0001: Stone Presence Protocol](PRESENCE-0001-COMPLETE.md)
-- [ARCHITECTURE-REFERENCE.md](../ARCHITECTURE-REFERENCE.md)
+- [PRESENCE-0001: Stone Presence Protocol](../archive/implementation-reports/presence-protocol-2026-01-26.md)
+- [Components](../reference/components.md)

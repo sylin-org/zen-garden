@@ -134,8 +134,8 @@ Rake → POST /api/v1/stone/companions/{id}/command
 - Timeout: 5000ms for command execution
 
 **Reference:**
-- [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md)
-- [Companion-SERVICE-REGISTRY.md](../specs/Companion-SERVICE-REGISTRY.md)
+- [companion-command-protocol.md](../specs/companion-command-protocol.md)
+- [companion-service-registry.md](../specs/companion-service-registry.md)
 - [CRICKET-0001-audio-Companion-spec.md](../decisions/CRICKET-0001-audio-Companion-spec.md)
 
 ---

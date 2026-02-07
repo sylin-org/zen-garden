@@ -659,7 +659,7 @@ tokio::spawn(async move {
 ## References
 
 - [COMM-0001: P2P Transport Singleton](COMM-0001-p2p-transport-singleton.md)
-- [ARCHITECTURE-REFERENCE.md](../ARCHITECTURE-REFERENCE.md#p2p-transport-singleton-critical)
+- [Components](../reference/components.md) - P2P transport singleton
 - RFC 2119: Key words for use in RFCs to Indicate Requirement Levels
 
 ---

@@ -746,10 +746,3 @@ Minimal impact even with 100 stones and 10 concurrent elections.
 - [CSMA/CA Protocol](https://en.wikipedia.org/wiki/Carrier-sense_multiple_access_with_collision_avoidance)
 - [BLAKE3 Hash Function](https://github.com/BLAKE3-team/BLAKE3)
 
----
-
-## Changelog
-
-| Version | Date       | Changes       |
-| ------- | ---------- | ------------- |
-| 0.1     | 2026-01-25 | Initial draft |

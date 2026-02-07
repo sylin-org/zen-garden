@@ -1,7 +1,7 @@
 //! S3-compatible Object Storage Gateway API
 //!
 //! Provides S3-compatible endpoints for storing and retrieving objects from seed banks.
-//! See docs/reference/S3-API-REFERENCE.md and docs/decisions/STORAGE-0002-api-structure.md.
+//! See docs/reference/s3-api-reference.md and docs/decisions/STORAGE-0002-api-structure.md.
 //!
 //! ## Endpoints
 //!

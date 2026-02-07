@@ -1,4 +1,4 @@
-﻿# Troubleshooting Zen Garden
+# Troubleshooting Zen Garden
 
 **Purpose:** Common problems and solutions for operators and maintainers.  
 **Audience:** Operators diagnosing production issues, developers debugging installations.
@@ -1067,4 +1067,4 @@ docker --version
 - **Detailed architecture:** [Technical Specification](../specs/technical.md)
 - **Security hardening:** [Pond Setup](../security/pond-setup.md)
 - **Operations guide:** [Maintainers Documentation](../ops/maintainers.md)
-- **Service management:** [Offering Services Guide](offering-services.md)
+- **Service management:** [Offering Services Guide](offering-lifecycle.md)

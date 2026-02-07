@@ -730,9 +730,9 @@ garden-rake Companion install my-Companion
 
 ## Reference
 
-- [Companion-COMMAND-PROTOCOL.md](../specs/Companion-COMMAND-PROTOCOL.md) - Full protocol spec
-- [Companion-SERVICE-REGISTRY.md](../specs/Companion-SERVICE-REGISTRY.md) - Registration details
-- [HEY-TELL-SYNTAX.md](../specs/HEY-TELL-SYNTAX.md) - Command grammar
+- [companion-command-protocol.md](../specs/companion-command-protocol.md) - Full protocol spec
+- [companion-service-registry.md](../specs/companion-service-registry.md) - Registration details
+- [hey-tell-syntax.md](../specs/hey-tell-syntax.md) - Command grammar
 - [Cricket source](../../src/cricket/) - Reference implementation in Rust
 - [ports.md](../reference/ports.md) - Port allocation (7187-7199)
 

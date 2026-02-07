@@ -1,6 +1,5 @@
 ﻿# OS-Aware Detection for Adopted Offerings v2.0
 
-**Status**: Implemented (2026-01-25)  
 **Breaking Change**: Detection structure changed from flat list to OS-grouped  
 **Migration**: See [Migration Guide](#migration-from-v10) below
 
@@ -542,10 +541,10 @@ windows:
 
 ## Related Documentation
 
-- [Offering Modes](../../decisions/OFFER-0001-taxonomy.md) - Managed/Adopted/Borrowed taxonomy
+- [Offering Modes](../decisions/OFFER-0001-taxonomy.md) - Managed/Adopted/Borrowed taxonomy
 - [Ollama Detection States](ollama-detection-states.md) - Ollama-specific detection examples
 - [Windows Docker Adoption](../specs/windows-docker-adoption-spec.md) - Platform-specific behaviors
-- [ARCHITECTURE-REFERENCE.md](../ARCHITECTURE-REFERENCE.md) - Core architectural rules
+- [Components](../reference/components.md) - Core architectural rules
 
 ---
 

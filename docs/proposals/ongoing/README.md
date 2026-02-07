@@ -1,4 +1,4 @@
-# Ongoing Proposals
+﻿# Ongoing Proposals
 
 This directory contains proposals that are **substantially implemented (75-95%)** with remaining work in progress.
 
@@ -21,7 +21,7 @@ A proposal moves to `implemented/` when:
 
 ## Current Ongoing Proposals
 
-### [cli-taxonomy.md](cli-taxonomy.md)
+### [rake-taxonomy-design.md](rake-taxonomy-design.md)
 **Status**: ✅ Partially Implemented (60-70%)
 **Implementation**: garden-rake CLI (src/rake/)
 **Date**: 2026-01-17
@@ -96,8 +96,8 @@ If work stalls and proposal needs re-planning (rare)
 
 ## Related Documentation
 
-- [../implemented/README.md](../implemented/README.md) - Fully implemented proposals
-- [../PROPOSAL-VALIDATION-SUMMARY.md](../PROPOSAL-VALIDATION-SUMMARY.md) - Validation summary
+- [Implemented Proposals](../../archive/proposals/README.md) - Fully implemented proposals
+- [Proposal Validation Summary](../../archive/planning/proposal-validation-summary.md) - Validation summary
 - [../../RUST-REFACTORING-STATUS.md](../../RUST-REFACTORING-STATUS.md) - Rust refactoring status
 
 ---

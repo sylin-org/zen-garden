@@ -153,4 +153,4 @@ pub const STORAGE_BEACON: &str = "storage_beacon";
 
 - [STORAGE-0001](../specs/STORAGE-0001-seed-bank-onboarding.md) - Seed bank onboarding
 - [STORAGE-0002](STORAGE-0002-api-structure.md) - API structure
-- [zen-garden-storage-capability-spec](../proposals/ongoing/zen-garden-storage-capability-spec.md) - Full storage capability design
+- [Storage Capability Model](../proposals/ongoing/storage-capability-model.md) - Full storage capability design

@@ -1,4 +1,4 @@
-﻿# Your First Stone
+# Your First Stone
 
 **From old hardware to running service in 30 minutes.**
 
@@ -541,7 +541,7 @@ dns-sd -G v4 blue-stone.local  # macOS
 ## Next Steps
 
 - **Add more services:** [Service Catalog](../reference/offerings.md)
-- **Customize offerings:** [Creating Custom Offerings](offering-services.md)
+- **Customize offerings:** [Creating Custom Offerings](offering-lifecycle.md)
 - **Enable security:** [Pond Setup Guide](../security/pond-setup.md)
 - **Monitor health:** [Operations Guide](../ops/maintainers.md)
 - **Multi-Stone garden:** Repeat installation with different Stone names

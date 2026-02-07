@@ -621,7 +621,7 @@ fingerprint=sha256:abc123def456...
 
 Apps validate certificate fingerprint before connecting.
 
-See [SECURITY.md](SECURITY.md) for full threat model.
+See [security/overview.md](../security/overview.md) for full threat model.
 
 ---
 
@@ -634,16 +634,16 @@ See [SECURITY.md](SECURITY.md) for full threat model.
 - IPv6 support (AAAA records)
 - Plugin architecture (community service types)
 
-**Status:** Tracked in [ROADMAP.md](ROADMAP.md)
+**Status:** Tracked in [ops/roadmap.md](../ops/roadmap.md)
 
 ---
 
 ## Further Reading
 
-- [Understanding](UNDERSTANDING.md) - How discovery works
-- [Getting Started](GETTING-STARTED.md) - Quick setup guide
-- [Security](SECURITY.md) - Pond security model
-- [Roadmap](ROADMAP.md) - Implementation timeline
+- [Discovery Protocol](../specs/discovery.md) - How discovery works
+- [First Stone](../guides/first-stone.md) - Quick setup guide
+- [Security](../security/overview.md) - Pond security model
+- [Roadmap](../ops/roadmap.md) - Implementation timeline
 
 ---
 

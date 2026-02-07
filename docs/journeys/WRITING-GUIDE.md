@@ -157,7 +157,7 @@ docs/journeys/
 ### Companions
 - `src/cricket/` — Audio Companion, tune system
 - `src/firefly/` — LED Companion, animations
-- `docs/guides/Companions.md` — Companion documentation
+- `docs/guides/companion-overview.md` — Companion documentation
 
 ### Storage & Backup
 - `docs/specs/STORAGE-0001-seed-bank-onboarding.md` — Seed bank spec

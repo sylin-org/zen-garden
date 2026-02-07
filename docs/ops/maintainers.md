@@ -46,7 +46,7 @@ note: "Maintainer-grade operational documentation."
 - Does NOT manage containers directly (delegates to Docker Compose)
 - Does NOT persist state to disk (registry rebuilt from UDP broadcasts on restart)
 - Does NOT require database (stateless, eventual consistency model)
-- Does NOT enforce authentication (Pond is optional, see SECURITY-SPEC.md § Pond Architecture)
+- Does NOT enforce authentication (Pond is optional, see [security/overview.md](../security/overview.md))
 
 **Failure modes:**
 - If Moss crashes: services continue running (Docker daemon independent)
@@ -99,7 +99,7 @@ note: "Maintainer-grade operational documentation."
 
 ---
 
-**Pond Security Layer** (optional, see SECURITY-SPEC.md)
+**Pond Security Layer** (optional, see [security/overview.md](../security/overview.md))
 
 **What it does:**
 - Provides mTLS authentication between Stones
@@ -204,7 +204,7 @@ Application               Client Library            mDNS                    Ston
 
 ### Core Guarantees (MUST NOT Break)
 
-**Source:** [TECHNICAL-SPEC.md § Design Decisions](TECHNICAL-SPEC.md#design-decisions-and-constraints), [UNDERSTANDING.md § Core Idea](UNDERSTANDING.md#the-core-idea)
+**Source:** [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md), [Discovery Over Configuration](../philosophy/discovery-over-configuration.md)
 
 #### 1. Connection String Stability
 
@@ -250,7 +250,7 @@ Application               Client Library            mDNS                    Ston
 
 **Implementation:** Moss announces `_koan-stone._tcp.local.` with TXT record `offering=mongodb` (not `_mongodb._tcp.local.`).
 
-**Rationale:** See [decisions/MDNS-0001-single-service-type.md](decisions/MDNS-0001-single-service-type.md) (to be created).
+**Rationale:** See [MDNS-0001](../decisions/MDNS-0001-single-service-type.md).
 
 ---
 
@@ -290,7 +290,7 @@ Application               Client Library            mDNS                    Ston
 
 ### Safety Rules (SHOULD Follow)
 
-**Source:** [SECURITY-SPEC.md § Operational Security](SECURITY-SPEC.md#operational-security)
+**Source:** [Security Overview](../security/overview.md)
 
 #### 1. Fail Secure (Not Fail Open)
 
@@ -354,7 +354,7 @@ Application               Client Library            mDNS                    Ston
 **Format:** `major.minor.timestamp`  
 **Example:** `0.1.202601181256` (January 18, 2026, 12:56 UTC)
 
-**Rationale:** See [decisions/BUILD-0001-natural-flow-versioning.md](decisions/BUILD-0001-natural-flow-versioning.md)
+**Rationale:** See [BUILD-0001-versioning.md](../decisions/BUILD-0001-versioning.md)
 
 **Components:**
 - **major**: Breaking changes (manual increment, rare)
@@ -601,7 +601,7 @@ docker stats
 
 ### What is STABLE (Backward Compatible)
 
-**Source:** [TECHNICAL-SPEC.md § mDNS Discovery](TECHNICAL-SPEC.md#mdns-discovery), [API-V1-DUAL-LAYER-DESIGN.md](API-V1-DUAL-LAYER-DESIGN.md)
+**Source:** [Discovery Spec](../specs/discovery.md), [API-0001 ADR](../decisions/API-0001-dual-layer-api.md)
 
 #### 1. mDNS Service Type
 
@@ -660,7 +660,7 @@ docker stats
 
 ### What is EVOLVING (Subject to Change)
 
-**Source:** [ROADMAP.md § Phase 1](ROADMAP.md#phase-1-reference-implementation-q2-2026), [TECHNICAL-SPEC.md § Implementation Roadmap](TECHNICAL-SPEC.md#implementation-roadmap)
+**Source:** [Roadmap](roadmap.md), [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md)
 
 #### 1. Agnostic Data API
 
@@ -714,7 +714,7 @@ healthcheck:           # NEW (optional)
 
 ## Security Operational Implications
 
-**Full specification:** [SECURITY-SPEC.md](SECURITY-SPEC.md) (canonical source)
+**Full specification:** [Security Overview](../security/overview.md) (canonical source)
 
 **This section summarizes operational implications only.**
 
@@ -767,7 +767,7 @@ garden-rake pond join --code 836294
 - Physical proximity assumed (operator types code from screen)
 - No pre-shared secrets required (Bluetooth pairing analogy)
 
-**Source:** [SECURITY-SPEC.md § Bluetooth Pairing Model](SECURITY-SPEC.md#bluetooth-pairing-model)
+**Source:** [POND-0001 Protocol](../specs/POND-0001-protocol.md#invitation-protocol)
 
 ---
 
@@ -805,7 +805,7 @@ garden-rake pond token --validity 1h
 
 **When acceptable:** Home lab, small trusted team (family, colleagues).
 
-**Source:** [SECURITY-SPEC.md § Tier 1 Implementation](SECURITY-SPEC.md#tier-1-implementation-mvp)
+**Source:** [Security Overview](../security/overview.md)
 
 ---
 
@@ -849,7 +849,7 @@ garden-rake pond drain --yes-i-am-sure
 
 ## Architecture Decision Index
 
-**Location:** [decisions/](decisions/) directory
+**Location:** [decisions/](../decisions/) directory
 
 ### Existing ADRs
 
@@ -863,7 +863,7 @@ garden-rake pond drain --yes-i-am-sure
 
 ### ADRs to Create (Implied by Docs)
 
-**Source:** [API-V1-DUAL-LAYER-DESIGN.md](API-V1-DUAL-LAYER-DESIGN.md), [SECURITY-SPEC.md § Pond Architecture](SECURITY-SPEC.md#pond-security-architecture), [TECHNICAL-SPEC.md § mDNS Discovery](TECHNICAL-SPEC.md#mdns-discovery)
+**Source:** [API-0001 ADR](../decisions/API-0001-dual-layer-api.md), [Security Overview](../security/overview.md), [Discovery Spec](../specs/discovery.md)
 
 - **API-0001**: Dual-Layer API Design (Offerings vs Services, progressive disclosure)
 - **MDNS-0001**: Single Service Type (`_koan-stone._tcp.local.` for all Stones, TXT record differentiation)
@@ -876,7 +876,7 @@ See [Creating ADRs](#creating-adrs) below.
 
 ## Creating ADRs
 
-**Template:** [decisions/template.md](decisions/template.md) (to be created)
+**Template:** See [decisions/README.md](../decisions/README.md) for ADR format
 
 **Naming:** `{AREA}-{NUMBER}-{slug}.md` (e.g., `API-0001-dual-layer-design.md`)
 
@@ -920,5 +920,4 @@ See [Creating ADRs](#creating-adrs) below.
 
 ---
 
-**Last Updated:** January 19, 2026  
 **Maintained By:** Zen Garden Core Team

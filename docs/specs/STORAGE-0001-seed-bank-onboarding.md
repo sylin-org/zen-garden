@@ -1131,9 +1131,9 @@ Detection and warning for multiple seed banks on same USB hub (power limitations
 
 ## References
 
-- [Storage Capability Spec](../proposals/ongoing/zen-garden-storage-capability-spec.md)
-- [Service Resolution Spec](../proposals/ongoing/zen-garden-service-resolution-spec.md)
-- [PRESENCE-0001](../PRESENCE-0001-COMPLETE.md) - SSE event architecture
+- [Storage Capability Model](../proposals/ongoing/storage-capability-model.md)
+- [Service Resolution Spec](../proposals/ongoing/discovery-service-resolution.md)
+- [PRESENCE-0001](../archive/implementation-reports/presence-protocol-2026-01-26.md) - SSE event architecture
 - [STORAGE-0002](../decisions/STORAGE-0002-api-structure.md) - API structure decision
 - [STORAGE-0003](../decisions/STORAGE-0003-beacon-protocol.md) - Storage beacon protocol
 - STORAGE-0002-seed-bank-federation.md - Federation protocol (TBD)

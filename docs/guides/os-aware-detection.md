@@ -1,7 +1,6 @@
 ﻿# OS-Aware Detection Commands
 
-**Status**: Implemented (2026-01-25)  
-**Related**: [Offering Modes Refactoring Plan](../proposals/implemented/offering-modes-refactoring-plan.md)
+**Related**: [Offering Modes Refactoring Plan](../archive/proposals/offering-modes-refactoring-plan.md)
 
 ---
 
@@ -422,5 +421,5 @@ detection:
 ## References
 
 - [Offering Manifest Schema](../../src/common/src/manifests/offering.rs)
-- [Command Detection Implementation](../../src/moss/src/infra/detection/command.rs)
-- [Ollama Adopted Example](../../manifests/sw/ai/ollama.adopted.example.yaml)
+- [Detection Implementation](../../src/moss/src/infra/detection/mod.rs)
+- [Ollama Adopted Example](../../src/moss/embedded/manifests/sw/ai/ollama.adopted.example.yaml)

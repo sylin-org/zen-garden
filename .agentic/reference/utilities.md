@@ -21,8 +21,10 @@ Existing utilities - don't reinvent these.
 | Function | Linux | Windows |
 |----------|-------|---------|
 | `data_dir()` | `/var/lib/zen-garden` | `.zen-garden` |
+| `shared_data_dir()` | `/var/lib/zen-garden` | `{ProgramData}\zen-garden` |
 | `config_dir()` | `/etc/zen-garden` | `.zen-garden` |
 | `companions_dir()` | `/usr/local/bin/companions/` | varies |
+| `topology_dir()` | shared_data subdir | shared_data subdir |
 | `harvest_dir()` | data subdir | data subdir |
 | `stored_dir()` | data subdir | data subdir |
 | `stone_home()` | `/home/stone` | varies |

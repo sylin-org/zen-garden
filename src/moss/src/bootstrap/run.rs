@@ -84,6 +84,21 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Self-entry will be progressively updated as boot continues
     let topology_cache = Arc::new(RwLock::new(std::collections::HashMap::new()));
 
+    // TOPO-0002: Dirty flag for topology persistence + ensure directory exists
+    let topology_dirty = crate::domain::topology::new_dirty_flag();
+    if let Err(e) = tokio::fs::create_dir_all(garden_common::constants::paths::topology_dir()).await {
+        tracing::warn!(error = %e, "Failed to create topology directory (will retry on first write)");
+    }
+
+    // Write initial topology file immediately (self entry only, no peers yet).
+    // Don't wait for the 30s maintenance cycle — containers may start before then.
+    if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &self_entry).await {
+        tracing::warn!(error = %e, "Failed to write initial topology file");
+    } else {
+        topology_dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+        tracing::debug!("Initial topology file written");
+    }
+
     // STORAGE-0003: Create storage cache for seed bank routing
     let storage_cache = crate::domain::storage_cache::new_storage_cache();
 
@@ -184,6 +199,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         stone_name.clone(),
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
+        topology_dirty.clone(),
         storage_cache.clone(),
         tools_cache.clone(),
         tools_tx.clone(),
@@ -406,6 +422,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         network_monitor: Arc::new(network_monitor),
         api_port: port,
         topology_cache: topology_cache.clone(),
+        topology_dirty: topology_dirty.clone(),
         storage_cache: storage_cache.clone(),
         tools_cache: tools_cache.clone(),
         tools_tx: tools_tx.clone(),
@@ -609,6 +626,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Phase 11.5: mDNS lurk-listener (passive topology discovery)
     // Listens for mDNS announcements from neighbor stones to populate topology cache
     let topology_cache_for_mdns = state.topology_cache.clone();
+    let topology_dirty_for_mdns = state.topology_dirty.clone();
     if let Ok(mut mdns_rx) = mdns::start_mdns_lurk_listener(stone_name.clone()) {
         tokio::spawn(async move {
             loop {
@@ -637,9 +655,10 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                                 last_seen: chrono::Utc::now(),
                                 tags: vec![], // mDNS doesn't provide tags
                             };
-                            crate::domain::topology::upsert_from_chirp(
+                            crate::domain::topology::upsert_from_chirp_dirty(
                                 &topology_cache_for_mdns,
                                 entry,
+                                &topology_dirty_for_mdns,
                             )
                             .await;
                         }
@@ -712,7 +731,7 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
                         last_seen: chrono::Utc::now(),
                         tags: vec![], // Will be populated by later chirps
                     };
-                    crate::domain::topology::upsert_from_chirp(&state.topology_cache, entry).await;
+                    crate::domain::topology::upsert_from_chirp_dirty(&state.topology_cache, entry, &state.topology_dirty).await;
                 }
             }
         }
@@ -802,7 +821,15 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         }
     }
 
-    // Phase 17.6: Seed bank resilience + storage cache hygiene
+    // Phase 17.6: Topology + storage cache maintenance
+    // Topology: mark stale stones offline, evict old, persist dirty cache to disk
+    crate::tasks::start_topology_maintenance(
+        state.topology_cache.clone(),
+        state.topology_dirty.clone(),
+        state.self_entry.clone(),
+    );
+
+    // Seed bank resilience + storage cache hygiene
     // Ensures hot-plugged prepared devices are auto-mounted and cache stays fresh.
     #[cfg(target_os = "linux")]
     {
@@ -845,10 +872,17 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     let app = router::configure(state.clone());
     let listener = bind_server(port, &console_printer).await?;
 
-    // Create shutdown callback to send goodbye announcement
+    // Create shutdown callback to flush topology and send goodbye announcement
     let goodbye_state = state.clone();
     let shutdown_callback: crate::bootstrap::server::ShutdownCallback = Box::new(move || {
         Box::pin(async move {
+            // TOPO-0002: Flush topology to disk before shutdown
+            crate::domain::topology::flush_topology(
+                &goodbye_state.topology_cache,
+                &goodbye_state.topology_dirty,
+                &goodbye_state.self_entry,
+            ).await;
+
             if let Err(e) = crate::announcement::send_goodbye(&goodbye_state).await {
                 tracing::warn!(error = ?e, "Failed to send goodbye announcement");
             }

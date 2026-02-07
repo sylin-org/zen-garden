@@ -114,8 +114,12 @@ pub struct AppState {
     /// API port for constructing endpoint URLs
     pub api_port: u16,
 
-    /// Topology cache for discovered stones (in-memory only)
+    /// Topology cache for discovered stones (in-memory, persisted via dirty flag)
     pub topology_cache: crate::domain::topology::TopologyCache,
+
+    /// Dirty flag for topology persistence (TOPO-0002)
+    /// Set by mutation functions, cleared after flush to disk.
+    pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
 
     /// Storage routing cache for seed banks across stones (STORAGE-0003)
     pub storage_cache: crate::domain::storage_cache::StorageCache,
@@ -560,9 +564,9 @@ impl AppState {
             entry.last_seen = chrono::Utc::now();
         }
 
-        // Re-register mDNS with updated MAC (resolution info changed)
+        // Re-register mDNS with updated IP and MAC
         if let Some(ref mdns) = self.mdns_handle {
-            if let Err(e) = mdns.reregister(new_mac.as_deref()) {
+            if let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()) {
                 tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
             }
         }

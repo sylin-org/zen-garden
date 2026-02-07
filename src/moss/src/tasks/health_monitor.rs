@@ -120,6 +120,56 @@ pub async fn health_monitor_task(state: AppState) {
             }
         }
 
+        // TOPO-0002: Check running managed containers for missing topology mount.
+        // Containers created before the topology directory feature lack the bind mount.
+        // Recreate them to pick up the auto-injected mount from install_service().
+        {
+            let running_snapshot: Vec<String> = {
+                let offerings = state.offerings.read().await;
+                offerings
+                    .iter()
+                    .filter(|o| o.is_managed() && o.status == OfferingStatus::Running)
+                    .map(|o| o.name.clone())
+                    .collect()
+            };
+
+            for name in &running_snapshot {
+                match state.docker.has_topology_mount(name).await {
+                    Ok(true) => {} // mount present, nothing to do
+                    Ok(false) => {
+                        tracing::warn!(
+                            offering = %name,
+                            "Container missing topology mount, recreating"
+                        );
+                        match state.docker.get_container_recreate_config(name).await {
+                            Ok((image, ports, env, volumes)) => {
+                                if let Err(e) = state.docker.remove_service(name, None).await {
+                                    tracing::error!(offering = %name, error = ?e, "Failed to remove container for mount remediation");
+                                    continue;
+                                }
+                                if let Err(e) = state
+                                    .docker
+                                    .install_service(name, &image, ports, env, volumes, None)
+                                    .await
+                                {
+                                    tracing::error!(offering = %name, error = ?e, "Failed to recreate container with topology mount");
+                                } else {
+                                    tracing::info!(offering = %name, "Recreated container with topology mount");
+                                    state_changed = true;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!(offering = %name, error = ?e, "Failed to extract container config for recreation");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(offering = %name, error = ?e, "Could not check topology mount");
+                    }
+                }
+            }
+        }
+
         // Update notification registry based on current offering health
         // Set "attention" tag if any offering is degraded or offline
         {

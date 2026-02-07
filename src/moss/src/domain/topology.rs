@@ -11,12 +11,24 @@
 //!
 //! - Max 64 offline stones tracked (LRU eviction when cap reached)
 //! - Offline stones evicted after 24 hours
-//! - No disk persistence - cache rebuilds on moss restart
+//!
+//! ## Persistence (TOPO-0002)
+//!
+//! The cache is persisted to `{topology_dir}/garden-topology.json` as a bare
+//! JSON array of TopologyEntry objects (self entry first, then peers).
+//!
+//! Write triggers:
+//! - Dirty flag set on cache mutation (upsert, mark offline, forget)
+//! - Periodic flush every 30s during maintenance (if dirty)
+//! - Graceful shutdown flush (immediate)
+//!
+//! Uses atomic write (tmp + rename) via `garden_common::persistence::atomic_write_file`.
 
 use chrono::{Duration, Utc};
 use garden_common::{TopologyEntry, StoneStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 /// Maximum number of offline stones to track
@@ -34,6 +46,25 @@ const OFFLINE_EVICTION_HOURS: i64 = 24;
 /// Stores all discovered stones indexed by stone_id.
 /// Populated from UDP discovery responses and mDNS announcements.
 pub type TopologyCache = Arc<RwLock<HashMap<String, TopologyEntry>>>;
+
+/// Shared dirty flag for topology persistence
+///
+/// Set by mutation functions, cleared after successful write.
+pub type TopologyDirtyFlag = Arc<AtomicBool>;
+
+/// Create a new dirty flag (initially dirty)
+///
+/// Starts dirty so the first maintenance cycle writes the initial topology
+/// file — even if no peer chirps have arrived yet, the self entry should
+/// be persisted to disk for container cold-start seeding.
+pub fn new_dirty_flag() -> TopologyDirtyFlag {
+    Arc::new(AtomicBool::new(true))
+}
+
+/// Mark the topology cache as dirty (needs persistence)
+fn mark_dirty(dirty: &TopologyDirtyFlag) {
+    dirty.store(true, Ordering::Relaxed);
+}
 
 /// Add or update a stone from a chirp (received TopologyEntry)
 ///
@@ -64,6 +95,16 @@ pub async fn upsert_from_chirp(cache: &TopologyCache, mut chirped_entry: Topolog
         chirped_entry.last_seen = now;
         map.insert(chirped_entry.stone_id.clone(), chirped_entry);
     }
+}
+
+/// Add or update a stone from a chirp, and mark dirty flag for persistence
+pub async fn upsert_from_chirp_dirty(
+    cache: &TopologyCache,
+    chirped_entry: TopologyEntry,
+    dirty: &TopologyDirtyFlag,
+) {
+    upsert_from_chirp(cache, chirped_entry).await;
+    mark_dirty(dirty);
 }
 
 /// Get all stones from topology cache (both online and offline)
@@ -179,6 +220,34 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
     (marked_offline, evicted)
 }
 
+/// Maintain topology and flush to disk if dirty (TOPO-0002)
+///
+/// Called every 30s by the topology maintenance task.
+/// Combines marking/eviction with persistence.
+pub async fn maintain_and_persist(
+    cache: &TopologyCache,
+    dirty: &TopologyDirtyFlag,
+    self_entry: &Arc<RwLock<TopologyEntry>>,
+) -> (usize, usize) {
+    let (marked, evicted) = maintain_topology(cache).await;
+
+    // Maintenance itself can dirty the cache (offline marking, eviction)
+    if marked > 0 || evicted > 0 {
+        mark_dirty(dirty);
+    }
+
+    // Flush to disk if dirty
+    if dirty.swap(false, Ordering::Relaxed) {
+        if let Err(e) = persist_topology(cache, self_entry).await {
+            tracing::warn!(error = %e, "Failed to persist topology to disk");
+            // Re-dirty so next cycle retries
+            mark_dirty(dirty);
+        }
+    }
+
+    (marked, evicted)
+}
+
 /// Legacy function for compatibility - now calls maintain_topology
 pub async fn prune_stale_stones(cache: &TopologyCache, _stale_threshold_minutes: i64) -> usize {
     let (marked, evicted) = maintain_topology(cache).await;
@@ -204,6 +273,19 @@ pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
     false
 }
 
+/// Mark a stone as offline and set dirty flag for persistence
+pub async fn mark_stone_offline_dirty(
+    cache: &TopologyCache,
+    stone_id: &str,
+    dirty: &TopologyDirtyFlag,
+) -> bool {
+    let result = mark_stone_offline(cache, stone_id).await;
+    if result {
+        mark_dirty(dirty);
+    }
+    result
+}
+
 /// Remove a specific stone from the cache (explicit forget)
 pub async fn forget_stone(cache: &TopologyCache, stone_name: &str) -> bool {
     let mut map = cache.write().await;
@@ -215,6 +297,85 @@ pub async fn forget_stone(cache: &TopologyCache, stone_name: &str) -> bool {
         map.remove(&id).is_some()
     } else {
         false
+    }
+}
+
+/// Remove a specific stone and set dirty flag for persistence
+pub async fn forget_stone_dirty(
+    cache: &TopologyCache,
+    stone_name: &str,
+    dirty: &TopologyDirtyFlag,
+) -> bool {
+    let result = forget_stone(cache, stone_name).await;
+    if result {
+        mark_dirty(dirty);
+    }
+    result
+}
+
+// ============================================================================
+// Persistence (TOPO-0002)
+// ============================================================================
+
+/// Persist the topology cache to disk as a bare JSON array
+///
+/// Writes self entry first, then all cached peers (skipping self).
+/// Format: bare `TopologyEntry[]` (not the API envelope).
+/// Uses atomic write (tmp + rename) for crash safety.
+pub async fn persist_topology(
+    cache: &TopologyCache,
+    self_entry: &Arc<RwLock<TopologyEntry>>,
+) -> Result<(), anyhow::Error> {
+    let self_entry = self_entry.read().await.clone();
+    let self_id = self_entry.stone_id.clone();
+
+    // Build array: self first, then peers
+    let mut stones = vec![self_entry];
+    let cache_entries = {
+        let map = cache.read().await;
+        map.values().cloned().collect::<Vec<_>>()
+    };
+    for entry in cache_entries {
+        if entry.stone_id == self_id {
+            continue;
+        }
+        stones.push(entry);
+    }
+
+    let json = serde_json::to_string_pretty(&stones)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize topology: {}", e))?;
+
+    let path = std::path::PathBuf::from(garden_common::constants::paths::topology_dir())
+        .join(garden_common::constants::paths::TOPOLOGY_FILE);
+
+    garden_common::persistence::atomic_write_file(&path, json.as_bytes())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to write topology file {}: {}", path.display(), e))?;
+
+    tracing::debug!(
+        stones = stones.len(),
+        path = %path.display(),
+        "Topology persisted to disk"
+    );
+
+    Ok(())
+}
+
+/// Flush topology to disk immediately (for graceful shutdown)
+///
+/// Checks dirty flag and flushes unconditionally.
+pub async fn flush_topology(
+    cache: &TopologyCache,
+    dirty: &TopologyDirtyFlag,
+    self_entry: &Arc<RwLock<TopologyEntry>>,
+) {
+    // Clear dirty flag (we're flushing regardless)
+    dirty.store(false, Ordering::Relaxed);
+
+    if let Err(e) = persist_topology(cache, self_entry).await {
+        tracing::warn!(error = %e, "Failed to flush topology on shutdown");
+    } else {
+        tracing::info!("Topology flushed to disk (shutdown)");
     }
 }
 
@@ -359,5 +520,75 @@ mod tests {
 
         let removed_again = forget_stone(&cache, "oak").await;
         assert!(!removed_again);
+    }
+
+    #[tokio::test]
+    async fn test_dirty_flag_basics() {
+        let dirty = new_dirty_flag();
+        // Starts dirty — first maintenance cycle writes initial file
+        assert!(dirty.load(Ordering::Relaxed));
+
+        // swap clears it
+        let was_dirty = dirty.swap(false, Ordering::Relaxed);
+        assert!(was_dirty);
+        assert!(!dirty.load(Ordering::Relaxed));
+
+        // mark_dirty sets it again
+        mark_dirty(&dirty);
+        assert!(dirty.load(Ordering::Relaxed));
+
+        // swap clears again
+        let was_dirty = dirty.swap(false, Ordering::Relaxed);
+        assert!(was_dirty);
+        assert!(!dirty.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_upsert_dirty_sets_flag() {
+        let cache = make_test_cache();
+        let dirty = new_dirty_flag();
+
+        let entry = make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0");
+        upsert_from_chirp_dirty(&cache, entry, &dirty).await;
+
+        assert!(dirty.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_persist_topology_writes_file() {
+        let cache = make_test_cache();
+        let self_entry = Arc::new(RwLock::new(
+            make_entry("self-1", "local", "http://127.0.0.1:7185", "0.1.0")
+        ));
+
+        // Add a peer
+        upsert_from_chirp(&cache, make_entry("peer-1", "oak", "http://10.0.0.1:7185", "0.1.0")).await;
+
+        // Write to temp directory
+        let temp_dir = std::env::temp_dir().join("zen-garden-test-topology");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        // Override shared_data_dir so topology_dir resolves to our temp dir
+        let original = std::env::var("GARDEN_SHARED_DATA_DIR").ok();
+        std::env::set_var("GARDEN_SHARED_DATA_DIR", temp_dir.to_str().unwrap());
+
+        let result = persist_topology(&cache, &self_entry).await;
+        assert!(result.is_ok());
+
+        // Read back and verify
+        let file_path = temp_dir.join("topology").join("garden-topology.json");
+        let content = tokio::fs::read_to_string(&file_path).await.unwrap();
+        let entries: Vec<TopologyEntry> = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].stone_id, "self-1"); // Self first
+        assert_eq!(entries[1].stone_id, "peer-1"); // Then peer
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        match original {
+            Some(val) => std::env::set_var("GARDEN_SHARED_DATA_DIR", val),
+            None => std::env::remove_var("GARDEN_SHARED_DATA_DIR"),
+        }
     }
 }

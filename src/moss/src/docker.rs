@@ -446,6 +446,13 @@ impl DockerManager {
             binds.push(format!("{}:{}", host_path, container_path));
         }
 
+        // TOPO-0002: Auto-inject shared topology directory mount
+        // Cross-cutting infrastructure concern — every managed container gets
+        // read-write access to the topology directory for pre-warmed discovery.
+        let topo_host = garden_common::constants::paths::topology_dir();
+        let topo_container = garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR;
+        binds.push(format!("{}:{}", topo_host, topo_container));
+
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
             binds: Some(binds),
@@ -1083,6 +1090,108 @@ impl DockerManager {
         );
 
         Ok(volumes)
+    }
+
+    /// Check if a managed container has the shared topology bind mount (TOPO-0002)
+    ///
+    /// Returns true if any mount destination matches CONTAINER_TOPOLOGY_DIR.
+    /// Used by the health monitor to detect containers created before the
+    /// topology mount was auto-injected.
+    pub async fn has_topology_mount(&self, name: &str) -> Result<bool> {
+        let volumes = self.get_container_volumes(name).await?;
+        Ok(volumes.iter().any(|(_, dest)| {
+            dest == garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR
+        }))
+    }
+
+    /// Extract a container's runtime config for recreation (TOPO-0002)
+    ///
+    /// Returns (image, ports, env, volumes) from Docker inspect — the same
+    /// shape as `install_service()` parameters. Filters out the topology mount
+    /// from volumes since `install_service()` auto-injects it.
+    pub async fn get_container_recreate_config(
+        &self,
+        name: &str,
+    ) -> Result<(String, Vec<(u16, u16)>, Vec<String>, Vec<(String, String)>)> {
+        let container_name = zen_offering_container_name(name)?;
+        let info = self
+            .docker
+            .inspect_container(&container_name, None::<InspectContainerOptions>)
+            .await
+            .context(format!("Failed to inspect container '{}'", container_name))?;
+
+        // Image
+        let config = info.config.as_ref().context("Container has no config")?;
+        let image = config
+            .image
+            .clone()
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        // Env
+        let env: Vec<String> = config
+            .env
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        // Ports: parse from host_config.port_bindings
+        let mut ports = Vec::new();
+        if let Some(ref host_config) = info.host_config {
+            if let Some(ref bindings) = host_config.port_bindings {
+                for (container_port_key, host_bindings) in bindings {
+                    // Key format: "27017/tcp"
+                    let container_port: u16 = container_port_key
+                        .split('/')
+                        .next()
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(0);
+                    if container_port == 0 {
+                        continue;
+                    }
+
+                    if let Some(ref hb_list) = host_bindings {
+                        for hb in hb_list {
+                            let host_port: u16 = hb
+                                .host_port
+                                .as_deref()
+                                .and_then(|p| p.parse().ok())
+                                .unwrap_or(0);
+                            if host_port > 0 {
+                                ports.push((host_port, container_port));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Volumes: from mounts, excluding the topology mount (auto-injected by install_service)
+        let topo_container_path = garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR;
+        let volumes: Vec<(String, String)> = info
+            .mounts
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| {
+                let source = m.source.as_ref()?;
+                let dest = m.destination.as_ref()?;
+                // Skip topology mount — install_service() auto-injects it
+                if dest == topo_container_path {
+                    return None;
+                }
+                Some((source.clone(), dest.clone()))
+            })
+            .collect();
+
+        tracing::debug!(
+            container = %container_name,
+            image = %image,
+            ports = ports.len(),
+            env_vars = env.len(),
+            volumes = volumes.len(),
+            "Extracted container config for recreation"
+        );
+
+        Ok((image, ports, env, volumes))
     }
 
     /// Execute a command inside a running container

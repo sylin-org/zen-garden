@@ -11,14 +11,19 @@ pub struct MdnsHandle {
 
 #[cfg(not(target_os = "windows"))]
 impl MdnsHandle {
-    /// Register or re-register the mDNS service
+    /// Register or re-register the mDNS service with an explicit IP address
     ///
     /// Called when:
     /// - Initial registration (if IP was valid at startup)
     /// - IP/MAC changes (to update resolution info)
     ///
+    /// The IP address is passed explicitly rather than relying on mdns-sd's
+    /// auto-detection ("0.0.0.0"), which does not reliably populate the A
+    /// record on all platforms — resulting in the service type appearing in
+    /// browse but instances never resolving.
+    ///
     /// Safe to call multiple times - mdns_sd handles dedup internally.
-    pub fn reregister(&self, mac: Option<&str>) -> anyhow::Result<()> {
+    pub fn reregister(&self, ip: &str, mac: Option<&str>) -> anyhow::Result<()> {
         use mdns_sd::ServiceInfo;
         use std::collections::HashMap;
 
@@ -39,7 +44,7 @@ impl MdnsHandle {
             service_type,
             &self.stone_name,
             &host_name,
-            "0.0.0.0", // Let mDNS daemon auto-resolve
+            ip,
             self.port,
             properties,
         )?;
@@ -50,14 +55,16 @@ impl MdnsHandle {
         if was_registered {
             tracing::info!(
                 stone_name = %self.stone_name,
+                ip = %ip,
                 mac = ?mac,
                 "mDNS service re-registered after resolution change"
             );
         } else {
             tracing::info!(
                 stone_name = %self.stone_name,
+                ip = %ip,
                 mac = ?mac,
-                "mDNS service registered (deferred from startup)"
+                "mDNS service registered"
             );
         }
 
@@ -106,8 +113,8 @@ pub fn announce_moss(
         return Ok(handle);
     }
 
-    // Valid IP - register immediately
-    handle.reregister(mac)?;
+    // Valid IP - register immediately with the actual address
+    handle.reregister(current_ip, mac)?;
 
     Ok(handle)
 }
@@ -118,7 +125,7 @@ pub struct MdnsHandle;
 
 #[cfg(target_os = "windows")]
 impl MdnsHandle {
-    pub fn reregister(&self, _mac: Option<&str>) -> anyhow::Result<()> {
+    pub fn reregister(&self, _ip: &str, _mac: Option<&str>) -> anyhow::Result<()> {
         Ok(())
     }
 

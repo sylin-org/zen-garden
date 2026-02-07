@@ -36,6 +36,34 @@ pub fn data_dir() -> String {
     })
 }
 
+/// Get shared data directory for cross-process data
+///
+/// A stable, absolute, system-wide location for data shared between Moss and
+/// other processes (Koan clients, containers). Unlike `data_dir()` which may
+/// be relative on Windows (`.zen-garden`), this always resolves to an absolute
+/// path so external processes can locate it by well-known convention.
+///
+/// | Platform | Default |
+/// |----------|---------|
+/// | Linux    | `/var/lib/zen-garden` (same as `data_dir()`) |
+/// | Windows  | `{ProgramData}\zen-garden` |
+///
+/// Override: `GARDEN_SHARED_DATA_DIR` environment variable.
+pub fn shared_data_dir() -> String {
+    std::env::var("GARDEN_SHARED_DATA_DIR").unwrap_or_else(|_| {
+        #[cfg(target_os = "windows")]
+        {
+            let program_data = std::env::var("ProgramData")
+                .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+            format!(r"{}\zen-garden", program_data)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            data_dir()
+        }
+    })
+}
+
 /// Get harvest storage directory
 pub fn harvest_dir() -> String {
     std::env::var("GARDEN_HARVEST_DIR").unwrap_or_else(|_| {
@@ -50,6 +78,25 @@ pub fn volumes_dir() -> String {
         format!("{}/volumes", data_dir())
     })
 }
+
+/// Get shared topology directory for cross-process topology sharing
+/// Layout: {shared_data_dir}/topology/
+///
+/// Contains two files with distinct ownership:
+/// - `garden-topology.json` (written by Moss — authoritative mesh snapshot)
+/// - `garden-stones.json` (written by clients — operational roster)
+///
+/// Exposed to managed containers via bind mount at `/app/cache/zen-garden/`.
+pub fn topology_dir() -> String {
+    format!("{}/topology", shared_data_dir())
+}
+
+/// Container-side path for the shared topology directory
+/// Matches Koan.ZenGarden's StoneRosterPathResolver convention
+pub const CONTAINER_TOPOLOGY_DIR: &str = "/app/cache/zen-garden";
+
+/// Topology file written by Moss (authoritative mesh snapshot)
+pub const TOPOLOGY_FILE: &str = "garden-topology.json";
 
 /// Get jobs persistence file path
 pub fn jobs_file() -> String {

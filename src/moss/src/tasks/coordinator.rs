@@ -12,7 +12,9 @@
 //!
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::domain::topology::{mark_stone_offline, upsert_from_chirp, TopologyCache};
+use crate::domain::topology::{
+    mark_stone_offline_dirty, upsert_from_chirp_dirty, TopologyCache, TopologyDirtyFlag,
+};
 use crate::tasks::backfill_missing_guidance;
 use crate::tasks::network_monitor::{NetworkEvent, NetworkMonitor};
 use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
@@ -27,11 +29,16 @@ use garden_common::{HardwareCapabilities, ServiceHealthStatus};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Start topology maintenance task
+/// Start topology maintenance task (TOPO-0002: with persistence)
 ///
-/// Periodically marks stale stones as offline and evicts old offline stones.
+/// Periodically marks stale stones as offline, evicts old offline stones,
+/// and flushes dirty topology cache to disk.
 /// Runs every 30 seconds (aligns with stone chirp interval).
-pub fn start_topology_maintenance(topology_cache: TopologyCache) {
+pub fn start_topology_maintenance(
+    topology_cache: TopologyCache,
+    topology_dirty: TopologyDirtyFlag,
+    self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         interval.tick().await; // Skip first immediate tick
@@ -39,7 +46,11 @@ pub fn start_topology_maintenance(topology_cache: TopologyCache) {
         loop {
             interval.tick().await;
             let (marked, evicted) =
-                crate::domain::topology::maintain_topology(&topology_cache).await;
+                crate::domain::topology::maintain_and_persist(
+                    &topology_cache,
+                    &topology_dirty,
+                    &self_entry,
+                ).await;
             if marked > 0 || evicted > 0 {
                 tracing::debug!(
                     marked_offline = marked,
@@ -88,6 +99,7 @@ pub async fn start_discovery_listener(
     stone_name: String,
     api_endpoint: String,
     topology_cache: TopologyCache,
+    topology_dirty: TopologyDirtyFlag,
     storage_cache: crate::domain::storage_cache::StorageCache,
     tools_cache: crate::domain::tools::ToolsCache,
     tools_tx: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
@@ -148,8 +160,8 @@ pub async fn start_discovery_listener(
                         "Stone chirp received, updating topology cache"
                     );
 
-                    // Update topology cache with chirp data
-                    upsert_from_chirp(&topology_cache, chirp.clone()).await;
+                    // Update topology cache with chirp data (marks dirty for persistence)
+                    upsert_from_chirp_dirty(&topology_cache, chirp.clone(), &topology_dirty).await;
 
                     // Trigger infrastructure handlers (MOSS-0002: garden-wide effects)
                     // Handlers react to topology changes and configure local infrastructure
@@ -244,8 +256,8 @@ pub async fn start_discovery_listener(
                         from = %from_addr,
                         "Stone goodbye received, marking offline"
                     );
-                    // Mark stone as offline immediately (don't wait for timeout)
-                    mark_stone_offline(&topology_cache, &goodbye.stone_id).await;
+                    // Mark stone as offline immediately (marks dirty for persistence)
+                    mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty).await;
 
                     // STORAGE-0003: Remove from storage cache
                     crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id)
@@ -846,8 +858,12 @@ pub async fn start_all_background_tasks(
 ) {
     let console = state.console.clone();
 
-    // Start topology maintenance (mark stale offline, evict old)
-    start_topology_maintenance(state.topology_cache.clone());
+    // Start topology maintenance (mark stale offline, evict old, persist if dirty)
+    start_topology_maintenance(
+        state.topology_cache.clone(),
+        state.topology_dirty.clone(),
+        state.self_entry.clone(),
+    );
 
     // Start storage cache maintenance (STORAGE-0003: prune stale entries)
     start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
@@ -861,6 +877,7 @@ pub async fn start_all_background_tasks(
         stone_name.to_string(),
         api_endpoint.to_string(),
         state.topology_cache.clone(),
+        state.topology_dirty.clone(),
         state.storage_cache.clone(),
         state.tools_cache.clone(),
         state.tools_tx.clone(),

@@ -566,7 +566,7 @@ impl AppState {
 
         // Re-register mDNS with updated IP and MAC
         if let Some(ref mdns) = self.mdns_handle {
-            if let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()) {
+            if let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await {
                 tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
             }
         }

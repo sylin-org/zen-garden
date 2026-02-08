@@ -42,6 +42,8 @@ pub mod storage;
 pub mod task_store;
 pub mod tools;
 #[cfg(target_os = "windows")]
+pub mod koi_client;
+#[cfg(target_os = "windows")]
 pub mod update_transaction;
 
 pub use api_helpers::{error_codes, error_response, require_docker};

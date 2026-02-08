@@ -293,9 +293,23 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         port,
         mac_for_mdns.as_deref(),
         &current_ip, // Gate: won't register if loopback
-    ) {
-        Ok(handle) => Some(Arc::new(handle)),
+    )
+    .await
+    {
+        Ok(handle) => {
+            console_printer.emit(console::ConsoleEvent::new(
+                console::EventCategory::Discovery,
+                console::EventStatus::MdnsActive,
+                format!("mDNS backend: {}", handle.status_label()),
+            ));
+            Some(Arc::new(handle))
+        }
         Err(e) => {
+            console_printer.emit(console::ConsoleEvent::new(
+                console::EventCategory::Discovery,
+                console::EventStatus::MdnsError,
+                format!("mDNS announcement failed: {}", e),
+            ));
             tracing::warn!(error = ?e, "mDNS announcement failed");
             None
         }
@@ -627,7 +641,12 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
     // Listens for mDNS announcements from neighbor stones to populate topology cache
     let topology_cache_for_mdns = state.topology_cache.clone();
     let topology_dirty_for_mdns = state.topology_dirty.clone();
-    if let Ok(mut mdns_rx) = mdns::start_mdns_lurk_listener(stone_name.clone()) {
+    if let Ok(mut mdns_rx) = mdns::start_mdns_lurk_listener(stone_name.clone()).await {
+        console_printer.emit(console::ConsoleEvent::new(
+            console::EventCategory::Discovery,
+            console::EventStatus::MdnsActive,
+            "Lurk-listener active (passive topology discovery)".to_string(),
+        ));
         tokio::spawn(async move {
             loop {
                 match mdns_rx.recv().await {

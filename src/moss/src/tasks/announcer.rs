@@ -1,7 +1,8 @@
 //! Periodic announcement task
 //!
 //! Runs in background, announcing stone presence every 30 seconds.
-//! Uses change detection to minimize unnecessary network traffic.
+//! Every chirp acts as a heartbeat — peers mark stones offline after 45s
+//! of silence, so chirps MUST be unconditional.
 //!
 //! Design:
 //! - Simple interval loop (KISS)
@@ -10,24 +11,21 @@
 //! - Respects network readiness (no chirps until network is ready)
 
 use std::sync::atomic::Ordering;
-use tokio::time::{interval, Duration, Instant};
+use tokio::time::{interval, Duration};
 use crate::AppState;
 
 /// Start periodic announcement task
 ///
 /// Announces stone presence every 30 seconds via all channels.
-/// Uses change detection to skip announcements when state unchanged.
-/// Forces announcement every 5 minutes as keep-alive.
-/// Skips announcements if network is not ready (no valid LAN IP).
+/// Chirps unconditionally — they double as heartbeats for topology
+/// liveness (peers mark offline after 45s silence).
+/// Skips announcements only if network is not ready (no valid LAN IP).
 ///
 /// Runs for process lifetime.
 pub fn start_periodic_announcer(state: AppState) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(30));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        let mut last_hash: Option<u64> = None;
-        let mut last_announcement = Instant::now();
 
         // Skip first tick (already announced at startup)
         ticker.tick().await;
@@ -44,18 +42,14 @@ pub fn start_periodic_announcer(state: AppState) {
             // Read current self topology entry
             let entry = state.self_entry.read().await.clone();
 
-            match crate::announcement::announce_if_changed(
-                &entry,
-                &mut last_hash,
-                &mut last_announcement,
-                false, // Not forced
-            ).await {
-                Ok(true) => tracing::debug!("Periodic announcement sent (state changed or keep-alive)"),
-                Ok(false) => tracing::trace!("Periodic announcement skipped (no changes)"),
+            // Always chirp — peers rely on periodic chirps as heartbeats
+            // to maintain online status in the topology cache.
+            match crate::announcement::announce(&entry).await {
+                Ok(()) => tracing::trace!("Periodic chirp sent"),
                 Err(e) => tracing::warn!(error = ?e, "Periodic announcement failed"),
             }
         }
     });
 
-    tracing::info!("Periodic announcer started (30s interval, 5min keep-alive)");
+    tracing::info!("Periodic announcer started (30s interval)");
 }

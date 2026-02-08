@@ -262,6 +262,29 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 
+    // Pre-copy: stop external tool services so their binaries can be overwritten.
+    // Tools run as Windows services — the file is locked while the service is active.
+    // We run uninstall from the *installed* binary (the one the service is actually running).
+    let existing_tools_dir = Path::new(&garden_common::constants::paths::data_dir()).join("tools");
+    if existing_tools_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&existing_tools_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let tool_path = entry.path();
+                if tool_path.is_file() && tool_path.extension().map(|e| e == "exe").unwrap_or(false) {
+                    let tool_name = tool_path.file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    log_update(&format!("Stopping external tool service: {}", tool_name));
+                    println!("Stopping tool service: {}...", tool_name);
+                    let _ = Command::new(&tool_path).arg("uninstall").output();
+                }
+            }
+        }
+        // Brief settle time for services to release file handles
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
     // Copy all staged binaries to install directory
     println!("Installing staged binaries...");
     log_update("Copying staged binaries to install directory...");
@@ -330,6 +353,58 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
 
     log_update(&format!("Installed {} binaries", installed_count));
     println!("✓ Installed {} binaries", installed_count);
+
+    // Post-copy: install external tools from the *installed* path (not staging).
+    // The service registers its binary path, so it must point to the permanent location.
+    // Convention: each .exe in tools/ supports `{exe} install` for service registration + start.
+    let installed_tools_dir = Path::new(&garden_common::constants::paths::data_dir()).join("tools");
+    if installed_tools_dir.exists() {
+        log_update(&format!("Installing external tools from: {:?}", installed_tools_dir));
+        println!("Installing external tools...");
+
+        let mut tools_ok: u32 = 0;
+        let mut tools_err: u32 = 0;
+
+        if let Ok(entries) = std::fs::read_dir(&installed_tools_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let tool_path = entry.path();
+                if tool_path.is_file() && tool_path.extension().map(|e| e == "exe").unwrap_or(false) {
+                    let tool_name = tool_path.file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    log_update(&format!("Installing external tool: {} ({:?})", tool_name, tool_path));
+                    println!("  Installing tool: {}...", tool_name);
+
+                    match Command::new(&tool_path).arg("install").output() {
+                        Ok(output) if output.status.success() => {
+                            log_update(&format!("Tool {} installed successfully", tool_name));
+                            println!("  ✓ {} installed", tool_name);
+                            tools_ok += 1;
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            log_update(&format!("Tool {} install returned non-zero: {} {}", tool_name, stdout, stderr));
+                            eprintln!("  ⚠ {} install: {} {}", tool_name, stdout.trim(), stderr.trim());
+                            tools_err += 1;
+                        }
+                        Err(e) => {
+                            log_update(&format!("Failed to run {} install: {}", tool_name, e));
+                            eprintln!("  ✗ {} - {}", tool_name, e);
+                            tools_err += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        if tools_err == 0 {
+            println!("✓ External tools: {} installed", tools_ok);
+        } else {
+            println!("⚠ External tools: {} installed, {} failed", tools_ok, tools_err);
+        }
+        log_update(&format!("External tools: {} installed, {} failed", tools_ok, tools_err));
+    }
 
     // Check if running as service
     let is_service = std::env::var("RUNNING_AS_SERVICE").is_ok();

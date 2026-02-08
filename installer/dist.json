@@ -90,6 +90,11 @@
     }
   },
   
+  "externalTools": {
+    "directory": "../tools",
+    "destination": "bin/tools/"
+  },
+
   "build": {
     "profiles": {
       "debug": {

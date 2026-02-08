@@ -335,13 +335,122 @@ function Copy-AssetToStaging {
     }
 }
 
+function Get-ExternalTools {
+    <#
+    .SYNOPSIS
+        Discover external tools from tools/ directory
+    .DESCRIPTION
+        Reads tool.json manifests from each subdirectory of the external tools directory.
+        Returns tool descriptors filtered by platform.
+        Tools are pre-built binaries from external repos (not cargo workspace members).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [PSCustomObject]$Config,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('linux', 'windows')]
+        [string]$Platform
+    )
+
+    $tools = @()
+
+    if (-not $Config.externalTools -or -not $Config.externalTools.directory) {
+        return $tools
+    }
+
+    $configDir = Split-Path (Join-Path $PSScriptRoot "dist.json") -Parent
+    $toolsDir = Resolve-ConfigPath $Config.externalTools.directory $configDir
+
+    if (-not (Test-Path $toolsDir)) {
+        return $tools
+    }
+
+    foreach ($dir in Get-ChildItem $toolsDir -Directory) {
+        $manifestPath = Join-Path $dir.FullName "tool.json"
+        if (-not (Test-Path $manifestPath)) { continue }
+
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+
+        # Filter by platform
+        if ($manifest.platforms -and $manifest.platforms -notcontains $Platform) { continue }
+
+        # Resolve local dist path
+        $localDist = $null
+        if ($manifest.acquire -and $manifest.acquire.localDist) {
+            $localDist = $manifest.acquire.localDist
+        }
+
+        $tools += [PSCustomObject]@{
+            Name         = $manifest.name
+            Binary       = $manifest.binary
+            LocalDist    = $localDist
+            Destination  = $Config.externalTools.destination
+            ManifestPath = $manifestPath
+            Manifest     = $manifest
+        }
+    }
+
+    return $tools
+}
+
+function Copy-ExternalToolToStaging {
+    <#
+    .SYNOPSIS
+        Copy an external tool binary into the staging directory
+    .DESCRIPTION
+        Locates the pre-built binary from the tool's local dist path and copies
+        it to the package staging directory under bin/tools/.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$StagingRoot,
+
+        [Parameter(Mandatory)]
+        [PSCustomObject]$Tool,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('linux', 'windows')]
+        [string]$Platform
+    )
+
+    if (-not $Tool.LocalDist) {
+        Write-Warning "External tool '$($Tool.Name)': no localDist configured, skipping"
+        return $false
+    }
+
+    $extension = if ($Platform -eq 'windows') { '.exe' } else { '' }
+    $filename = $Tool.Binary + $extension
+    $sourcePath = Join-Path $Tool.LocalDist $filename
+
+    if (-not (Test-Path $sourcePath)) {
+        Write-Warning "External tool '$($Tool.Name)': binary not found at $sourcePath"
+        return $false
+    }
+
+    $destDir = Join-Path $StagingRoot $Tool.Destination
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    $destPath = Join-Path $destDir $filename
+
+    Copy-Item $sourcePath $destPath -Force
+
+    $relativePath = ($Tool.Destination + $filename) -replace '\\', '/'
+    Write-Host "  + $relativePath (external: $($Tool.Name))" -ForegroundColor DarkCyan
+
+    return $true
+}
+
 Export-ModuleMember -Function @(
     'Get-DistConfig',
     'Get-PlatformBinaries',
     'Get-TierBinaries',
     'Get-CargoBuildTargets',
     'Get-PlatformAssets',
+    'Get-ExternalTools',
     'New-StagingDirectory',
     'Copy-BinaryToStaging',
-    'Copy-AssetToStaging'
+    'Copy-AssetToStaging',
+    'Copy-ExternalToolToStaging'
 )

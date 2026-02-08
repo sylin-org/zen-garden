@@ -182,12 +182,24 @@ if (-not $SkipPackage) {
     }
     Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
     
+    # Copy external tools (pre-built binaries from external repos, e.g., Koi)
+    $externalTools = Get-ExternalTools -Config $config -Platform "windows"
+    $toolsIncluded = 0
+    $toolsSkipped = 0
+    foreach ($tool in $externalTools) {
+        $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "windows"
+        if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
+    }
+    if ($externalTools.Count -gt 0) {
+        Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
+    }
+
     # Copy assets from config
     $assets = Get-PlatformAssets -Config $config -Platform "windows"
     foreach ($asset in $assets) {
         Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
     }
-    
+
     # Create package manifest
     $components = @{}
     foreach ($binary in $binaries) {
@@ -201,6 +213,23 @@ if (-not $SkipPackage) {
                 sha256 = $hash
                 size = (Get-Item $sourcePath).Length
                 required = $binary.Required
+            }
+        }
+    }
+
+    # Add external tools to manifest
+    foreach ($tool in $externalTools) {
+        $filename = $tool.Binary + ".exe"
+        $toolPath = Join-Path (Join-Path $packageDir $tool.Destination) $filename
+        if (Test-Path $toolPath) {
+            $hash = (Get-FileHash $toolPath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = $tool.Destination + $filename
+            $components[$tool.Name] = @{
+                path = $relativePath
+                sha256 = $hash
+                size = (Get-Item $toolPath).Length
+                required = $false
+                external = $true
             }
         }
     }

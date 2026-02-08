@@ -1,0 +1,19 @@
+{
+  "name": "koi",
+  "description": "mDNS proxy — provides mDNS service discovery via HTTP/SSE API",
+  "repo": "https://github.com/sylin-org/koi",
+  "license": "MIT",
+  "binary": "koi",
+  "platforms": ["windows"],
+  "service": {
+    "name": "koi",
+    "displayName": "Koi mDNS Service",
+    "installVerb": "install",
+    "uninstallVerb": "uninstall",
+    "port": 5641,
+    "healthEndpoint": "http://localhost:5641/healthz"
+  },
+  "acquire": {
+    "localDist": "F:/Replica/NAS/Files/repo/github/zen-garden/tools/koi"
+  }
+}

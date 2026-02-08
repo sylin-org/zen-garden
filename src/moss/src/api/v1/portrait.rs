@@ -152,6 +152,7 @@ pub struct PortraitCandidate {
 pub struct HorizonStone {
     pub name: String,
     pub endpoint: String,
+    pub status: String,
     pub health: String,
     pub color: String,
     /// Operating system family ("windows", "linux", "macos")
@@ -553,7 +554,7 @@ pub async fn get_portrait_data(
 
     // === Horizon (visible stones) ===
     let horizon = {
-        let visible_stones = topology::get_online_stones(&state.topology_cache).await;
+        let visible_stones = topology::get_all_stones(&state.topology_cache).await;
         let storage_cache = state.storage_cache.read().await;
         let stones: Vec<HorizonStone> = visible_stones
             .iter()
@@ -578,6 +579,7 @@ pub async fn get_portrait_data(
                 HorizonStone {
                     name: entry.stone_name.clone(),
                     endpoint: entry.endpoint.clone(),
+                    status: entry.status.to_string(),
                     health: entry.health.clone(),
                     color: derive_stone_color(&entry.stone_id),
                     os_family,

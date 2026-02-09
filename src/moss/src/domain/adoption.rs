@@ -16,8 +16,8 @@ use crate::AppState;
 use garden_common::offerings::parse_offering_fqn;
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
-    ManagedData, Offering, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
-    ServiceHealthStatus,
+    HardwareCapabilities, ManagedData, Offering, OfferingGuidance, OfferingLocation,
+    OfferingModeData, OfferingStatus, ServiceHealthStatus,
 };
 
 /// Adopt a container for a specific offering into the registry
@@ -43,6 +43,7 @@ pub async fn adopt_offering_container(
     manifest_registry: &ManifestRegistry,
     offering: &str,
     stone_name: &str,
+    cached_capabilities: Option<&HardwareCapabilities>,
 ) -> anyhow::Result<Option<Offering>> {
     let fqn = parse_offering_fqn(offering)
         .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering, e))?;
@@ -65,7 +66,7 @@ pub async fn adopt_offering_container(
 
     // Compute expected image based on compatibility rules.
     if let Some(rules) = &template.compatibility {
-        let capabilities = get_current_compat_capabilities();
+        let capabilities = get_current_compat_capabilities(cached_capabilities);
         match evaluate_compatibility(rules, &capabilities) {
             CompatibilityDecision::Pass => {}
             CompatibilityDecision::Warning { .. } => {
@@ -105,11 +106,28 @@ pub async fn adopt_offering_container(
         .unwrap_or("latest")
         .to_string();
 
+    // Query Docker for actual port bindings (may differ from manifest if remapped)
+    let docker_ports = docker
+        .get_container_ports(&offering_name)
+        .await
+        .unwrap_or_default();
+    let actual_port = docker_ports.first().map(|(h, _)| *h).unwrap_or(native_port);
+
+    // Build a lookup from container_port → actual_host_port for guidance substitution
+    let docker_port_map: std::collections::HashMap<u16, u16> = docker_ports
+        .iter()
+        .map(|(h, c)| (*c, *h))
+        .collect();
+
     // Build guidance with template substitution (if guidance template exists)
     let guidance = guidance_template.map(|tmpl| {
-        // Substitute named ports: "default" → {{port}}, others → {{<name>-port}}
+        // Substitute named ports using actual Docker bindings (fall back to manifest)
         let mut content = tmpl.clone();
-        for (port_name, (host_port, _)) in &template.ports {
+        for (port_name, (template_host, container_port)) in &template.ports {
+            let host_port = docker_port_map
+                .get(container_port)
+                .copied()
+                .unwrap_or(*template_host);
             let placeholder = if port_name == "default" {
                 "{{port}}".to_string()
             } else {
@@ -122,11 +140,15 @@ pub async fn adopt_offering_container(
             .replace("{{offering}}", &offering_type)
             .replace("{{name}}", &offering_name);
 
-        // Build variables map for API consumers
+        // Build variables map for API consumers (using actual Docker ports)
         let mut variables = std::collections::HashMap::new();
-        variables.insert("port".to_string(), native_port.to_string());
-        for (port_name, (host_port, _)) in &template.ports {
+        variables.insert("port".to_string(), actual_port.to_string());
+        for (port_name, (template_host, container_port)) in &template.ports {
             if port_name != "default" {
+                let host_port = docker_port_map
+                    .get(container_port)
+                    .copied()
+                    .unwrap_or(*template_host);
                 variables.insert(format!("{}-port", port_name), host_port.to_string());
             }
         }
@@ -165,7 +187,7 @@ pub async fn adopt_offering_container(
         sub_capabilities: Vec::new(),
         location: OfferingLocation {
             host: "localhost".to_string(),
-            port: native_port,
+            port: actual_port,
             protocol,
             agnostic_port: None,
         },
@@ -211,6 +233,10 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
         }
     };
 
+    // Snapshot cached capabilities once for all adoptions (avoids N subprocess calls)
+    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps_ref = cached_caps.as_ref();
+
     let mut adopted = Vec::new();
     let mut no_template = Vec::new();
     let mut failed = Vec::new();
@@ -229,6 +255,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
             &state.manifest_registry,
             &offering,
             &state.stone_name,
+            cached_caps_ref,
         )
         .await
         {

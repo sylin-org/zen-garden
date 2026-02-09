@@ -101,39 +101,21 @@ fn blake3_hex(bytes: &[u8]) -> String {
 ///
 /// Includes CPU, memory, GPU/AI capabilities.
 /// Changes trigger offerings index rebuild.
-pub fn current_capabilities_hash() -> String {
-    let caps = crate::domain::compatibility::get_current_compat_capabilities();
-    let gpus = garden_common::metrics::system::detect_gpus();
-
-    // Include GPU/AI capabilities in hash so offerings re-evaluate when AI hardware is detected
-    // Helper to check if any GPU has a runtime (supports both "cuda" and "cuda:12.2" formats)
-    let has_runtime = |runtime_name: &str| {
-        gpus.iter().any(|g| {
-            g.ai_runtimes.iter().any(|r| {
-                let r_lower = r.to_lowercase();
-                let runtime_lower = runtime_name.to_lowercase();
-                // Match either exact or base runtime (e.g., "cuda" matches "cuda:12.2")
-                r_lower == runtime_lower || r_lower.starts_with(&format!("{}:", runtime_lower))
-            })
-        })
-    };
-
-    let has_cuda = has_runtime("cuda");
-    let has_rocm = has_runtime("rocm");
-    let has_directml = has_runtime("directml");
-    let has_openvino = has_runtime("openvino");
-    let gpu_vram_total: u64 = gpus.iter().filter_map(|g| g.vram_mb).sum();
+pub fn current_capabilities_hash(
+    cached_capabilities: Option<&garden_common::HardwareCapabilities>,
+) -> String {
+    let caps = crate::domain::compatibility::get_current_compat_capabilities(cached_capabilities);
 
     let payload = serde_json::json!({
         "cpu_model": caps.cpu_model,
         "cpu_features": caps.cpu_features,
         "architecture": caps.architecture,
         "total_memory_mb": caps.total_memory_mb,
-        "has_cuda": has_cuda,
-        "has_rocm": has_rocm,
-        "has_directml": has_directml,
-        "has_openvino": has_openvino,
-        "gpu_vram_total_mb": gpu_vram_total,
+        "has_cuda": caps.has_cuda,
+        "has_rocm": caps.has_rocm,
+        "has_directml": caps.has_directml,
+        "has_openvino": caps.has_openvino,
+        "gpu_vram_total_mb": caps.gpu_vram_total_mb,
     });
     blake3_hex(serde_json::to_vec(&payload).unwrap_or_default().as_slice())
 }
@@ -200,12 +182,16 @@ pub async fn ensure_offerings_index(
         }
     }
 
+    // Snapshot cached capabilities once
+    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps_ref = cached_caps.as_ref();
+
     // Try disk cache first (best-effort)
     if !force_rebuild {
         if let Some(on_disk) = crate::infra::load_offerings_cache::<OfferingsIndexCache>().await? {
             let current = OfferingsFingerprint {
                 moss_version: moss_version_string(),
-                capabilities_hash: current_capabilities_hash(),
+                capabilities_hash: current_capabilities_hash(cached_caps_ref),
                 templates_hash: manifests_hash(&state.manifest_registry)?,
             };
 
@@ -216,7 +202,7 @@ pub async fn ensure_offerings_index(
         }
     }
 
-    let rebuilt = rebuild_offerings_index(&state.manifest_registry)?;
+    let rebuilt = rebuild_offerings_index(&state.manifest_registry, cached_caps_ref)?;
     crate::infra::save_offerings_cache(&rebuilt).await?;
     *state.offerings_index.write().await = Some(rebuilt);
     Ok(())
@@ -249,20 +235,23 @@ pub async fn get_compiled_offering(
 ///
 /// Evaluates compatibility rules and compiles all offerings.
 /// Returns cache-ready index with fingerprint.
-pub fn rebuild_offerings_index(registry: &ManifestRegistry) -> Result<OfferingsIndexCache> {
+pub fn rebuild_offerings_index(
+    registry: &ManifestRegistry,
+    cached_capabilities: Option<&garden_common::HardwareCapabilities>,
+) -> Result<OfferingsIndexCache> {
     let mut entries: Vec<_> = registry.sw.entries.values().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     let fingerprint = OfferingsFingerprint {
         moss_version: moss_version_string(),
-        capabilities_hash: current_capabilities_hash(),
+        capabilities_hash: current_capabilities_hash(cached_capabilities),
         templates_hash: manifests_hash(registry)?,
     };
 
     let mut offerings = Vec::with_capacity(entries.len());
     for entry in entries {
         let mut template = entry.parse_template()?;
-        let compatibility = compile_compatibility(&mut template);
+        let compatibility = compile_compatibility(&mut template, cached_capabilities);
 
         offerings.push(CompiledOffering {
             name: entry.name.clone(),
@@ -298,8 +287,8 @@ mod tests {
 
     #[test]
     fn test_capabilities_hash_stable() {
-        let hash1 = current_capabilities_hash();
-        let hash2 = current_capabilities_hash();
+        let hash1 = current_capabilities_hash(None);
+        let hash2 = current_capabilities_hash(None);
         // Hash should be stable for same capabilities
         assert_eq!(hash1, hash2);
         assert!(!hash1.is_empty());

@@ -266,6 +266,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 
     // First pass: collect offerings that need guidance
     // For backfilling, we use the manifest's ports since existing offerings may only have a single port stored
+    #[allow(clippy::type_complexity)]
     let offerings_needing_guidance: Vec<(
         String,
         String,
@@ -544,20 +545,17 @@ pub async fn install_service_task(
         return;
     }
 
-    match compiled.compatibility.decision.as_str() {
-        "fallback" => {
-            emit_job_progress(
-                state,
-                "warn",
-                format!(
-                    "Compatibility fallback: {}",
-                    compiled.compatibility.reason.clone().unwrap_or_default()
-                ),
-                job_id,
-                offering,
-            );
-        }
-        _ => {}
+    if compiled.compatibility.decision.as_str() == "fallback" {
+        emit_job_progress(
+            state,
+            "warn",
+            format!(
+                "Compatibility fallback: {}",
+                compiled.compatibility.reason.clone().unwrap_or_default()
+            ),
+            job_id,
+            offering,
+        );
     }
 
     // Handle static IP requirements for this offering
@@ -713,7 +711,7 @@ pub async fn install_service_task(
         offering,
     );
     let ports_for_docker = compiled.ports_vec();
-    if let Err(e) = state
+    let actual_ports = match state
         .docker
         .install_service(
             offering,
@@ -725,29 +723,35 @@ pub async fn install_service_task(
         )
         .await
     {
-        state.console.emit(console::ConsoleEvent::new(
-            console::EventCategory::Jobs,
-            console::EventStatus::Failed,
-            format!("Install failed: {}", offering),
-        ));
-        emit_job_failed(
-            state,
-            job_id,
-            offering,
-            &format!("Installation failed: {}", e),
-        );
-        tracing::error!(job_id, offering, error = ?e, "Docker install failed");
-        // Remove Installing entry from registry
-        remove_installing_entry(state, offering).await;
-        let mut jobs = state.jobs.write().await;
-        if let Some(job) = jobs.get_mut(job_id) {
-            job.status = JobStatus::Failed;
-            job.failed
-                .insert(offering.to_string(), format!("Install failed: {}", e));
-            job.completed_at = Some(std::time::SystemTime::now());
+        Ok(resolved) => resolved,
+        Err(e) => {
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Failed,
+                format!("Install failed: {}", offering),
+            ));
+            emit_job_failed(
+                state,
+                job_id,
+                offering,
+                &format!("Installation failed: {}", e),
+            );
+            tracing::error!(job_id, offering, error = ?e, "Docker install failed");
+            // Remove Installing entry from registry
+            remove_installing_entry(state, offering).await;
+            let mut jobs = state.jobs.write().await;
+            if let Some(job) = jobs.get_mut(job_id) {
+                job.status = JobStatus::Failed;
+                job.failed
+                    .insert(offering.to_string(), format!("Install failed: {}", e));
+                job.completed_at = Some(std::time::SystemTime::now());
+            }
+            return;
         }
-        return;
-    }
+    };
+
+    // Use actual Docker-bound port (may differ from manifest if remapped due to conflict)
+    let actual_port = actual_ports.first().map(|(h, _)| *h).unwrap_or(native_port);
 
     emit_job_progress(
         state,
@@ -765,7 +769,7 @@ pub async fn install_service_task(
             existing.status = OfferingStatus::Running;
             existing.health = ServiceHealthStatus::Healthy;
             existing.version = image_version.clone();
-            existing.location.port = native_port;
+            existing.location.port = actual_port;
             existing.location.protocol = offering_protocol.clone();
             if let Some(ref mut managed) = existing.managed_data_mut() {
                 managed.job_id = None;
@@ -785,7 +789,7 @@ pub async fn install_service_task(
                 sub_capabilities: Vec::new(),
                 location: OfferingLocation {
                     host: "localhost".to_string(),
-                    port: native_port,
+                    port: actual_port,
                     protocol: offering_protocol.clone(),
                     agnostic_port: None,
                 },
@@ -1006,7 +1010,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 
         // Install via Docker
         let ports_for_docker = compiled.ports_vec();
-        if let Err(e) = state
+        let actual_ports = match state
             .docker
             .install_service(
                 &service_name,
@@ -1018,14 +1022,20 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             )
             .await
         {
-            tracing::error!(job_id, service = %service_name, error = ?e, "Docker install failed");
-            let mut jobs = state.jobs.write().await;
-            if let Some(job) = jobs.get_mut(job_id) {
-                job.failed
-                    .insert(service_name.clone(), format!("Install failed: {}", e));
+            Ok(resolved) => resolved,
+            Err(e) => {
+                tracing::error!(job_id, service = %service_name, error = ?e, "Docker install failed");
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.failed
+                        .insert(service_name.clone(), format!("Install failed: {}", e));
+                }
+                continue;
             }
-            continue;
-        }
+        };
+
+        // Use actual Docker-bound port (may differ from manifest if remapped due to conflict)
+        let actual_port = actual_ports.first().map(|(h, _)| *h).unwrap_or(native_port);
 
         // Add to offerings registry
         let offering_id = generate_guidv7();
@@ -1039,7 +1049,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             sub_capabilities: Vec::new(),
             location: OfferingLocation {
                 host: "localhost".to_string(),
-                port: native_port,
+                port: actual_port,
                 protocol: offering_protocol,
                 agnostic_port: None,
             },

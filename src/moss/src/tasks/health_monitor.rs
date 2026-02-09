@@ -64,7 +64,7 @@ pub async fn health_monitor_task(state: AppState) {
             offerings
                 .iter()
                 .filter(|o| o.is_managed())
-                .map(|o| (o.offering_id.clone(), o.name.clone(), o.status.clone(), o.health.clone()))
+                .map(|o| (o.offering_id.clone(), o.name.clone(), o.status, o.health.clone()))
                 .collect()
         };
 
@@ -115,6 +115,27 @@ pub async fn health_monitor_task(state: AppState) {
                 if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
                     if let Some(ref mut managed) = offering.managed_data_mut() {
                         managed.resources = Some(resources);
+                    }
+                }
+            }
+
+            // Port reconciliation: detect if Docker port bindings differ from registry
+            if new_status == OfferingStatus::Running {
+                if let Ok(docker_ports) = state.docker.get_container_ports(&name).await {
+                    if let Some((actual_host_port, _)) = docker_ports.first() {
+                        let mut offerings = state.offerings.write().await;
+                        if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                            if offering.location.port != *actual_host_port {
+                                tracing::info!(
+                                    offering = %name,
+                                    registry_port = offering.location.port,
+                                    docker_port = *actual_host_port,
+                                    "Port mismatch detected, updating registry"
+                                );
+                                offering.location.port = *actual_host_port;
+                                state_changed = true;
+                            }
+                        }
                     }
                 }
             }
@@ -190,6 +211,8 @@ pub async fn health_monitor_task(state: AppState) {
         // Check for containers not in offerings (external changes)
         // This provides self-heal: if someone manually starts a zen-offering container,
         // moss will adopt it into the offerings registry
+        let cached_caps = state.capabilities.read().await.clone();
+        let cached_caps_ref = cached_caps.as_ref();
         match state.docker.list_zen_containers().await {
             Ok(container_names) => {
                 for container_name in &container_names {
@@ -201,7 +224,7 @@ pub async fn health_monitor_task(state: AppState) {
 
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
-                        match adopt_offering_container(&state.docker, &state.manifest_registry, container_name, &state.stone_name).await {
+                        match adopt_offering_container(&state.docker, &state.manifest_registry, container_name, &state.stone_name, cached_caps_ref).await {
                             Ok(Some(offering)) => {
                                 state.upsert_offering(offering, true).await;
                                 state_changed = true;

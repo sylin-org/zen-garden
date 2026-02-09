@@ -78,6 +78,16 @@ impl ContainerRuntime {
     pub async fn get_service_image_id(&self, service_name: &str) -> Result<String> {
         self.docker.get_service_image_id(service_name).await
     }
+
+    /// Get service uptime in seconds (from container StartedAt timestamp)
+    pub async fn get_service_uptime(&self, service_name: &str) -> Result<u64> {
+        self.docker.get_service_uptime(service_name).await
+    }
+
+    /// Get actual port bindings from a running container
+    pub async fn get_container_ports(&self, service_name: &str) -> Result<Vec<(u16, u16)>> {
+        self.docker.get_container_ports(service_name).await
+    }
 }
 
 #[cfg(test)]

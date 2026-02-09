@@ -51,6 +51,10 @@ pub async fn reconcile_services(
         }
     };
 
+    // Snapshot cached capabilities once for all adoptions
+    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps_ref = cached_caps.as_ref();
+
     let mut adopted = Vec::new();
     let mut dropped_invalid = Vec::new();
     let mut skipped_existing = Vec::new();
@@ -67,7 +71,7 @@ pub async fn reconcile_services(
             continue;
         }
 
-        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name).await {
+        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name, cached_caps_ref).await {
             Ok(Some(adopted_offering)) => {
                 tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
                 let mut offerings = state.offerings.write().await;

@@ -269,11 +269,13 @@ pub async fn create_service_v1(
         };
 
         if !in_registry {
+            let cached_caps = state.capabilities.read().await.clone();
             if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
                 &state.docker,
                 &state.manifest_registry,
                 &service_name,
                 &state.stone_name,
+                cached_caps.as_ref(),
             )
             .await
             {

@@ -8,6 +8,7 @@
 //! No I/O here - delegates to metrics module for detection.
 
 use anyhow::Result;
+use garden_common::{DetectionStatus, HardwareCapabilities};
 
 /// Hardware capabilities for compatibility checking
 #[derive(Debug, Clone)]
@@ -54,33 +55,73 @@ pub struct CompiledCompatibility {
 
 /// Get current hardware capabilities for compatibility checking
 ///
-/// Delegates to metrics module for actual detection.
-pub fn get_current_compat_capabilities() -> CompatCheckCapabilities {
-    let (cpu_model, cpu_features, architecture) = garden_common::metrics::system::get_cpu_info()
-        .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
-    let resources = garden_common::metrics::system::collect_stone_resources().ok();
-    let total_memory_mb = resources.as_ref().map(|r| r.memory.total_bytes / 1024 / 1024);
+/// When `cached` contains complete hardware capabilities (from background detection),
+/// builds the result from cache — avoiding expensive subprocess calls like `docker images`.
+/// Falls back to live detection when cache is unavailable or incomplete.
+pub fn get_current_compat_capabilities(
+    cached: Option<&HardwareCapabilities>,
+) -> CompatCheckCapabilities {
+    // Use cached capabilities if detection is complete
+    if let Some(caps) = cached {
+        if caps.detection_status == DetectionStatus::Complete {
+            return build_from_cached(caps);
+        }
+    }
 
-    // Detect GPU/AI capabilities using new ai_runtimes format
-    let gpus = garden_common::metrics::system::detect_gpus();
+    // Fall back to live detection (expensive — shells out to docker, nvidia-smi, etc.)
+    build_from_live_detection()
+}
 
-    // Helper to check if any GPU has a runtime (supports both "cuda" and "cuda:12.2" formats)
+/// Build compat capabilities from cached HardwareCapabilities (fast path)
+fn build_from_cached(caps: &HardwareCapabilities) -> CompatCheckCapabilities {
+    let gpus = &caps.hardware.gpus;
+
     let has_runtime = |runtime_name: &str| {
         gpus.iter().any(|g| {
             g.ai_runtimes.iter().any(|r| {
                 let r_lower = r.to_lowercase();
                 let runtime_lower = runtime_name.to_lowercase();
-                // Match either exact or base runtime (e.g., "cuda" matches "cuda:12.2")
                 r_lower == runtime_lower || r_lower.starts_with(&format!("{}:", runtime_lower))
             })
         })
     };
 
-    let has_cuda = has_runtime("cuda");
-    let has_rocm = has_runtime("rocm");
-    let has_directml = has_runtime("directml");
-    let has_openvino = has_runtime("openvino");
-    let gpu_vram_total_mb: u64 = gpus.iter().filter_map(|g| g.vram_mb).sum();
+    CompatCheckCapabilities {
+        cpu_model: caps.hardware.cpu.model.clone(),
+        cpu_features: caps.hardware.cpu.features.clone(),
+        architecture: Some(caps.hardware.cpu.architecture.clone()),
+        total_memory_mb: Some(caps.hardware.memory.total_mb),
+        os_family: caps
+            .runtime
+            .as_ref()
+            .map(|r| r.os.clone())
+            .unwrap_or_else(|| std::env::consts::OS.to_string()),
+        has_cuda: has_runtime("cuda"),
+        has_rocm: has_runtime("rocm"),
+        has_directml: has_runtime("directml"),
+        has_openvino: has_runtime("openvino"),
+        gpu_vram_total_mb: gpus.iter().filter_map(|g| g.vram_mb).sum(),
+    }
+}
+
+/// Build compat capabilities from live system detection (slow path)
+fn build_from_live_detection() -> CompatCheckCapabilities {
+    let (cpu_model, cpu_features, architecture) = garden_common::metrics::system::get_cpu_info()
+        .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
+    let resources = garden_common::metrics::system::collect_stone_resources().ok();
+    let total_memory_mb = resources.as_ref().map(|r| r.memory.total_bytes / 1024 / 1024);
+
+    let gpus = garden_common::metrics::system::detect_gpus();
+
+    let has_runtime = |runtime_name: &str| {
+        gpus.iter().any(|g| {
+            g.ai_runtimes.iter().any(|r| {
+                let r_lower = r.to_lowercase();
+                let runtime_lower = runtime_name.to_lowercase();
+                r_lower == runtime_lower || r_lower.starts_with(&format!("{}:", runtime_lower))
+            })
+        })
+    };
 
     CompatCheckCapabilities {
         cpu_model: Some(cpu_model),
@@ -88,11 +129,11 @@ pub fn get_current_compat_capabilities() -> CompatCheckCapabilities {
         architecture: Some(architecture),
         total_memory_mb,
         os_family: std::env::consts::OS.to_string(),
-        has_cuda,
-        has_rocm,
-        has_directml,
-        has_openvino,
-        gpu_vram_total_mb,
+        has_cuda: has_runtime("cuda"),
+        has_rocm: has_runtime("rocm"),
+        has_directml: has_runtime("directml"),
+        has_openvino: has_runtime("openvino"),
+        gpu_vram_total_mb: gpus.iter().filter_map(|g| g.vram_mb).sum(),
     }
 }
 
@@ -102,9 +143,10 @@ pub fn get_current_compat_capabilities() -> CompatCheckCapabilities {
 /// Returns structured compatibility result.
 pub fn compile_compatibility(
     template: &mut crate::infra::manifests::ServiceTemplate,
+    cached_capabilities: Option<&HardwareCapabilities>,
 ) -> CompiledCompatibility {
     if let Some(rules) = &template.compatibility {
-        let capabilities = get_current_compat_capabilities();
+        let capabilities = get_current_compat_capabilities(cached_capabilities);
         match evaluate_compatibility(rules, &capabilities) {
             CompatibilityDecision::Pass => CompiledCompatibility {
                 decision: garden_common::COMPAT_PASS.to_string(),

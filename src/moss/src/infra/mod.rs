@@ -31,6 +31,8 @@ pub mod hardware_id;
 pub mod harvest;
 pub mod harvest_store;
 pub mod listeners;
+pub mod log_broadcast;
+pub mod maintenance_store;
 pub mod manifests;
 pub mod network;
 pub mod nurturing_store;

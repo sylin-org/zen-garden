@@ -10,7 +10,7 @@
 
 use crate::{cli::Cli, infra::MossConfig};
 use garden_common::console;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 /// Merged daemon configuration from all sources
 #[derive(Clone)]
@@ -127,9 +127,9 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
 
     let stone_name = explicit_cli_stone_name
         .or_else(|| config.as_ref().and_then(|c| c.stone_name.clone()))
-        .or_else(|| cached_stone_name)
-        .or_else(|| system_hostname)
-        .or_else(|| env_stone_name)
+        .or(cached_stone_name)
+        .or(system_hostname)
+        .or(env_stone_name)
         .unwrap_or_else(|| garden_common::DEFAULT_STONE_NAME.to_string());
 
     Ok(stone_name)
@@ -137,27 +137,57 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
 
 /// Initialize tracing/logging based on configuration
 ///
-/// Adjusts tracing level based on console mode to avoid duplication.
-pub fn init_tracing(config: &DaemonConfig) {
-    // Adjust tracing level based on console mode to avoid duplication with console events
-    // verbose mode: keep INFO for debugging
-    // all other modes: suppress to WARN to avoid spam (console events handle the rest)
-    let default_tracing_level = match config.console_mode {
+/// Composes three tracing layers:
+/// 1. **stderr** — for journald on Linux, console on Windows
+/// 2. **file** — rotating daily log files in `{data_dir}/logs/`
+/// 3. **broadcast** — live log events pushed to a broadcast channel (for SSE streaming)
+///
+/// Returns a `WorkerGuard` that must be held for the lifetime of the process
+/// to ensure the non-blocking file writer flushes on shutdown.
+pub fn init_tracing(
+    config: &DaemonConfig,
+    log_tx: tokio::sync::broadcast::Sender<String>,
+) -> tracing_appender::non_blocking::WorkerGuard {
+    // Per-layer filtering: stderr respects console mode, file+broadcast always capture info+.
+    // This ensures log files and SSE streaming work regardless of console mode (critical on
+    // Windows where interactive = Informative, not Verbose).
+    let stderr_level = match config.console_mode {
         console::ConsoleMode::Verbose => "info",
-        _ => "warn",  // Suppress INFO logs when console events are active
+        _ => "warn",
     };
 
-    // Build filter with suppressions for noisy external crates
-    // mdns_sd emits spurious ERROR logs about IPv6/TYPE_A/TYPE_AAAA on interfaces that are working fine
-    // These are false positives from the library, so we suppress them entirely
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_tracing_level))
-        .add_directive("mdns_sd=off".parse().unwrap());
+    // Helper: build an EnvFilter with mdns_sd suppressed
+    // mdns_sd emits spurious ERROR logs about IPv6/TYPE_A/TYPE_AAAA on interfaces that work fine
+    let make_filter = |default: &str| -> EnvFilter {
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(default))
+            .add_directive("mdns_sd=off".parse().unwrap())
+    };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(false)  // Clean output for journald
-        .with_writer(std::io::stderr)  // Explicit stderr (unbuffered)
+    // Layer 1: stderr — console-mode-aware (warn unless verbose)
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
+        .with_filter(make_filter(stderr_level));
+
+    // Layer 2: rotating log file — always info+ (non-blocking)
+    let logs_dir = garden_common::constants::paths::logs_dir();
+    let _ = std::fs::create_dir_all(&logs_dir); // best-effort
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, "garden-moss.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(non_blocking)
+        .with_filter(make_filter("info"));
+
+    // Layer 3: broadcast channel — always info+ (for live SSE streaming)
+    let broadcast_layer = crate::infra::log_broadcast::LogBroadcastLayer::new(log_tx)
+        .with_filter(make_filter("info"));
+
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(file_layer)
+        .with(broadcast_layer)
         .init();
 
     // Legacy structured log (keep for debugging until full migration)
@@ -169,6 +199,8 @@ pub fn init_tracing(config: &DaemonConfig) {
         config_loaded = config.file_config.is_some(),
         "Moss daemon starting with merged configuration (priority: CLI > Env > Config > Defaults)"
     );
+
+    guard
 }
 
 /// Ensure Windows has a stone_name in config before loading

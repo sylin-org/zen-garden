@@ -141,6 +141,14 @@ pub fn companions_dir() -> String {
     })
 }
 
+/// Get logs directory for daemon file logging
+/// Layout: {data_dir}/logs/
+pub fn logs_dir() -> String {
+    std::env::var("ZG_LOGS_DIR").unwrap_or_else(|_| {
+        format!("{}/logs", data_dir())
+    })
+}
+
 // ============================================================================
 // Linux-Specific Paths (for SSH validation from Windows to Linux stones)
 // ============================================================================

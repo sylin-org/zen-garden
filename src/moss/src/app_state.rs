@@ -190,6 +190,9 @@ pub struct AppState {
     /// See: garden_common::notifications for source keys and tag types.
     pub notifications: Arc<NotificationRegistry>,
 
+    /// Log broadcast channel (for live SSE log streaming)
+    pub log_tx: tokio::sync::broadcast::Sender<String>,
+
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 }
@@ -203,6 +206,7 @@ pub struct AppState {
 /// Background tasks set these flags when subsystems become operational.
 /// Consumers check flags before attempting operations that require readiness.
 #[derive(Clone)]
+#[derive(Default)]
 pub struct SubSystems {
     /// Network subsystem state
     pub network: NetworkSubSystem,
@@ -210,14 +214,6 @@ pub struct SubSystems {
     pub docker: DockerSubSystem,
 }
 
-impl Default for SubSystems {
-    fn default() -> Self {
-        Self {
-            network: NetworkSubSystem::default(),
-            docker: DockerSubSystem::default(),
-        }
-    }
-}
 
 /// Network subsystem state
 ///

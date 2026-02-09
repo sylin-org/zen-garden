@@ -3,7 +3,7 @@ use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions,
     LogsOptions, RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
-use bollard::image::CreateImageOptions;
+use bollard::image::{CreateImageOptions, PruneImagesOptions};
 use bollard::models::{ContainerCreateResponse, HealthStatusEnum, HostConfig, PortBinding};
 use bollard::Docker;
 use futures_util::stream::{Stream, StreamExt, TryStreamExt};
@@ -79,12 +79,7 @@ fn get_default_remediation(port: u16) -> Option<&'static PortRemediation> {
 
 /// Find the next available port in a given range
 fn find_available_port_in_range(start: u16, end: u16) -> Option<u16> {
-    for port in start..=end {
-        if is_port_available(port) {
-            return Some(port);
-        }
-    }
-    None
+    (start..=end).find(|&port| is_port_available(port))
 }
 
 /// Run a shell command and return success status
@@ -391,7 +386,7 @@ impl DockerManager {
         env: Vec<String>,
         volumes: Vec<(String, String)>,
         console: Option<&Arc<ConsolePrinter>>,
-    ) -> Result<()> {
+    ) -> Result<Vec<(u16, u16)>> {
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
@@ -507,7 +502,7 @@ impl DockerManager {
             ));
         }
         tracing::info!(service = %name, container_name = %container_name, "Service started successfully");
-        Ok(())
+        Ok(resolved_ports)
     }
 
     pub async fn remove_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
@@ -922,6 +917,12 @@ impl DockerManager {
         })
     }
 
+    /// Get service uptime in seconds (public wrapper that applies zen-offering prefix)
+    pub async fn get_service_uptime(&self, name: &str) -> Result<u64> {
+        let container_name = zen_offering_container_name(name)?;
+        self.get_container_uptime(&container_name).await
+    }
+
     /// Get container uptime in seconds
     async fn get_container_uptime(&self, container_name: &str) -> Result<u64> {
         let inspect = self
@@ -1194,6 +1195,48 @@ impl DockerManager {
         Ok((image, ports, env, volumes))
     }
 
+    /// Get the actual port bindings from a running container.
+    ///
+    /// Returns `Vec<(host_port, container_port)>` reflecting what Docker is actually
+    /// bound to, which may differ from the manifest if ports were remapped due to conflicts.
+    pub async fn get_container_ports(&self, name: &str) -> Result<Vec<(u16, u16)>> {
+        let container_name = zen_offering_container_name(name)?;
+        let info = self
+            .docker
+            .inspect_container(&container_name, None::<InspectContainerOptions>)
+            .await
+            .context(format!("Failed to inspect container '{}'", container_name))?;
+
+        let mut ports = Vec::new();
+        if let Some(ref host_config) = info.host_config {
+            if let Some(ref bindings) = host_config.port_bindings {
+                for (container_port_key, host_bindings) in bindings {
+                    let container_port: u16 = container_port_key
+                        .split('/')
+                        .next()
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(0);
+                    if container_port == 0 {
+                        continue;
+                    }
+                    if let Some(ref hb_list) = host_bindings {
+                        for hb in hb_list {
+                            let host_port: u16 = hb
+                                .host_port
+                                .as_deref()
+                                .and_then(|p| p.parse().ok())
+                                .unwrap_or(0);
+                            if host_port > 0 {
+                                ports.push((host_port, container_port));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(ports)
+    }
+
     /// Execute a command inside a running container
     ///
     /// Used for quiesce/resume operations during ceremonies.
@@ -1257,6 +1300,30 @@ impl DockerManager {
         let exit_code = inspect.exit_code.unwrap_or(-1);
 
         Ok((exit_code, output))
+    }
+
+    /// Prune dangling Docker images
+    ///
+    /// Returns (count_pruned, bytes_reclaimed).
+    pub async fn prune_dangling_images(&self) -> Result<(usize, u64)> {
+        let mut filters = HashMap::new();
+        filters.insert("dangling", vec!["true"]);
+
+        let options = Some(PruneImagesOptions { filters });
+        let response = self
+            .docker
+            .prune_images(options)
+            .await
+            .context("Failed to prune dangling Docker images")?;
+
+        let count = response
+            .images_deleted
+            .as_ref()
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let bytes = response.space_reclaimed.unwrap_or(0) as u64;
+
+        Ok((count, bytes))
     }
 }
 

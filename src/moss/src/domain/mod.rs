@@ -24,6 +24,7 @@ pub mod events;
 pub mod harvest;
 pub mod health;
 pub mod infrastructure;
+pub mod maintenance;
 pub mod metrics_collection;
 pub mod modes;
 pub mod network;

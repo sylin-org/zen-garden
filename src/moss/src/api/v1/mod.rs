@@ -9,6 +9,8 @@ pub mod garden;
 pub mod health;
 pub mod helpers;
 pub mod jobs;
+pub mod logs;
+pub mod maintenance;
 pub mod manifest;
 pub mod memories;
 pub mod metrics;

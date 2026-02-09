@@ -310,6 +310,24 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/nourishment/stream/:job_id",
             get(api::v1::nourishment::stream_status),
         )
+        // Stone logs (daemon log access)
+        .route(
+            "/api/v1/stone/logs",
+            get(api::v1::logs::get_recent_logs),
+        )
+        .route(
+            "/api/v1/stone/logs/stream",
+            get(api::v1::logs::stream_logs),
+        )
+        // Stone maintenance (caretaking sweeps)
+        .route(
+            "/api/v1/stone/maintenance/history",
+            get(api::v1::maintenance::get_sweep_history),
+        )
+        .route(
+            "/api/v1/stone/maintenance/sweep",
+            post(api::v1::maintenance::trigger_sweep),
+        )
         // Stone nurturing (A/B local backup slots)
         .route(
             "/api/v1/stone/nurturing",

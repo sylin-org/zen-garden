@@ -94,6 +94,7 @@ pub fn start_storage_maintenance(
 /// Handles discovery requests (chirp response), stone chirps (topology updates),
 /// goodbyes, and storage beacons (STORAGE-0003).
 /// Returns immediately after spawning the listener.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_discovery_listener(
     stone_id: String,
     stone_name: String,
@@ -446,6 +447,34 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
 pub fn start_health_monitor(state: AppState) {
     tokio::spawn(async move {
         health_monitor_task(state).await;
+    });
+}
+
+/// Start caretaking maintenance sweep (hourly background task)
+///
+/// Runs all domain sweepers sequentially every hour (5 min delay after boot).
+/// Persists results to disk for API consumption.
+pub fn start_maintenance_sweep(state: AppState) {
+    tokio::spawn(async move {
+        // Wait 5 minutes after boot before first sweep
+        tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+
+            let run = crate::domain::maintenance::run_sweep(&state).await;
+            tracing::info!(
+                status = ?run.overall_status,
+                duration_ms = run.duration_ms,
+                domains = run.reports.len(),
+                "Maintenance sweep complete"
+            );
+
+            if let Err(e) = crate::infra::maintenance_store::save_sweep_run(&run).await {
+                tracing::warn!(error = ?e, "Failed to save sweep report");
+            }
+        }
     });
 }
 
@@ -910,6 +939,9 @@ pub async fn start_all_background_tasks(
     // Start scheduled task scheduler
     start_task_scheduler(state.clone());
     tracing::info!("Started scheduled task scheduler");
+
+    // Start caretaking sweep (hourly maintenance)
+    start_maintenance_sweep(state.clone());
 
     // Start auto-adoption if configured
     if let Some(cfg) = config {

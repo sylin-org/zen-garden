@@ -73,6 +73,18 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | POST | `/api/v1/stone/nourishment/execute` | Execute updates |
 | GET | `/api/v1/stone/nourishment/stream/:job_id` | SSE stream |
 
+### Logs (Daemon)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/logs?lines=100&level=warn` | Recent log lines from file |
+| GET | `/api/v1/stone/logs/stream` | Live log stream (SSE) |
+
+### Maintenance (Caretaking)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/maintenance/history` | Last N sweep reports |
+| POST | `/api/v1/stone/maintenance/sweep` | Trigger immediate sweep |
+
 ---
 
 ## Garden Endpoints (Orchestrated)

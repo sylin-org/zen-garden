@@ -52,7 +52,7 @@ use tokio::sync::RwLock;
 ///
 /// This is the main entry point after CLI parsing and config loading.
 /// Handles all startup phases and background task coordination.
-pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
+pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<String>) -> anyhow::Result<()> {
     let stone_name = config.stone_name.clone();
     let port = config.port;
 
@@ -457,6 +457,8 @@ pub async fn run(config: DaemonConfig) -> anyhow::Result<()> {
         network_metrics_cache: Arc::new(RwLock::new(None)),
         // Notification registry - subsystems set/clear, chirp compiles to tags
         notifications: Arc::new(garden_common::NotificationRegistry::new()),
+        // Log broadcast channel (for live SSE log streaming)
+        log_tx: log_tx.clone(),
         // Subsystem readiness (network_ready managed by NetworkMonitor)
         subsystems: subsystems.clone(),
     };

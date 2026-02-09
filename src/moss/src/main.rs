@@ -52,8 +52,11 @@ async fn main() -> anyhow::Result<()> {
     // Load and merge configuration (CLI > Env > File > Defaults)
     let config = DaemonConfig::from_cli(&cli).await?;
 
-    // Initialize tracing/logging
-    init_tracing(&config);
+    // Create log broadcast channel (for live SSE streaming via API)
+    let (log_tx, _) = tokio::sync::broadcast::channel::<String>(1024);
+
+    // Initialize tracing/logging (returns guard that must be held for process lifetime)
+    let _log_guard = init_tracing(&config, log_tx.clone());
 
     // Handle --force flag: kill existing processes
     if config.force {
@@ -65,5 +68,5 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Run daemon (all orchestration in bootstrap::run)
-    run_daemon(config).await
+    run_daemon(config, log_tx).await
 }

@@ -207,12 +207,18 @@ pub(crate) fn build_txt_properties(
     stone_id: Option<&str>,
     stone_name: &str,
     mac: Option<&str>,
+    version: &str,
+    health: &str,
+    api_port: u16,
 ) -> HashMap<String, String> {
     let mut properties = HashMap::new();
     if let Some(id) = stone_id {
         properties.insert("stone_id".to_string(), id.to_string());
     }
     properties.insert("stone_name".to_string(), stone_name.to_string());
+    properties.insert("version".to_string(), version.to_string());
+    properties.insert("health".to_string(), health.to_string());
+    properties.insert("api_port".to_string(), api_port.to_string());
     if let Some(mac_addr) = mac {
         properties.insert("mac".to_string(), mac_addr.to_string());
     }
@@ -343,6 +349,8 @@ pub(crate) fn parse_sse_event(
 
     let stone_id = txt.get("stone_id").cloned();
     let mac = txt.get("mac").cloned();
+    let version = txt.get("version").cloned();
+    let health = txt.get("health").cloned();
     let endpoint = format!("http://{}:{}", ip, port);
 
     tracing::info!(
@@ -350,6 +358,8 @@ pub(crate) fn parse_sse_event(
         stone_name = %stone_name,
         endpoint = %endpoint,
         mac = ?mac,
+        version = ?version,
+        health = ?health,
         "Koi: Discovered neighbor stone via mDNS"
     );
 
@@ -358,6 +368,8 @@ pub(crate) fn parse_sse_event(
         stone_name,
         endpoint,
         mac,
+        version,
+        health,
         discovered_at: chrono::Utc::now(),
     })
 }

@@ -293,6 +293,7 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
         port,
         mac_for_mdns.as_deref(),
         &current_ip, // Gate: won't register if loopback
+        crate::cli::VERSION,
     )
     .await
     {
@@ -628,6 +629,33 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
         tracing::debug!("IP change handler spawned (uses AppState.announce_resolution_change)");
     }
 
+    // Phase 11.2: mDNS health-change listener
+    // Re-registers mDNS TXT record when stone health transitions (ARCH-0066)
+    if let Some(ref mdns) = state.mdns_handle {
+        let mdns_for_health = mdns.clone();
+        let mut health_rx = state.event_bus.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match health_rx.recv().await {
+                    Ok(crate::domain::DomainEvent::Stone(
+                        crate::domain::StoneEvent::HealthChanged { ref health, .. },
+                    )) => {
+                        mdns_for_health.update_health(health).await;
+                    }
+                    Ok(_) => {} // Ignore non-health events
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "mDNS health listener: missed events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("mDNS health listener: event bus closed");
+                        break;
+                    }
+                }
+            }
+        });
+        tracing::debug!("mDNS health-change listener spawned (ARCH-0066)");
+    }
+
     // Phase 11.3: Sync self_entry services after registry loads
     let state_for_sync = state.clone();
     tokio::spawn(async move {
@@ -666,10 +694,10 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
                                 stone_id: sid,
                                 stone_name: discovered.stone_name,
                                 endpoint: discovered.endpoint,
-                                moss_version: "unknown".to_string(), // mDNS doesn't provide version
+                                moss_version: discovered.version.unwrap_or_else(|| "unknown".to_string()),
                                 services: vec![], // mDNS doesn't provide services
                                 mac: discovered.mac,
-                                health: garden_common::constants::STONE_INITIALIZING.to_string(), // mDNS = early discovery
+                                health: discovered.health.unwrap_or_else(|| garden_common::constants::STONE_INITIALIZING.to_string()),
                                 capabilities: None, // mDNS doesn't provide capabilities
                                 status: garden_common::StoneStatus::Online,
                                 discovered_at: chrono::Utc::now(),

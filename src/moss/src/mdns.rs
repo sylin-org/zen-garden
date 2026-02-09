@@ -9,6 +9,10 @@ pub struct MdnsHandle {
     stone_id: Option<String>,
     stone_name: String,
     port: u16,
+    /// Moss version string (static for process lifetime)
+    version: String,
+    /// Current health status (updated on transitions, guarded by RwLock)
+    health: std::sync::RwLock<String>,
     /// Whether we've registered the service (guards against advertising bad IPs)
     registered: std::sync::atomic::AtomicBool,
 }
@@ -41,6 +45,12 @@ impl MdnsHandle {
             properties.insert("stone_id".to_string(), id.clone());
         }
         properties.insert("stone_name".to_string(), self.stone_name.clone());
+        properties.insert("version".to_string(), self.version.clone());
+        properties.insert("api_port".to_string(), self.port.to_string());
+        {
+            let health = self.health.read().unwrap_or_else(|e| e.into_inner());
+            properties.insert("health".to_string(), health.clone());
+        }
         if let Some(mac_addr) = mac {
             properties.insert("mac".to_string(), mac_addr.to_string());
         }
@@ -87,6 +97,45 @@ impl MdnsHandle {
     pub fn status_label(&self) -> &'static str {
         "mdns-sd (native)"
     }
+
+    /// Update health status and re-register mDNS TXT record
+    ///
+    /// Called when stone health transitions (e.g. thriving → withering).
+    /// Only re-registers if the service is currently registered (has a valid IP).
+    pub async fn update_health(&self, new_health: &str) {
+        {
+            let mut health = self.health.write().unwrap_or_else(|e| e.into_inner());
+            *health = new_health.to_string();
+        }
+
+        if !self.is_registered() {
+            tracing::debug!(
+                health = %new_health,
+                "mDNS health updated (deferred - not yet registered)"
+            );
+            return;
+        }
+
+        // Re-register with updated TXT. We need the current IP, but mdns-sd
+        // handles dedup internally — re-registering with the same instance name
+        // updates the TXT record in-place.
+        // We use "0.0.0.0" as a sentinel which mdns-sd resolves to the current IP.
+        // However, since we pin IPs explicitly, we need to get the current one.
+        // The caller (AppState) should call reregister() with the actual IP if needed.
+        // For health-only updates, we re-register with the hostname trick —
+        // mdns-sd will update the TXT record for the existing registration.
+        let (current_ip, current_mac) = garden_common::infra::network::get_local_ip_and_mac();
+        if current_ip == "127.0.0.1" || current_ip.is_empty() {
+            tracing::debug!("mDNS health update skipped - no valid IP");
+            return;
+        }
+
+        if let Err(e) = self.reregister(&current_ip, current_mac.as_deref()).await {
+            tracing::warn!(error = ?e, health = %new_health, "Failed to re-register mDNS after health change");
+        } else {
+            tracing::info!(health = %new_health, "mDNS TXT record updated with new health status");
+        }
+    }
 }
 
 /// Create mDNS handle, optionally registering immediately
@@ -102,6 +151,7 @@ pub async fn announce_moss(
     port: u16,
     mac: Option<&str>,
     current_ip: &str,
+    version: &str,
 ) -> anyhow::Result<MdnsHandle> {
     use mdns_sd::ServiceDaemon;
 
@@ -112,6 +162,8 @@ pub async fn announce_moss(
         stone_id: stone_id.map(|s| s.to_string()),
         stone_name: stone_name.to_string(),
         port,
+        version: version.to_string(),
+        health: std::sync::RwLock::new("healthy".to_string()),
         registered: std::sync::atomic::AtomicBool::new(false),
     };
 
@@ -155,6 +207,10 @@ pub struct MdnsHandle {
     stone_id: Option<String>,
     stone_name: String,
     port: u16,
+    /// Moss version string (static for process lifetime)
+    version: String,
+    /// Current health status (updated on transitions, guarded by RwLock)
+    health: std::sync::Arc<std::sync::RwLock<String>>,
     /// Shutdown signal for heartbeat task
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
@@ -178,10 +234,14 @@ impl MdnsHandle {
         }
 
         // Register with updated IP
+        let health = self.health.read().unwrap_or_else(|e| e.into_inner()).clone();
         let txt = crate::infra::koi_client::build_txt_properties(
             self.stone_id.as_deref(),
             &self.stone_name,
             mac,
+            &self.version,
+            &health,
+            self.port,
         );
 
         match koi
@@ -225,6 +285,37 @@ impl MdnsHandle {
             "unavailable (Koi not running)"
         }
     }
+
+    /// Update health status and re-register mDNS TXT record via Koi
+    ///
+    /// Called when stone health transitions (e.g. thriving → withering).
+    /// No-op if Koi is not available or service is not registered.
+    pub async fn update_health(&self, new_health: &str) {
+        {
+            let mut health = self.health.write().unwrap_or_else(|e| e.into_inner());
+            *health = new_health.to_string();
+        }
+
+        if !self.is_registered() {
+            tracing::debug!(
+                health = %new_health,
+                "mDNS health updated (deferred - not yet registered)"
+            );
+            return;
+        }
+
+        let (current_ip, current_mac) = garden_common::infra::network::get_local_ip_and_mac();
+        if current_ip == "127.0.0.1" || current_ip.is_empty() {
+            tracing::debug!("mDNS health update skipped - no valid IP");
+            return;
+        }
+
+        if let Err(e) = self.reregister(&current_ip, current_mac.as_deref()).await {
+            tracing::warn!(error = ?e, health = %new_health, "Failed to re-register mDNS via Koi after health change");
+        } else {
+            tracing::info!(health = %new_health, "mDNS TXT record updated with new health status via Koi");
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -261,11 +352,13 @@ pub async fn announce_moss(
     port: u16,
     mac: Option<&str>,
     current_ip: &str,
+    version: &str,
 ) -> anyhow::Result<MdnsHandle> {
     use crate::infra::koi_client::{self, KoiClient};
     use std::sync::{Arc, RwLock};
 
     let koi = KoiClient::try_connect().await;
+    let initial_health = "healthy".to_string();
 
     match koi {
         None => {
@@ -276,6 +369,8 @@ pub async fn announce_moss(
                 stone_id: stone_id.map(|s| s.to_string()),
                 stone_name: stone_name.to_string(),
                 port,
+                version: version.to_string(),
+                health: Arc::new(RwLock::new(initial_health)),
                 shutdown_tx: None,
             })
         }
@@ -285,7 +380,7 @@ pub async fn announce_moss(
 
             // Register if IP is valid (defer if loopback)
             let reg_id = if current_ip != "127.0.0.1" && !current_ip.is_empty() {
-                let txt = koi_client::build_txt_properties(stone_id, stone_name, mac);
+                let txt = koi_client::build_txt_properties(stone_id, stone_name, mac, version, &initial_health, port);
 
                 match client
                     .register(
@@ -323,6 +418,8 @@ pub async fn announce_moss(
 
             let reg_id_lock = Arc::new(RwLock::new(reg_id));
 
+            let health = Arc::new(RwLock::new(initial_health));
+
             // Spawn heartbeat task for lease renewal
             tokio::spawn(koi_heartbeat_loop(
                 client.clone(),
@@ -332,6 +429,8 @@ pub async fn announce_moss(
                 stone_id.map(|s| s.to_string()),
                 port,
                 mac.map(|s| s.to_string()),
+                version.to_string(),
+                health.clone(),
             ));
 
             Ok(MdnsHandle {
@@ -340,6 +439,8 @@ pub async fn announce_moss(
                 stone_id: stone_id.map(|s| s.to_string()),
                 stone_name: stone_name.to_string(),
                 port,
+                version: version.to_string(),
+                health,
                 shutdown_tx: Some(shutdown_tx),
             })
         }
@@ -348,6 +449,7 @@ pub async fn announce_moss(
 
 /// Heartbeat loop — renews Koi registration, re-registers on expiry
 #[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
 async fn koi_heartbeat_loop(
     koi: std::sync::Arc<crate::infra::koi_client::KoiClient>,
     reg_id: std::sync::Arc<std::sync::RwLock<Option<String>>>,
@@ -356,6 +458,8 @@ async fn koi_heartbeat_loop(
     stone_id: Option<String>,
     port: u16,
     mac: Option<String>,
+    version: String,
+    health: std::sync::Arc<std::sync::RwLock<String>>,
 ) {
     use crate::infra::koi_client::{self, KoiClient};
 
@@ -388,10 +492,14 @@ async fn koi_heartbeat_loop(
                     continue;
                 }
 
+                let current_health = health.read().unwrap_or_else(|e| e.into_inner()).clone();
                 let txt = koi_client::build_txt_properties(
                     stone_id.as_deref(),
                     &stone_name,
                     mac_fresh.as_deref().or(mac.as_deref()),
+                    &version,
+                    &current_health,
+                    port,
                 );
 
                 match koi
@@ -434,6 +542,10 @@ pub struct MdnsDiscoveredStone {
     pub endpoint: String,
     /// MAC address for Wake-on-LAN support
     pub mac: Option<String>,
+    /// Moss version (from TXT `version` field)
+    pub version: Option<String>,
+    /// Stone health status (from TXT `health` field)
+    pub health: Option<String>,
     pub discovered_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -512,6 +624,19 @@ pub async fn start_mdns_lurk_listener(
                         .find(|p| p.key() == "mac")
                         .map(|p| p.val_str().to_string());
 
+                    // Extract version and health from TXT records
+                    let version: Option<String> = info
+                        .get_properties()
+                        .iter()
+                        .find(|p| p.key() == "version")
+                        .map(|p| p.val_str().to_string());
+
+                    let health: Option<String> = info
+                        .get_properties()
+                        .iter()
+                        .find(|p| p.key() == "health")
+                        .map(|p| p.val_str().to_string());
+
                     // Skip self-announcements
                     if stone_name == self_stone_name {
                         continue;
@@ -525,6 +650,8 @@ pub async fn start_mdns_lurk_listener(
                             stone_name: stone_name.clone(),
                             endpoint: endpoint.clone(),
                             mac: mac.clone(),
+                            version: version.clone(),
+                            health: health.clone(),
                             discovered_at: chrono::Utc::now(),
                         };
 
@@ -533,6 +660,8 @@ pub async fn start_mdns_lurk_listener(
                             stone_name = %stone_name,
                             endpoint = %endpoint,
                             mac = ?mac,
+                            version = ?version,
+                            health = ?health,
                             "mDNS lurk-listener: Discovered neighbor stone"
                         );
 

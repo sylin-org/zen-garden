@@ -1,0 +1,12 @@
+bootia32.efi - 32-bit UEFI GRUB bootloader
+
+Source:  https://github.com/lamadotcare/bootia32-efi
+Built from: GRUB (grub-efi-ia32)
+License: GPLv3+ (GRUB is licensed under the GNU General Public License v3 or later)
+
+This binary is a standalone GRUB EFI bootloader for i386-efi (IA32 UEFI) platforms.
+It enables boot on devices with 32-bit UEFI firmware (e.g., Bay Trail Atom tablets,
+early UEFI-capable machines).
+
+For the full GRUB license text, see: https://www.gnu.org/licenses/gpl-3.0.txt
+For build scripts and source: https://github.com/lamadotcare/bootia32-efi

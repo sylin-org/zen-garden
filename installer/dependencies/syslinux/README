@@ -1,0 +1,12 @@
+SYSLINUX 6.04-pre1 - Legacy BIOS boot support
+
+Source:  https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/Testing/6.04/syslinux-6.04-pre1.zip
+Note:    Version must match Debian's ISOLINUX (6.04). A mismatch causes .c32 module load failures.
+License: GPLv2+ (see LICENSE in this directory)
+
+Files:
+  mbr.bin          - MBR boot code (440 bytes), written to disk MBR sector
+  syslinux64.exe   - Windows 64-bit tool to install SYSLINUX VBR on FAT partitions
+
+These files enable legacy BIOS boot from USB drives formatted by NewStone.ps1.
+Used by Repair-LegacyBoot.ps1 to add legacy boot support to existing NewStone USBs.

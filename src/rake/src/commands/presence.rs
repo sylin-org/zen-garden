@@ -74,10 +74,10 @@ pub async fn presence_command(
         let text = String::from_utf8_lossy(&chunk);
         
         for line in text.lines() {
-            if line.starts_with("event:") {
-                current_event_type = line[6..].trim().to_string();
-            } else if line.starts_with("data:") {
-                let data_part = line[5..].trim();
+            if let Some(stripped) = line.strip_prefix("event:") {
+                current_event_type = stripped.trim().to_string();
+            } else if let Some(stripped) = line.strip_prefix("data:") {
+                let data_part = stripped.trim();
                 if !current_data.is_empty() {
                     current_data.push(b'\n');
                 }

@@ -917,8 +917,7 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                 }
             }
 
-            if seed_bank.is_some() {
-                let (_, name) = seed_bank.as_ref().unwrap();
+            if let Some((_, name)) = seed_bank.as_ref() {
                 bag.record_step(
                     "orchestration_detect_seedbank",
                     format!("Seed bank detected: {}", name),
@@ -1302,11 +1301,10 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
                     .filter(|s| s.get("status").and_then(|st| st.as_str()) == Some("Running"))
                     .count();
 
-                if running_count > 0 {
-                    if best_stone.is_none() || running_count > best_stone.as_ref().unwrap().1 {
+                if running_count > 0
+                    && (best_stone.is_none() || running_count > best_stone.as_ref().unwrap().1) {
                         best_stone = Some((stone.name.clone(), running_count));
                     }
-                }
             }
         }
     }
@@ -2424,7 +2422,7 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
         }
 
         // Test SSH
-        if ssh.test_connectivity(stone).unwrap_or(false) == false {
+        if !ssh.test_connectivity(stone).unwrap_or(false) {
             continue;
         }
 
@@ -2679,7 +2677,7 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
         }
 
         // Test SSH
-        if ssh.test_connectivity(stone).unwrap_or(false) == false {
+        if !ssh.test_connectivity(stone).unwrap_or(false) {
             bag.record_step(
                 format!("physical_retention_ssh_{}", stone.name),
                 format!("{}: SSH not accessible", stone.name),
@@ -2830,7 +2828,7 @@ async fn test_physical_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         }
 
         // Test SSH
-        if ssh.test_connectivity(stone).unwrap_or(false) == false {
+        if !ssh.test_connectivity(stone).unwrap_or(false) {
             continue;
         }
 

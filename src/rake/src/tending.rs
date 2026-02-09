@@ -370,7 +370,7 @@ where
         .into_iter()
         .filter(|r| {
             exclude_endpoint
-                .map(|exclude| &r.stone_endpoint != exclude)
+                .map(|exclude| r.stone_endpoint != exclude)
                 .unwrap_or(true)
         })
         .map(|r| StoneCandidate::from_discovery(&r))

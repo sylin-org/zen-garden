@@ -249,7 +249,7 @@ impl EncryptedFileBackend {
         use std::process::Command;
 
         let output = Command::new("reg")
-            .args(&[
+            .args([
                 "query",
                 "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
                 "/v",

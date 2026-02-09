@@ -204,7 +204,7 @@ fn parse_capability_selectors(
     raw: &str,
 ) -> Result<Vec<CapabilitySelector>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut parsed = Vec::new();
-    for token in raw.split(|c| c == ',' || c == '|') {
+    for token in raw.split([',', '|']) {
         let token = token.trim();
         if token.is_empty() {
             continue;

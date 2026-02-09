@@ -178,17 +178,14 @@ pub struct AnimationContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum Health {
+    #[default]
     Thriving,
     Withering,
     Wilting,
 }
 
-impl Default for Health {
-    fn default() -> Self {
-        Health::Thriving
-    }
-}
 
 /// Default brightness (fairly dim for ambient use)
 const DEFAULT_BRIGHTNESS: u8 = 30;
@@ -530,8 +527,8 @@ impl AnimationEngine {
         // Send to device
         if let Err(e) = self.connection.with_device(|serial| {
             // Clear pixels that were lit before but aren't now
-            for idx in 0..TOTAL_PIXELS {
-                if self.prev_lit[idx] && !currently_lit[idx] {
+            for (idx, (&prev, &curr)) in self.prev_lit.iter().zip(currently_lit.iter()).enumerate() {
+                if prev && !curr {
                     let x = (idx % GRID_SIZE as usize) as u8;
                     let y = (idx / GRID_SIZE as usize) as u8;
                     serial.pixel(x, y, 0, 0, 0)?;
@@ -701,7 +698,7 @@ impl AnimationEngine {
                 let x = CENTER.0 as f32 + angle.cos() * dist;
                 let y = CENTER.1 as f32 + angle.sin() * dist;
 
-                if x >= 0.0 && x <= 4.0 && y >= 0.0 && y <= 4.0 {
+                if (0.0..=4.0).contains(&x) && (0.0..=4.0).contains(&y) {
                     let flicker = ((frame + i * 7) % 3) != 0;
                     if flicker {
                         let _ = self.connection.with_device(|serial| {
@@ -727,7 +724,7 @@ impl AnimationEngine {
                 let fade = (1.0 - disperse_progress).max(0.0);
                 let flicker = ((frame + i * 11) % 4) != 0;
 
-                if x >= 0.0 && x <= 4.0 && y >= 0.0 && y <= 4.0 && flicker && fade > 0.1 {
+                if (0.0..=4.0).contains(&x) && (0.0..=4.0).contains(&y) && flicker && fade > 0.1 {
                     let (r, g, b) = STORAGE_AMBER;
                     let _ = self.connection.with_device(|serial| {
                         serial.pixel(

@@ -3,10 +3,12 @@
 /// Console output mode - determines what events are displayed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ConsoleMode {
     /// No console output (Windows service, systemd with no TTY)
     Silent,
     /// Startup + critical events only (daemon default)
+    #[default]
     Minimal,
     /// Major lifecycle events (interactive default)
     Informative,
@@ -14,11 +16,6 @@ pub enum ConsoleMode {
     Verbose,
 }
 
-impl Default for ConsoleMode {
-    fn default() -> Self {
-        Self::Minimal
-    }
-}
 
 impl std::fmt::Display for ConsoleMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1,10 +1,10 @@
-﻿/// Command manifest system for Zen Garden Rake
-/// 
-/// This module provides a declarative way to define commands with compile-time validation
-/// that ensures every clap command has a corresponding manifest entry.
-///
-/// Philosophy: Single source of truth - commands are defined once in the manifest,
-/// and both the CLI parser and metadata are generated from it.
+﻿//! Command manifest system for Zen Garden Rake
+//!
+//! This module provides a declarative way to define commands with compile-time validation
+//! that ensures every clap command has a corresponding manifest entry.
+//!
+//! Philosophy: Single source of truth - commands are defined once in the manifest,
+//! and both the CLI parser and metadata are generated from it.
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -179,6 +179,12 @@ pub struct CommandDef {
 
 pub struct CommandManifest {
     commands: HashMap<&'static str, CommandDef>,
+}
+
+impl Default for CommandManifest {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CommandManifest {

@@ -529,7 +529,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         let guidance_content = EmbeddedManifests::get_string(&guidance_path)
             .map(|md| garden_common::manifests::offering::strip_markdown_frontmatter(&md));
 
-        match serde_yaml::from_str::<AdoptedFile>(&content) {
+        match serde_yaml::from_str::<AdoptedFile>(content) {
             Ok(file) => {
                 let offering = Offering {
                     name: file.name.unwrap_or(name.clone()),

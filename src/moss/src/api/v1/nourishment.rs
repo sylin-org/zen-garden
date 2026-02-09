@@ -215,12 +215,11 @@ pub async fn execute_garden(
         if let Ok((stone_name, endpoint, Some(check_response))) = task.await {
             // Check if this stone has updates matching the scope
             let has_matching_updates = check_response.updates.available.iter().any(|update| {
-                match (&request.scope, update) {
-                    (UpdateScope::All, _) => true,
-                    (UpdateScope::Offerings, Update::Offering { .. }) => true,
-                    (UpdateScope::Firmware, Update::Firmware { .. }) => true,
-                    _ => false,
-                }
+                matches!((&request.scope, update),
+                    (UpdateScope::All, _)
+                    | (UpdateScope::Offerings, Update::Offering { .. })
+                    | (UpdateScope::Firmware, Update::Firmware { .. })
+                )
             });
             
             if has_matching_updates {
@@ -578,8 +577,7 @@ async fn execute_offering_update(
     {
         let mut offerings = state.offerings.write().await;
         if let Some(o) = offerings.iter_mut().find(|o| o.name == name && o.is_managed()) {
-            o.status = garden_common::OfferingStatus::Installing;  // Reuse for now
-            // TODO V2: Use SERVICE_UPDATING constant when fully wired
+            o.status = garden_common::OfferingStatus::Maintenance;
         }
     }
     
@@ -680,7 +678,7 @@ async fn execute_firmware_update(
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = tx.send(format!("    Firmware updates not supported on this platform"));
+        let _ = tx.send("    Firmware updates not supported on this platform".to_string());
         tokio::time::sleep(Duration::from_secs(1)).await;
         Ok(false)
     }
@@ -820,7 +818,7 @@ async fn check_offering_updates(
                     name: offering.name.clone(),
                     current: current_tag.to_string(),
                     available: newer_tag.clone(),
-                    age_days: None, // TODO: Calculate from registry metadata
+                    age_days: None, // Requires registry API v2 created-timestamp (not available from digest alone)
                 };
 
                 // Check constraints (example: MongoDB 5.0+ requires AVX)
@@ -911,15 +909,14 @@ async fn check_firmware_updates(
         if is_manifest_device {
             if let Some(firmware_cfg) = manifest_config {
                 // Check AC power requirement
-                if firmware_cfg.requires_ac_power.unwrap_or(false) {
-                    if !is_on_ac_power().await {
+                if firmware_cfg.requires_ac_power.unwrap_or(false)
+                    && !is_on_ac_power().await {
                         results.push(Err(BlockedUpdate {
                             update,
                             reason: "Firmware update requires AC power. Please plug in the power Companion.".to_string(),
                         }));
                         continue;
                     }
-                }
                 
                 // Check version constraints
                 if let Some(ref versions) = firmware_cfg.versions {

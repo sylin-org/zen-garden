@@ -245,7 +245,7 @@ pub async fn put_object(
         return resp;
     }
     let key = key.trim_start_matches('/');
-    if let Some(resp) = validate_key(&key) {
+    if let Some(resp) = validate_key(key) {
         return resp;
     }
 
@@ -265,7 +265,7 @@ pub async fn put_object(
                 .unwrap_or("application/octet-stream");
 
             let store = ObjectStore::new(&mount_path);
-            match store.put_object(&bucket, &key, content_type, &body).await {
+            match store.put_object(&bucket, key, content_type, &body).await {
                 Ok(result) => {
                     debug!(bucket = %bucket, key = %key, size = body.len(), "PUT object success");
                     Response::builder()
@@ -317,7 +317,7 @@ pub async fn get_object(
     if key.is_empty() {
         return xml_error(StatusCode::NOT_FOUND, "NoSuchKey", "Object key cannot be empty");
     }
-    if let Some(resp) = validate_key(&key) {
+    if let Some(resp) = validate_key(key) {
         return resp;
     }
 
@@ -332,7 +332,7 @@ pub async fn get_object(
     match route {
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
-            match store.get_object(&bucket, &key).await {
+            match store.get_object(&bucket, key).await {
                 Ok(Some((data, meta))) => {
                     debug!(bucket = %bucket, key = %key, size = data.len(), "GET object success");
                     Response::builder()
@@ -388,7 +388,7 @@ pub async fn head_object(
     if key.is_empty() {
         return Response::builder().status(StatusCode::NOT_FOUND).body("".into()).unwrap();
     }
-    if let Some(resp) = validate_key(&key) {
+    if let Some(resp) = validate_key(key) {
         return resp;
     }
 
@@ -403,7 +403,7 @@ pub async fn head_object(
     match route {
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
-            match store.head_object(&bucket, &key).await {
+            match store.head_object(&bucket, key).await {
                 Ok(Some(meta)) => {
                     debug!(bucket = %bucket, key = %key, "HEAD object success");
                     Response::builder()
@@ -453,7 +453,7 @@ pub async fn delete_object(
         return resp;
     }
     let key = key.trim_start_matches('/');
-    if let Some(resp) = validate_key(&key) {
+    if let Some(resp) = validate_key(key) {
         return resp;
     }
 
@@ -468,7 +468,7 @@ pub async fn delete_object(
     match route {
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
-            match store.delete_object(&bucket, &key).await {
+            match store.delete_object(&bucket, key).await {
                 Ok(_) => {
                     debug!(bucket = %bucket, key = %key, "DELETE object success");
                     Response::builder().status(StatusCode::NO_CONTENT).body("".into()).unwrap()

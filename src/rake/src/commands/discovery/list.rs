@@ -178,11 +178,11 @@ fn format_capability_summary(caps: &[SubCapability]) -> String {
 fn truncate_cap_type(cap_type: &str, plural: bool) -> String {
     let base = match cap_type.to_lowercase().as_str() {
         "model" => if plural { "models" } else { "model" },
-        "extension" => if plural { "ext." } else { "ext." },
+        "extension" => "ext.",
         "module" => if plural { "mods." } else { "mod." },
-        "plugin" => if plural { "plug." } else { "plug." },
-        "collection" => if plural { "coll." } else { "coll." },
-        _ => if plural { cap_type } else { cap_type },
+        "plugin" => "plug.",
+        "collection" => "coll.",
+        _ => cap_type,
     };
     base.to_string()
 }

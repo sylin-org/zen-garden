@@ -284,7 +284,7 @@ fn get_local_ip_and_mac_with_priority() -> Option<(String, Option<String>)> {
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
     let (_, ip, iface_name) = candidates.first()?;
-    let mac = get_mac_for_interface(&iface_name);
+    let mac = get_mac_for_interface(iface_name);
 
     Some((ip.to_string(), mac))
 }

@@ -244,7 +244,7 @@ fn compare_values(a: Option<&Value>, b: &Value) -> Option<Ordering> {
 
     // Try numeric comparison first
     if let (Some(a_num), Some(b_num)) = (a.as_f64(), b.as_f64()) {
-        return Some(a_num.partial_cmp(&b_num)?);
+        return a_num.partial_cmp(&b_num);
     }
 
     // Try string comparison (with semver awareness)

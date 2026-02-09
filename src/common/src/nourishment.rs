@@ -8,18 +8,15 @@ use serde::{Deserialize, Serialize};
 /// Firmware confidence level - indicates how much we've validated this update
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum FirmwareConfidence {
     /// Matched against a hardware manifest - we've tested this device/version
     Tested,
     /// From LVFS/fwupd but not in our manifests - cryptographically signed but not garden-tested
+    #[default]
     Suggested,
 }
 
-impl Default for FirmwareConfidence {
-    fn default() -> Self {
-        Self::Suggested
-    }
-}
 
 /// Unified update model - discriminated by type
 #[derive(Debug, Clone, Serialize, Deserialize)]

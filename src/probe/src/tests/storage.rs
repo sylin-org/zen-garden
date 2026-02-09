@@ -593,7 +593,7 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     let delete_duration = delete_start.elapsed();
 
     match delete_result {
-        Ok(status) if status == 204 => {
+        Ok(204) => {
             bag.record_step(
                 "delete_object",
                 format!("DELETE {} - cleaned up", test_key),

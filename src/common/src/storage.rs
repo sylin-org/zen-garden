@@ -639,8 +639,10 @@ impl SeedBankAnnouncement {
 /// Storage access type for routing
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Default)]
 pub enum StorageAccess {
     /// Stone can access storage directly
+    #[default]
     Direct,
     /// Stone proxies to another gateway
     Proxy {
@@ -649,11 +651,6 @@ pub enum StorageAccess {
     },
 }
 
-impl Default for StorageAccess {
-    fn default() -> Self {
-        Self::Direct
-    }
-}
 
 #[cfg(test)]
 mod tests {

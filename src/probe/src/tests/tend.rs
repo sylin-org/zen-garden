@@ -159,7 +159,7 @@ async fn test_alternatives(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag>
         .stones
         .iter()
         .filter(|s| {
-            garden.tended.as_ref().map(|t| &t.name != &s.name).unwrap_or(true)
+            garden.tended.as_ref().map(|t| t.name != s.name).unwrap_or(true)
         })
         .map(|s| s.name.as_str())
         .collect();
@@ -213,7 +213,7 @@ async fn test_switch_simulation(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     // Find an alternative stone
     let alternative = garden.stones.iter().find(|s| {
-        garden.tended.as_ref().map(|t| &t.name != &s.name).unwrap_or(true)
+        garden.tended.as_ref().map(|t| t.name != s.name).unwrap_or(true)
     });
 
     let result = match alternative {

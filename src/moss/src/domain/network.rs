@@ -25,8 +25,10 @@ use std::net::Ipv4Addr;
 /// Network addressing mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum NetworkMode {
     /// OS-managed DHCP (default)
+    #[default]
     Dhcp,
 
     /// Moss-managed static IP from configured pool
@@ -43,11 +45,6 @@ pub enum NetworkMode {
     },
 }
 
-impl Default for NetworkMode {
-    fn default() -> Self {
-        Self::Dhcp
-    }
-}
 
 impl NetworkMode {
     /// Create a new static mode

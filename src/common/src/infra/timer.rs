@@ -559,7 +559,7 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
 
         for line in stdout.lines() {
             if line.contains("ZenGarden-Nurturing-") {
-                if let Some(name) = line.split(':').last() {
+                if let Some(name) = line.split(':').next_back() {
                     let name = name.trim();
                     if let Some(offering) = name.strip_prefix("ZenGarden-Nurturing-") {
                         tasks.push(offering.to_string());

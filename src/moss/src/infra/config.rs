@@ -82,6 +82,7 @@ pub type ScanSchedulePhase = (u64, i64);
 
 /// Adoption configuration for auto-detection and management
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Default)]
 pub struct AdoptionConfig {
     /// Enable auto-adoption at bootstrap (default: true for regular, false for USB/container)
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -201,18 +202,6 @@ impl AdoptionConfig {
     }
 }
 
-impl Default for AdoptionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: None, // Will use deployment profile detection
-            default_control_level: None,
-            exclude: Vec::new(),
-            detection_cache_ttl_secs: None,
-            stability_threshold: None,
-            scan_schedule: None, // Will use default: [[10, 600], [30, -1]]
-        }
-    }
-}
 
 // ============================================================================
 // Network Configuration
@@ -462,7 +451,7 @@ impl MossConfig {
         let config_path = config_dir.join(garden_common::names::MOSS_CONFIG);
 
         let toml_content = toml::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         std::fs::write(&config_path, toml_content)?;
 

@@ -1294,6 +1294,7 @@ pub async fn prepare_seed_bank_v1(
 }
 
 /// Run the actual preparation job
+#[allow(clippy::too_many_arguments)]
 async fn run_prepare_job(
     job_id: &str,
     device: &str,

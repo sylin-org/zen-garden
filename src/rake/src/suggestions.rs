@@ -1,7 +1,7 @@
-/// Self-teaching suggestions for garden-rake CLI
-///
-/// Suggestions are derived from command_manifest.rs `see_also` field,
-/// ensuring single source of truth for command relationships.
+//! Self-teaching suggestions for garden-rake CLI
+//!
+//! Suggestions are derived from command_manifest.rs `see_also` field,
+//! ensuring single source of truth for command relationships.
 
 use crate::command_manifest::MANIFEST;
 

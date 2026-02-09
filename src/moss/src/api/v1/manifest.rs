@@ -20,6 +20,7 @@ pub async fn get_api_manifest_v1(
 }
 
 /// Build complete API manifest with all endpoints
+#[allow(clippy::vec_init_then_push)]
 fn build_manifest(base_url: &str) -> ApiManifest {
     let mut endpoints = Vec::new();
     

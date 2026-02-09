@@ -340,7 +340,7 @@ pub async fn deploy_stone_v1(
     let staging_base = garden_common::constants::paths::staging_dir();
 
     // Create temporary extraction directory
-    let temp_dir = format!("{}/extract-{}", staging_base, actual_hash[..8].to_string());
+    let temp_dir = format!("{}/extract-{}", staging_base, &actual_hash[..8]);
     if let Err(e) = std::fs::create_dir_all(&temp_dir) {
         tracing::error!(error = ?e, dir = %temp_dir, "Failed to create extraction directory");
         return (
@@ -369,15 +369,9 @@ pub async fn deploy_stone_v1(
 
     // Extract package (tar.gz on Linux/Windows for now)
     tracing::info!(path = %temp_package, "Extracting package...");
-    let extract_result = if cfg!(windows) {
-        std::process::Command::new("tar")
-            .args(&["-xzf", &temp_package, "-C", &temp_dir])
-            .output()
-    } else {
-        std::process::Command::new("tar")
-            .args(&["-xzf", &temp_package, "-C", &temp_dir])
-            .output()
-    };
+    let extract_result = std::process::Command::new("tar")
+        .args(["-xzf", &temp_package, "-C", &temp_dir])
+        .output();
 
     if let Err(e) = extract_result {
         tracing::error!(error = ?e, "Failed to extract package");
@@ -484,7 +478,7 @@ pub async fn deploy_stone_v1(
     // Create validated staging directory
     let validated_dir = format!("{}/validated", staging_base);
     let _ = std::fs::remove_dir_all(&validated_dir); // Clear old staging
-    if let Err(e) = std::fs::create_dir_all(&format!("{}/bin", validated_dir)) {
+    if let Err(e) = std::fs::create_dir_all(format!("{}/bin", validated_dir)) {
         tracing::error!(error = ?e, "Failed to create validated staging");
         let _ = std::fs::remove_dir_all(&temp_dir);
         return (
@@ -550,10 +544,8 @@ pub async fn deploy_stone_v1(
                 let path = entry.path();
                 if path.is_dir() {
                     log_staged_files(&path, base);
-                } else {
-                    if let Ok(rel_path) = path.strip_prefix(base) {
-                        tracing::info!(file = %rel_path.display(), "Staged validated binary");
-                    }
+                } else if let Ok(rel_path) = path.strip_prefix(base) {
+                    tracing::info!(file = %rel_path.display(), "Staged validated binary");
                 }
             }
         }
@@ -569,7 +561,7 @@ pub async fn deploy_stone_v1(
     // Copy scripts if present
     let scripts_dir = package_dir.join("scripts");
     if scripts_dir.exists() {
-        if let Err(e) = std::fs::create_dir_all(&format!("{}/scripts", validated_dir)) {
+        if let Err(e) = std::fs::create_dir_all(format!("{}/scripts", validated_dir)) {
             tracing::warn!(error = ?e, "Failed to create scripts staging");
         } else if let Ok(entries) = std::fs::read_dir(&scripts_dir) {
             for entry in entries.filter_map(|e| e.ok()) {

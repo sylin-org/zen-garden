@@ -15,14 +15,18 @@ pub enum OutputFormat {
     Json,
 }
 
-impl OutputFormat {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for OutputFormat {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "json" => Self::Json,
             _ => Self::Human,
-        }
+        })
     }
+}
 
+impl OutputFormat {
     pub fn is_json(&self) -> bool {
         matches!(self, Self::Json)
     }
@@ -87,6 +91,7 @@ impl CommandContext {
     }
 
     /// Create context with all options including automation flags
+    #[allow(clippy::too_many_arguments)]
     pub fn with_automation(
         client: reqwest::Client,
         endpoint: Option<String>,

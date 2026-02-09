@@ -183,6 +183,7 @@ fn cmd_list(category: Option<String>, tag: Option<String>) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_run(
     use_udp: bool,
     timeout: Duration,

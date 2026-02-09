@@ -139,7 +139,7 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             memory_percent,
             disk_percent,
             uptime_seconds: uptime,
-            pond_active: false, // TODO: Real pond status
+            pond_active: false, // Pond security not yet implemented
         },
         offerings,
         timestamp: chrono::Utc::now(),
@@ -189,12 +189,10 @@ fn translate_to_presence(sse_event: SseEvent, filter: &EventFilter) -> Option<Ev
     if let Some(ref offering) = sse_event.offering {
         data["service"] = serde_json::Value::String(offering.clone());
     }
-    if let Some(ref extra) = sse_event.data {
+    if let Some(serde_json::Value::Object(map)) = sse_event.data.as_ref() {
         // Merge extra data
-        if let serde_json::Value::Object(map) = extra {
-            for (k, v) in map {
-                data[k] = v.clone();
-            }
+        for (k, v) in map {
+            data[k] = v.clone();
         }
     }
 

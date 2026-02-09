@@ -105,6 +105,7 @@ pub type ShutdownCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> 
 /// - Admin-initiated shutdown via notify channel
 /// - In-flight request draining
 /// - Goodbye announcement via shutdown_callback (if provided)
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     listener: TcpListener,
     app: Router,

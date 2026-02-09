@@ -14,17 +14,18 @@ pub struct JsonJobPersistence {
     storage: JsonStorage<HashMap<String, Job>>,
 }
 
+impl Default for JsonJobPersistence {
+    fn default() -> Self {
+        Self::new(PathBuf::from(crate::constants::paths::jobs_file()))
+    }
+}
+
 impl JsonJobPersistence {
     /// Create a new JSON job persistence instance with a custom file path
     pub fn new(file_path: PathBuf) -> Self {
         Self {
             storage: JsonStorage::new(file_path),
         }
-    }
-
-    /// Create with default path (uses data_dir())
-    pub fn default() -> Self {
-        Self::new(PathBuf::from(crate::constants::paths::jobs_file()))
     }
 
     /// Load all jobs from storage

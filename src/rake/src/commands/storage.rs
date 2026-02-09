@@ -332,6 +332,12 @@ pub struct ShowSeedBanksCommand {
     pub quiet: bool,
 }
 
+impl Default for ShowSeedBanksCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShowSeedBanksCommand {
     pub fn new() -> Self {
         Self { quiet: false }

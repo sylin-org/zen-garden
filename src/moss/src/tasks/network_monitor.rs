@@ -207,7 +207,7 @@ async fn network_monitor_task(
     config: NetworkMonitorConfig,
     network_ready: Arc<AtomicBool>,
 ) {
-    let mut was_disconnected = is_disconnected(&*current_ip.read().await);
+    let mut was_disconnected = is_disconnected(&current_ip.read().await);
 
     loop {
         // Determine poll interval based on current state

@@ -516,7 +516,7 @@ pub async fn remove_offering_capability_v1(
     // Execute remove operation
     let executor = CapabilityExecutor::new();
     let result = executor
-        .remove_capability(&service, &manifest, mode, cap_type, &capability_name)
+        .remove_capability(&service, manifest, mode, cap_type, &capability_name)
         .await
         .map_err(|e| {
             error_response(
@@ -1278,9 +1278,7 @@ async fn resolve_offering_for_capability(
 
     // Prefer a single running instance when multiple exist.
     let running: Vec<Offering> = matches
-        .iter()
-        .cloned()
-        .filter(|o| o.status == OfferingStatus::Running)
+        .iter().filter(|&o| o.status == OfferingStatus::Running).cloned()
         .collect();
 
     let selected = if running.len() == 1 {

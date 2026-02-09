@@ -5,10 +5,7 @@
 //! ## Usage in build.rs
 //!
 //! ```no_run
-//! // build.rs
-//! fn main() {
-//!     garden_build_utils::capture_build_number();
-//! }
+//! garden_build_utils::capture_build_number();
 //! ```
 //!
 //! Then in your code:
@@ -27,10 +24,7 @@
 /// # Example
 ///
 /// ```no_run
-/// // build.rs
-/// fn main() {
-///     garden_build_utils::capture_build_number();
-/// }
+/// garden_build_utils::capture_build_number();
 /// ```
 pub fn capture_build_number() {
     let build_number = std::env::var("CARGO_BUILD_NUMBER").unwrap_or_else(|_| "dev".to_string());

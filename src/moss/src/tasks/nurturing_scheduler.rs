@@ -56,8 +56,10 @@ pub struct ReplicationAttempt {
 /// Seed bank routing strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RoutingStrategy {
     /// Use the first available seed bank
+    #[default]
     First,
     /// Use the seed bank with most available capacity
     MostCapacity,
@@ -65,11 +67,6 @@ pub enum RoutingStrategy {
     All,
 }
 
-impl Default for RoutingStrategy {
-    fn default() -> Self {
-        Self::First
-    }
-}
 
 /// Configuration for the nurturing workflow
 #[derive(Debug, Clone)]

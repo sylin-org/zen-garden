@@ -355,8 +355,9 @@ pub async fn get_portrait_data(
     // === Identity ===
     let stone_color = derive_stone_color(&state.stone_id);
     
-    // Determine role (simple heuristic - could be enhanced)
-    let role = "STONE".to_string(); // TODO: detect LANTERN/CORNERSTONE from state
+    // Role is always STONE for now — multi-role (LANTERN, CORNERSTONE) requires
+    // a role field in AppState once Pond/elections are implemented.
+    let role = "STONE".to_string();
     
     // Build endpoint URL
     let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);

@@ -334,7 +334,7 @@ fn parse_capability_selectors(
     let mut parsed = Vec::new();
     let mut seen = BTreeSet::new();
 
-    for raw in selectors.split(|c| c == ',' || c == '|') {
+    for raw in selectors.split([',', '|']) {
         let selector = parse_capability_selector(raw, default_capability_type)?;
         let key = format!(
             "{}:{}",

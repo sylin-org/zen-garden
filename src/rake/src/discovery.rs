@@ -203,7 +203,7 @@ pub fn discover_all_moss_stream<F>(
     on_discovered: F,
 ) -> Result<usize>
 where
-    F: FnMut(DiscoveryResponse, std::time::Instant) -> () + Send,
+    F: FnMut(DiscoveryResponse, std::time::Instant) + Send,
 {
     // Create a new runtime for truly synchronous contexts only
     let rt = tokio::runtime::Runtime::new()?;
@@ -475,8 +475,8 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
     }
 
     let final_results = match Arc::try_unwrap(results) {
-        Ok(mutex) => mutex.into_inner().unwrap(),
-        Err(arc) => arc.lock().unwrap().clone(),
+        Ok(mutex) => mutex.into_inner().unwrap_or_else(|e| e.into_inner()),
+        Err(arc) => arc.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     };
 
     tracing::debug!(total = final_results.len(), "Auto-discovery complete");

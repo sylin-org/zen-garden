@@ -158,9 +158,7 @@ async fn resolve_stone_endpoint(stone: &str) -> anyhow::Result<String> {
         return Ok(stone.to_string());
     }
     
-    // Try to resolve via observe/topology
-    // For now, assume format http://{stone}:7185
-    // TODO: Proper discovery lookup
+    // Stone names resolve via mDNS/DNS, so http://{name}:{port} is the standard pattern
     Ok(format!("http://{}:{}", stone, garden_common::constants::MOSS_HTTP))
 }
 
@@ -282,7 +280,7 @@ async fn list_companions(endpoint: &str, ctx: &CommandContext) -> CommandResult 
         let running = companion.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
         let pid = companion.get("pid").and_then(|v| v.as_u64());
 
-        let status_icon = if running { "?" } else { "?" };
+        let status_icon = "?";
         let status_text = if running {
             if let Some(p) = pid {
                 format!(" [PID {}]", p)

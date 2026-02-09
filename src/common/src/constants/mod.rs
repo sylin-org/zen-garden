@@ -80,13 +80,13 @@ pub const STONE_PASSWORD: &str = "stone";
 // Standard Error Codes
 // ============================================================================
 
-/// Standard error codes for consistent API error responses
-/// 
-/// Mapped to HTTP status codes:
-/// - 400 Bad Request: INVALID_REQUEST, TEMPLATE_NOT_FOUND, CONTAINER_NOT_RUNNING
-/// - 404 Not Found: SERVICE_NOT_FOUND, OFFERING_NOT_FOUND, NOT_FOUND, JOB_NOT_FOUND
-/// - 500 Internal Server Error: DOCKER_ERROR, INTERNAL_ERROR, REMOVE_FAILED, TEMPLATE_LOAD_FAILED, UPGRADE_FAILED
-/// - 503 Service Unavailable: DOCKER_UNAVAILABLE
+// Standard error codes for consistent API error responses
+//
+// Mapped to HTTP status codes:
+// - 400 Bad Request: INVALID_REQUEST, TEMPLATE_NOT_FOUND, CONTAINER_NOT_RUNNING
+// - 404 Not Found: SERVICE_NOT_FOUND, OFFERING_NOT_FOUND, NOT_FOUND, JOB_NOT_FOUND
+// - 500 Internal Server Error: DOCKER_ERROR, INTERNAL_ERROR, REMOVE_FAILED, TEMPLATE_LOAD_FAILED, UPGRADE_FAILED
+// - 503 Service Unavailable: DOCKER_UNAVAILABLE
 
 // 400 Bad Request
 pub const INVALID_REQUEST: &str = "INVALID_REQUEST";

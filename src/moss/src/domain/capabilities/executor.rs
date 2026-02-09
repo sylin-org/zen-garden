@@ -822,7 +822,7 @@ impl CapabilityExecutor {
             .lines()
             .map(|line| line.trim())
             .filter(|line| !line.is_empty())
-            .map(|name| CapabilityItem::new(name))
+            .map(CapabilityItem::new)
             .collect();
 
         Ok(items)

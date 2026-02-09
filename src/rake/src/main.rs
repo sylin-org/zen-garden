@@ -71,6 +71,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::enum_variant_names)]
 enum Commands {
     /// Get Stone status (alias for stone details)
     #[command(hide = false)]
@@ -1641,7 +1642,7 @@ async fn async_main() -> anyhow::Result<()> {
     let output_format = if cli.field.is_some() {
         garden_rake::context::OutputFormat::Json
     } else {
-        garden_rake::context::OutputFormat::from_str(&cli.output)
+        cli.output.parse().unwrap()
     };
     let field = cli.field.clone();
 
@@ -1830,7 +1831,7 @@ async fn async_main() -> anyhow::Result<()> {
                 // Field extraction or global JSON mode -> use JSON internally
                 commands::discovery::FindOutputFormat::Json
             } else {
-                commands::discovery::FindOutputFormat::from_str(&format)
+                format.parse().unwrap()
             };
             let wishfully = wishful || parsed_keywords.as_ref().map(|k| k.wishfully).unwrap_or(false);
             let cmd = commands::discovery::FindCommand::with_field(

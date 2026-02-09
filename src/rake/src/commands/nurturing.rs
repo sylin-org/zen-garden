@@ -689,7 +689,7 @@ impl NurturingStatusCommand {
                                         for snap in matching.iter().take(5) {
                                             let size_str = snap
                                                 .size_bytes
-                                                .map(|s| format_bytes(s))
+                                                .map(format_bytes)
                                                 .unwrap_or_else(|| "?".to_string());
                                             println!(
                                                 "      {} - {} ({})",
@@ -888,7 +888,7 @@ impl Command for NurturingListCommand {
                                         total_count += 1;
                                         let size_str = snap
                                             .size_bytes
-                                            .map(|s| format_bytes(s))
+                                            .map(format_bytes)
                                             .unwrap_or_else(|| "?".to_string());
                                         println!(
                                             "    {} - {} - {}",

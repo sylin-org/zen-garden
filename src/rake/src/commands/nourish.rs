@@ -193,17 +193,11 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
                 .collect();
             
             let firmware_tested: Vec<_> = stone.updates.available.iter()
-                .filter_map(|u| match u {
-                    Update::Firmware { confidence: FirmwareConfidence::Tested, .. } => Some(u),
-                    _ => None,
-                })
+                .filter(|u| matches!(u, Update::Firmware { confidence: FirmwareConfidence::Tested, .. }))
                 .collect();
-            
+
             let firmware_suggested: Vec<_> = stone.updates.available.iter()
-                .filter_map(|u| match u {
-                    Update::Firmware { confidence: FirmwareConfidence::Suggested, .. } => Some(u),
-                    _ => None,
-                })
+                .filter(|u| matches!(u, Update::Firmware { confidence: FirmwareConfidence::Suggested, .. }))
                 .collect();
             
             // Display offerings

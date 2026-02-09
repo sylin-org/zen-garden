@@ -14,6 +14,13 @@ pub struct FileSystem {
     data_dir: PathBuf,
 }
 
+#[cfg(target_os = "windows")]
+impl Default for FileSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileSystem {
     /// Create a new filesystem handler
     #[cfg(target_os = "linux")]

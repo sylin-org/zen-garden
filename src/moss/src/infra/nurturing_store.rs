@@ -28,7 +28,7 @@ use crate::domain::harvest::HarvestManifest;
 use crate::infra::{HarvestStore, create_harvest};
 use crate::docker::DockerManager;
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use garden_common::paths;
 use garden_common::storage::MemoriesOfferingManifest;
 
@@ -558,7 +558,7 @@ impl NurturingStore {
     }
 
     /// Create a compressed archive of a harvest directory and return its contents
-    async fn create_harvest_archive(&self, harvest_path: &PathBuf) -> Result<Vec<u8>> {
+    async fn create_harvest_archive(&self, harvest_path: &Path) -> Result<Vec<u8>> {
         // Use temporary file for archive (tar command needs file output)
         let temp_archive = harvest_path.with_extension("tar.gz.tmp");
 
@@ -577,7 +577,7 @@ impl NurturingStore {
     }
 
     /// Extract a harvest archive from data to a directory
-    async fn extract_harvest_archive(&self, target_path: &PathBuf, archive_data: &[u8]) -> Result<()> {
+    async fn extract_harvest_archive(&self, target_path: &Path, archive_data: &[u8]) -> Result<()> {
         // Write archive data to temp file (tar command needs file input)
         let temp_archive = target_path.with_extension("tar.gz.tmp");
 

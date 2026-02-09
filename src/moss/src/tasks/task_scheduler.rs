@@ -18,9 +18,6 @@ use anyhow::Result;
 use garden_common::{ScheduledTask, TaskResult};
 use std::time::Duration;
 
-#[allow(unused_imports)]
-use tracing::{debug, error, info, warn};
-
 /// Task scheduler configuration
 #[derive(Debug, Clone)]
 pub struct TaskSchedulerConfig {

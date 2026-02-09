@@ -23,8 +23,10 @@ use std::time::Duration;
 
 /// Output format for find command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum FindOutputFormat {
     /// Human-readable output (default)
+    #[default]
     Human,
     /// JSON output
     Json,
@@ -34,20 +36,17 @@ pub enum FindOutputFormat {
     UriIp,
 }
 
-impl Default for FindOutputFormat {
-    fn default() -> Self {
-        Self::Human
-    }
-}
 
-impl FindOutputFormat {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for FindOutputFormat {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "json" => Self::Json,
             "uri" | "connection-string" => Self::Uri,
             "uri-ip" | "ip" => Self::UriIp,
             _ => Self::Human,
-        }
+        })
     }
 }
 
@@ -373,7 +372,7 @@ impl FindCommand {
                 if msg.contains("Job ID:") {
                     msg.split("Job ID:")
                         .nth(1)
-                        .map(|s| s.trim().split_whitespace().next().unwrap_or(""))
+                        .map(|s| s.split_whitespace().next().unwrap_or(""))
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                 } else {

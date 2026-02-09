@@ -368,6 +368,7 @@ pub struct StorageMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AiRuntime {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cuda_version: Option<String>,
@@ -379,16 +380,6 @@ pub struct AiRuntime {
     pub has_openvino: bool,
 }
 
-impl Default for AiRuntime {
-    fn default() -> Self {
-        Self {
-            cuda_version: None,
-            rocm_version: None,
-            has_directml: false,
-            has_openvino: false,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfo {
@@ -1120,20 +1111,17 @@ pub enum OfferingMode {
 /// Control level for adopted offerings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum AdoptedControlLevel {
     /// Moss manages lifecycle (start/stop/restart)
     Full,
     /// Moss monitors health only (default - safe)
+    #[default]
     Monitor,
     /// Moss announces existence only (discovery)
     Announce,
 }
 
-impl Default for AdoptedControlLevel {
-    fn default() -> Self {
-        Self::Monitor
-    }
-}
 
 /// Health check method for borrowed offerings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1534,8 +1522,10 @@ pub enum GuidanceTrigger {
 /// Category of scheduled task
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TaskCategory {
     /// Maintenance tasks (updates, cleanup, optimization)
+    #[default]
     Maintenance,
     /// Backup operations
     Backup,
@@ -1545,11 +1535,6 @@ pub enum TaskCategory {
     Custom,
 }
 
-impl Default for TaskCategory {
-    fn default() -> Self {
-        Self::Maintenance
-    }
-}
 
 impl std::fmt::Display for TaskCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

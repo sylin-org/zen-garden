@@ -57,9 +57,7 @@ pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
     // Detect style based on first argument
     let style = if is_zen_verb(first_arg) {
         CommandStyle::Zen
-    } else if first_arg.starts_with("--") || first_arg.starts_with("-") {
-        CommandStyle::Normative
-    } else if is_normative_verb(first_arg) {
+    } else if first_arg.starts_with("--") || first_arg.starts_with("-") || is_normative_verb(first_arg) {
         CommandStyle::Normative
     } else {
         // Unknown verb, let Clap handle the error

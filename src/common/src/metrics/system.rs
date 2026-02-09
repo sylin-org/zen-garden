@@ -60,7 +60,7 @@ fn get_cpu_info_windows() -> Result<(String, Vec<String>, String)> {
     
     // Get CPU model name from WMI
     let output = Command::new("powershell")
-        .args(&["-Command", "Get-WmiObject -Class Win32_Processor | Select-Object -ExpandProperty Name"])
+        .args(["-Command", "Get-WmiObject -Class Win32_Processor | Select-Object -ExpandProperty Name"])
         .output();
     
     if let Ok(output) = output {
@@ -959,12 +959,11 @@ fn detect_ai_runtime(vendor: &str, capabilities: &[String]) -> Option<AiRuntime>
     }
     
     // Intel: Check for OpenVINO
-    if vendor == "Intel" {
-        if detect_openvino() {
+    if vendor == "Intel"
+        && detect_openvino() {
             runtime.has_openvino = true;
             has_any = true;
         }
-    }
     
     if has_any {
         Some(runtime)
@@ -1028,7 +1027,7 @@ fn detect_cuda_toolkit() -> Option<String> {
         if !cuda_path.is_empty() {
             // Try to extract version from path like "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2"
             if let Some(version) = cuda_path.split("v").last() {
-                if version.chars().next().map_or(false, |c| c.is_numeric()) {
+                if version.chars().next().is_some_and(|c| c.is_numeric()) {
                     return Some(version.to_string());
                 }
             }
@@ -1136,7 +1135,7 @@ pub fn detect_os_version() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
-            .args(&["-Command", 
+            .args(["-Command", 
                 "(Get-WmiObject -Class Win32_OperatingSystem).Caption"])
             .output()
             .ok()?;
@@ -1170,7 +1169,7 @@ pub fn detect_kernel_version() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
-            .args(&["-Command", 
+            .args(["-Command", 
                 "(Get-WmiObject -Class Win32_OperatingSystem).Version"])
             .output()
             .ok()?;
@@ -1214,7 +1213,7 @@ pub fn detect_swap() -> Option<u64> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
-            .args(&["-Command", 
+            .args(["-Command", 
                 "(Get-WmiObject -Class Win32_PageFileUsage | Measure-Object -Property AllocatedBaseSize -Sum).Sum"])
             .output()
             .ok()?;
@@ -1397,13 +1396,13 @@ fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)
         let version = if let Some(tag) = image.split(':').nth(1) {
             // Extract version like "12.2.0-base" ? "12.2"
             tag.split('-').next()
-                .and_then(|v| {
+                .map(|v| {
                     // Take major.minor from semver (12.2.0 ? 12.2)
                     let parts: Vec<&str> = v.split('.').collect();
                     if parts.len() >= 2 {
-                        Some(format!("{}.{}", parts[0], parts[1]))
+                        format!("{}.{}", parts[0], parts[1])
                     } else {
-                        Some(v.to_string())
+                        v.to_string()
                     }
                 })
         } else {

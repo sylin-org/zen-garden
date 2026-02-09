@@ -129,7 +129,7 @@ async fn execute_companion_command_local(
     request: &CompanionCommandRequest,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
     // Get Companion and its assigned port
-    let companion = match state.companion_registry.get(&companion_id).await {
+    let companion = match state.companion_registry.get(companion_id).await {
         Some(a) => a,
         None => {
             return Err((
@@ -148,7 +148,7 @@ async fn execute_companion_command_local(
         let moss_endpoint = self_entry.endpoint.clone();
         drop(self_entry);
         
-        if let Err(e) = state.companion_registry.start(&companion_id, &moss_endpoint).await {
+        if let Err(e) = state.companion_registry.start(companion_id, &moss_endpoint).await {
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(CommandResponse::error(format!(

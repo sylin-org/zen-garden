@@ -71,6 +71,7 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
 /// Parse manifest snippet YAML to extract ports, env, and volumes
 ///
 /// This is a simplified parser - in production we'd use the full template parser.
+#[allow(clippy::type_complexity)]
 fn parse_manifest_config(
     snippet_yaml: &str,
 ) -> Result<(Vec<(u16, u16)>, Vec<String>, Vec<(String, String)>)> {

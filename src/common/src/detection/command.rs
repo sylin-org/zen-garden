@@ -20,22 +20,16 @@ fn get_windows_fallback_paths(program: &str) -> Vec<String> {
 
     // Get LOCALAPPDATA for user-installed programs
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        match program {
-            "ollama" => {
-                // Standard Ollama install path
-                paths.push(format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data));
-            }
-            _ => {}
+        if program == "ollama" {
+            // Standard Ollama install path
+            paths.push(format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data));
         }
     }
 
     // Common Program Files locations
     if let Ok(program_files) = std::env::var("ProgramFiles") {
-        match program {
-            "ollama" => {
-                paths.push(format!("{}\\Ollama\\ollama.exe", program_files));
-            }
-            _ => {}
+        if program == "ollama" {
+            paths.push(format!("{}\\Ollama\\ollama.exe", program_files));
         }
     }
 

@@ -172,7 +172,7 @@ impl MdnsHandle {
         };
 
         // Unregister old (best-effort, ignore errors)
-        let old_id = self.reg_id.read().unwrap().clone();
+        let old_id = self.reg_id.read().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(old_id) = old_id {
             let _ = koi.unregister(&old_id).await;
         }
@@ -196,7 +196,7 @@ impl MdnsHandle {
             .await
         {
             Ok(new_id) => {
-                *self.reg_id.write().unwrap() = Some(new_id);
+                *self.reg_id.write().unwrap_or_else(|e| e.into_inner()) = Some(new_id);
                 tracing::info!(
                     stone_name = %self.stone_name,
                     ip = %ip,
@@ -214,7 +214,7 @@ impl MdnsHandle {
 
     /// Check if service is currently registered with Koi
     pub fn is_registered(&self) -> bool {
-        self.koi.is_some() && self.reg_id.read().unwrap().is_some()
+        self.koi.is_some() && self.reg_id.read().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 
     /// Human-readable backend description for console output
@@ -237,7 +237,7 @@ impl Drop for MdnsHandle {
 
         // Best-effort unregister (fire-and-forget, lease backup expires in 120s)
         if let Some(ref koi) = self.koi {
-            if let Some(id) = self.reg_id.read().unwrap().clone() {
+            if let Some(id) = self.reg_id.read().unwrap_or_else(|e| e.into_inner()).clone() {
                 let client = koi.clone();
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
@@ -368,7 +368,7 @@ async fn koi_heartbeat_loop(
             }
         }
 
-        let current_id = reg_id.read().unwrap().clone();
+        let current_id = reg_id.read().unwrap_or_else(|e| e.into_inner()).clone();
         let Some(id) = current_id else { continue };
 
         match koi.heartbeat(&id).await {
@@ -384,7 +384,7 @@ async fn koi_heartbeat_loop(
                 // Don't re-register with loopback (network might be down)
                 if ip == "127.0.0.1" || ip.is_empty() {
                     tracing::warn!("Koi re-registration skipped - no valid IP available");
-                    *reg_id.write().unwrap() = None;
+                    *reg_id.write().unwrap_or_else(|e| e.into_inner()) = None;
                     continue;
                 }
 
@@ -406,12 +406,12 @@ async fn koi_heartbeat_loop(
                     .await
                 {
                     Ok(new_id) => {
-                        *reg_id.write().unwrap() = Some(new_id);
+                        *reg_id.write().unwrap_or_else(|e| e.into_inner()) = Some(new_id);
                         tracing::info!("Koi re-registration successful after heartbeat 404");
                     }
                     Err(e) => {
                         tracing::warn!(error = ?e, "Koi re-registration failed");
-                        *reg_id.write().unwrap() = None;
+                        *reg_id.write().unwrap_or_else(|e| e.into_inner()) = None;
                     }
                 }
             }

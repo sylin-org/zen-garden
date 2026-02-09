@@ -662,7 +662,7 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
     // Write back
     tokio::fs::write(&config_path, updated_content)
         .await
-        .context(format!("Failed to write moss.toml"))?;
+        .context("Failed to write moss.toml".to_string())?;
     
     display_success("Configuration updated")?;
     Ok(())

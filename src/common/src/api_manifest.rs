@@ -194,10 +194,10 @@ impl EndpointRegistry {
     /// Get or initialize the global registry
     pub fn global() -> &'static EndpointRegistry {
         ENDPOINT_REGISTRY_INSTANCE.get_or_init(|| {
-            let registry = EndpointRegistry::default();
+            
             // Register all endpoints during initialization
             // This happens when the module is first loaded
-            registry
+            EndpointRegistry::default()
         })
     }
 
@@ -219,7 +219,7 @@ impl EndpointRegistry {
         for endpoint in &self.endpoints {
             categories_map
                 .entry(endpoint.category.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(endpoint.path.clone());
         }
 

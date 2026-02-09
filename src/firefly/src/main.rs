@@ -352,11 +352,9 @@ fn list_ports() -> Result<()> {
             serialport::SerialPortType::UsbPort(info) => {
                 let vid_pid = format!("{:04x}:{:04x}", info.vid, info.pid);
                 let product = info
-                    .product
-                    .as_ref()
-                    .map(|s| s.as_str())
+                    .product.as_deref()
                     .unwrap_or("Unknown");
-                let manufacturer = info.manufacturer.as_ref().map(|s| s.as_str()).unwrap_or("");
+                let manufacturer = info.manufacturer.as_deref().unwrap_or("");
 
                 // Detect device type from VID
                 let device_type = FireflyDeviceType::from_vid(info.vid);
@@ -505,11 +503,8 @@ fn probe_device(port_override: Option<String>) -> Result<()> {
     }
 
     // Get help (optional, may not be supported)
-    match serial.send_command("?") {
-        Ok(response) => {
-            println!("  Commands: {}", response.trim_start_matches("OK,"));
-        }
-        Err(_) => {}
+    if let Ok(response) = serial.send_command("?") {
+        println!("  Commands: {}", response.trim_start_matches("OK,"));
     }
 
     Ok(())

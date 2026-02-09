@@ -48,8 +48,7 @@ pub async fn execute(
     tracing::warn!(offering, "Health check failed after {:?}", timeout);
 
     // Step 3: Handle failure - rollback or bail
-    if auto_rollback && harvest_id.is_some() {
-        let harvest_id = harvest_id.unwrap();
+    if let Some(harvest_id) = harvest_id.filter(|_| auto_rollback) {
         tracing::warn!(
             offering,
             harvest_id,

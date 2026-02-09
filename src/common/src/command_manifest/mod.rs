@@ -18,7 +18,9 @@ pub use types::*;
 /// Command argument type for validation
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ArgType {
+    #[default]
     String,
     Integer,
     Boolean,
@@ -27,11 +29,6 @@ pub enum ArgType {
     Enum(Vec<String>),
 }
 
-impl Default for ArgType {
-    fn default() -> Self {
-        Self::String
-    }
-}
 
 /// Command argument definition
 #[derive(Debug, Clone, Serialize, Deserialize)]

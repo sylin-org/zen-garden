@@ -1,0 +1,40 @@
+# SearXNG Compatibility Rules
+# AGPL-3.0 licensed metasearch engine
+# Excellent multi-arch support: amd64, arm64
+# Python/Flask-based — no AVX/SSE requirements
+version: "1"
+
+compatibility_rules:
+  - name: "insufficient-memory"
+    condition:
+      memory_mb_less_than: 128
+    reason: "SearXNG requires at least 128MB RAM"
+    suggestion: "Increase stone memory allocation"
+
+  - name: "low-memory-warning"
+    condition:
+      memory_mb_less_than: 256
+    reason: "SearXNG with many search engines benefits from 256MB+ RAM"
+    suggestion: "Consider increasing RAM for better performance with concurrent queries"
+    warn_only: true
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 30
+  patterns:
+    - pattern: "Cannot allocate memory|OOM|MemoryError"
+      reason: "Insufficient memory for SearXNG"
+      suggestion: "Increase RAM allocation"
+
+    - pattern: "address already in use.*:8080"
+      reason: "Port 8080 already in use"
+      suggestion: "Another service is using port 8080 — the port remap system should handle this automatically on next deploy"
+
+    - pattern: "settings\\.yml.*error|YAML.*error|yaml\\.scanner"
+      reason: "Configuration file syntax error"
+      suggestion: "Check /etc/searxng/settings.yml for YAML syntax issues"
+
+    - pattern: "No valid search engine"
+      reason: "All search engines disabled or unreachable"
+      suggestion: "Check internet connectivity and search engine configuration in settings.yml"

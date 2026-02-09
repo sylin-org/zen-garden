@@ -1,0 +1,8 @@
+{
+  "name": "searxng",
+  "description": "Privacy-respecting metasearch engine aggregating 70+ sources (AGPL-3.0)",
+  "category": "search",
+  "tags": ["search", "metasearch", "privacy", "web"],
+  "ports": [8080],
+  "volumes": ["searxng-data"]
+}

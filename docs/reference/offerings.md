@@ -10,7 +10,7 @@ canonical: true
 
 Complete catalog of all service offerings available in Zen Garden. Each service has a manifest in `manifests/` with Docker Compose snippets and compatibility metadata.
 
-**Total Offerings:** 28 services across 15 categories
+**Total Offerings:** 29 services across 16 categories
 
 ---
 
@@ -29,6 +29,7 @@ Complete catalog of all service offerings available in Zen Garden. Each service 
 | [Networking](#networking) | Pi-hole, WireGuard |
 | [Observability](#observability) | Aspire Dashboard, Grafana, Prometheus |
 | [Proxy](#proxy) | Traefik |
+| [Search](#search) | SearXNG |
 | [Secrets](#secrets) | Vault |
 | [Storage](#storage) | MinIO, Nextcloud |
 | [Time Series](#time-series) | InfluxDB |
@@ -365,6 +366,25 @@ rake plant traefik
 
 ---
 
+## Search
+
+### SearXNG
+
+Privacy-respecting metasearch engine aggregating 70+ sources.
+
+| Property | Value |
+|----------|-------|
+| **Image** | `searxng/searxng:latest` |
+| **Port** | 8080 |
+| **Volumes** | `/etc/searxng` |
+| **Features** | JSON API, configurable engines, no tracking |
+
+```bash
+rake plant searxng
+```
+
+---
+
 ## Secrets
 
 ### Vault
@@ -478,11 +498,12 @@ rake plant milvus
 | Networking | 2 |
 | Observability | 3 |
 | Proxy | 1 |
+| Search | 1 |
 | Secrets | 1 |
 | Storage | 2 |
 | Time Series | 1 |
 | Vector | 2 |
-| **Total** | **28** |
+| **Total** | **29** |
 
 ---
 

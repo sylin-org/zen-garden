@@ -1,0 +1,18 @@
+{
+  "$schema": "../category.schema.json",
+  "name": "search",
+  "description": "Search engines and metasearch services",
+  "aliases": [
+    "metasearch",
+    "web-search",
+    "indexing"
+  ],
+  "tags": [
+    "search",
+    "privacy"
+  ],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
+}

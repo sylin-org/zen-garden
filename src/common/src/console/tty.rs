@@ -589,10 +589,27 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
     let config_dir = crate::constants::paths::config_dir();
     let config_path = format!("{}/{}", config_dir, crate::constants::MOSS_CONFIG);
     
-    // Read current config
-    let config_content = tokio::fs::read_to_string(&config_path)
-        .await
-        .context(format!("Failed to read {}", crate::constants::MOSS_CONFIG))?;
+    // Read current config, creating a default if missing
+    let config_content = match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!(path = %config_path, "Config file not found, creating default");
+            let default = format!(
+                "# garden-moss configuration\n\nport = {}\nlog_level = \"info\"\n",
+                crate::constants::MOSS_HTTP
+            );
+            // Ensure config directory exists
+            let config_dir_path = std::path::Path::new(&config_dir);
+            tokio::fs::create_dir_all(config_dir_path)
+                .await
+                .context("Failed to create config directory")?;
+            tokio::fs::write(&config_path, &default)
+                .await
+                .context(format!("Failed to create default {}", crate::constants::MOSS_CONFIG))?;
+            default
+        }
+        Err(e) => return Err(anyhow::anyhow!("Failed to read {}: {}", crate::constants::MOSS_CONFIG, e)),
+    };
     
     let mut found = false;
     let mut updated_lines: Vec<String> = Vec::new();

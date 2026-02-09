@@ -1,7 +1,10 @@
 # Build container for Zen Garden Linux i386 (32-bit) binaries
 # Cross-compiles from amd64 host to i686-unknown-linux-gnu target.
 # Used by compile-linux-i386.ps1 for 32-bit stone support (e.g., Atom Z5xx).
-FROM rust:latest AS builder
+#
+# Pinned to Bookworm (Debian 12) to match glibc on i386 target stones.
+# rust:latest is based on Trixie (glibc 2.39+) which won't run on Bookworm (glibc 2.36).
+FROM rust:bookworm AS builder
 
 WORKDIR /build
 

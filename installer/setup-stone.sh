@@ -101,7 +101,7 @@ fi
 
 # --- Create directories ---
 log "Creating directories..."
-mkdir -p "$BIN_DIR" "$DATA_DIR" "$CONFIG_DIR" "$STAGING_DIR" "/home/$STONE_USER/bin"
+mkdir -p "$BIN_DIR" "$DATA_DIR" "$CONFIG_DIR" "$STAGING_DIR" "/home/$STONE_USER/bin" "/etc/netplan"
 ok "Directories ready"
 
 # --- Install binaries ---
@@ -149,6 +149,22 @@ if [[ -d "$PACKAGE_DIR/scripts" ]]; then
     done < <(find "$PACKAGE_DIR/scripts" -type f -print0)
 else
     warn "No scripts/ directory in package"
+fi
+
+# --- Ensure garden-moss.toml exists ---
+MOSS_CONFIG="$CONFIG_DIR/garden-moss.toml"
+if [[ ! -f "$MOSS_CONFIG" ]]; then
+    log "Creating default garden-moss.toml..."
+    cat > "$MOSS_CONFIG" << 'TOMLEOF'
+# garden-moss configuration
+
+port = 7185
+log_level = "info"
+TOMLEOF
+    chown "$STONE_USER:$STONE_USER" "$MOSS_CONFIG" 2>/dev/null || true
+    ok "Default config created"
+else
+    ok "garden-moss.toml already exists"
 fi
 
 # --- Install Docker if needed ---

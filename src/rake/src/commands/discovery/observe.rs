@@ -125,15 +125,12 @@ async fn observe_garden(
         .print();
 
     // Fresh mode: For detailed stone info with resource metrics
-    // Note: Fresh mode requires UDP discovery + HTTP fetches (not yet refactored)
+    // Requires UDP discovery + HTTP fetches per stone (not yet implemented)
     if ctx.fresh_mode {
-        // TODO: Implement fresh mode with detailed ServiceInfo fetches
-        // For now, just note that fresh mode is ignored and continue to topology view
-        if ctx.verbose > 0 {
-            layout.line("Note: Fresh mode ignored, using topology cache")
-                .level(IndentLevel::Card)
-                .print();
-        }
+        layout.status("Fresh mode not yet supported, using topology cache")
+            .level(IndentLevel::Card)
+            .warn()
+            .print();
     }
 
     // Use execute_on_stone to handle tended + mDNS fallback with SoC

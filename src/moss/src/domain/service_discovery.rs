@@ -192,7 +192,7 @@ impl ServiceSearchCriteria {
 
 fn parse_capability_items(cap_type: Option<&str>, items: &str) -> Vec<SubCapabilityFilter> {
     items
-        .split(|c| c == ',' || c == '|')
+        .split([',', '|'])
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(|item| SubCapabilityFilter {
@@ -204,7 +204,7 @@ fn parse_capability_items(cap_type: Option<&str>, items: &str) -> Vec<SubCapabil
 
 fn parse_capability_requirements(input: &str) -> Vec<SubCapabilityFilter> {
     input
-        .split(|c| c == ',' || c == '|')
+        .split([',', '|'])
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .map(|token| SubCapabilityFilter {
@@ -453,11 +453,23 @@ pub async fn find_services(
         "Service discovery completed"
     );
 
+    // Compute cache age from the most recent topology entry's last_seen
+    let cache_age_seconds = {
+        let map = state.topology_cache.read().await;
+        map.values()
+            .map(|e| e.last_seen)
+            .max()
+            .map(|newest| {
+                let age = Utc::now().signed_duration_since(newest);
+                age.num_seconds().max(0) as u64
+            })
+    };
+
     ServiceDiscoveryResponse {
         found: !all_services.is_empty(),
         services: all_services,
         source: if fresh { "fresh" } else { "cache" }.to_string(),
-        cache_age_seconds: None, // TODO: Track cache age
+        cache_age_seconds,
         timestamp: Utc::now(),
     }
 }

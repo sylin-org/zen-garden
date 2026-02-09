@@ -156,18 +156,15 @@ impl Default for OutputWriter {
 /// Verbosity level for command output (Phase 3)
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default)]
 pub enum Verbosity {
     Minimal = 0,    // -v0
+    #[default]
     Standard = 1,   // -v1 (DEFAULT)
     Verbose = 2,    // -v2
     Debug = 3,      // -v3
 }
 
-impl Default for Verbosity {
-    fn default() -> Self {
-        Self::Standard
-    }
-}
 
 #[allow(dead_code)]
 impl Verbosity {
@@ -209,7 +206,7 @@ pub fn stone_banner(name: &str, status: &str, color: bool) -> String {
     let prefix = "=== ";
     let middle = format!("{} - {}", name, status_colored);
     // For length calculation, use the uncolored version
-    let middle_len = format!("{} - {}", name, format!("[{}]", status)).len();
+    let middle_len = format!("{} - [{}]", name, status).len();
     let total_len = prefix.len() + middle_len + 1; // +1 for space before equals
     
     let equals = if max_width > total_len {
@@ -247,8 +244,6 @@ pub fn section_header_v2(title: &str, bold: bool, color: bool) -> String {
     
     let title_display = if color && bold {
         title.to_uppercase().bold().to_string()
-    } else if bold {
-        title.to_uppercase()
     } else {
         title.to_uppercase()
     };
@@ -474,9 +469,9 @@ pub fn status_indicator(status: &str, color: bool) -> String {
         crate::VITALITY_NEEDS_ATTENTION
     } else if status_str == "ok" || status_str == crate::HEALTH_HEALTHY {
         crate::VITALITY_THRIVING
-    } else if status_str == "error" || status_str == "failed" || status_str == crate::HEALTH_UNHEALTHY {
-        crate::VITALITY_NEEDS_ATTENTION
-    } else if status_str == "warn" || status_str == "warning" || status_str == crate::HEALTH_DEGRADED {
+    } else if status_str == "error" || status_str == "failed" || status_str == crate::HEALTH_UNHEALTHY
+        || status_str == "warn" || status_str == "warning" || status_str == crate::HEALTH_DEGRADED
+    {
         crate::VITALITY_NEEDS_ATTENTION
     } else {
         return status.to_string();  // Unknown status, pass through without brackets
@@ -604,7 +599,7 @@ fn visible_length(s: &str) -> usize {
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
                 // Skip until we hit a letter (the final character of the sequence)
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c.is_ascii_alphabetic() {
                         break;
                     }
@@ -614,7 +609,7 @@ fn visible_length(s: &str) -> usize {
             visible += 1;
         }
     }
-    
+
     visible
 }
 
@@ -658,14 +653,54 @@ pub fn place_value(left_side: &str, value: &str) -> String {
     let visible = visible_length(left_side);
 
     if visible > target_col {
-        // Truncate with ellipsis - for now, simple truncation
-        // TODO: Smarter truncation that preserves ANSI codes
-        format!("{}... {}", &left_side[..(target_col - 3).min(left_side.len())], value)
+        // ANSI-aware truncation: keep escape sequences, count only visible chars
+        let truncated = truncate_visible(left_side, target_col.saturating_sub(3));
+        format!("{}... {}", truncated, value)
     } else {
         // Pad to target column, add space, value appears at VALUE_COLUMN
         let padded = pad_visible(left_side, target_col);
         format!("{} {}", padded, value)
     }
+}
+
+/// Truncate a string to a maximum visible width, preserving ANSI escape codes.
+///
+/// Walks the string character by character. ANSI escape sequences (ESC [ ... letter)
+/// are always included without counting toward visible width. Once `max_visible`
+/// printable characters have been emitted, the string is cut.
+fn truncate_visible(s: &str, max_visible: usize) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut visible = 0;
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Always include full ANSI escape sequence
+            result.push(ch);
+            if chars.peek() == Some(&'[') {
+                result.push(chars.next().unwrap()); // '['
+                for c in chars.by_ref() {
+                    result.push(c);
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            if visible >= max_visible {
+                break;
+            }
+            result.push(ch);
+            visible += 1;
+        }
+    }
+
+    // Append ANSI reset if the original had escape codes and we truncated
+    if visible >= max_visible && s.contains('\x1b') {
+        result.push_str("\x1b[0m");
+    }
+
+    result
 }
 
 /// Constants for UI rendering

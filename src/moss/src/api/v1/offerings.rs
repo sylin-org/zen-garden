@@ -76,6 +76,10 @@ pub async fn list_offerings_v1(
     if query.state.as_deref() != Some("available") {
         for offering in offerings_guard.iter() {
             let image = state.docker.get_service_image(&offering.name).await.unwrap_or_else(|_| "<unknown>".to_string());
+            let uptime = state.docker.get_service_uptime(&offering.name).await
+                .ok()
+                .filter(|&s| s > 0)
+                .map(garden_common::format_uptime);
             offerings.push(OfferingView {
                 name: offering.name.clone(),
                 state: "installed".to_string(),
@@ -85,7 +89,7 @@ pub async fn list_offerings_v1(
                 image,
                 compatibility: None,
                 health: Some(simplify_health(&offering.status)),
-                uptime: None, // TODO: Track uptime in Offering
+                uptime,
             });
         }
     }

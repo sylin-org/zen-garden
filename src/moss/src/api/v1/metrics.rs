@@ -62,12 +62,14 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
             available_friendly: "0 B".to_string(),
         }));
 
+    let network = state.network_metrics_cache.read().await.clone();
+
     let snapshot = MetricsSnapshot {
         timestamp: chrono::Utc::now().to_rfc3339(),
         cpu: resources.cpu,
         memory: resources.memory,
         disk,
-        network: None, // TODO: Add network metrics
+        network,
         uptime_seconds: resources.uptime_seconds,
     };
 

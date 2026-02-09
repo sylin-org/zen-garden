@@ -1,0 +1,28 @@
+# Build container for Zen Garden Linux i386 (32-bit) binaries
+# Cross-compiles from amd64 host to i686-unknown-linux-gnu target.
+# Used by compile-linux-i386.ps1 for 32-bit stone support (e.g., Atom Z5xx).
+FROM rust:latest AS builder
+
+WORKDIR /build
+
+# Install dependencies including i386 cross-compilation libraries
+RUN dpkg --add-architecture i386 && \
+    apt-get update && apt-get install -y \
+    musl-tools \
+    file \
+    pkg-config \
+    gcc-multilib \
+    libasound2-dev:i386 \
+    libudev-dev:i386 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add i686 Rust target
+RUN rustup target add i686-unknown-linux-gnu
+
+# Configure pkg-config for cross-compilation to i386
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig"
+ENV PKG_CONFIG_SYSROOT_DIR="/"
+
+# Source code is mounted as a volume at runtime via -v flag
+CMD ["bash", "-c", "cargo build --target i686-unknown-linux-gnu --bin garden-moss && cargo build --target i686-unknown-linux-gnu --bin garden-rake"]

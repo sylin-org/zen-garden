@@ -1,0 +1,171 @@
+<#
+.SYNOPSIS
+    Build and package Zen Garden Linux i386 (32-bit) distribution
+
+.DESCRIPTION
+    Complete Linux i386 build pipeline:
+    - Build i386 binaries via Docker cross-compilation
+    - Create deployment package (tar.gz)
+
+    Parallel pipeline to build-linux.ps1 for 32-bit stone support.
+    Output: dist/packages/zen-garden-{version}-linux-i386.tar.gz
+
+.PARAMETER Version
+    Version string (e.g., "0.1.202601251234")
+
+.PARAMETER Tier
+    Build tier: "core" (moss + rake only) or "full" (all binaries)
+    Default: "core" (most i386 stones only need core).
+
+.PARAMETER DebugBuild
+    Build debug binaries
+
+.PARAMETER Fast
+    Use fast-release profile (default, thin LTO)
+
+.PARAMETER ForceRebuild
+    Force rebuild of Docker container
+
+.PARAMETER SkipPackage
+    Skip creating deployment package
+
+.PARAMETER Jobs
+    Number of parallel cargo jobs
+#>
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [string]$Version,
+
+    [ValidateSet('core', 'full')]
+    [string]$Tier = "core",
+
+    [switch]$DebugBuild,
+    [switch]$Fast,
+    [switch]$ForceRebuild,
+    [switch]$SkipPackage,
+    [int]$Jobs = 0
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# Import config module
+Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
+
+$WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
+$DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
+$LINUX_I386_DIR = Join-Path $DIST_DIR "linux-i386"
+
+# Load configuration
+$config = Get-DistConfig -ConfigPath (Join-Path $PSScriptRoot "dist.json")
+
+# Set environment variables for build
+$env:GARDEN_VERSION = $Version
+$env:BUILD_NUMBER = ($Version -split '\.')[-1]
+$env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
+
+Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Magenta
+Write-Host " Linux i386 Build Pipeline" -ForegroundColor Magenta
+Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
+Write-Host "Version: $Version" -ForegroundColor Cyan
+Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
+Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Fast -or (-not $DebugBuild)) { 'fast-release' } else { 'release' })" -ForegroundColor Cyan
+Write-Host ""
+
+# Get build targets for this tier
+$buildTargets = Get-CargoBuildTargets -Config $config -Tier $Tier
+Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
+
+# Build i386 binaries
+$buildScript = Join-Path $PSScriptRoot "compile-linux-i386.ps1"
+$buildArgs = @{
+    Targets = $buildTargets
+}
+if ($DebugBuild) { $buildArgs.Add('DebugBuild', $true) }
+if ($Fast -or (-not $DebugBuild)) { $buildArgs.Add('Fast', $true) }
+if ($ForceRebuild) { $buildArgs.Add('ForceRebuild', $true) }
+if ($Jobs -gt 0) { $buildArgs.Add('Jobs', $Jobs) }
+
+& $buildScript @buildArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Linux i386 build failed"
+}
+
+# Create package
+if (-not $SkipPackage) {
+    Write-Host "`nCreating i386 deployment package..." -ForegroundColor Yellow
+
+    $stagingDir = Join-Path $DIST_DIR "staging\linux-i386"
+    New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+
+    $packageName = "zen-garden-$Version-linux-i386"
+    $packageDir = Join-Path $stagingDir $packageName
+    $tarPath = Join-Path $stagingDir "$packageName.tar.gz"
+
+    if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+    # Copy binaries from dist/linux-i386/
+    $binaries = Get-PlatformBinaries -Config $config -Platform "linux"
+    $includedCount = 0
+    $skippedCount = 0
+    foreach ($binary in $binaries) {
+        $result = Copy-BinaryToStaging -SourceDir $LINUX_I386_DIR -StagingRoot $packageDir -Binary $binary -Platform "linux"
+        if ($result) { $includedCount++ } else { $skippedCount++ }
+    }
+    Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
+
+    # Copy assets
+    $assets = Get-PlatformAssets -Config $config -Platform "linux"
+    foreach ($asset in $assets) {
+        Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
+    }
+
+    # Create package manifest
+    $components = @{}
+    foreach ($binary in $binaries) {
+        $sourceFilename = $binary.Source
+        $sourcePath = Join-Path $LINUX_I386_DIR $sourceFilename
+        if (Test-Path $sourcePath) {
+            $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = ($binary.Destination + $sourceFilename) -replace '\\', '/'
+            $components[$binary.Source] = @{
+                path = $relativePath
+                sha256 = $hash
+                size = (Get-Item $sourcePath).Length
+                required = $binary.Required
+            }
+        }
+    }
+
+    $manifest = @{
+        version = $Version
+        platform = "linux"
+        architecture = "i386"
+        created = (Get-Date).ToUniversalTime().ToString("o")
+        components = $components
+    }
+    $jsonContent = $manifest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText((Join-Path $packageDir "package.json"), $jsonContent, [System.Text.UTF8Encoding]::new($false))
+
+    # Create tar.gz
+    try {
+        $tarFile = "$packageName.tar.gz"
+        & tar -czf $tarFile -C $stagingDir $packageName 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $tarFile)) {
+            Move-Item $tarFile $tarPath -Force
+            $sizeMB = [math]::Round((Get-Item $tarPath).Length / 1MB, 2)
+            Write-Host "`nPackage: $packageName.tar.gz ($sizeMB MB)" -ForegroundColor Green
+            Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
+        } else {
+            throw "tar failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Write-Host "`nLinux i386 build complete" -ForegroundColor Green

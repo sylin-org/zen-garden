@@ -24,7 +24,7 @@ mDNS (Multicast DNS) allows services to announce themselves on local networks. C
 - Stones may offer multiple services (MongoDB + Redis on same device)
 - Backward compatibility required (changing service type breaks discovery)
 
-**Source:** [technical.md § mDNS Discovery](../specs/technical.md#mdns-discovery), [connection-strings.md § mDNS Service Announcement](../reference/connection-strings.md#mdns-service-announcement)
+**Source:** [discovery.md § mDNS Service Types](../specs/discovery.md#mdns-service-types), [connection-strings.md § mDNS Service Announcement](../reference/connection-strings.md#mdns-service-announcement)
 
 ## Decision
 

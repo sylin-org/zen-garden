@@ -64,7 +64,7 @@ Remaining gap: hydration orchestration flow (auto-install + restore from memorie
 **Missing / Incomplete Code Paths (Seed‑Bank‑Relevant)**
 1. Hydration orchestration workflow (auto‑install + restore from memories).
 2. Documented operational gaps in nurturing (retention config, routing strategy, restore commands, health metrics).  
-   Evidence: `docs/TODO-NURTURING-GAPS.md`.
+   Evidence: [nurturing-gaps-todo.md](nurturing-gaps-todo.md).
 
 ---
 

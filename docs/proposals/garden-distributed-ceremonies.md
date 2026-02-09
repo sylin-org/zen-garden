@@ -1415,7 +1415,7 @@ This persists across Moss restarts. Remove with `garden-rake forget stone-03 as 
 
 ## References
 
-- [Technical Specification](../specs/technical.md) — Core architecture
+- [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md) — Core architecture
 - [Discovery Protocol](../specs/discovery.md) — mDNS and UDP broadcast
 - [Offerings Specification](../specs/offerings.md) — Manifest format
 - [Architecture Joy](../architecture/joy-in-infrastructure.md) — Design philosophy

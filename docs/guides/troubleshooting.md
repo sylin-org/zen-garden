@@ -1064,7 +1064,7 @@ docker --version
 
 ## Next Steps
 
-- **Detailed architecture:** [Technical Specification](../specs/technical.md)
+- **Detailed architecture:** [Moss Daemon Lifecycle](../specs/moss-daemon-lifecycle.md)
 - **Security hardening:** [Pond Setup](../security/pond-setup.md)
 - **Operations guide:** [Maintainers Documentation](../ops/maintainers.md)
 - **Service management:** [Offering Services Guide](offering-lifecycle.md)

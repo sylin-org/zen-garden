@@ -1,7 +1,7 @@
 ---
 audience: [contributor]
 doc_type: proposal
-status: draft
+status: implemented
 last_verified: 2026-02-08
 ---
 

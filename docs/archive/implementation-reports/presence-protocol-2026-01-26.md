@@ -284,7 +284,7 @@ curl -N http://localhost:7185/api/v1/stone/presence/stream?categories=stone
 ## Related Documents
 
 - [PRESENCE-0001-implementation-plan.md](PRESENCE-0001-implementation-plan.md) - Original implementation plan
-- [PRESENCE-CODE-ASSESSMENT.md](../../specs/presence-code-assessment.md) - Pre-implementation code review
+- [presence-code-assessment.md](presence-code-assessment.md) - Pre-implementation code review
 - [ARCHITECTURE-REFERENCE.md](ARCHITECTURE-REFERENCE.md) - Centralized utilities and patterns
 
 ## Changelog Entry

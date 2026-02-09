@@ -62,16 +62,19 @@ $distRoot = Resolve-Path "$PSScriptRoot/../dist"
 $packagesDir = Join-Path $distRoot "packages"
 
 $linuxPackage = $null
+$linuxI386Package = $null
 $windowsPackage = $null
 
 if (Test-Path $packagesDir) {
     $linuxPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-amd64.tar.gz" | Sort-Object LastWriteTime -Descending
+    $linuxI386Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-i386.tar.gz" | Sort-Object LastWriteTime -Descending
     $windowsPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-amd64.zip" | Sort-Object LastWriteTime -Descending
     if ($linuxPackages.Count -gt 0) { $linuxPackage = $linuxPackages[0].FullName }
+    if ($linuxI386Packages.Count -gt 0) { $linuxI386Package = $linuxI386Packages[0].FullName }
     if ($windowsPackages.Count -gt 0) { $windowsPackage = $windowsPackages[0].FullName }
 }
 
-if (-not $linuxPackage -and -not $windowsPackage) {
+if (-not $linuxPackage -and -not $linuxI386Package -and -not $windowsPackage) {
     Write-Host "⚠️  No packages found in $packagesDir" -ForegroundColor Yellow
     Write-Host "   Run with -Build flag or run build.ps1 first." -ForegroundColor Yellow
     exit 1
@@ -242,12 +245,14 @@ function Get-StoneInfo {
         $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 3
         return [PSCustomObject]@{
             OS = if ($health.os) { $health.os } else { "linux" }
+            Architecture = if ($health.architecture) { $health.architecture } else { "x86_64" }
             ResolvedEndpoint = $resolvedEndpoint
         }
     }
     catch {
         return [PSCustomObject]@{
             OS = "linux"
+            Architecture = "x86_64"
             ResolvedEndpoint = $resolvedEndpoint
         }
     }
@@ -327,14 +332,17 @@ try {
 
     Write-Status "📦 Using packages:" -ForegroundColor Cyan
     if ($linuxPackage) {
-        Write-Status "   Linux:   $(Split-Path -Leaf $linuxPackage)"
+        Write-Status "   Linux amd64: $(Split-Path -Leaf $linuxPackage)"
     } else {
-        Write-Status "   Linux:   (not available)" -Type "Warning"
+        Write-Status "   Linux amd64: (not available)" -Type "Warning"
+    }
+    if ($linuxI386Package) {
+        Write-Status "   Linux i386:  $(Split-Path -Leaf $linuxI386Package)"
     }
     if ($windowsPackage) {
-        Write-Status "   Windows: $(Split-Path -Leaf $windowsPackage)"
+        Write-Status "   Windows:     $(Split-Path -Leaf $windowsPackage)"
     } else {
-        Write-Status "   Windows: (not available)" -Type "Warning"
+        Write-Status "   Windows:     (not available)" -Type "Warning"
     }
     Write-Host ""
 
@@ -352,16 +360,24 @@ try {
 
     foreach ($stone in $stones) {
         $info = Get-StoneInfo -Stone $stone
-        $platform = if ($info.OS -match "windows") { "Windows" } else { "Linux" }
-        $packagePath = if ($platform -eq "Windows") { $windowsPackage } else { $linuxPackage }
+        $arch = $info.Architecture
+        $platformLabel = if ($info.OS -match "windows") { "Windows amd64" }
+                         elseif ($arch -eq "x86" -or $arch -eq "i686" -or $arch -eq "i386") { "Linux i386" }
+                         else { "Linux amd64" }
+
+        $packagePath = switch -Wildcard ($platformLabel) {
+            "Windows*"    { $windowsPackage }
+            "Linux i386*" { $linuxI386Package }
+            default       { $linuxPackage }
+        }
 
         if (-not $packagePath) {
-            Write-Status "   $($stone.Name): $platform - SKIPPED (no package)" -Type "Warning"
+            Write-Status "   $($stone.Name): $platformLabel - SKIPPED (no package)" -Type "Warning"
             $skippedStones += $stone.Name
             continue
         }
 
-        Write-Status "   $($stone.Name): $platform" -Type "Success"
+        Write-Status "   $($stone.Name): $platformLabel" -Type "Success"
 
         $stoneConfigs += [PSCustomObject]@{
             Stone = [PSCustomObject]@{
@@ -369,7 +385,7 @@ try {
                 Endpoint = $info.ResolvedEndpoint
                 Address = $stone.Address
             }
-            Platform = $platform
+            Platform = $platformLabel
             PackagePath = $packagePath
         }
     }

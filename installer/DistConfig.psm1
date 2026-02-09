@@ -24,6 +24,9 @@ function Get-DistConfig {
     $config.workspace.dist = Resolve-ConfigPath $config.workspace.dist $configDir
     $config.packages.outputDir = Resolve-ConfigPath $config.packages.outputDir $configDir
     $config.staging.linux = Resolve-ConfigPath $config.staging.linux $configDir
+    if ($config.staging.'linux-i386') {
+        $config.staging | Add-Member -NotePropertyName 'linuxI386' -NotePropertyValue (Resolve-ConfigPath $config.staging.'linux-i386' $configDir) -Force
+    }
     $config.staging.windows = Resolve-ConfigPath $config.staging.windows $configDir
     
     return $config

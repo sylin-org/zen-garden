@@ -31,6 +31,9 @@
 .PARAMETER Fast
     Use fast-release profile (default, thin LTO)
 
+.PARAMETER IncludeI386
+    Also build Linux i386 (32-bit) binaries for legacy stones
+
 .PARAMETER ForceRebuild
     Force rebuild of Docker container (Linux only)
 
@@ -48,6 +51,10 @@
 .EXAMPLE
     .\build.ps1 -SkipWindows -Release
     Build Linux only with full release profile
+
+.EXAMPLE
+    .\build.ps1 -IncludeI386
+    Build for all platforms including Linux i386
 #>
 
 [CmdletBinding()]
@@ -57,6 +64,7 @@ param(
 
     [switch]$SkipLinux,
     [switch]$SkipWindows,
+    [switch]$IncludeI386,
     [switch]$DebugBuild,
     [switch]$Release,
     [switch]$Fast,
@@ -161,6 +169,36 @@ if (-not $SkipWindows) {
     }
 }
 
+# Build Linux i386
+if ($IncludeI386) {
+    Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Magenta
+    Write-Host " Linux i386 Build" -ForegroundColor Magenta
+    Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
+
+    $i386Script = Join-Path $PSScriptRoot $config.'linux-i386'.buildScript
+    $i386Tier = $config.'linux-i386'.tier  # i386 always builds core only
+    try {
+        & $i386Script `
+            -Version $version `
+            -Tier $i386Tier `
+            -DebugBuild:$DebugBuild `
+            -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
+            -ForceRebuild:$ForceRebuild `
+            -Jobs $Jobs
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Linux i386 build failed with exit code $LASTEXITCODE"
+        }
+
+        $builtPlatforms += "linux-i386"
+        Write-Host "✓ Linux i386 build complete`n" -ForegroundColor Green
+    }
+    catch {
+        $buildErrors += "Linux i386: $_"
+        Write-Host "✗ Linux i386 build failed: $_`n" -ForegroundColor Red
+    }
+}
+
 # Check for build errors
 if ($buildErrors.Count -gt 0) {
     Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Red
@@ -219,6 +257,23 @@ if ($builtPlatforms -contains "windows") {
     }
 }
 
+# Move Linux i386 package
+if ($builtPlatforms -contains "linux-i386") {
+    $i386StagingDir = $config.staging.linuxI386
+    if ($i386StagingDir -and (Test-Path $i386StagingDir)) {
+        $i386Package = Get-ChildItem $i386StagingDir -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if ($i386Package) {
+            Move-Item $i386Package.FullName $config.packages.outputDir -Force
+            $sizeMB = [math]::Round($i386Package.Length / 1MB, 2)
+            Write-Host "  ✓ $($i386Package.Name) ($sizeMB MB)" -ForegroundColor Green
+            $packagesMoved++
+        } else {
+            Write-Warning "Linux i386 package not found in staging: $i386StagingDir"
+        }
+    }
+}
+
 if ($packagesMoved -eq 0) {
     Write-Host "⚠️  No packages found to consolidate (binaries built but not packaged)" -ForegroundColor Yellow
 } else {
@@ -237,10 +292,13 @@ if ($packagesMoved -gt 0) {
 }
 Write-Host "`nBinaries available in:" -ForegroundColor Cyan
 if ($builtPlatforms -contains "linux") {
-    Write-Host "  Linux: $($config.workspace.dist)/linux" -ForegroundColor Gray
+    Write-Host "  Linux amd64: $($config.workspace.dist)/linux" -ForegroundColor Gray
+}
+if ($builtPlatforms -contains "linux-i386") {
+    Write-Host "  Linux i386:  $($config.workspace.dist)/linux-i386" -ForegroundColor Gray
 }
 if ($builtPlatforms -contains "windows") {
-    Write-Host "  Windows: $($config.workspace.dist)/windows" -ForegroundColor Gray
+    Write-Host "  Windows:     $($config.workspace.dist)/windows" -ForegroundColor Gray
 }
 Write-Host "Location: $($config.packages.outputDir)" -ForegroundColor DarkGray
 Write-Host ""

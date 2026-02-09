@@ -10,6 +10,7 @@
 
   "staging": {
     "linux": "../dist/staging/linux",
+    "linux-i386": "../dist/staging/linux-i386",
     "windows": "../dist/staging/windows"
   },
 
@@ -116,7 +117,14 @@
     "distDir": "../dist/linux",
     "architecture": "amd64"
   },
-  
+
+  "linux-i386": {
+    "buildScript": "build-linux-i386.ps1",
+    "distDir": "../dist/linux-i386",
+    "architecture": "i386",
+    "tier": "core"
+  },
+
   "windows": {
     "buildScript": "build-windows.ps1",
     "distDir": "../dist/windows",

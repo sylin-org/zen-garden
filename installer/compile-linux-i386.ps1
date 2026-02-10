@@ -58,6 +58,7 @@ $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
 $LINUX_I386_DIR = Join-Path $DIST_DIR "linux-i386"
 $IMAGE_NAME = "zen-garden-builder-i386:latest"
 $CONTAINER_NAME = "zen-garden-builder-i386-container"
+$CARGO_CACHE_VOLUME = "zen-garden-cargo-cache-i386"
 
 # Detect if running on Windows
 $RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)) {
@@ -134,6 +135,17 @@ if ($existingImage -and -not $ForceRebuild) {
 } else {
     Write-Host "Build Container:" -ForegroundColor Yellow
     Write-Host "  $(if ($ForceRebuild) { 'Rebuilding' } else { 'Creating' }) image: $IMAGE_NAME"
+
+    if ($ForceRebuild) {
+        # Remove existing container and cargo cache volume to avoid stale
+        # build-script binaries compiled against a different glibc version.
+        # The i386 Dockerfile is pinned to rust:bookworm (glibc 2.36) — if the
+        # cargo cache was populated under rust:latest (glibc 2.39), host-arch
+        # build scripts (libsqlite3-sys, alsa-sys, etc.) will fail at runtime.
+        Write-Host "  Removing old container and cargo cache..." -ForegroundColor DarkGray
+        docker rm -f $CONTAINER_NAME 2>$null | Out-Null
+        docker volume rm $CARGO_CACHE_VOLUME 2>$null | Out-Null
+    }
 
     Push-Location $WORKSPACE_ROOT
     try {
@@ -215,7 +227,7 @@ try {
         docker run -d `
             --name $CONTAINER_NAME `
             -v "${unixPath}:/build" `
-            -v "zen-garden-cargo-cache-i386:/root/.cargo" `
+            -v "${CARGO_CACHE_VOLUME}:/root/.cargo" `
             -w /build `
             $IMAGE_NAME `
             tail -f /dev/null
@@ -224,7 +236,8 @@ try {
     }
 
     # Clean cached binaries to force version update
-    # Cross-compiled binaries live under target/{RUST_TARGET}/{profile}/
+    # Cross-compiled binaries: target/{RUST_TARGET}/{profile}/
+    # Host-arch build scripts: target/{profile}/build/ (build scripts always compile for host)
     Write-Host "  -> Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
     $targetBase = "/build/target/$RUST_TARGET"
     docker exec $CONTAINER_NAME sh -c "rm -f $targetBase/debug/garden-* $targetBase/release/garden-* $targetBase/fast-release/garden-*" 2>$null | Out-Null

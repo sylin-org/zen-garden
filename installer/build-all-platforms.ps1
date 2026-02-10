@@ -7,7 +7,7 @@
     Produces 3 packages: Linux amd64, Linux i386, Windows amd64.
 
 .PARAMETER Tier
-    Build tier: "core" or "full". Default: "core".
+    Build tier: "core" or "full". Default: "full".
 
 .PARAMETER SkipLinux
     Skip Linux amd64 build
@@ -32,17 +32,17 @@
 
 .EXAMPLE
     .\build-all-platforms.ps1
-    Build core binaries for Linux amd64, Linux i386, and Windows
+    Build all binaries for Linux amd64, Linux i386, and Windows
 
 .EXAMPLE
-    .\build-all-platforms.ps1 -Tier full -SkipWindows
-    Build all binaries for Linux amd64 + i386 only
+    .\build-all-platforms.ps1 -Tier core -SkipWindows
+    Build core binaries only for Linux amd64 + i386
 #>
 
 [CmdletBinding()]
 param(
     [ValidateSet('core', 'full')]
-    [string]$Tier = "core",
+    [string]$Tier = "full",
 
     [switch]$SkipLinux,
     [switch]$SkipWindows,

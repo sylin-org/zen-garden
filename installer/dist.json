@@ -121,8 +121,7 @@
   "linux-i386": {
     "buildScript": "build-linux-i386.ps1",
     "distDir": "../dist/linux-i386",
-    "architecture": "i386",
-    "tier": "core"
+    "architecture": "i386"
   },
 
   "windows": {

@@ -15,7 +15,7 @@
 
 .PARAMETER Tier
     Build tier: "core" (moss + rake only) or "full" (all binaries)
-    Default: "core" (most i386 stones only need core).
+    Default: "full".
 
 .PARAMETER DebugBuild
     Build debug binaries
@@ -39,7 +39,7 @@ param(
     [string]$Version,
 
     [ValidateSet('core', 'full')]
-    [string]$Tier = "core",
+    [string]$Tier = "full",
 
     [switch]$DebugBuild,
     [switch]$Fast,

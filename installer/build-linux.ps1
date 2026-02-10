@@ -17,7 +17,7 @@
 
 .PARAMETER Tier
     Build tier: "core" (moss + rake only) or "full" (all binaries)
-    Default: "core" for fast iteration. Use "full" for complete rebuilds.
+    Default: "full".
 
 .PARAMETER DebugBuild
     Build debug binaries
@@ -44,7 +44,7 @@ param(
     [string]$Version,
 
     [ValidateSet('core', 'full')]
-    [string]$Tier = "core",
+    [string]$Tier = "full",
 
     [switch]$DebugBuild,
     [switch]$Release,

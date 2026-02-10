@@ -1,18 +1,18 @@
 <#
 .SYNOPSIS
-    Build and package Zen Garden Linux i386 (32-bit) distribution
+    Build and package Zen Garden Linux x86 (32-bit) distribution
 
 .DESCRIPTION
-    Complete Linux i386 build pipeline:
-    - Build i386 binaries via Docker cross-compilation (only tier-specified binaries)
+    Complete Linux x86 build pipeline:
+    - Build x86 binaries via Docker cross-compilation (only tier-specified binaries)
     - Create deployment package (tar.gz with ALL available binaries, manifests, scripts)
 
-    The package always includes all binaries found in dist/linux-i386/, even if only
+    The package always includes all binaries found in dist/linux-x86/, even if only
     core binaries were built. This allows fast iteration on core components while
     including previously-built Companions in the package.
 
-    Parallel pipeline to build-linux.ps1 for 32-bit stone support.
-    Output: dist/packages/zen-garden-{version}-linux-i386.tar.gz
+    Parallel pipeline to build-linux-x64.ps1 for 32-bit stone support.
+    Output: dist/packages/zen-garden-{version}-linux-x86.tar.gz
 
 .PARAMETER Version
     Version string (e.g., "0.1.202601251234")
@@ -64,7 +64,7 @@ Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$LINUX_I386_DIR = Join-Path $DIST_DIR "linux-i386"
+$LINUX_X86_DIR = Join-Path $DIST_DIR "linux-x86"
 
 # Load configuration
 $config = Get-DistConfig -ConfigPath (Join-Path $PSScriptRoot "dist.json")
@@ -75,7 +75,7 @@ $env:BUILD_NUMBER = ($Version -split '\.')[-1]
 $env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
 
 Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Magenta
-Write-Host " Linux i386 Build Pipeline" -ForegroundColor Magenta
+Write-Host " Linux x86 Build Pipeline" -ForegroundColor Magenta
 Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
 Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
@@ -86,8 +86,8 @@ Write-Host ""
 $buildTargets = Get-CargoBuildTargets -Config $config -Tier $Tier
 Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
 
-# Build i386 binaries
-$buildScript = Join-Path $PSScriptRoot "compile-linux-i386.ps1"
+# Build x86 binaries
+$buildScript = Join-Path $PSScriptRoot "compile-linux-x86.ps1"
 $buildArgs = @{
     Targets = $buildTargets
 }
@@ -98,18 +98,18 @@ if ($Jobs -gt 0) { $buildArgs.Add('Jobs', $Jobs) }
 
 & $buildScript @buildArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "Linux i386 build failed"
+    throw "Linux x86 build failed"
 }
 
 # Create package (includes ALL available binaries, not just those built in this tier)
 if (-not $SkipPackage) {
-    Write-Host "`nCreating i386 deployment package..." -ForegroundColor Yellow
-    Write-Host "  (Including all available binaries from dist/linux-i386/)" -ForegroundColor DarkGray
+    Write-Host "`nCreating x86 deployment package..." -ForegroundColor Yellow
+    Write-Host "  (Including all available binaries from dist/linux-x86/)" -ForegroundColor DarkGray
 
-    $stagingDir = Join-Path $DIST_DIR "staging\linux-i386"
+    $stagingDir = Join-Path $DIST_DIR "staging\linux-x86"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
-    $packageName = "zen-garden-$Version-linux-i386"
+    $packageName = "zen-garden-$Version-linux-x86"
     $packageDir = Join-Path $stagingDir $packageName
     $tarPath = Join-Path $stagingDir "$packageName.tar.gz"
 
@@ -122,7 +122,7 @@ if (-not $SkipPackage) {
     $includedCount = 0
     $skippedCount = 0
     foreach ($binary in $binaries) {
-        $result = Copy-BinaryToStaging -SourceDir $LINUX_I386_DIR -StagingRoot $packageDir -Binary $binary -Platform "linux"
+        $result = Copy-BinaryToStaging -SourceDir $LINUX_X86_DIR -StagingRoot $packageDir -Binary $binary -Platform "linux"
         if ($result) { $includedCount++ } else { $skippedCount++ }
     }
     Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
@@ -149,7 +149,7 @@ if (-not $SkipPackage) {
     $components = @{}
     foreach ($binary in $binaries) {
         $sourceFilename = $binary.Source
-        $sourcePath = Join-Path $LINUX_I386_DIR $sourceFilename
+        $sourcePath = Join-Path $LINUX_X86_DIR $sourceFilename
         if (Test-Path $sourcePath) {
             $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
             $relativePath = ($binary.Destination + $sourceFilename) -replace '\\', '/'
@@ -182,7 +182,7 @@ if (-not $SkipPackage) {
     $manifest = @{
         version = $Version
         platform = "linux"
-        architecture = "i386"
+        architecture = "x86"
         created = (Get-Date).ToUniversalTime().ToString("o")
         components = $components
     }
@@ -207,4 +207,4 @@ if (-not $SkipPackage) {
     }
 }
 
-Write-Host "`n✓ Linux i386 build complete" -ForegroundColor Green
+Write-Host "`n✓ Linux x86 build complete" -ForegroundColor Green

@@ -40,7 +40,7 @@ $ErrorActionPreference = "Stop"
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$LINUX_DIR = Join-Path $DIST_DIR "linux"
+$LINUX_DIR = Join-Path $DIST_DIR "linux-x64"
 
 Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║   Zen Garden Cross-Compilation Build              ║" -ForegroundColor Cyan
@@ -139,7 +139,7 @@ try {
         throw "Build failed"
     }
 
-    # Copy binaries to dist/linux/
+    # Copy binaries to dist/linux-x64/
     $sourcePath = Join-Path $WORKSPACE_ROOT "target\cross\x86_64-unknown-linux-gnu\$buildProfile"
     
     Copy-Item "$sourcePath\garden-lantern" "$LINUX_DIR\garden-lantern" -Force
@@ -165,4 +165,4 @@ Get-ChildItem $LINUX_DIR -ErrorAction SilentlyContinue | ForEach-Object {
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
 Write-Host "  Deploy: .\deploy.ps1 -UsePackage"
-Write-Host "  USB:    .\NewStone.ps1 -UsbDrive G:"
+Write-Host "  USB:    .\NewStone-linux-x64.ps1 -UsbDrive G:"

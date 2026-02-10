@@ -190,7 +190,7 @@ pub async fn resolve_endpoint(
               • Firewall is blocking UDP broadcast (port 7184)\n\
               • Stone's garden-moss service is not running\n\n\
             To fix:\n\
-              • Create a new stone: Run installer/NewStone.ps1\n\
+              • Create a new stone: Run installer/NewStone-linux-x64.ps1\n\
               • Set tending: garden-rake tend <endpoint>\n\
               • Specify endpoint manually: garden-rake <command> --at http://<IP>:7185\n\
               • Or use a stone name: garden-rake <command> --at <stone-name>\n\

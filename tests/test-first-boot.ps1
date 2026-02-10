@@ -20,7 +20,7 @@ Write-Host   "║   First-Boot Console Test                   ║" -ForegroundCo
 Write-Host   "╚══════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 # Check if binary exists
-$mossBinary = ".\dist\linux\garden-moss"
+$mossBinary = ".\dist\linux-x64\garden-moss"
 if (-not (Test-Path $mossBinary)) {
     Write-Host "  [FAIL] Moss binary not found at $mossBinary" -ForegroundColor Red
     Write-Host "  Run: .\installer\compile-linux.ps1 first" -ForegroundColor Yellow
@@ -124,7 +124,7 @@ Write-Host "  ======================================`n" -ForegroundColor DarkGra
 $containerName = "zen-firstboot-test-$(Get-Random)"
 docker run --rm `
     --name $containerName `
-    -v "${PWD}/dist/linux/garden-moss:/test/garden-moss:ro" `
+    -v "${PWD}/dist/linux-x64/garden-moss:/test/garden-moss:ro" `
     -v "${PWD}/test-firstboot.sh:/test/run-test.sh:ro" `
     zen-garden-firstboot-test `
     /bin/bash /test/run-test.sh
@@ -149,5 +149,5 @@ Write-Host "    ✓ First-run detection logic executes" -ForegroundColor Green
 Write-Host "    ✓ Console module compiles correctly" -ForegroundColor Green
 Write-Host ""
 Write-Host "  For full testing with TTY output:" -ForegroundColor Yellow
-Write-Host "    Deploy to a physical Stone via NewStone.ps1" -ForegroundColor Yellow
+Write-Host "    Deploy to a physical Stone via NewStone-linux-x64.ps1" -ForegroundColor Yellow
 Write-Host ""

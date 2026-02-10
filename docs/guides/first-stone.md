@@ -8,13 +8,13 @@
 
 **What you'll need:**
 
-| Item | Notes |
-|------|-------|
-| Old hardware | Laptop, desktop, thin client, or Raspberry Pi. 64-bit CPU, 2GB+ RAM. |
-| USB drive | 8GB+, will be erased |
+| Item            | Notes                                                                    |
+| --------------- | ------------------------------------------------------------------------ |
+| Old hardware    | Laptop, desktop, thin client, or Raspberry Pi. 64-bit CPU, 2GB+ RAM.     |
+| USB drive       | 8GB+, will be erased                                                     |
 | Windows machine | For running the USB installer script (Linux/macOS installer coming soon) |
-| Ethernet cable | Optional but recommended for reliability |
-| 30 minutes | First Stone takes longest. Additional Stones: ~5 minutes each. |
+| Ethernet cable  | Optional but recommended for reliability                                 |
+| 30 minutes      | First Stone takes longest. Additional Stones: ~5 minutes each.           |
 
 **What you'll do:**
 
@@ -46,18 +46,21 @@
 ### Recommended Hardware Tiers
 
 **Tier 1 - Reclaimed ($0-30)**
+
 - Old laptop (2010-2015 era, any condition)
 - Decommissioned thin client
 - Unused desktop with failing display
 - **Use case:** Low-traffic databases, development environments, file servers
 
 **Tier 2 - Budget ($30-100)**
+
 - Raspberry Pi 4 (4GB RAM)
 - Used enterprise thin client (eBay: $40-80)
 - Refurbished mini PC
 - **Use case:** Production databases for small teams, continuous integration, media servers
 
 **Tier 3 - Performance ($100-250)**
+
 - Intel NUC (used: $150-200)
 - Raspberry Pi 5 (8GB RAM)
 - Budget mini PC with SSD
@@ -95,7 +98,7 @@
 cd zen-garden\installer
 
 # Create bootable Stone USB
-.\NewStone.ps1 -UsbDrive "E:" -StoneName "blue-stone" -Offering mongodb,redis
+.\NewStone-linux-x64.ps1 -UsbDrive "E:" -StoneName "blue-stone" -Offering mongodb,redis
 
 # Parameters:
 #   -UsbDrive      : Drive letter of USB (will be formatted)
@@ -104,6 +107,7 @@ cd zen-garden\installer
 ```
 
 **What the script does:**
+
 1. Downloads Debian 12 net-install ISO
 2. Creates preseed configuration (automated installation)
 3. Injects garden-moss Debian package
@@ -112,6 +116,7 @@ cd zen-garden\installer
 6. Writes bootable image to USB
 
 **Pre-install manifest example:**
+
 ```json
 {
   "version": "1.0",
@@ -157,6 +162,7 @@ Boot USB → Debian Installer (preseed) → Reboot → systemd → garden-moss.s
 ```
 
 **Resilience features:**
+
 - If Moss crashes during pre-install: systemd restarts it (`Restart=always`)
 - If Docker not ready: Moss waits up to 60 seconds (30 retries × 2s)
 - If power loss during pre-install: Manifest persists, job resumes on next boot
@@ -186,6 +192,7 @@ garden-rake discover
 ```
 
 If Stone not discovered:
+
 - Check Stone is powered on and network cable connected
 - Verify Stone and client on same subnet
 - Try Lantern discovery (if configured): `garden-rake discover --via-lantern http://lantern:7186`
@@ -302,14 +309,16 @@ POSTGRES_DSN=zen-garden:postgresql/production
 ### Client Library Support
 
 **Node.js:**
+
 ```javascript
-const { MongoClient } = require('mongodb');
-const uri = process.env.MONGODB_URI || 'zen-garden:mongodb/myapp';
+const { MongoClient } = require("mongodb");
+const uri = process.env.MONGODB_URI || "zen-garden:mongodb/myapp";
 const client = new MongoClient(uri);
 await client.connect();
 ```
 
 **Python:**
+
 ```python
 from pymongo import MongoClient
 uri = os.getenv('MONGODB_URI', 'zen-garden:mongodb/myapp')
@@ -317,12 +326,14 @@ client = MongoClient(uri)
 ```
 
 **Connection string resolution:**
+
 1. Client library queries mDNS for `_koan-stone._tcp.local.` with TXT record `offering=mongodb`
 2. Discovers Stone IP (e.g., `192.168.1.42`) and port (`27017`)
 3. Rewrites to native protocol: `mongodb://192.168.1.42:27017/myapp`
 4. Connects to MongoDB using standard driver
 
 **Why this matters:**
+
 - Replace failing laptop with Raspberry Pi → applications automatically discover new hardware
 - Move database from stone-01 to stone-02 → no configuration updates needed
 - Add load balancing → connection string unchanged, resolution returns multiple endpoints
@@ -334,6 +345,7 @@ client = MongoClient(uri)
 ### Optional: Enable Pond Security
 
 **When to enable:**
+
 - Multi-user environment (family, small team)
 - Exposed to internet (port forwarding)
 - Compliance requirements (GDPR, HIPAA)
@@ -417,6 +429,7 @@ curl http://blue-stone:7185/metrics
 **Symptom:** `garden-rake discover` returns "No Stones found"
 
 **Diagnosis:**
+
 ```bash
 # Check mDNS availability
 avahi-browse -a  # Linux
@@ -430,6 +443,7 @@ curl http://blue-stone.local:7185/health
 ```
 
 **Solutions:**
+
 1. **Same subnet?** mDNS limited to local broadcast domain (192.168.1.0/24)
    - Solution: Use Lantern registry for cross-subnet discovery
 2. **Firewall blocking?** Check port 7185 (HTTP API) and 5353 (mDNS)
@@ -442,6 +456,7 @@ curl http://blue-stone.local:7185/health
 **Symptom:** `garden-rake observe` shows service as "Exited" or "Restarting"
 
 **Diagnosis:**
+
 ```bash
 # Stream service logs in real-time
 garden-rake watch offering mongodb logs
@@ -456,6 +471,7 @@ docker logs <container_id>
 ```
 
 **Common issues:**
+
 1. **Port conflict:** Another service using same port
    - Solution: Change port in offering template (see customization guide)
 2. **Volume permissions:** Container cannot write to volume
@@ -468,6 +484,7 @@ docker logs <container_id>
 **Symptom:** Stone boots but pre-install services not running
 
 **Diagnosis:**
+
 ```bash
 # Check pre-install job status (HTTP API)
 curl http://blue-stone:7185/api/jobs
@@ -486,6 +503,7 @@ sudo journalctl -u garden-moss -n 200 | grep preinstall
 ```
 
 **Common issues:**
+
 1. **Network timeout:** Image pull failed during installation
    - Solution: Manually install service: `garden-rake offer mongodb --to blue-stone`
 2. **Invalid offering name:** Typo in pre-install manifest
@@ -498,6 +516,7 @@ sudo journalctl -u garden-moss -n 200 | grep preinstall
 **Symptom:** Application cannot resolve `zen-garden:mongodb`
 
 **Diagnosis:**
+
 ```bash
 # Test mDNS resolution manually
 avahi-resolve -n blue-stone.local  # Linux
@@ -508,6 +527,7 @@ dns-sd -G v4 blue-stone.local  # macOS
 ```
 
 **Solutions:**
+
 1. **mDNS not enabled:** Install Avahi (Linux) or Bonjour (Windows)
    - Linux: `sudo apt install avahi-daemon`
    - Windows: Install Bonjour Print Services or use direct IP
@@ -524,14 +544,16 @@ dns-sd -G v4 blue-stone.local  # macOS
 **Note:** SSH is **disabled by default** in production preseed for security.
 
 **Enable SSH (development only):**
+
 1. Edit `installer/preseed.cfg` before USB creation
 2. Uncomment SSH server installation:
    ```
    d-i pkgsel/include string openssh-server
    ```
-3. Regenerate USB with `NewStone.ps1`
+3. Regenerate USB with `NewStone-linux-x64.ps1`
 
 **Alternative access methods:**
+
 - Direct keyboard/monitor access (Stone has full Debian console)
 - Moss HTTP API for diagnostics: `curl http://blue-stone:7185/metrics`
 - Physical access to edit `/etc/garden-moss/config.toml`

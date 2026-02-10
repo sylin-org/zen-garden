@@ -1,6 +1,8 @@
 /dist
 /target
-/target-i386
+/target-linux-x64
+/target-linux-x86
+/target-windows-x64
 
 # Environment (local dev secrets/config)
 .env

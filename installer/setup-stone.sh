@@ -1,12 +1,12 @@
 #!/bin/bash
 # setup-stone.sh - Bootstrap a fresh Debian machine into a Zen Garden stone
 #
-# Works with any Zen Garden package (amd64 or i386).
+# Works with any Zen Garden package (x64 or x86).
 # Run as root on the target machine after installing Debian.
 #
 # Usage:
-#   sudo ./setup-stone.sh zen-garden-0.1.202602082356-linux-i386.tar.gz
-#   sudo ./setup-stone.sh zen-garden-0.1.202602082356-linux-amd64.tar.gz
+#   sudo ./setup-stone.sh zen-garden-0.1.202602082356-linux-x86.tar.gz
+#   sudo ./setup-stone.sh zen-garden-0.1.202602082356-linux-x64.tar.gz
 #
 # What this script does:
 #   1. Extracts the package
@@ -46,7 +46,7 @@ if [[ $# -lt 1 ]]; then
     echo "Usage: sudo ./setup-stone.sh <package.tar.gz>"
     echo ""
     echo "Example:"
-    echo "  sudo ./setup-stone.sh zen-garden-0.1.202602082356-linux-i386.tar.gz"
+    echo "  sudo ./setup-stone.sh zen-garden-0.1.202602082356-linux-x86.tar.gz"
     exit 1
 fi
 

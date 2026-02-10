@@ -1,6 +1,6 @@
 ﻿# Zen Garden GRUB Theme Configuration
 # This file contains GRUB menu customizations applied to boot/grub/grub.cfg
-# Format: Plain text config that NewStone.ps1 will inject into GRUB config
+# Format: Plain text config that NewStone-linux-x64.ps1 will inject into GRUB config
 
 # Timeout (seconds) - set to 3 for brief branded display
 set timeout=3
@@ -11,7 +11,7 @@ set color_normal=cyan/black
 set color_highlight=white/cyan
 
 # Menu entry customization
-# NewStone.ps1 will replace "Install" entries with these labels
+# NewStone-linux-x64.ps1 will replace "Install" entries with these labels
 MENU_ENTRY_INSTALL="Zen Garden Stone - Install (auto in 3s)"
 MENU_ENTRY_VERBOSE="Zen Garden Stone - Install (verbose)"
 MENU_ENTRY_BOOT_HD="Boot from first hard disk"

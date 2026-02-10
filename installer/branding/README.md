@@ -6,7 +6,7 @@ This directory contains branding assets and preparation scripts for the Stone US
 
 ```
 branding/
-├── Prepare-BrandingArtifacts.ps1   # Run this to prepare artifacts for NewStone.ps1
+├── Prepare-BrandingArtifacts.ps1   # Run this to prepare artifacts for NewStone-linux-x64.ps1
 ├── source/                          # Edit these assets (version-controlled)
 │   ├── zen-banner-800x75.png       # GTK installer banner (800×75, 16-bit color)
 │   ├── zen-splash-640x300.png      # ISOLINUX splash screen (640×300, 16 colors)
@@ -40,20 +40,20 @@ branding/
 ### 2. Create Branded USB
 
 ```powershell
-# NewStone.ps1 automatically detects and applies prepared branding
+# NewStone-linux-x64.ps1 automatically detects and applies prepared branding
 cd ..\
-.\NewStone.ps1
+.\NewStone-linux-x64.ps1
 
-# If branding/prepared/ exists, NewStone.ps1 will apply:
+# If branding/prepared/ exists, NewStone-linux-x64.ps1 will apply:
 # - ISOLINUX splash screen (BIOS boot)
 # - First-boot MOTD and SSH banners
 # - (Future) GRUB theme colors
 # - (Future) GTK installer theme and banner
 ```
 
-**Note**: Branding is optional. If `prepared/` doesn't exist, NewStone.ps1 creates a standard (unbranded) Stone USB.
+**Note**: Branding is optional. If `prepared/` doesn't exist, NewStone-linux-x64.ps1 creates a standard (unbranded) Stone USB.
 
-## Integration with NewStone.ps1
+## Integration with NewStone-linux-x64.ps1
 
 The branding integration is automatic and non-intrusive:
 
@@ -62,7 +62,7 @@ The branding integration is automatic and non-intrusive:
    - Committed source assets → build-time artifacts
 
 2. **USB Creation Phase** (automatic):
-   - NewStone.ps1 detects `prepared/` directory
+   - NewStone-linux-x64.ps1 detects `prepared/` directory
    - Calls `Copy-BrandingAssets` function after stone files are written
    - Copies splash screen, first-boot assets, and theme configs
    - If `prepared/` is missing: skips branding (no error)
@@ -86,26 +86,29 @@ The branding integration is automatic and non-intrusive:
 - **GTK Installer**: Banner image + gtkrc theme (requires initrd repacking with WSL)
 
 ## Branding Layers
+
 .\Prepare-BrandingArtifacts.ps1
 
 # Quick preparation (skip initrd, for testing boot menus only)
+
 .\Prepare-BrandingArtifacts.ps1 -SkipInitrd
-```
+
+````
 
 ### 2. Create Branded USB
 
 ```powershell
 cd ..
-.\NewStone.ps1  # Now uses prepared branding artifacts automatically
-```
+.\NewStone-linux-x64.ps1  # Now uses prepared branding artifacts automatically
+````
 
 ## Asset Specifications
 
-| Asset | Specification | Purpose |
-|-------|---------------|---------|
-| **zen-banner-800x75.png** | 800×75 px, 16-bit color (PNG) | GTK installer header banner |
-| **zen-splash-640x300.png** | 640×300 px, 16 colors (PNG) | ISOLINUX boot splash screen |
-| **zen-texture.png** | Any size, tileable (PNG) | Optional GTK background texture |
+| Asset                      | Specification                 | Purpose                         |
+| -------------------------- | ----------------------------- | ------------------------------- |
+| **zen-banner-800x75.png**  | 800×75 px, 16-bit color (PNG) | GTK installer header banner     |
+| **zen-splash-640x300.png** | 640×300 px, 16 colors (PNG)   | ISOLINUX boot splash screen     |
+| **zen-texture.png**        | Any size, tileable (PNG)      | Optional GTK background texture |
 
 **Reference**: [Debian Artwork Requirements](https://wiki.debian.org/DebianDesktop/Artwork/Requirements)
 
@@ -124,7 +127,7 @@ notepad source\isolinux-menu.txt
 .\Prepare-BrandingArtifacts.ps1 -SkipInitrd
 
 # Test
-..\NewStone.ps1 -UsbDrive "E:"
+..\NewStone-linux-x64.ps1 -UsbDrive "E:"
 ```
 
 ### Option B: Full Branding Customization
@@ -134,15 +137,17 @@ Replace images and themes:
 1. Edit `source/*.png` files (ensure correct dimensions)
 2. Edit `source/*.txt` theme files
 3. Run `.\Prepare-BrandingArtifacts.ps1`
-4. Test with `.\NewStone.ps1`
+4. Test with `.\NewStone-linux-x64.ps1`
 
 ## Dependencies
 
 ### Windows-Only (No Dependencies)
+
 - ✅ GRUB/ISOLINUX menu customization
 - ✅ MOTD/first-boot asset preparation
 
 ### WSL Required (for GTK Initrd Repacking)
+
 - ⚠️ GTK banner injection (requires `cpio`, `gzip`)
 - Install: `wsl --install` (one-time setup)
 
@@ -183,16 +188,17 @@ wsl --install
   run: |
     cd installer/branding
     pwsh -File Prepare-BrandingArtifacts.ps1 -Force
-    
+
 - name: Build USB Image
   run: |
     cd installer
-    pwsh -File NewStone.ps1 -UsbDrive "TestDrive" -Force
+    pwsh -File NewStone-linux-x64.ps1 -UsbDrive "TestDrive" -Force
 ```
 
 ## Design Guidelines
 
 **Zen Garden Visual Identity**:
+
 - **Colors**: Cyan accent (#17A2B8), neutral grays
 - **Typography**: Clean sans-serif fonts
 - **Mood**: Calm, professional, minimalist

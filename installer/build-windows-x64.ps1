@@ -8,7 +8,7 @@
     - Build Windows binaries natively (only tier-specified binaries)
     - Create deployment package (zip with ALL available binaries, manifests)
 
-    The package always includes all binaries found in dist/windows/, even if only
+    The package always includes all binaries found in dist/windows-x64/, even if only
     core binaries were built. This allows fast iteration on core components while
     including previously-built Companions in the package.
 
@@ -62,7 +62,7 @@ Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$WINDOWS_DIR = Join-Path $DIST_DIR "windows"
+$WINDOWS_X64_DIR = Join-Path $DIST_DIR "windows-x64"
 
 # Load configuration
 $config = Get-DistConfig -ConfigPath (Join-Path $PSScriptRoot "dist.json")
@@ -73,7 +73,7 @@ $env:BUILD_NUMBER = ($Version -split '\.')[-1]
 $env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
 
 Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host " Windows Build Pipeline" -ForegroundColor Cyan
+Write-Host " Windows x64 Build Pipeline" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
 Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
@@ -84,7 +84,7 @@ Write-Host ""
 Write-Host "Cleaning Cargo cache for version update..." -ForegroundColor DarkGray
 $targetProfiles = @("fast-release", "release", "debug")
 foreach ($profile in $targetProfiles) {
-    $profileDir = Join-Path $WORKSPACE_ROOT "target\$profile"
+    $profileDir = Join-Path $WORKSPACE_ROOT "target-windows-x64\x86_64-pc-windows-msvc\$profile"
     if (Test-Path $profileDir) {
         # 1. Final binaries
         Get-ChildItem $profileDir -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -140,7 +140,7 @@ $buildTargets = Get-CargoBuildTargets -Config $config -Tier $Tier
 Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
 
 # Build Windows binaries (only tier-specified targets)
-$buildScript = Join-Path $PSScriptRoot "compile-windows.ps1"
+$buildScript = Join-Path $PSScriptRoot "compile-windows-x64.ps1"
 $buildArgs = @{
     Targets = $buildTargets
 }
@@ -158,12 +158,12 @@ if ($LASTEXITCODE -ne 0) {
 # Create package (includes ALL available binaries, not just those built in this tier)
 if (-not $SkipPackage) {
     Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
-    Write-Host "  (Including all available binaries from dist/windows/)" -ForegroundColor DarkGray
+    Write-Host "  (Including all available binaries from dist/windows-x64/)" -ForegroundColor DarkGray
 
-    $stagingDir = Join-Path $DIST_DIR "staging\windows"
+    $stagingDir = Join-Path $DIST_DIR "staging\windows-x64"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
-    $packageName = "zen-garden-$Version-windows-amd64"
+    $packageName = "zen-garden-$Version-windows-x64"
     $packageDir = Join-Path $stagingDir $packageName
     $zipPath = Join-Path $stagingDir "$packageName.zip"
 
@@ -177,7 +177,7 @@ if (-not $SkipPackage) {
     $includedCount = 0
     $skippedCount = 0
     foreach ($binary in $binaries) {
-        $result = Copy-BinaryToStaging -SourceDir $WINDOWS_DIR -StagingRoot $packageDir -Binary $binary -Platform "windows"
+        $result = Copy-BinaryToStaging -SourceDir $WINDOWS_X64_DIR -StagingRoot $packageDir -Binary $binary -Platform "windows"
         if ($result) { $includedCount++ } else { $skippedCount++ }
     }
     Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
@@ -204,7 +204,7 @@ if (-not $SkipPackage) {
     $components = @{}
     foreach ($binary in $binaries) {
         $sourceFilename = $binary.Source + ".exe"
-        $sourcePath = Join-Path $WINDOWS_DIR $sourceFilename
+        $sourcePath = Join-Path $WINDOWS_X64_DIR $sourceFilename
         if (Test-Path $sourcePath) {
             $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
             $relativePath = $binary.Destination + $sourceFilename
@@ -237,7 +237,7 @@ if (-not $SkipPackage) {
     $manifest = @{
         version = $Version
         platform = "windows"
-        architecture = "amd64"
+        architecture = "x64"
         created = (Get-Date).ToUniversalTime().ToString("o")
         components = $components
     }
@@ -256,4 +256,4 @@ if (-not $SkipPackage) {
     Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "`n✓ Windows build complete" -ForegroundColor Green
+Write-Host "`n✓ Windows x64 build complete" -ForegroundColor Green

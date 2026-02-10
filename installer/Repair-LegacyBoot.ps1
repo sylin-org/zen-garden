@@ -3,7 +3,7 @@
     Adds legacy BIOS boot support to a NewStone USB drive.
 
 .DESCRIPTION
-    NewStone.ps1 creates USB drives that boot via UEFI (EFI\BOOT\BOOTX64.EFI).
+    NewStone-linux-x64.ps1 creates USB drives that boot via UEFI (EFI\BOOT\BOOTX64.EFI).
     This script patches an existing NewStone USB to also boot on legacy BIOS
     machines and 32-bit UEFI firmware by:
 
@@ -31,7 +31,7 @@
 
 .NOTES
     Requires: Windows 10/11, Administrator privileges
-    Run AFTER NewStone.ps1 has created the USB.
+    Run AFTER NewStone-linux-x64.ps1 has created the USB.
     Dependencies: installer/dependencies/syslinux/ and installer/dependencies/bootia32.efi
 #>
 
@@ -55,14 +55,14 @@ function Write-Step {
         [string]$Status = "..."
     )
     $symbol = switch ($Status) {
-        "OK"   { "[+]" }
+        "OK" { "[+]" }
         "FAIL" { "[x]" }
         "WARN" { "[!]" }
         "SKIP" { "[-]" }
         default { "[*]" }
     }
     $color = switch ($Status) {
-        "OK"   { "Green" }
+        "OK" { "Green" }
         "FAIL" { "Red" }
         "WARN" { "Yellow" }
         "SKIP" { "DarkGray" }
@@ -139,7 +139,7 @@ function Main {
         $found = $null
         foreach ($disk in $usbDisks) {
             $partitions = Get-Partition -DiskNumber $disk.DiskNumber -ErrorAction SilentlyContinue |
-                Where-Object { $_.DriveLetter }
+            Where-Object { $_.DriveLetter }
             foreach ($p in $partitions) {
                 $vol = Get-Volume -DriveLetter $p.DriveLetter -ErrorAction SilentlyContinue
                 if ($vol -and $vol.FileSystem -eq 'FAT32') {

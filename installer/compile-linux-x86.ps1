@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Compile Zen Garden Linux i386 (32-bit) binaries using Docker
+    Compile Zen Garden Linux x86 (32-bit) binaries using Docker
 
 .DESCRIPTION
     Cross-compiles Zen Garden binaries for i686-unknown-linux-gnu (32-bit Linux).
     Uses a dedicated Docker container with gcc-multilib and i386 libraries.
-    Output goes to dist/linux-i386/ (separate from the amd64 dist/linux/).
+    Output goes to dist/linux-x86/ (separate from the x64 dist/linux-x64/).
 
-    This is a parallel pipeline to compile-linux.ps1, not a replacement.
+    This is a parallel pipeline to compile-linux-x64.ps1, not a replacement.
     Use this for 32-bit stones (e.g., Atom Z5xx machines).
 
 .PARAMETER Targets
@@ -27,15 +27,15 @@
     Number of parallel cargo jobs (default: number of CPUs)
 
 .EXAMPLE
-    .\compile-linux-i386.ps1
-    # Build core binaries (moss + rake) for i386
+    .\compile-linux-x86.ps1
+    # Build core binaries (moss + rake) for x86
 
 .EXAMPLE
-    .\compile-linux-i386.ps1 -Targets "garden-moss","garden-rake","garden-lantern"
-    # Build specific binaries for i386
+    .\compile-linux-x86.ps1 -Targets "garden-moss","garden-rake","garden-lantern"
+    # Build specific binaries for x86
 
 .EXAMPLE
-    .\compile-linux-i386.ps1 -ForceRebuild
+    .\compile-linux-x86.ps1 -ForceRebuild
     # Rebuild Docker image and compile
 #>
 
@@ -55,10 +55,10 @@ $ErrorActionPreference = "Stop"
 $RUST_TARGET = "i686-unknown-linux-gnu"
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$LINUX_I386_DIR = Join-Path $DIST_DIR "linux-i386"
-$IMAGE_NAME = "zen-garden-builder-i386:latest"
-$CONTAINER_NAME = "zen-garden-builder-i386-container"
-$CARGO_CACHE_VOLUME = "zen-garden-cargo-cache-i386"
+$LINUX_X86_DIR = Join-Path $DIST_DIR "linux-x86"
+$IMAGE_NAME = "zen-builder-linux-x86:latest"
+$CONTAINER_NAME = "zen-builder-linux-x86"
+$CARGO_CACHE_VOLUME = "zen-cargo-cache-linux-x86"
 
 # Detect if running on Windows
 $RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)) {
@@ -68,7 +68,7 @@ $RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -Erro
 }
 
 # Create dist directory
-New-Item -ItemType Directory -Force -Path $LINUX_I386_DIR | Out-Null
+New-Item -ItemType Directory -Force -Path $LINUX_X86_DIR | Out-Null
 
 # Version handling
 if ($Version) {
@@ -99,16 +99,16 @@ $buildTypeDesc = switch ($buildProfile) {
 $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
 Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "║   Zen Garden Linux i386 Build                      ║" -ForegroundColor Magenta
+Write-Host "║   Zen Garden Linux x86 Build                       ║" -ForegroundColor Magenta
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Magenta
 
 Write-Host "Configuration:" -ForegroundColor Yellow
 Write-Host "  Platform: Linux"
-Write-Host "  Architecture: i386 ($RUST_TARGET)"
+Write-Host "  Architecture: x86 ($RUST_TARGET)"
 Write-Host "  Version: $version"
 Write-Host "  Build Type: $buildTypeDesc"
 Write-Host "  Parallel Jobs: $parallelJobs"
-Write-Host "  Output Dir: $LINUX_I386_DIR"
+Write-Host "  Output Dir: $LINUX_X86_DIR"
 Write-Host '  Build Method: Docker Container [cross-compilation]'
 Write-Host ""
 
@@ -116,7 +116,7 @@ Write-Host ""
 try {
     docker version | Out-Null
 } catch {
-    Write-Host "Docker not available. Docker is required for i386 cross-compilation." -ForegroundColor Red
+    Write-Host "Docker not available. Docker is required for x86 cross-compilation." -ForegroundColor Red
     if ($RunningOnWindows) {
         Write-Host "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/" -ForegroundColor Yellow
     }
@@ -139,7 +139,7 @@ if ($existingImage -and -not $ForceRebuild) {
     if ($ForceRebuild) {
         # Remove existing container and cargo cache volume to avoid stale
         # build-script binaries compiled against a different glibc version.
-        # The i386 Dockerfile is pinned to rust:bookworm (glibc 2.36) — if the
+        # The x86 Dockerfile is pinned to rust:bookworm (glibc 2.36) — if the
         # cargo cache was populated under rust:latest (glibc 2.39), host-arch
         # build scripts (libsqlite3-sys, alsa-sys, etc.) will fail at runtime.
         Write-Host "  Removing old container and cargo cache..." -ForegroundColor DarkGray
@@ -149,7 +149,7 @@ if ($existingImage -and -not $ForceRebuild) {
 
     Push-Location $WORKSPACE_ROOT
     try {
-        docker build -f Dockerfile.build-i386 -t $IMAGE_NAME . --quiet
+        docker build -f Dockerfile.linux-x86 -t $IMAGE_NAME . --quiet
         if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
         Write-Host "  Image ready`n" -ForegroundColor Green
     } finally {
@@ -164,7 +164,7 @@ $buildProfile = if ($DebugBuild) { "debug" }
 
 $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
-Write-Host "Building i386 binaries in container..." -ForegroundColor Cyan
+Write-Host "Building x86 binaries in container..." -ForegroundColor Cyan
 $buildTypeDesc = switch ($buildProfile) {
     "debug" { "Debug" }
     "fast-release" { "Fast-Release (thin LTO)" }
@@ -188,12 +188,12 @@ try {
         Write-Host "  Build Number: $env:CARGO_BUILD_NUMBER" -ForegroundColor Cyan
     }
 
-    # Default to core binaries only (moss + rake) for i386
+    # Default to core binaries only (moss + rake) for x86
     $defaultTargets = @("garden-moss", "garden-rake")
     $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
 
     foreach ($target in $buildTargets) {
-        Write-Host "  -> Building $target (i386)..."
+        Write-Host "  -> Building $target (x86)..."
     }
 
     # Cargo build args with --target for cross-compilation
@@ -236,28 +236,28 @@ try {
     }
 
     # Clean cached garden binaries to force version update
-    # i386 uses a separate target dir (target-i386/) to avoid glibc conflicts
+    # x86 uses a separate target dir (target-linux-x86/) to avoid glibc conflicts
     # with the amd64 builder which uses target/ and a different base image.
     Write-Host "  -> Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-    $targetBase = "/build/target-i386/$RUST_TARGET"
+    $targetBase = "/build/target-linux-x86/$RUST_TARGET"
     docker exec $CONTAINER_NAME sh -c "rm -f $targetBase/debug/garden-* $targetBase/release/garden-* $targetBase/fast-release/garden-*" 2>$null | Out-Null
     docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/build/garden-* $targetBase/release/build/garden-* $targetBase/fast-release/build/garden-*" 2>$null | Out-Null
     docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/incremental/garden* $targetBase/release/incremental/garden* $targetBase/fast-release/incremental/garden*" 2>$null | Out-Null
     docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/.fingerprint/garden-* $targetBase/release/.fingerprint/garden-* $targetBase/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
 
     # Execute build with separate target directory
-    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-i386 -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
+    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x86 -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
 
     if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
     # Copy binaries from container
-    # Cross-compiled binaries are at target-i386/{RUST_TARGET}/{profile}/{binary}
+    # Cross-compiled binaries are at target-linux-x86/{RUST_TARGET}/{profile}/{binary}
     Write-Host "  -> Copying binaries from container..." -ForegroundColor DarkGray
     $copyFailed = $false
-    $containerBuildDir = "/build/target-i386/$RUST_TARGET/$buildProfile"
+    $containerBuildDir = "/build/target-linux-x86/$RUST_TARGET/$buildProfile"
 
     foreach ($target in $buildTargets) {
-        docker cp "${CONTAINER_NAME}:${containerBuildDir}/${target}" "$LINUX_I386_DIR\$target" 2>$null
+        docker cp "${CONTAINER_NAME}:${containerBuildDir}/${target}" "$LINUX_X86_DIR\$target" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Write-Host "    Failed to copy $target" -ForegroundColor Red
             $copyFailed = $true
@@ -266,7 +266,7 @@ try {
 
     if ($copyFailed) { throw "Failed to copy one or more binaries from container" }
 
-    Write-Host "  Linux i386 binaries built`n" -ForegroundColor Green
+    Write-Host "  Linux x86 binaries built`n" -ForegroundColor Green
 
 } finally {
     Pop-Location
@@ -274,12 +274,12 @@ try {
 
 # Display results
 Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║   i386 Build Complete!                             ║" -ForegroundColor Green
+Write-Host "║   Linux x86 Build Complete!                        ║" -ForegroundColor Green
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
 
-Write-Host "Artifacts in $LINUX_I386_DIR`:" -ForegroundColor Cyan
+Write-Host "Artifacts in $LINUX_X86_DIR`:" -ForegroundColor Cyan
 
-$artifacts = Get-ChildItem $LINUX_I386_DIR -ErrorAction SilentlyContinue
+$artifacts = Get-ChildItem $LINUX_X86_DIR -ErrorAction SilentlyContinue
 if ($artifacts) {
     $artifacts | ForEach-Object {
         $sizeMB = [math]::Round($_.Length / 1MB, 2)
@@ -292,7 +292,7 @@ if ($artifacts) {
         # Verify binary type
         $marker = "-"
         try {
-            $fileType = docker run --rm -v "${LINUX_I386_DIR}:/check" $IMAGE_NAME file "/check/$($_.Name)" 2>$null
+            $fileType = docker run --rm -v "${LINUX_X86_DIR}:/check" $IMAGE_NAME file "/check/$($_.Name)" 2>$null
             $isLinuxBinary = $fileType -match "ELF 32-bit.*Linux"
             $marker = if ($isLinuxBinary) { "OK" } else { "?" }
         } catch {
@@ -307,6 +307,6 @@ if ($artifacts) {
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
 Write-Host "  1. Install Debian i386 on the target machine"
-Write-Host "  2. SCP binaries from dist/linux-i386/ to the stone"
+Write-Host "  2. SCP binaries from dist/linux-x86/ to the stone"
 Write-Host "  (Build container cached for next run)" -ForegroundColor DarkGray
 Write-Host ""

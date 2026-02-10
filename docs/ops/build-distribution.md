@@ -10,7 +10,7 @@ canonical: true
 
 **Purpose:** Build production-ready binaries for Garden-Moss (Linux) and Rake (Linux + Windows)  
 **Date:** January 15, 2026  
-**Target:** USB deployment via NewStone.ps1
+**Target:** USB deployment via NewStone-linux-x64.ps1
 
 ---
 
@@ -77,6 +77,7 @@ cargo build --release --bin garden-rake --target x86_64-pc-windows-msvc
 ### Cross-Platform Build Script
 
 **build.ps1** (Windows PowerShell):
+
 ```powershell
 <#
 .SYNOPSIS
@@ -98,20 +99,20 @@ try {
     # Build flags
     $buildType = if ($Release) { "--release" } else { "" }
     $outDir = if ($Release) { "release" } else { "debug" }
-    
+
     # Run tests first
     if (-not $SkipTests) {
         Write-Host "`nRunning tests..." -ForegroundColor Yellow
         cargo test --workspace
         if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
     }
-    
+
     # Build Linux binaries (requires WSL or Linux)
     if ($IsWindows) {
         Write-Host "`nBuilding Linux binaries (requires WSL)..." -ForegroundColor Yellow
         wsl bash -c "cd `$(wslpath '$PWD') && cargo build $buildType --bin garden-moss"
         wsl bash -c "cd `$(wslpath '$PWD') && cargo build $buildType --bin garden-rake"
-        
+
         # Copy to bin/ directory
         New-Item -ItemType Directory -Force -Path "bin" | Out-Null
         Copy-Item "target/$outDir/garden-moss" "bin/garden-moss" -Force
@@ -122,28 +123,29 @@ try {
         cargo build $buildType --bin garden-moss
         cargo build $buildType --bin garden-rake
     }
-    
+
     # Build Windows binary
     Write-Host "`nBuilding Windows binary..." -ForegroundColor Yellow
     cargo build $buildType --bin garden-rake --target x86_64-pc-windows-msvc
-    
+
     # Copy Windows binary to bin/
     New-Item -ItemType Directory -Force -Path "bin" | Out-Null
     Copy-Item "target/x86_64-pc-windows-msvc/$outDir/garden-rake.exe" "bin/garden-rake.exe" -Force
-    
+
     Write-Host "`n✓ Build complete!" -ForegroundColor Green
     Write-Host "`nArtifacts:" -ForegroundColor Cyan
     Get-ChildItem bin/ | ForEach-Object {
         $size = [math]::Round($_.Length / 1MB, 2)
         Write-Host "  $($_.Name) - ${size}MB"
     }
-    
+
 } finally {
     Pop-Location
 }
 ```
 
 **build-dist.sh** (Linux Bash):
+
 ```bash
 #!/bin/bash
 # Build distribution binaries for Zen Garden
@@ -213,11 +215,11 @@ panic = "abort"          # Smaller binary
 
 ### Expected Sizes
 
-| Binary | Debug | Release | Release + Strip |
-|--------|-------|---------|-----------------|
-| garden-moss | 45MB | 18MB | 15MB |
-| garden-rake (Linux) | 35MB | 10MB | 8MB |
-| garden-rake.exe (Windows) | 40MB | 12MB | 10MB |
+| Binary                    | Debug | Release | Release + Strip |
+| ------------------------- | ----- | ------- | --------------- |
+| garden-moss               | 45MB  | 18MB    | 15MB            |
+| garden-rake (Linux)       | 35MB  | 10MB    | 8MB             |
+| garden-rake.exe (Windows) | 40MB  | 12MB    | 10MB            |
 
 ---
 
@@ -229,7 +231,7 @@ name: Build Distribution
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -238,12 +240,12 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Build Linux binaries
         run: |
           cargo build --release --bin garden-moss
           cargo build --release --bin garden-rake
-      
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
@@ -257,10 +259,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Build Windows binary
         run: cargo build --release --bin garden-rake
-      
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
@@ -272,7 +274,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v3
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -329,7 +331,7 @@ garden-rake list
 - [ ] Test garden-rake on Linux
 - [ ] Test garden-rake.exe on Windows
 - [ ] Copy binaries to `installer/bin/`
-- [ ] Update NewStone.ps1 to reference binaries
+- [ ] Update NewStone-linux-x64.ps1 to reference binaries
 - [ ] Test full USB deployment workflow
 - [ ] Verify garden-moss.service starts on boot
 - [ ] Verify garden-rake in PATH on Stone
@@ -342,12 +344,14 @@ garden-rake list
 ### Build Errors
 
 **Error: `cross-compilation requires target installed`**
+
 ```bash
 rustup target add x86_64-pc-windows-gnu
 rustup target add x86_64-pc-windows-msvc
 ```
 
 **Error: `linker 'x86_64-w64-mingw32-gcc' not found`**
+
 ```bash
 # Ubuntu/Debian
 sudo apt install mingw-w64
@@ -385,6 +389,6 @@ wsl rsync -av /mnt/f/path/to/zen-garden ~/zen-garden
 2. **Push tag**: `git push origin v0.1.0`
 3. **GitHub Actions builds binaries**
 4. **Download artifacts from release**
-5. **Update NewStone.ps1** with release URLs
+5. **Update NewStone-linux-x64.ps1** with release URLs
 6. **Test USB deployment**
 7. **Publish release notes**

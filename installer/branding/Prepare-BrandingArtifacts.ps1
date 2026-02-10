@@ -4,10 +4,10 @@
 
 .DESCRIPTION
     This script processes source branding assets (images, themes, configs)
-    and generates ready-to-overlay artifacts for NewStone.ps1.
+    and generates ready-to-overlay artifacts for NewStone-linux-x64.ps1.
     
     The prepared artifacts are placed in branding/prepared/ and are
-    automatically applied by NewStone.ps1 during USB creation.
+    automatically applied by NewStone-linux-x64.ps1 during USB creation.
 
 .PARAMETER Force
     Overwrite existing prepared artifacts without prompting.
@@ -54,29 +54,29 @@ $script:Config = @{
     
     # Asset specifications (Debian requirements)
     Assets      = @{
-        GtkBanner      = @{
-            FileName      = "zen-banner-800x75.png"
-            RequiredWidth = 800
+        GtkBanner         = @{
+            FileName       = "zen-banner-800x75.png"
+            RequiredWidth  = 800
             RequiredHeight = 75
-            ColorDepth    = 16  # 16-bit color (65,536 colors)
+            ColorDepth     = 16  # 16-bit color (65,536 colors)
         }
-        IsolinuxSplash = @{
+        IsolinuxSplash    = @{
             FileName       = "zen-splash-640x300.png"
             RequiredWidth  = 640
             RequiredHeight = 300
             ColorDepth     = 4   # 16 colors (will be converted to ASCII art)
         }
         BackgroundTexture = @{
-            FileName  = "zen-texture.png"
-            Optional  = $true
+            FileName = "zen-texture.png"
+            Optional = $true
         }
     }
     
     # Theme files
     Themes      = @{
-        GrubTheme     = "grub-theme.txt"
-        IsolinuxMenu  = "isolinux-menu.txt"
-        GtkTheme      = "gtk-theme-gtkrc.txt"
+        GrubTheme    = "grub-theme.txt"
+        IsolinuxMenu = "isolinux-menu.txt"
+        GtkTheme     = "gtk-theme-gtkrc.txt"
     }
 }
 #endregion
@@ -308,7 +308,7 @@ function Prepare-GtkInitrdAssets {
     Copy-Item $gtkThemeSource $gtkThemeDest -Force
     Write-Step "GTK theme configuration copied" "OK"
     
-    Write-Step "GTK initrd assets prepared (will be injected into initrd by NewStone.ps1)" "OK"
+    Write-Step "GTK initrd assets prepared (will be injected into initrd by NewStone-linux-x64.ps1)" "OK"
 }
 
 function Prepare-FirstBootAssets {
@@ -385,12 +385,12 @@ function Save-Manifest {
     }
     
     $manifest = @{
-        PreparedAt   = Get-Date -Format "o"
-        PreparedBy   = $env:USERNAME
-        ComputerName = $env:COMPUTERNAME
-        SourceHashes = $sourceHashes
+        PreparedAt    = Get-Date -Format "o"
+        PreparedBy    = $env:USERNAME
+        ComputerName  = $env:COMPUTERNAME
+        SourceHashes  = $sourceHashes
         SkippedInitrd = $SkipInitrd.IsPresent
-        Version      = "1.0"
+        Version       = "1.0"
     }
     
     $manifestPath = Join-Path $script:Config.PreparedDir "manifest.json"
@@ -434,7 +434,7 @@ try {
     Write-Host "  ║   ✓ Branding artifacts prepared successfully       ║" -ForegroundColor Green
     Write-Host "  ╚════════════════════════════════════════════════════╝" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Next step: Run NewStone.ps1 to create branded USB" -ForegroundColor Cyan
+    Write-Host "  Next step: Run NewStone-linux-x64.ps1 to create branded USB" -ForegroundColor Cyan
     Write-Host "  Location: $($script:Config.PreparedDir)" -ForegroundColor Gray
     Write-Host ""
     

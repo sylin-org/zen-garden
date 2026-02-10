@@ -66,9 +66,9 @@ $linuxI386Package = $null
 $windowsPackage = $null
 
 if (Test-Path $packagesDir) {
-    $linuxPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-amd64.tar.gz" | Sort-Object LastWriteTime -Descending
-    $linuxI386Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-i386.tar.gz" | Sort-Object LastWriteTime -Descending
-    $windowsPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-amd64.zip" | Sort-Object LastWriteTime -Descending
+    $linuxPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x64.tar.gz" | Sort-Object LastWriteTime -Descending
+    $linuxI386Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x86.tar.gz" | Sort-Object LastWriteTime -Descending
+    $windowsPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-x64.zip" | Sort-Object LastWriteTime -Descending
     if ($linuxPackages.Count -gt 0) { $linuxPackage = $linuxPackages[0].FullName }
     if ($linuxI386Packages.Count -gt 0) { $linuxI386Package = $linuxI386Packages[0].FullName }
     if ($windowsPackages.Count -gt 0) { $windowsPackage = $windowsPackages[0].FullName }

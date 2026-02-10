@@ -23,11 +23,11 @@ function Get-DistConfig {
     $config.workspace.root = Resolve-ConfigPath $config.workspace.root $configDir
     $config.workspace.dist = Resolve-ConfigPath $config.workspace.dist $configDir
     $config.packages.outputDir = Resolve-ConfigPath $config.packages.outputDir $configDir
-    $config.staging.linux = Resolve-ConfigPath $config.staging.linux $configDir
-    if ($config.staging.'linux-i386') {
-        $config.staging | Add-Member -NotePropertyName 'linuxI386' -NotePropertyValue (Resolve-ConfigPath $config.staging.'linux-i386' $configDir) -Force
+    $config.staging.'linux-x64' = Resolve-ConfigPath $config.staging.'linux-x64' $configDir
+    if ($config.staging.'linux-x86') {
+        $config.staging | Add-Member -NotePropertyName 'linuxX86' -NotePropertyValue (Resolve-ConfigPath $config.staging.'linux-x86' $configDir) -Force
     }
-    $config.staging.windows = Resolve-ConfigPath $config.staging.windows $configDir
+    $config.staging.'windows-x64' = Resolve-ConfigPath $config.staging.'windows-x64' $configDir
     
     return $config
 }

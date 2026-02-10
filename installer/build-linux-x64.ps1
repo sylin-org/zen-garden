@@ -8,7 +8,7 @@
     - Build Linux binaries via Docker (only tier-specified binaries)
     - Create deployment package (tar.gz with ALL available binaries, manifests, scripts)
 
-    The package always includes all binaries found in dist/linux/, even if only
+    The package always includes all binaries found in dist/linux-x64/, even if only
     core binaries were built. This allows fast iteration on core components while
     including previously-built Companions in the package.
 
@@ -62,7 +62,7 @@ Import-Module (Join-Path $PSScriptRoot "DistConfig.psm1") -Force
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$LINUX_DIR = Join-Path $DIST_DIR "linux"
+$LINUX_DIR = Join-Path $DIST_DIR "linux-x64"
 
 # Load configuration
 $config = Get-DistConfig -ConfigPath (Join-Path $PSScriptRoot "dist.json")
@@ -73,7 +73,7 @@ $env:BUILD_NUMBER = ($Version -split '\.')[-1]
 $env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
 
 Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host " Linux Build Pipeline" -ForegroundColor Cyan
+Write-Host " Linux x64 Build Pipeline" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
 Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
@@ -85,7 +85,7 @@ $buildTargets = Get-CargoBuildTargets -Config $config -Tier $Tier
 Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
 
 # Build Linux binaries (only tier-specified targets)
-$buildScript = Join-Path $PSScriptRoot "compile-linux.ps1"
+$buildScript = Join-Path $PSScriptRoot "compile-linux-x64.ps1"
 $buildArgs = @{
     Targets = $buildTargets
 }
@@ -103,12 +103,12 @@ if ($LASTEXITCODE -ne 0) {
 # Create package (includes ALL available binaries, not just those built in this tier)
 if (-not $SkipPackage) {
     Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
-    Write-Host "  (Including all available binaries from dist/linux/)" -ForegroundColor DarkGray
+    Write-Host "  (Including all available binaries from dist/linux-x64/)" -ForegroundColor DarkGray
 
-    $stagingDir = Join-Path $DIST_DIR "staging\linux"
+    $stagingDir = Join-Path $DIST_DIR "staging\linux-x64"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
-    $packageName = "zen-garden-$Version-linux-amd64"
+    $packageName = "zen-garden-$Version-linux-x64"
     $packageDir = Join-Path $stagingDir $packageName
     $tarPath = Join-Path $stagingDir "$packageName.tar.gz"
 
@@ -182,7 +182,7 @@ if (-not $SkipPackage) {
     $manifest = @{
         version = $Version
         platform = "linux"
-        architecture = "amd64"
+        architecture = "x64"
         created = (Get-Date).ToUniversalTime().ToString("o")
         components = $components
     }
@@ -208,4 +208,4 @@ if (-not $SkipPackage) {
     }
 }
 
-Write-Host "`n✓ Linux build complete" -ForegroundColor Green
+Write-Host "`n✓ Linux x64 build complete" -ForegroundColor Green

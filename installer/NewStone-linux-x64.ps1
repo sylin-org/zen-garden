@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Creates a bootable USB drive that auto-installs a Zen Garden Stone.
+    Creates a bootable USB drive that auto-installs a Zen Garden Stone (Linux x64).
 
 .DESCRIPTION
-    This script prepares a USB drive with Debian and preseed file
-    configuration for fully unattended Zen Garden Stone installation.
+    This script prepares a USB drive with Debian amd64 and preseed file
+    configuration for fully unattended Zen Garden Stone installation (Linux x64).
     
     The target machine will:
     1. Boot from USB
@@ -21,11 +21,11 @@
     Skip confirmation prompts.
 
 .EXAMPLE
-    .\NewStone.ps1
+    .\NewStone-linux-x64.ps1
     # Auto-detects USB drive
 
 .EXAMPLE
-    .\NewStone.ps1 -UsbDrive "E:"
+    .\NewStone-linux-x64.ps1 -UsbDrive "E:"
 
 .NOTES
     Requires: Windows 10/11, Administrator privileges, 8GB+ USB drive
@@ -60,18 +60,18 @@ $script:Config = @{
     # Local paths
     CacheDir            = (Join-Path $PSScriptRoot "dependencies")
     ManifestsDir        = (Join-Path $PSScriptRoot "..\manifests")
-    LinuxDistDir        = (Join-Path $PSScriptRoot "..\dist\linux")
+    LinuxDistDir        = (Join-Path $PSScriptRoot "..\dist\linux-x64")
     PackagesDir         = (Join-Path $PSScriptRoot "..\dist\packages")
     
     # Zen Garden binaries (required) - used as fallback if no package
-    MossUrl             = "https://github.com/koan-framework/zen-garden/releases/latest/download/garden-moss-linux-amd64"
-    MossPath            = (Join-Path $PSScriptRoot "..\dist\linux\garden-moss")
-    GardenRakeUrl       = "https://github.com/koan-framework/zen-garden/releases/latest/download/garden-rake-linux-amd64"
-    GardenRakePath      = (Join-Path $PSScriptRoot "..\dist\linux\garden-rake")
+    MossUrl             = "https://github.com/koan-framework/zen-garden/releases/latest/download/garden-moss-linux-x64"
+    MossPath            = (Join-Path $PSScriptRoot "..\dist\linux-x64\garden-moss")
+    GardenRakeUrl       = "https://github.com/koan-framework/zen-garden/releases/latest/download/garden-rake-linux-x64"
+    GardenRakePath      = (Join-Path $PSScriptRoot "..\dist\linux-x64\garden-rake")
     
     # Zen Garden binaries (optional)
-    LanternPath         = (Join-Path $PSScriptRoot "..\dist\linux\garden-lantern")
-    CricketPath         = (Join-Path $PSScriptRoot "..\dist\linux\garden-cricket")
+    LanternPath         = (Join-Path $PSScriptRoot "..\dist\linux-x64\garden-lantern")
+    CricketPath         = (Join-Path $PSScriptRoot "..\dist\linux-x64\garden-cricket")
     
     # USB requirements
     MinUsbSizeGB        = 4
@@ -989,7 +989,7 @@ function Write-StoneFiles {
     # Find latest Linux package
     $linuxPackage = $null
     if (Test-Path $script:Config.PackagesDir) {
-        $packages = @(Get-ChildItem $script:Config.PackagesDir -Filter "zen-garden-*-linux-amd64.tar.gz" | Sort-Object LastWriteTime -Descending)
+        $packages = @(Get-ChildItem $script:Config.PackagesDir -Filter "zen-garden-*-linux-x64.tar.gz" | Sort-Object LastWriteTime -Descending)
         if ($packages.Count -gt 0) {
             $linuxPackage = $packages[0].FullName
         }
@@ -1014,7 +1014,7 @@ function Write-StoneFiles {
             throw "Failed to extract package"
         }
         
-        # Find extracted directory (zen-garden-X.Y.Z-linux-amd64/)
+        # Find extracted directory (zen-garden-X.Y.Z-linux-x64/)
         $pkgDir = Get-ChildItem $tempExtract -Directory | Where-Object { $_.Name -like "zen-garden-*" } | Select-Object -First 1
         if (-not $pkgDir) {
             throw "Invalid package structure - no zen-garden-* directory found"
@@ -1581,14 +1581,14 @@ function Main {
                     # Build Linux binaries (release is default, no flag needed)
                     Write-Host ""
                     Write-Step "Building Linux binaries..." "..."
-                    $buildScript = Join-Path $PSScriptRoot "compile-linux.ps1"
+                    $buildScript = Join-Path $PSScriptRoot "compile-linux-x64.ps1"
 
                     if (Test-Path $buildScript) {
                         try {
                             & $buildScript
                             Write-Host ""
                             Write-Step "✓ Binaries built successfully" "OK"
-                            Write-Host "  Updated: ..\dist\linux\moss, ..\dist\linux\garden-rake" -ForegroundColor Gray
+                            Write-Host "  Updated: ..\dist\linux-x64\moss, ..\dist\linux-x64\garden-rake" -ForegroundColor Gray
                             Write-Host ""
                             Write-Host "  Press Enter to continue..." -ForegroundColor Gray
                             [void][Console]::ReadLine()
@@ -1601,7 +1601,7 @@ function Main {
                         }
                     }
                     else {
-                        Write-Step "compile-linux.ps1 not found at $buildScript" "FAIL"
+                        Write-Step "compile-linux-x64.ps1 not found at $buildScript" "FAIL"
                         Start-Sleep -Seconds 2
                     }
                 }

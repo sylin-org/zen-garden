@@ -31,8 +31,8 @@
 .PARAMETER Fast
     Use fast-release profile (default, thin LTO)
 
-.PARAMETER IncludeI386
-    Also build Linux i386 (32-bit) binaries for legacy stones
+.PARAMETER IncludeX86
+    Also build Linux x86 (32-bit) binaries for legacy stones
 
 .PARAMETER ForceRebuild
     Force rebuild of Docker container (Linux only)
@@ -53,8 +53,8 @@
     Build Linux only with full release profile
 
 .EXAMPLE
-    .\build.ps1 -IncludeI386
-    Build for all platforms including Linux i386
+    .\build.ps1 -IncludeX86
+    Build for all platforms including Linux x86
 #>
 
 [CmdletBinding()]
@@ -64,7 +64,7 @@ param(
 
     [switch]$SkipLinux,
     [switch]$SkipWindows,
-    [switch]$IncludeI386,
+    [switch]$IncludeX86,
     [switch]$DebugBuild,
     [switch]$Release,
     [switch]$Fast,
@@ -115,10 +115,10 @@ $builtPlatforms = @()
 # Build Linux
 if (-not $SkipLinux) {
     Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host " Linux Build" -ForegroundColor Cyan
+    Write-Host " Linux x64 Build" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
-    
-    $linuxScript = Join-Path $PSScriptRoot $config.linux.buildScript
+
+    $linuxScript = Join-Path $PSScriptRoot $config.'linux-x64'.buildScript
     try {
         & $linuxScript `
             -Version $version `
@@ -132,22 +132,22 @@ if (-not $SkipLinux) {
             throw "Linux build failed with exit code $LASTEXITCODE"
         }
         
-        $builtPlatforms += "linux"
-        Write-Host "✓ Linux build complete`n" -ForegroundColor Green
+        $builtPlatforms += "linux-x64"
+        Write-Host "✓ Linux x64 build complete`n" -ForegroundColor Green
     }
     catch {
-        $buildErrors += "Linux: $_"
-        Write-Host "✗ Linux build failed: $_`n" -ForegroundColor Red
+        $buildErrors += "Linux x64: $_"
+        Write-Host "✗ Linux x64 build failed: $_`n" -ForegroundColor Red
     }
 }
 
 # Build Windows
 if (-not $SkipWindows) {
     Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host " Windows Build" -ForegroundColor Cyan
+    Write-Host " Windows x64 Build" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
-    
-    $windowsScript = Join-Path $PSScriptRoot $config.windows.buildScript
+
+    $windowsScript = Join-Path $PSScriptRoot $config.'windows-x64'.buildScript
     try {
         & $windowsScript `
             -Version $version `
@@ -160,24 +160,24 @@ if (-not $SkipWindows) {
             throw "Windows build failed with exit code $LASTEXITCODE"
         }
         
-        $builtPlatforms += "windows"
-        Write-Host "✓ Windows build complete`n" -ForegroundColor Green
+        $builtPlatforms += "windows-x64"
+        Write-Host "✓ Windows x64 build complete`n" -ForegroundColor Green
     }
     catch {
-        $buildErrors += "Windows: $_"
-        Write-Host "✗ Windows build failed: $_`n" -ForegroundColor Red
+        $buildErrors += "Windows x64: $_"
+        Write-Host "✗ Windows x64 build failed: $_`n" -ForegroundColor Red
     }
 }
 
-# Build Linux i386
-if ($IncludeI386) {
+# Build Linux x86
+if ($IncludeX86) {
     Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Magenta
-    Write-Host " Linux i386 Build" -ForegroundColor Magenta
+    Write-Host " Linux x86 Build" -ForegroundColor Magenta
     Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
 
-    $i386Script = Join-Path $PSScriptRoot $config.'linux-i386'.buildScript
+    $x86Script = Join-Path $PSScriptRoot $config.'linux-x86'.buildScript
     try {
-        & $i386Script `
+        & $x86Script `
             -Version $version `
             -Tier $Tier `
             -DebugBuild:$DebugBuild `
@@ -186,15 +186,15 @@ if ($IncludeI386) {
             -Jobs $Jobs
 
         if ($LASTEXITCODE -ne 0) {
-            throw "Linux i386 build failed with exit code $LASTEXITCODE"
+            throw "Linux x86 build failed with exit code $LASTEXITCODE"
         }
 
-        $builtPlatforms += "linux-i386"
-        Write-Host "✓ Linux i386 build complete`n" -ForegroundColor Green
+        $builtPlatforms += "linux-x86"
+        Write-Host "✓ Linux x86 build complete`n" -ForegroundColor Green
     }
     catch {
-        $buildErrors += "Linux i386: $_"
-        Write-Host "✗ Linux i386 build failed: $_`n" -ForegroundColor Red
+        $buildErrors += "Linux x86: $_"
+        Write-Host "✗ Linux x86 build failed: $_`n" -ForegroundColor Red
     }
 }
 
@@ -228,47 +228,47 @@ New-Item -ItemType Directory -Path $config.packages.outputDir -Force | Out-Null
 
 $packagesMoved = 0
 
-# Move Linux package
-if ($builtPlatforms -contains "linux") {
-    $linuxPackage = Get-ChildItem $config.staging.linux -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
-    
+# Move Linux x64 package
+if ($builtPlatforms -contains "linux-x64") {
+    $linuxPackage = Get-ChildItem $config.staging.'linux-x64' -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
+
     if ($linuxPackage) {
         Move-Item $linuxPackage.FullName $config.packages.outputDir -Force
         $sizeMB = [math]::Round($linuxPackage.Length / 1MB, 2)
         Write-Host "  ✓ $($linuxPackage.Name) ($sizeMB MB)" -ForegroundColor Green
         $packagesMoved++
     } else {
-        Write-Warning "Linux package not found in staging: $($config.staging.linux)"
+        Write-Warning "Linux x64 package not found in staging: $($config.staging.'linux-x64')"
     }
 }
 
-# Move Windows package
-if ($builtPlatforms -contains "windows") {
-    $windowsPackage = Get-ChildItem $config.staging.windows -Filter "*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
-    
+# Move Windows x64 package
+if ($builtPlatforms -contains "windows-x64") {
+    $windowsPackage = Get-ChildItem $config.staging.'windows-x64' -Filter "*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+
     if ($windowsPackage) {
         Move-Item $windowsPackage.FullName $config.packages.outputDir -Force
         $sizeMB = [math]::Round($windowsPackage.Length / 1MB, 2)
         Write-Host "  ✓ $($windowsPackage.Name) ($sizeMB MB)" -ForegroundColor Green
         $packagesMoved++
     } else {
-        Write-Warning "Windows package not found in staging: $($config.staging.windows)"
+        Write-Warning "Windows x64 package not found in staging: $($config.staging.'windows-x64')"
     }
 }
 
-# Move Linux i386 package
-if ($builtPlatforms -contains "linux-i386") {
-    $i386StagingDir = $config.staging.linuxI386
-    if ($i386StagingDir -and (Test-Path $i386StagingDir)) {
-        $i386Package = Get-ChildItem $i386StagingDir -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
+# Move Linux x86 package
+if ($builtPlatforms -contains "linux-x86") {
+    $x86StagingDir = $config.staging.linuxX86
+    if ($x86StagingDir -and (Test-Path $x86StagingDir)) {
+        $x86Package = Get-ChildItem $x86StagingDir -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-        if ($i386Package) {
-            Move-Item $i386Package.FullName $config.packages.outputDir -Force
-            $sizeMB = [math]::Round($i386Package.Length / 1MB, 2)
-            Write-Host "  ✓ $($i386Package.Name) ($sizeMB MB)" -ForegroundColor Green
+        if ($x86Package) {
+            Move-Item $x86Package.FullName $config.packages.outputDir -Force
+            $sizeMB = [math]::Round($x86Package.Length / 1MB, 2)
+            Write-Host "  ✓ $($x86Package.Name) ($sizeMB MB)" -ForegroundColor Green
             $packagesMoved++
         } else {
-            Write-Warning "Linux i386 package not found in staging: $i386StagingDir"
+            Write-Warning "Linux x86 package not found in staging: $x86StagingDir"
         }
     }
 }
@@ -290,14 +290,14 @@ if ($packagesMoved -gt 0) {
     Write-Host "Packages: $packagesMoved created" -ForegroundColor Green
 }
 Write-Host "`nBinaries available in:" -ForegroundColor Cyan
-if ($builtPlatforms -contains "linux") {
-    Write-Host "  Linux amd64: $($config.workspace.dist)/linux" -ForegroundColor Gray
+if ($builtPlatforms -contains "linux-x64") {
+    Write-Host "  Linux x64:   $($config.workspace.dist)/linux-x64" -ForegroundColor Gray
 }
-if ($builtPlatforms -contains "linux-i386") {
-    Write-Host "  Linux i386:  $($config.workspace.dist)/linux-i386" -ForegroundColor Gray
+if ($builtPlatforms -contains "linux-x86") {
+    Write-Host "  Linux x86:   $($config.workspace.dist)/linux-x86" -ForegroundColor Gray
 }
-if ($builtPlatforms -contains "windows") {
-    Write-Host "  Windows:     $($config.workspace.dist)/windows" -ForegroundColor Gray
+if ($builtPlatforms -contains "windows-x64") {
+    Write-Host "  Windows x64: $($config.workspace.dist)/windows-x64" -ForegroundColor Gray
 }
 Write-Host "Location: $($config.packages.outputDir)" -ForegroundColor DarkGray
 Write-Host ""

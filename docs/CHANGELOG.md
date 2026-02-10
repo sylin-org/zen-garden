@@ -3,6 +3,7 @@
 All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-06
+
 - **Tools Domain implemented (greenfield)** - normative automation-grade tools projection and stream
   - New APIs: `GET /api/v1/garden/tools`, `GET /api/v1/garden/tools/stream`
   - New inter-Moss announcement: `TOOLS_BEACON` (`tools_beacon`) for offerings + seed banks
@@ -19,6 +20,7 @@ All notable changes to Zen Garden will be documented in this file.
   - `model/extension/module` treated as offering-local labels, not global nomenclature
 
 ## 2026-02-04
+
 - **Fixed P2P discovery selecting wrong network interface** - Hyper-V/WSL virtual adapters were being selected over physical LAN
   - Root cause: IP-range blocklisting (`192.168.224.x`) was incomplete and brittle
   - Solution: MAC OUI-based detection using IEEE-assigned vendor prefixes
@@ -51,6 +53,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Uses `socket2` crate for cross-platform socket options
 
 ## 2026-02-02
+
 - **Unified Offering Model (Greenfield Refactor)** - merged dual-collection manifest system into single `Offering` struct
   - `SwEntry` + `OfferingManifest` â†’ unified `Offering` with mode-as-configuration
   - Mode support now derived from `Option<ManagedConfig>`, `Option<AdoptedConfig>`, `Option<BorrowedConfig>`
@@ -72,11 +75,12 @@ All notable changes to Zen Garden will be documented in this file.
   - Changed `DetectionMethod` enum from `lowercase` to `snake_case` (`http_probe` not `httpprobe`)
 
 ## 2026-01-29
+
 - **Package Structure v2.0** - Simplified to mirror target filesystem exactly
   - Package now has just `bin/` (â†’ /usr/local/bin) and `lib/` (â†’ /var/lib) folders
   - Deploy is now two `cp -r` operations instead of multiple conditional blocks
   - Removed `dependencies` block from dist.json (Companions install deps at runtime)
-  - Updated `moss-update-helper.sh` and `NewStone.ps1` to use new structure
+  - Updated `moss-update-helper.sh` and `NewStone-linux-x64.ps1` to use new structure
 - **Timezone/NTP Configuration** - Stones now sync timezone on deploy
   - New `garden.conf` with timezone setting (default: America/New_York)
   - `moss-update-helper.sh` applies timezone and enables NTP on upgrade
@@ -85,7 +89,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Manifests at `/var/lib/zen-garden/manifests/{sw,hw}/`
   - Companions at `/usr/local/bin/companions/{Companion}/`
   - Fixed `RUNTIME_MANIFESTS_DIR` and `RUNTIME_HW_MANIFESTS_DIR` constants
-- **NewStone.ps1: Package-based deployment** - USB creator now extracts from Linux package directly
+- **NewStone-linux-x64.ps1: Package-based deployment** - USB creator now extracts from Linux package directly
   - Single source of truth: binaries, Companions, manifests, scripts all from `dist/packages/*.tar.gz`
   - Matches deployment layout used by `garden-upgrade.sh` and `moss-update-helper.sh`
   - Includes `dependencies.json` for post-install Companion dependency resolution
@@ -141,6 +145,7 @@ All notable changes to Zen Garden will be documented in this file.
 - **ARCHITECTURE-REFERENCE.md** - updated Seed Bank Endpoints with STORAGE-0002/0003 structure
 
 ## 2026-01-28
+
 - **Storage API restructured per STORAGE-0002** - dual-layer API for native and S3 gateway
   - Native Bank API: `/api/v1/stone/storage/bank/:id/*path` - ApiResponse JSON format
   - S3 Gateway: `/api/v1/stone/storage/s3/:bucket/*key` - S3-spec XML/raw bytes
@@ -158,6 +163,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Updated 15+ documentation files for consistency with proposal specs
 
 ## 2026-01-27
+
 - **Portrait at-a-glance panel** - Hero now shows stone uptime (ðŸª¨), Moss uptime (ðŸŒ¿), and offerings status dots
   - Added `moss_uptime` field to PortraitIdentity API response
   - Stone uptime = system uptime (how long machine running), Moss uptime = daemon uptime
@@ -205,6 +211,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Tests for scoring functions moved from Rake to Moss
 
 ## 2026-01-26
+
 - **Companion port ledger system** - Moss-managed persistent port assignments (base 7187, range 7187-7199)
   - Created PortLedger: load/save to `{data_dir}/companion-ports.json`, incremental assignment from base 7187
   - Moss passes `--port {assigned}` to Companions during both `--dump-commands` and runtime startup
@@ -240,7 +247,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Objective alignment confirmed: "make home lab infrastructure feel intimate, tactile, and real"
 - **METRICS-0001: Unified storage metrics** - eliminated deprecated StorageDevice struct, detect_storage() function, and HardwareCapabilities.storage field
   - Removed ~200 lines of redundant storage detection code (detect_storage_windows/linux functions)
-  - Changed StoneResources.disk (single DiskMetrics) to storage (Vec<StorageMetrics>)  
+  - Changed StoneResources.disk (single DiskMetrics) to storage (Vec<StorageMetrics>)
   - All storage data now from live metrics (30s refresh), no stale boot-time usage percentages
   - Handles hot-swap drives naturally (storage inventory refreshes every 30s)
   - Fixed observe/status commands: removed stale static storage display, replaced by live /metrics endpoint (future work)
@@ -280,6 +287,7 @@ All notable changes to Zen Garden will be documented in this file.
 - Added changelog maintenance guidelines to copilot instructions for AI agents
 
 ## 2026-01-25
+
 - Implemented multicast-first UDP discovery (239.255.42.99:7184) with directed broadcast fallback to solve multi-homed Windows 11 failures
 - Added per-interface sender sockets to prevent OS routing packets through wrong interfaces (WSL/Hyper-V)
 - Added virtual Companion detection and filtering (skips veth, docker, vmnet, vboxnet, hyperv, wsl interfaces)
@@ -289,6 +297,7 @@ All notable changes to Zen Garden will be documented in this file.
 - Fixed topology cache accumulating duplicate stone entries with different IDs
 
 ## Unreleased (Rake UI/UX Improvements)
+
 - Progressive discovery display â€” stones appear as discovered with response times
 - Streaming progress updates for container installations via SSE polling
 - Garden vitality language: `[thriving]`, `[dormant]`, `[needs attention]`
@@ -302,6 +311,7 @@ All notable changes to Zen Garden will be documented in this file.
 ---
 
 See also:
+
 - [Discovery Transport spec](specs/discovery-transport.md)
 - [Topology Cache spec](specs/topology-cache.md)
 - [COMM-0004: Multicast-First Discovery](decisions/COMM-0004-multicast-first-discovery.md)

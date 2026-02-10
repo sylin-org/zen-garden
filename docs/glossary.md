@@ -105,10 +105,11 @@
 → See: [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
 
 **Keystone Protection Tiers** - Automatic security capability detection:
+
 - **Hardware-backed**: TPM 2.0 (keys sealed in physical chip)
 - **Hypervisor-backed**: vTPM (VM isolation via KVM/VMware/Hyper-V)
 - **Software-backed**: Passphrase encryption (AES-256-GCM fallback)  
-→ See: [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
+  → See: [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
 
 **Stone Admission** - Process of joining a Stone to a Pond. Uses TOTP-based Bluetooth-style pairing (6-character code, 5-minute window). Any pond member can invite new stones.  
 → See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md#invitation-protocol)
@@ -143,7 +144,7 @@
 
 ## Operations
 
-**Installer** - USB creation tool (`NewStone.ps1` on Windows) that generates bootable Debian drives with preseed configuration. Automates Stone provisioning.
+**Installer** - USB creation tool (`NewStone-linux-x64.ps1` on Windows) that generates bootable Debian drives with preseed configuration. Automates Stone provisioning.
 
 **Provisioning** - Stone setup process: boot from USB → install Debian → configure networking → install Moss daemon → join Garden.  
 → See: [guides/first-stone.md](guides/first-stone.md)
@@ -176,21 +177,21 @@
 
 ## Quick Reference
 
-| Term       | Summary                                    | Category     |
-| ---------- | ------------------------------------------ | ------------ |
-| Stone      | Physical device running Moss               | Core         |
-| Moss       | Daemon on each Stone (port 7185)           | Core         |
-| Rake       | CLI tool for operators                     | Core         |
-| Garden     | Collection of Stones                       | Core         |
-| Offering   | Pre-defined service template               | Services     |
-| mDNS       | Multicast DNS discovery protocol           | Discovery    |
-| Connection String | `zen-garden:<type>[/<db>]`       | Discovery    |
-| Pond       | mTLS security layer                        | Security     |
-| Keystone   | Encrypted CA keypair file                  | Security     |
-| Cornerstone| First Stone with CA authority              | Security     |
-| Lantern    | Optional HTTP directory (port 7186)        | Discovery    |
-| Set        | Logical namespace (database/schema/prefix) | Services     |
-| E-waste    | Repurposed obsolete hardware               | Mission      |
+| Term              | Summary                                    | Category  |
+| ----------------- | ------------------------------------------ | --------- |
+| Stone             | Physical device running Moss               | Core      |
+| Moss              | Daemon on each Stone (port 7185)           | Core      |
+| Rake              | CLI tool for operators                     | Core      |
+| Garden            | Collection of Stones                       | Core      |
+| Offering          | Pre-defined service template               | Services  |
+| mDNS              | Multicast DNS discovery protocol           | Discovery |
+| Connection String | `zen-garden:<type>[/<db>]`                 | Discovery |
+| Pond              | mTLS security layer                        | Security  |
+| Keystone          | Encrypted CA keypair file                  | Security  |
+| Cornerstone       | First Stone with CA authority              | Security  |
+| Lantern           | Optional HTTP directory (port 7186)        | Discovery |
+| Set               | Logical namespace (database/schema/prefix) | Services  |
+| E-waste           | Repurposed obsolete hardware               | Mission   |
 
 ---
 

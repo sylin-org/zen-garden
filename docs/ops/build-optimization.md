@@ -64,10 +64,10 @@ Check binary sizes after build:
 
 ```powershell
 # Windows
-Get-ChildItem .\dist\windows\*.exe | Format-Table Name, @{L="Size (MB)";E={[math]::Round($_.Length/1MB,2)}}
+Get-ChildItem .\dist\windows-x64\*.exe | Format-Table Name, @{L="Size (MB)";E={[math]::Round($_.Length/1MB,2)}}
 
 # Linux
-Get-ChildItem .\dist\linux\garden-* | Format-Table Name, @{L="Size (MB)";E={[math]::Round($_.Length/1MB,2)}}
+Get-ChildItem .\dist\linux-x64\garden-* | Format-Table Name, @{L="Size (MB)";E={[math]::Round($_.Length/1MB,2)}}
 ```
 
 ## Build Performance

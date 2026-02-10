@@ -1,6 +1,6 @@
 ﻿# The First Stone
 
-*You have an old laptop and twenty minutes.*
+_You have an old laptop and twenty minutes._
 
 ---
 
@@ -15,7 +15,7 @@ Today, it becomes useful again.
 You plug a USB drive into your main computer and run the installer script:
 
 ```powershell
-.\NewStone.ps1 -UsbDrive "E:" -StoneName "stone-01"
+.\NewStone-linux-x64.ps1 -UsbDrive "E:" -StoneName "stone-01"
 ```
 
 ```
@@ -181,7 +181,7 @@ Let's rewind and look at the machinery.
 
 ### The USB Installer
 
-When you ran `NewStone.ps1`, it didn't just copy an image to the USB drive. It created a customized installation environment:
+When you ran `NewStone-linux-x64.ps1`, it didn't just copy an image to the USB drive. It created a customized installation environment:
 
 1. Downloaded the Debian 12 net-install ISO
 2. Injected a "preseed" file—a script that answers every installation question automatically
@@ -278,7 +278,7 @@ image: mongo:7.0.5
 requirements:
   memory_mb: 512
   disk_gb: 1
-  cpu_features: []  # 7.0.5 doesn't require AVX
+  cpu_features: [] # 7.0.5 doesn't require AVX
 ```
 
 All requirements passed. If they hadn't, Rake would have shown which constraints failed.
@@ -357,7 +357,7 @@ Each piece removes a decision you'd otherwise have to make. The cumulative effec
 
 ```bash
 # Create bootable USB (Windows PowerShell)
-.\NewStone.ps1 -UsbDrive "E:" -StoneName "stone-01"
+.\NewStone-linux-x64.ps1 -UsbDrive "E:" -StoneName "stone-01"
 
 # Discover Stones on network
 garden-rake observe
@@ -371,4 +371,4 @@ garden-rake status stone-amber-ridge
 
 ---
 
-*Zen Garden Documentation — Journeys*
+_Zen Garden Documentation — Journeys_

@@ -26,7 +26,7 @@ stone-root/
 
 ## How It Works
 
-1. **Build Phase**: `NewStone.ps1` populates this directory with:
+1. **Build Phase**: `NewStone-linux-x64.ps1` populates this directory with:
    - Binaries from `../bin/` (garden-moss, garden-lantern, garden-rake)
    - Generated config files (garden-moss.toml, garden-moss.service)
    - Templates (quickstart guide)
@@ -35,6 +35,7 @@ stone-root/
 2. **Copy to USB**: Entire `stone-root/` directory is copied to USB
 
 3. **Installation**: Debian preseed runs:
+
    ```bash
    cp -r /cdrom/stone-root/* /target/
    ```
@@ -51,6 +52,7 @@ stone-root/
 ## File Permissions
 
 Set during preseed late_command:
+
 - Binaries: `chmod +x /usr/local/bin/*`
 - User files: `chown -R stone:stone /home/stone`
 - Service files: Handled by systemd

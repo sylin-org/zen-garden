@@ -9,9 +9,9 @@
   },
 
   "staging": {
-    "linux": "../dist/staging/linux",
-    "linux-i386": "../dist/staging/linux-i386",
-    "windows": "../dist/staging/windows"
+    "linux-x64": "../dist/staging/linux-x64",
+    "linux-x86": "../dist/staging/linux-x86",
+    "windows-x64": "../dist/staging/windows-x64"
   },
 
   "packages": {
@@ -112,21 +112,21 @@
     "jobs": 0
   },
   
-  "linux": {
-    "buildScript": "build-linux.ps1",
-    "distDir": "../dist/linux",
-    "architecture": "amd64"
+  "linux-x64": {
+    "buildScript": "build-linux-x64.ps1",
+    "distDir": "../dist/linux-x64",
+    "architecture": "x64"
   },
 
-  "linux-i386": {
-    "buildScript": "build-linux-i386.ps1",
-    "distDir": "../dist/linux-i386",
-    "architecture": "i386"
+  "linux-x86": {
+    "buildScript": "build-linux-x86.ps1",
+    "distDir": "../dist/linux-x86",
+    "architecture": "x86"
   },
 
-  "windows": {
-    "buildScript": "build-windows.ps1",
-    "distDir": "../dist/windows",
-    "architecture": "amd64"
+  "windows-x64": {
+    "buildScript": "build-windows-x64.ps1",
+    "distDir": "../dist/windows-x64",
+    "architecture": "x64"
   }
 }

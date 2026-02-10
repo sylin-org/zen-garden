@@ -24,23 +24,23 @@
     Number of parallel cargo jobs (default: number of CPUs)
 
 .EXAMPLE
-    .\compile-windows.ps1
+    .\compile-windows-x64.ps1
     # Build all binaries for Windows (default)
 
 .EXAMPLE
-    .\compile-windows.ps1 -Targets "garden-moss","garden-rake"
+    .\compile-windows-x64.ps1 -Targets "garden-moss","garden-rake"
     # Build only moss and rake (core tier)
 
 .EXAMPLE
-    .\compile-windows.ps1 -Fast
+    .\compile-windows-x64.ps1 -Fast
     # Build with fast-release profile (~40% faster, slightly larger binaries)
 
 .EXAMPLE
-    .\compile-windows.ps1 -DebugBuild
+    .\compile-windows-x64.ps1 -DebugBuild
     # Compile debug binaries (faster compile, larger size)
 
 .EXAMPLE
-    .\compile-windows.ps1 -SkipTests
+    .\compile-windows-x64.ps1 -SkipTests
     # Fast build without tests
 #>
 
@@ -66,15 +66,15 @@ $RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -Erro
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$WINDOWS_DIR = Join-Path $DIST_DIR "windows"
+$WINDOWS_X64_DIR = Join-Path $DIST_DIR "windows-x64"
 
 Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Windows Build                         ║" -ForegroundColor Cyan
+Write-Host "║   Zen Garden Windows x64 Build                     ║" -ForegroundColor Cyan
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 if (-not $RunningOnWindows) {
     Write-Host "✗ This script must run on Windows." -ForegroundColor Red
-    Write-Host "  For Linux builds, use compile-linux.ps1" -ForegroundColor Yellow
+    Write-Host "  For Linux builds, use compile-linux-x64.ps1" -ForegroundColor Yellow
     exit 1
 }
 
@@ -119,11 +119,11 @@ $buildTypeDesc = switch ($buildProfile) {
 }
 Write-Host "  Build Type: $buildTypeDesc"
 Write-Host "  Parallel Jobs: $parallelJobs"
-Write-Host "  Output Dir: $WINDOWS_DIR"
+Write-Host "  Output Dir: $WINDOWS_X64_DIR"
 Write-Host ""
 
 # Create dist directories
-New-Item -ItemType Directory -Force -Path $WINDOWS_DIR | Out-Null
+New-Item -ItemType Directory -Force -Path $WINDOWS_X64_DIR | Out-Null
 
 # Run tests
 if (-not $SkipTests) {
@@ -180,19 +180,20 @@ try {
         $buildArgs += @("--bin", $target)
     }
 
+    $env:CARGO_TARGET_DIR = Join-Path $WORKSPACE_ROOT "target-windows-x64"
     cargo @buildArgs
 
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ⚠ Build failed with exit code $LASTEXITCODE" -ForegroundColor Yellow
     }
 
-    # Copy binaries from target to dist/windows/
-    $srcDir = Join-Path $WORKSPACE_ROOT "target\x86_64-pc-windows-msvc\$buildProfile"
+    # Copy binaries from target-windows-x64 to dist/windows-x64/
+    $srcDir = Join-Path $WORKSPACE_ROOT "target-windows-x64\x86_64-pc-windows-msvc\$buildProfile"
 
     foreach ($target in $buildTargets) {
         $srcPath = "$srcDir\$target.exe"
         if (Test-Path $srcPath) {
-            Copy-Item $srcPath "$WINDOWS_DIR\$target.exe" -Force
+            Copy-Item $srcPath "$WINDOWS_X64_DIR\$target.exe" -Force
             Write-Host "  ✓ $target.exe built" -ForegroundColor Green
         } else {
             Write-Host "  ⚠ $target.exe not found (build may have failed)" -ForegroundColor Yellow
@@ -210,9 +211,9 @@ Write-Host "╔═════════════════════�
 Write-Host "║   Build Complete!                                  ║" -ForegroundColor Green
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
 
-Write-Host "Artifacts in $WINDOWS_DIR`:" -ForegroundColor Cyan
+Write-Host "Artifacts in $WINDOWS_X64_DIR`:" -ForegroundColor Cyan
 
-$artifacts = Get-ChildItem $WINDOWS_DIR -Filter "*.exe" -ErrorAction SilentlyContinue
+$artifacts = Get-ChildItem $WINDOWS_X64_DIR -Filter "*.exe" -ErrorAction SilentlyContinue
 if ($artifacts) {
     $artifacts | ForEach-Object {
         $sizeMB = [math]::Round($_.Length / 1MB, 2)
@@ -229,8 +230,8 @@ if ($artifacts) {
 }
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  1. Test garden-rake.exe: .\dist\windows\garden-rake.exe list"
-if (Test-Path "$WINDOWS_DIR\garden-moss.exe") {
-    Write-Host "  2. Test garden-moss.exe (requires admin): .\dist\windows\garden-moss.exe --help"
+Write-Host "  1. Test garden-rake.exe: .\dist\windows-x64\garden-rake.exe list"
+if (Test-Path "$WINDOWS_X64_DIR\garden-moss.exe") {
+    Write-Host "  2. Test garden-moss.exe (requires admin): .\dist\windows-x64\garden-moss.exe --help"
 }
 Write-Host ""

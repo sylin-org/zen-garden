@@ -30,12 +30,12 @@ This plan restructures manifest handling with two major changes:
 
 Current codebase has fragmented manifest handling:
 
-| Component | Location | Purpose | Problem |
-|-----------|----------|---------|---------|
-| `manifest_loader.rs` | infra | Loads `OfferingManifest` | Separate from templates |
-| `TemplateLoader` | templates.rs | Loads snippets | Rescans filesystem repeatedly |
-| `offerings_index` | domain | Caches offerings | Yet another cache layer |
-| Hardcoded categories | templates.rs (4 places) | Category lists | DRY violation |
+| Component            | Location                | Purpose                  | Problem                       |
+| -------------------- | ----------------------- | ------------------------ | ----------------------------- |
+| `manifest_loader.rs` | infra                   | Loads `OfferingManifest` | Separate from templates       |
+| `TemplateLoader`     | templates.rs            | Loads snippets           | Rescans filesystem repeatedly |
+| `offerings_index`    | domain                  | Caches offerings         | Yet another cache layer       |
+| Hardcoded categories | templates.rs (4 places) | Category lists           | DRY violation                 |
 
 **Result:** Multiple filesystem scans, redundant caches, confused terminology.
 
@@ -93,6 +93,7 @@ impl ManifestRegistry {
 ### AppState Changes
 
 **Before:**
+
 ```rust
 pub struct AppState {
     pub manifests: Arc<RwLock<Vec<OfferingManifest>>>,  // Confusing
@@ -103,6 +104,7 @@ pub struct AppState {
 ```
 
 **After:**
+
 ```rust
 pub struct AppState {
     pub manifests: Arc<ManifestRegistry>,  // SINGLE SOURCE OF TRUTH
@@ -113,31 +115,31 @@ pub struct AppState {
 
 ### Migration Path
 
-| Current | After | Action |
-|---------|-------|--------|
-| `manifest_loader.rs` | `ManifestRegistry::load()` | Merge logic |
-| `TemplateLoader` struct | `SwEntry::parse_template()` | Convert to method |
-| `TemplateLoader::load()` | `registry.sw.entries.get(name)` | Direct lookup |
-| `TemplateLoader::list_templates()` | `registry.sw.entries.values()` | Direct iteration |
-| `AppState.templates` | Removed | Use `manifests.sw` |
-| `AppState.manifests` | `Arc<ManifestRegistry>` | Unified type |
-| Hardcoded category arrays | `registry.sw.categories` | Dynamic from entries |
+| Current                            | After                           | Action               |
+| ---------------------------------- | ------------------------------- | -------------------- |
+| `manifest_loader.rs`               | `ManifestRegistry::load()`      | Merge logic          |
+| `TemplateLoader` struct            | `SwEntry::parse_template()`     | Convert to method    |
+| `TemplateLoader::load()`           | `registry.sw.entries.get(name)` | Direct lookup        |
+| `TemplateLoader::list_templates()` | `registry.sw.entries.values()`  | Direct iteration     |
+| `AppState.templates`               | Removed                         | Use `manifests.sw`   |
+| `AppState.manifests`               | `Arc<ManifestRegistry>`         | Unified type         |
+| Hardcoded category arrays          | `registry.sw.categories`        | Dynamic from entries |
 
 ### Files to Modify
 
-| File | Change |
-|------|--------|
-| `src/moss/src/infra/manifests/mod.rs` | **NEW** - ManifestRegistry module |
-| `src/moss/src/infra/manifests/sw.rs` | **NEW** - SwManifests, SwEntry |
-| `src/moss/src/infra/manifests/hw.rs` | **NEW** - HwManifests, HwEntry |
-| `src/moss/src/infra/mod.rs` | Add `pub mod manifests;` |
-| `src/moss/src/templates.rs` | Simplify to parsing only, use registry |
-| `src/moss/src/infra/manifest_loader.rs` | **REMOVE** - merged into registry |
-| `src/moss/src/app_state.rs` | Replace `templates` + `manifests` with single `manifests: Arc<ManifestRegistry>` |
-| `src/moss/src/bootstrap/run.rs` | Load ManifestRegistry once at startup |
-| `src/moss/src/tasks/coordinator.rs` | Use registry instead of template loader |
-| `src/moss/src/domain/offerings.rs` | Derive from registry.sw |
-| `src/moss/src/api/v1/services.rs` | Use registry lookups |
+| File                                    | Change                                                                           |
+| --------------------------------------- | -------------------------------------------------------------------------------- |
+| `src/moss/src/infra/manifests/mod.rs`   | **NEW** - ManifestRegistry module                                                |
+| `src/moss/src/infra/manifests/sw.rs`    | **NEW** - SwManifests, SwEntry                                                   |
+| `src/moss/src/infra/manifests/hw.rs`    | **NEW** - HwManifests, HwEntry                                                   |
+| `src/moss/src/infra/mod.rs`             | Add `pub mod manifests;`                                                         |
+| `src/moss/src/templates.rs`             | Simplify to parsing only, use registry                                           |
+| `src/moss/src/infra/manifest_loader.rs` | **REMOVE** - merged into registry                                                |
+| `src/moss/src/app_state.rs`             | Replace `templates` + `manifests` with single `manifests: Arc<ManifestRegistry>` |
+| `src/moss/src/bootstrap/run.rs`         | Load ManifestRegistry once at startup                                            |
+| `src/moss/src/tasks/coordinator.rs`     | Use registry instead of template loader                                          |
+| `src/moss/src/domain/offerings.rs`      | Derive from registry.sw                                                          |
+| `src/moss/src/api/v1/services.rs`       | Use registry lookups                                                             |
 
 ### Implementation Approach
 
@@ -220,7 +222,7 @@ manifests/
 
 ## Priority 3: Installer Scripts
 
-### `installer/NewStone.ps1`
+### `installer/NewStone-linux-x64.ps1`
 
 **Current (lines 989-1006):**
 
@@ -349,7 +351,7 @@ mv manifests/{data,messaging,ai,...} manifests/sw/
 
 ### Step 4: Update Installer Scripts
 
-1. Update `NewStone.ps1` - copy from `manifests/sw/*`
+1. Update `NewStone-linux-x64.ps1` - copy from `manifests/sw/*`
 2. Update `moss-update-helper.sh` - deploy to correct paths
 
 ### Step 5: Verify
@@ -365,15 +367,16 @@ mv manifests/{data,messaging,ai,...} manifests/sw/
 ### Hardware Firmware Management
 
 With `ManifestRegistry.hw` in place, future work includes:
+
 - Hardware detection matching (`registry.hw.entries.find(|e| e.matches(dmidecode))`)
 - Firmware update commands in `garden-rake nourish`
 - Integration with `capabilities.rs` for hardware identification
 
 ### Runtime Paths
 
-| Purpose | Linux Path | Windows Path |
-|---------|------------|--------------|
-| SW Manifests | `/var/lib/zen-garden/manifests/` | `.zen-garden\manifests\` |
+| Purpose      | Linux Path                          | Windows Path                |
+| ------------ | ----------------------------------- | --------------------------- |
+| SW Manifests | `/var/lib/zen-garden/manifests/`    | `.zen-garden\manifests\`    |
 | HW Manifests | `/var/lib/zen-garden/manifests/hw/` | `.zen-garden\manifests\hw\` |
 
 ---
@@ -381,6 +384,7 @@ With `ManifestRegistry.hw` in place, future work includes:
 ## Checklist
 
 ### Priority 1: ManifestRegistry Architecture
+
 - [ ] Create `src/moss/src/infra/manifests/mod.rs` - ManifestRegistry struct
 - [ ] Create `src/moss/src/infra/manifests/sw.rs` - SwManifests, SwEntry
 - [ ] Create `src/moss/src/infra/manifests/hw.rs` - HwManifests, HwEntry
@@ -393,18 +397,21 @@ With `ManifestRegistry.hw` in place, future work includes:
 - [ ] Run `cargo test -p moss`
 
 ### Priority 2: Directory Structure
+
 - [x] Create `manifests/sw/` directory
 - [x] Move all category directories to `manifests/sw/`
 - [x] Verify `manifests/hw/` structure intact
 
 ### Priority 3: Installer Scripts
-- [ ] Update `NewStone.ps1` - dynamic category copy from `sw/`
+
+- [ ] Update `NewStone-linux-x64.ps1` - dynamic category copy from `sw/`
 - [ ] Update `moss-update-helper.sh` - handle `sw/` and `hw/` paths
 - [ ] Verify `build.ps1` works with new structure
 
 ### Verification
+
 - [ ] Build distribution: `.\installer\build.ps1`
-- [ ] Create USB: `.\installer\NewStone.ps1`
+- [ ] Create USB: `.\installer\NewStone-linux-x64.ps1`
 - [ ] Deploy to test stone
 - [ ] Verify `garden-rake list` shows all offerings
 - [ ] Verify `garden-rake install mongodb` works
@@ -413,7 +420,7 @@ With `ManifestRegistry.hw` in place, future work includes:
 
 ## Revision History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.1 | 2026-01-24 | Added ManifestRegistry architecture as Priority 1 |
-| 1.0 | 2026-01-24 | Initial plan |
+| Version | Date       | Changes                                           |
+| ------- | ---------- | ------------------------------------------------- |
+| 1.1     | 2026-01-24 | Added ManifestRegistry architecture as Priority 1 |
+| 1.0     | 2026-01-24 | Initial plan                                      |

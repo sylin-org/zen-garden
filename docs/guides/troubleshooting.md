@@ -376,16 +376,16 @@ Most client libraries require explicit discovery integration.
 
 ```javascript
 // This will NOT work - connection string not resolved
-const client = new MongoClient('zen-garden:mongodb/myapp');
+const client = new MongoClient("zen-garden:mongodb/myapp");
 ```
 
 **Node.js example (correct):**
 
 ```javascript
 // Use zen-garden discovery library
-const { resolveConnectionString } = require('zen-garden-client');
+const { resolveConnectionString } = require("zen-garden-client");
 
-const uri = await resolveConnectionString('zen-garden:mongodb/myapp');
+const uri = await resolveConnectionString("zen-garden:mongodb/myapp");
 // Returns: mongodb://stone-01.local:27017/myapp
 
 const client = new MongoClient(uri);
@@ -395,7 +395,7 @@ const client = new MongoClient(uri);
 
 ```javascript
 // Direct connection (bypasses discovery)
-const uri = 'mongodb://stone-01.local:27017/myapp';
+const uri = "mongodb://stone-01.local:27017/myapp";
 const client = new MongoClient(uri);
 ```
 
@@ -719,7 +719,7 @@ garden-rake offer mongodb --at stone-01
 
 ```powershell
 # Re-create USB with Force flag (Windows)
-.\NewStone.ps1 -UsbDrive E: -StoneName "stone-01" -Force
+.\NewStone-linux-x64.ps1 -UsbDrive E: -StoneName "stone-01" -Force
 
 # Verify USB contents:
 # - EFI partition (FAT32)

@@ -33,31 +33,31 @@
     Number of parallel cargo jobs (default: number of CPUs)
 
 .EXAMPLE
-    .\compile-linux.ps1
+    .\compile-linux-x64.ps1
     # Build all binaries using Docker (default)
 
 .EXAMPLE
-    .\compile-linux.ps1 -Targets "garden-moss","garden-rake"
+    .\compile-linux-x64.ps1 -Targets "garden-moss","garden-rake"
     # Build only moss and rake (core tier)
 
 .EXAMPLE
-    .\compile-linux.ps1 -Fast
+    .\compile-linux-x64.ps1 -Fast
     # Build with fast-release profile (~40% faster, slightly larger binaries)
 
 .EXAMPLE
-    .\compile-linux.ps1 -DebugBuild
+    .\compile-linux-x64.ps1 -DebugBuild
     # Compile debug binaries (faster compile, larger size)
 
 .EXAMPLE
-    .\compile-linux.ps1 -ForceRebuild
+    .\compile-linux-x64.ps1 -ForceRebuild
     # Rebuild Docker image and compile debug binaries
 
 .EXAMPLE
-    .\compile-linux.ps1 -Native -Release
+    .\compile-linux-x64.ps1 -Native -Release
     # On Linux: build natively without Docker
 
 .EXAMPLE
-    .\compile-linux.ps1 -CheckUpdates
+    .\compile-linux-x64.ps1 -CheckUpdates
     # Check for outdated crates before building
 #>
 
@@ -86,8 +86,8 @@ else {
 
 $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
-$LINUX_DIR = Join-Path $DIST_DIR "linux"
-$IMAGE_NAME = "zen-garden-builder:latest"
+$LINUX_DIR = Join-Path $DIST_DIR "linux-x64"
+$IMAGE_NAME = "zen-builder-linux-x64:latest"
 
 # Detect platform (handle Windows PowerShell which lacks $PSVersionTable.Platform)
 $IsLinuxHost = $false
@@ -132,7 +132,7 @@ $buildTypeDesc = switch ($buildProfile) {
 $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
 Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Linux Build                           ║" -ForegroundColor Cyan
+Write-Host "║   Zen Garden Linux x64 Build                       ║" -ForegroundColor Cyan
 Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 Write-Host "Configuration:" -ForegroundColor Yellow
@@ -178,7 +178,7 @@ if ($UseDocker) {
         
         Push-Location $WORKSPACE_ROOT
         try {
-            docker build -f Dockerfile.build -t $IMAGE_NAME . --quiet
+            docker build -f Dockerfile.linux-x64 -t $IMAGE_NAME . --quiet
             if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
             Write-Host "  ✓ Image ready`n" -ForegroundColor Green
         }
@@ -251,7 +251,7 @@ if ($UseDocker) {
             $buildArgs += @("--bin", $target)
         }
         
-        $containerName = "zen-garden-builder-container"
+        $containerName = "zen-builder-linux-x64"
         
         # Check if container already exists and is running
         $existingContainer = docker ps --filter "name=^/${containerName}$" --format "{{.Names}}" 2>$null
@@ -271,7 +271,7 @@ if ($UseDocker) {
             docker run -d `
                 --name $containerName `
                 -v "${unixPath}:/build" `
-                -v "zen-garden-cargo-cache:/root/.cargo" `
+                -v "zen-cargo-cache-linux-x64:/root/.cargo" `
                 -w /build `
                 $IMAGE_NAME `
                 tail -f /dev/null
@@ -293,28 +293,28 @@ if ($UseDocker) {
         # Clean build artifacts to force version update
         # (Cargo cache doesn't detect CARGO_BUILD_NUMBER changes)
         # Must clean:
-        # 1. Final binaries in target/{profile}/
-        # 2. Build script outputs in target/{profile}/build/garden-*/
-        # 3. Incremental cache in target/{profile}/incremental/garden*/
+        # 1. Final binaries in target-linux-x64/{profile}/
+        # 2. Build script outputs in target-linux-x64/{profile}/build/garden-*/
+        # 3. Incremental cache in target-linux-x64/{profile}/incremental/garden*/
         Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-        docker exec $containerName sh -c "rm -f /build/target/debug/garden-* /build/target/release/garden-* /build/target/fast-release/garden-*" 2>$null | Out-Null
-        docker exec $containerName sh -c "rm -rf /build/target/debug/build/garden-* /build/target/release/build/garden-* /build/target/fast-release/build/garden-*" 2>$null | Out-Null
-        docker exec $containerName sh -c "rm -rf /build/target/debug/incremental/garden* /build/target/release/incremental/garden* /build/target/fast-release/incremental/garden*" 2>$null | Out-Null
-        docker exec $containerName sh -c "rm -rf /build/target/debug/.fingerprint/garden-* /build/target/release/.fingerprint/garden-* /build/target/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
-        
-        # Execute build in the persistent container with build number
-        docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER $containerName $buildArgs
+        docker exec $containerName sh -c "rm -f /build/target-linux-x64/debug/garden-* /build/target-linux-x64/release/garden-* /build/target-linux-x64/fast-release/garden-*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -rf /build/target-linux-x64/debug/build/garden-* /build/target-linux-x64/release/build/garden-* /build/target-linux-x64/fast-release/build/garden-*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -rf /build/target-linux-x64/debug/incremental/garden* /build/target-linux-x64/release/incremental/garden* /build/target-linux-x64/fast-release/incremental/garden*" 2>$null | Out-Null
+        docker exec $containerName sh -c "rm -rf /build/target-linux-x64/debug/.fingerprint/garden-* /build/target-linux-x64/release/.fingerprint/garden-* /build/target-linux-x64/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
+
+        # Execute build with isolated target directory
+        docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x64 $containerName $buildArgs
         
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
         
-        # Copy binaries from Docker container to dist/linux/
+        # Copy binaries from Docker container to dist/linux-x64/
         # Use docker cp because volume mount may not reflect changes immediately on Windows
         Write-Host "  → Copying binaries from container..." -ForegroundColor DarkGray
 
         $copyFailed = $false
 
         foreach ($target in $buildTargets) {
-            docker cp "${containerName}:/build/target/${buildProfile}/${target}" "$LINUX_DIR\$target" 2>$null
+            docker cp "${containerName}:/build/target-linux-x64/${buildProfile}/${target}" "$LINUX_DIR\$target" 2>$null
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "    ✗ Failed to copy $target" -ForegroundColor Red
                 $copyFailed = $true
@@ -323,7 +323,7 @@ if ($UseDocker) {
 
         if ($copyFailed) { throw "Failed to copy one or more binaries from container" }
         
-        Write-Host "  ✓ Linux binaries built`n" -ForegroundColor Green
+        Write-Host "  ✓ Linux x64 binaries built`n" -ForegroundColor Green
         
     }
     finally {
@@ -367,7 +367,7 @@ else {
         Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
         $targetProfileDirs = @("debug", "release", "fast-release")
         foreach ($profileDir in $targetProfileDirs) {
-            $targetPath = Join-Path (Join-Path $WORKSPACE_ROOT "target") $profileDir
+            $targetPath = Join-Path (Join-Path $WORKSPACE_ROOT "target-linux-x64") $profileDir
             if (Test-Path $targetPath) {
                 Get-ChildItem $targetPath -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
                 $buildPath = Join-Path $targetPath "build"
@@ -403,12 +403,13 @@ else {
             $buildArgs += @("--bin", $target)
         }
 
+        $env:CARGO_TARGET_DIR = Join-Path $WORKSPACE_ROOT "target-linux-x64"
         cargo @buildArgs
 
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
-        # Copy binaries from target to dist/linux/
-        $srcDir = Join-Path (Join-Path $WORKSPACE_ROOT "target") $buildProfile
+        # Copy binaries from target-linux-x64 to dist/linux-x64/
+        $srcDir = Join-Path (Join-Path $WORKSPACE_ROOT "target-linux-x64") $buildProfile
         foreach ($target in $buildTargets) {
             $srcPath = Join-Path $srcDir $target
             if (Test-Path $srcPath) {
@@ -468,7 +469,7 @@ else {
 }
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  1. Create USB: cd installer; .\NewStone.ps1 -UsbDrive G:"
+Write-Host "  1. Create USB: cd installer; .\NewStone-linux-x64.ps1 -UsbDrive G:"
 Write-Host "  2. Deploy to Stone and test"
 if ($UseDocker -and $existingImage -and -not $ForceRebuild) {
     Write-Host "  (Build container cached for next run)" -ForegroundColor DarkGray

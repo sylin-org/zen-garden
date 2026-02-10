@@ -8,5 +8,5 @@ Files:
   mbr.bin          - MBR boot code (440 bytes), written to disk MBR sector
   syslinux64.exe   - Windows 64-bit tool to install SYSLINUX VBR on FAT partitions
 
-These files enable legacy BIOS boot from USB drives formatted by NewStone.ps1.
+These files enable legacy BIOS boot from USB drives formatted by NewStone-linux-x64.ps1.
 Used by Repair-LegacyBoot.ps1 to add legacy boot support to existing NewStone USBs.

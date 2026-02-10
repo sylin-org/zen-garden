@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-    Build Zen Garden for all platforms including Linux i386
+    Build Zen Garden for all platforms including Linux x86
 
 .DESCRIPTION
-    Convenience wrapper for build.ps1 -IncludeI386.
-    Produces 3 packages: Linux amd64, Linux i386, Windows amd64.
+    Convenience wrapper for build.ps1 -IncludeX86.
+    Produces 3 packages: Linux x64, Linux x86, Windows x64.
 
 .PARAMETER Tier
     Build tier: "core" or "full". Default: "full".
 
 .PARAMETER SkipLinux
-    Skip Linux amd64 build
+    Skip Linux x64 build
 
 .PARAMETER SkipWindows
     Skip Windows build
@@ -32,11 +32,11 @@
 
 .EXAMPLE
     .\build-all-platforms.ps1
-    Build all binaries for Linux amd64, Linux i386, and Windows
+    Build all binaries for Linux x64, Linux x86, and Windows x64
 
 .EXAMPLE
     .\build-all-platforms.ps1 -Tier core -SkipWindows
-    Build core binaries only for Linux amd64 + i386
+    Build core binaries only for Linux x64 + x86
 #>
 
 [CmdletBinding()]
@@ -57,7 +57,7 @@ $scriptPath = Join-Path $PSScriptRoot "build.ps1"
 
 & $scriptPath `
     -Tier $Tier `
-    -IncludeI386 `
+    -IncludeX86 `
     -SkipLinux:$SkipLinux `
     -SkipWindows:$SkipWindows `
     -DebugBuild:$DebugBuild `

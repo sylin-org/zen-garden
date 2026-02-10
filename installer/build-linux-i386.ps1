@@ -4,8 +4,12 @@
 
 .DESCRIPTION
     Complete Linux i386 build pipeline:
-    - Build i386 binaries via Docker cross-compilation
-    - Create deployment package (tar.gz)
+    - Build i386 binaries via Docker cross-compilation (only tier-specified binaries)
+    - Create deployment package (tar.gz with ALL available binaries, manifests, scripts)
+
+    The package always includes all binaries found in dist/linux-i386/, even if only
+    core binaries were built. This allows fast iteration on core components while
+    including previously-built Companions in the package.
 
     Parallel pipeline to build-linux.ps1 for 32-bit stone support.
     Output: dist/packages/zen-garden-{version}-linux-i386.tar.gz
@@ -19,6 +23,9 @@
 
 .PARAMETER DebugBuild
     Build debug binaries
+
+.PARAMETER Release
+    Build full-release binaries (full LTO)
 
 .PARAMETER Fast
     Use fast-release profile (default, thin LTO)
@@ -42,6 +49,7 @@ param(
     [string]$Tier = "full",
 
     [switch]$DebugBuild,
+    [switch]$Release,
     [switch]$Fast,
     [switch]$ForceRebuild,
     [switch]$SkipPackage,
@@ -71,7 +79,7 @@ Write-Host " Linux i386 Build Pipeline" -ForegroundColor Magenta
 Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
 Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
-Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Fast -or (-not $DebugBuild)) { 'fast-release' } else { 'release' })" -ForegroundColor Cyan
+Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'fast-release' })" -ForegroundColor Cyan
 Write-Host ""
 
 # Get build targets for this tier
@@ -84,7 +92,7 @@ $buildArgs = @{
     Targets = $buildTargets
 }
 if ($DebugBuild) { $buildArgs.Add('DebugBuild', $true) }
-if ($Fast -or (-not $DebugBuild)) { $buildArgs.Add('Fast', $true) }
+if ($Fast -or (-not $DebugBuild -and -not $Release)) { $buildArgs.Add('Fast', $true) }
 if ($ForceRebuild) { $buildArgs.Add('ForceRebuild', $true) }
 if ($Jobs -gt 0) { $buildArgs.Add('Jobs', $Jobs) }
 
@@ -93,9 +101,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "Linux i386 build failed"
 }
 
-# Create package
+# Create package (includes ALL available binaries, not just those built in this tier)
 if (-not $SkipPackage) {
     Write-Host "`nCreating i386 deployment package..." -ForegroundColor Yellow
+    Write-Host "  (Including all available binaries from dist/linux-i386/)" -ForegroundColor DarkGray
 
     $stagingDir = Join-Path $DIST_DIR "staging\linux-i386"
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
@@ -107,7 +116,8 @@ if (-not $SkipPackage) {
     if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
-    # Copy binaries from dist/linux-i386/
+    # Copy ALL available binaries (not just tier-specific ones)
+    # This allows packages to include previously-built Companions even when only core was built
     $binaries = Get-PlatformBinaries -Config $config -Platform "linux"
     $includedCount = 0
     $skippedCount = 0
@@ -116,6 +126,18 @@ if (-not $SkipPackage) {
         if ($result) { $includedCount++ } else { $skippedCount++ }
     }
     Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
+
+    # Copy external tools (pre-built binaries from external repos)
+    $externalTools = Get-ExternalTools -Config $config -Platform "linux"
+    $toolsIncluded = 0
+    $toolsSkipped = 0
+    foreach ($tool in $externalTools) {
+        $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "linux"
+        if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
+    }
+    if ($externalTools.Count -gt 0) {
+        Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
+    }
 
     # Copy assets
     $assets = Get-PlatformAssets -Config $config -Platform "linux"
@@ -140,6 +162,23 @@ if (-not $SkipPackage) {
         }
     }
 
+    # Add external tools to manifest
+    foreach ($tool in $externalTools) {
+        $filename = $tool.Binary
+        $toolPath = Join-Path (Join-Path $packageDir $tool.Destination) $filename
+        if (Test-Path $toolPath) {
+            $hash = (Get-FileHash $toolPath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = ($tool.Destination + $filename) -replace '\\', '/'
+            $components[$tool.Name] = @{
+                path = $relativePath
+                sha256 = $hash
+                size = (Get-Item $toolPath).Length
+                required = $false
+                external = $true
+            }
+        }
+    }
+
     $manifest = @{
         version = $Version
         platform = "linux"
@@ -157,7 +196,7 @@ if (-not $SkipPackage) {
         if ($LASTEXITCODE -eq 0 -and (Test-Path $tarFile)) {
             Move-Item $tarFile $tarPath -Force
             $sizeMB = [math]::Round((Get-Item $tarPath).Length / 1MB, 2)
-            Write-Host "`nPackage: $packageName.tar.gz ($sizeMB MB)" -ForegroundColor Green
+            Write-Host "`n✓ Package: $packageName.tar.gz ($sizeMB MB)" -ForegroundColor Green
             Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
         } else {
             throw "tar failed with exit code $LASTEXITCODE"
@@ -168,4 +207,4 @@ if (-not $SkipPackage) {
     }
 }
 
-Write-Host "`nLinux i386 build complete" -ForegroundColor Green
+Write-Host "`n✓ Linux i386 build complete" -ForegroundColor Green

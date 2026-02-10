@@ -126,7 +126,19 @@ if (-not $SkipPackage) {
         if ($result) { $includedCount++ } else { $skippedCount++ }
     }
     Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
-    
+
+    # Copy external tools (pre-built binaries from external repos)
+    $externalTools = Get-ExternalTools -Config $config -Platform "linux"
+    $toolsIncluded = 0
+    $toolsSkipped = 0
+    foreach ($tool in $externalTools) {
+        $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "linux"
+        if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
+    }
+    if ($externalTools.Count -gt 0) {
+        Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
+    }
+
     # Copy assets from config
     $assets = Get-PlatformAssets -Config $config -Platform "linux"
     foreach ($asset in $assets) {
@@ -149,7 +161,24 @@ if (-not $SkipPackage) {
             }
         }
     }
-    
+
+    # Add external tools to manifest
+    foreach ($tool in $externalTools) {
+        $filename = $tool.Binary
+        $toolPath = Join-Path (Join-Path $packageDir $tool.Destination) $filename
+        if (Test-Path $toolPath) {
+            $hash = (Get-FileHash $toolPath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = ($tool.Destination + $filename) -replace '\\', '/'
+            $components[$tool.Name] = @{
+                path = $relativePath
+                sha256 = $hash
+                size = (Get-Item $toolPath).Length
+                required = $false
+                external = $true
+            }
+        }
+    }
+
     $manifest = @{
         version = $Version
         platform = "linux"

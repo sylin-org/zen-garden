@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Cross-compiles Zen Garden binaries for i686-unknown-linux-gnu (32-bit Linux).
-    Uses a dedicated Docker container with gcc-multilib and i386 libraries.
+    Uses a dedicated Docker container with gcc-multilib and x86 cross-compilation libraries.
     Output goes to dist/linux-x86/ (separate from the x64 dist/linux-x64/).
 
     This is a parallel pipeline to compile-linux-x64.ps1, not a replacement.
@@ -237,7 +237,7 @@ try {
 
     # Clean cached garden binaries to force version update
     # x86 uses a separate target dir (target-linux-x86/) to avoid glibc conflicts
-    # with the amd64 builder which uses target/ and a different base image.
+    # with the x64 builder which uses target-linux-x64/ and a different base image.
     Write-Host "  -> Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
     $targetBase = "/build/target-linux-x86/$RUST_TARGET"
     docker exec $CONTAINER_NAME sh -c "rm -f $targetBase/debug/garden-* $targetBase/release/garden-* $targetBase/fast-release/garden-*" 2>$null | Out-Null
@@ -306,7 +306,7 @@ if ($artifacts) {
 }
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  1. Install Debian i386 on the target machine"
+Write-Host "  1. Install Debian x86 on the target machine"
 Write-Host "  2. SCP binaries from dist/linux-x86/ to the stone"
 Write-Host "  (Build container cached for next run)" -ForegroundColor DarkGray
 Write-Host ""

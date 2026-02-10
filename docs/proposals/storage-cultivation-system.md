@@ -313,7 +313,7 @@ names:
     to: null
 
 hardware:
-  architecture: amd64
+  architecture: x64
   cpu: Intel Celeron J4105
   memory_mb: 8192
   

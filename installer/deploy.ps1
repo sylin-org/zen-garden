@@ -61,20 +61,20 @@ if ($Build) {
 $distRoot = Resolve-Path "$PSScriptRoot/../dist"
 $packagesDir = Join-Path $distRoot "packages"
 
-$linuxPackage = $null
-$linuxI386Package = $null
-$windowsPackage = $null
+$linuxX64Package = $null
+$linuxX86Package = $null
+$windowsX64Package = $null
 
 if (Test-Path $packagesDir) {
-    $linuxPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x64.tar.gz" | Sort-Object LastWriteTime -Descending
-    $linuxI386Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x86.tar.gz" | Sort-Object LastWriteTime -Descending
-    $windowsPackages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-x64.zip" | Sort-Object LastWriteTime -Descending
-    if ($linuxPackages.Count -gt 0) { $linuxPackage = $linuxPackages[0].FullName }
-    if ($linuxI386Packages.Count -gt 0) { $linuxI386Package = $linuxI386Packages[0].FullName }
-    if ($windowsPackages.Count -gt 0) { $windowsPackage = $windowsPackages[0].FullName }
+    $linuxX64Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x64.tar.gz" | Sort-Object LastWriteTime -Descending
+    $linuxX86Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x86.tar.gz" | Sort-Object LastWriteTime -Descending
+    $windowsX64Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-x64.zip" | Sort-Object LastWriteTime -Descending
+    if ($linuxX64Packages.Count -gt 0) { $linuxX64Package = $linuxX64Packages[0].FullName }
+    if ($linuxX86Packages.Count -gt 0) { $linuxX86Package = $linuxX86Packages[0].FullName }
+    if ($windowsX64Packages.Count -gt 0) { $windowsX64Package = $windowsX64Packages[0].FullName }
 }
 
-if (-not $linuxPackage -and -not $linuxI386Package -and -not $windowsPackage) {
+if (-not $linuxX64Package -and -not $linuxX86Package -and -not $windowsX64Package) {
     Write-Host "⚠️  No packages found in $packagesDir" -ForegroundColor Yellow
     Write-Host "   Run with -Build flag or run build.ps1 first." -ForegroundColor Yellow
     exit 1
@@ -242,18 +242,20 @@ function Get-StoneInfo {
 
     try {
         $url = "$($resolvedEndpoint.TrimEnd('/'))/health"
-        $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 3
+        $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
         return [PSCustomObject]@{
             OS = if ($health.os) { $health.os } else { "linux" }
-            Architecture = if ($health.architecture) { $health.architecture } else { "x86_64" }
+            Architecture = if ($health.architecture) { $health.architecture } else { "unknown" }
             ResolvedEndpoint = $resolvedEndpoint
+            Reachable = $true
         }
     }
     catch {
         return [PSCustomObject]@{
-            OS = "linux"
-            Architecture = "x86_64"
+            OS = "unknown"
+            Architecture = "unknown"
             ResolvedEndpoint = $resolvedEndpoint
+            Reachable = $false
         }
     }
 }
@@ -331,18 +333,18 @@ try {
     Write-Status "═══════════════════════════════════════════════════════════════`n"
 
     Write-Status "📦 Using packages:" -ForegroundColor Cyan
-    if ($linuxPackage) {
-        Write-Status "   Linux amd64: $(Split-Path -Leaf $linuxPackage)"
+    if ($linuxX64Package) {
+        Write-Status "   Linux x64:   $(Split-Path -Leaf $linuxX64Package)"
     } else {
-        Write-Status "   Linux amd64: (not available)" -Type "Warning"
+        Write-Status "   Linux x64:   (not available)" -Type "Warning"
     }
-    if ($linuxI386Package) {
-        Write-Status "   Linux i386:  $(Split-Path -Leaf $linuxI386Package)"
+    if ($linuxX86Package) {
+        Write-Status "   Linux x86:   $(Split-Path -Leaf $linuxX86Package)"
     }
-    if ($windowsPackage) {
-        Write-Status "   Windows:     $(Split-Path -Leaf $windowsPackage)"
+    if ($windowsX64Package) {
+        Write-Status "   Windows x64: $(Split-Path -Leaf $windowsX64Package)"
     } else {
-        Write-Status "   Windows:     (not available)" -Type "Warning"
+        Write-Status "   Windows x64: (not available)" -Type "Warning"
     }
     Write-Host ""
 
@@ -361,14 +363,21 @@ try {
     foreach ($stone in $stones) {
         $info = Get-StoneInfo -Stone $stone
         $arch = $info.Architecture
-        $platformLabel = if ($info.OS -match "windows") { "Windows amd64" }
-                         elseif ($arch -eq "x86" -or $arch -eq "i686" -or $arch -eq "i386") { "Linux i386" }
-                         else { "Linux amd64" }
 
-        $packagePath = switch -Wildcard ($platformLabel) {
-            "Windows*"    { $windowsPackage }
-            "Linux i386*" { $linuxI386Package }
-            default       { $linuxPackage }
+        if ($arch -eq "unknown") {
+            Write-Status "   $($stone.Name): SKIPPED (unreachable - cannot detect architecture)" -Type "Warning"
+            $skippedStones += $stone.Name
+            continue
+        }
+
+        $platformLabel = if ($info.OS -match "windows") { "Windows x64" }
+                         elseif ($arch -eq "x86" -or $arch -eq "i686" -or $arch -eq "i386") { "Linux x86" }
+                         else { "Linux x64" }
+
+        $packagePath = switch ($platformLabel) {
+            "Windows x64" { $windowsX64Package }
+            "Linux x86"   { $linuxX86Package }
+            default       { $linuxX64Package }
         }
 
         if (-not $packagePath) {

@@ -219,6 +219,7 @@ pub async fn execute_garden(
                     (UpdateScope::All, _)
                     | (UpdateScope::Offerings, Update::Offering { .. })
                     | (UpdateScope::Firmware, Update::Firmware { .. })
+                    | (UpdateScope::Moss, Update::Moss { .. })
                 )
             });
             
@@ -381,6 +382,7 @@ pub async fn execute_stone(
         UpdateScope::All => (true, true),
         UpdateScope::Offerings => (true, false),
         UpdateScope::Firmware => (false, true),
+        UpdateScope::Moss => (false, false), // Moss self-update handled separately
     };
 
     // Collect updates to execute

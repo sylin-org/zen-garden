@@ -1,31 +1,38 @@
 //! Zen Garden Moss - Service orchestration daemon
 //!
-//! Entry point with CLI dispatch. All orchestration logic delegated to bootstrap module.
+//! Entry point with CLI dispatch. Install/uninstall run synchronously
+//! before the Tokio runtime to prevent accidental daemon startup.
+//! All orchestration logic delegated to bootstrap module.
 
-use garden_moss::{
-    Cli, DaemonConfig, init_tracing, run_daemon,
-};
+use garden_moss::{Cli, Commands, DaemonConfig, init_tracing, run_daemon};
 use garden_moss::infra::kill_existing_moss_processes_graceful;
 #[cfg(target_os = "windows")]
-use garden_moss::Commands;
-#[cfg(target_os = "windows")]
-use garden_moss::infra::{install_windows_service, finalize_service_update, cleanup_after_service_update, cleanup_updater_process};
+use garden_moss::infra::{finalize_service_update, cleanup_after_service_update, cleanup_updater_process};
 #[cfg(target_os = "windows")]
 use garden_moss::ensure_windows_stone_name_config;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Parse CLI arguments
+fn main() -> anyhow::Result<()> {
     let cli = <Cli as clap::Parser>::parse();
 
-    // Handle Windows service commands (early exit)
-    #[cfg(target_os = "windows")]
+    // ── Synchronous subcommands (no Tokio runtime, no daemon) ────────
+    // Install and uninstall are pure setup/teardown operations.
+    // They must never activate the daemon loop, API server, or service stack.
     if let Some(command) = &cli.command {
         return match command {
-            Commands::TakeRoot | Commands::InstallService => install_windows_service().await,
+            Commands::Install => garden_moss::infra::installer::install(),
+            Commands::Uninstall => garden_moss::infra::installer::uninstall(),
+            #[cfg(target_os = "windows")]
+            Commands::TakeRoot | Commands::InstallService => garden_moss::infra::installer::install(),
         };
     }
 
+    // ── Everything below needs a Tokio runtime ───────────────────────
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async_main(cli))
+}
+
+async fn async_main(cli: Cli) -> anyhow::Result<()> {
+    // Handle Windows update lifecycle flags (early exit)
     #[cfg(target_os = "windows")]
     if cli.update_finalize {
         return finalize_service_update().await;

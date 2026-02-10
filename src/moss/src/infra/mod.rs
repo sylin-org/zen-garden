@@ -39,6 +39,7 @@ pub mod nurturing_store;
 pub mod persistence;
 pub mod process;
 pub mod secrets;
+pub mod installer;
 pub mod service;
 pub mod storage;
 pub mod task_store;

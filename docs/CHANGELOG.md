@@ -2,6 +2,23 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-09
+
+- **`garden-moss install` / `garden-moss uninstall`** - cross-platform self-install from a single binary
+  - Three tiers: online (GitHub download, future), offline (sibling package), USB (removable media)
+  - Linux: systemd unit generation, binary + script deployment, directory creation
+  - Windows: idempotent SCM registration (stop-delete-wait-recreate), recovery policy, firewall rules
+  - Removable media detection: copies binary + package to permanent location before installing
+  - Privilege checks: root (Linux) / Administrator (Windows) with clear error messages
+  - Health check after start, success summary with management commands
+  - Replaces Windows-only `take-root` / `install-service` (kept as hidden aliases)
+  - Proposal: [moss-self-install](proposals/moss-self-install.md)
+- **Nourishment: `Update::Moss` variant** - self-update type for Moss daemon alongside offerings and firmware
+  - New `UpdateScope::Moss` for scoped update execution
+  - Rake displays Moss updates in nourishment check output
+- **main.rs restructured** - synchronous CLI dispatch before Tokio runtime (Koi pattern)
+  - Install/uninstall run without async runtime, preventing accidental daemon startup
+
 ## 2026-02-06
 
 - **Tools Domain implemented (greenfield)** - normative automation-grade tools projection and stream

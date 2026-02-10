@@ -44,6 +44,15 @@ pub enum Update {
         #[serde(default)]
         confidence: FirmwareConfidence,
     },
+    /// Moss daemon self-update (from GitHub Releases)
+    #[serde(rename = "moss")]
+    Moss {
+        current: String,
+        available: String,
+        /// Download URL for the platform-matching package asset
+        #[serde(skip_serializing_if = "Option::is_none")]
+        download_url: Option<String>,
+    },
 }
 
 /// Updates collection with available and blocked items
@@ -107,13 +116,15 @@ impl Default for ExecuteRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdateScope {
-    /// All available updates (offerings + firmware)
+    /// All available updates (offerings + firmware + moss)
     #[default]
     All,
     /// Only offering (software) updates
     Offerings,
     /// Only firmware updates
     Firmware,
+    /// Only Moss daemon self-updates
+    Moss,
 }
 
 /// Execute response with job ID

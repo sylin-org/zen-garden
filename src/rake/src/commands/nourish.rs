@@ -187,11 +187,15 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
         println!("  {}", stone.stone_name);
 
         if !stone.updates.available.is_empty() {
-            // Separate offerings from firmware, and firmware by confidence
+            // Separate by update type
+            let moss_updates: Vec<_> = stone.updates.available.iter()
+                .filter(|u| matches!(u, Update::Moss { .. }))
+                .collect();
+
             let offerings: Vec<_> = stone.updates.available.iter()
                 .filter(|u| matches!(u, Update::Offering { .. }))
                 .collect();
-            
+
             let firmware_tested: Vec<_> = stone.updates.available.iter()
                 .filter(|u| matches!(u, Update::Firmware { confidence: FirmwareConfidence::Tested, .. }))
                 .collect();
@@ -199,7 +203,16 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
             let firmware_suggested: Vec<_> = stone.updates.available.iter()
                 .filter(|u| matches!(u, Update::Firmware { confidence: FirmwareConfidence::Suggested, .. }))
                 .collect();
-            
+
+            // Display Moss self-updates
+            if !moss_updates.is_empty() {
+                for update in moss_updates {
+                    if let Update::Moss { current, available, .. } = update {
+                        println!("    Moss       {} → {}", current, available);
+                    }
+                }
+            }
+
             // Display offerings
             if !offerings.is_empty() {
                 println!("    📦 OFFERINGS:");
@@ -209,7 +222,7 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
                     }
                 }
             }
-            
+
             // Display tested firmware (from manifests)
             if !firmware_tested.is_empty() {
                 println!("    🔧 FIRMWARE (tested):");
@@ -220,7 +233,7 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
                     }
                 }
             }
-            
+
             // Display suggested firmware (from LVFS, not in manifests)
             if !firmware_suggested.is_empty() {
                 println!("    🔧 FIRMWARE (suggested):");
@@ -237,8 +250,9 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
             println!("    ⚠ BLOCKED:");
             for blocked in &stone.updates.blocked {
                 let (name, current, available) = match &blocked.update {
-                    Update::Offering { name, current, available, .. } => (name, current, available),
-                    Update::Firmware { name, current, available, .. } => (name, current, available),
+                    Update::Offering { name, current, available, .. } => (name.as_str(), current.as_str(), available.as_str()),
+                    Update::Firmware { name, current, available, .. } => (name.as_str(), current.as_str(), available.as_str()),
+                    Update::Moss { current, available, .. } => ("moss", current.as_str(), available.as_str()),
                 };
                 println!(
                     "      ⚠ {} {} → {}: {}",

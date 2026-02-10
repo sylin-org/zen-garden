@@ -1,0 +1,370 @@
+//! Linux-specific install and uninstall logic (systemd)
+
+use std::path::Path;
+use std::process::Command;
+
+use super::SERVICE_NAME;
+
+const UNIT_FILE_PATH: &str = "/etc/systemd/system/garden-moss.service";
+const BIN_DIR: &str = "/usr/local/bin";
+
+/// Linux binaries to install from package bin/ directory
+const BINARIES: &[&str] = &[
+    "garden-moss",
+    "garden-rake",
+    "garden-lantern",
+];
+
+/// Scripts to install from package bin/ directory
+const SCRIPTS: &[&str] = &[
+    "moss-update-helper.sh",
+    "garden-upgrade.sh",
+];
+
+/// Install on Linux: deploy binaries, scripts, systemd unit, create directories.
+pub fn install_platform(staging_dir: &Path) -> anyhow::Result<()> {
+    // Create data and config directories
+    create_directories()?;
+
+    // Find the package contents (may be inside a subdirectory)
+    let bin_dir = find_bin_dir(staging_dir);
+
+    // Install binaries
+    install_binaries(&bin_dir)?;
+
+    // Install companions subdirectory if present
+    install_companions(&bin_dir)?;
+
+    // Install scripts from the scripts/ directory
+    install_scripts(staging_dir)?;
+
+    // Install systemd service
+    install_service_unit()?;
+
+    Ok(())
+}
+
+fn create_directories() -> anyhow::Result<()> {
+    let data = garden_common::constants::paths::data_dir();
+    let config = garden_common::constants::paths::config_dir();
+
+    println!("  Creating directories...");
+    std::fs::create_dir_all(&data)?;
+    println!("    {}", data);
+    std::fs::create_dir_all(&config)?;
+    println!("    {}", config);
+
+    Ok(())
+}
+
+/// Find the bin/ directory inside the extracted package.
+/// Packages extract as: staging/zen-garden-{version}/bin/ or staging/bin/
+fn find_bin_dir(staging_dir: &Path) -> std::path::PathBuf {
+    // Direct bin/ in staging
+    let direct = staging_dir.join("bin");
+    if direct.exists() {
+        return direct;
+    }
+
+    // Inside a version subdirectory: staging/zen-garden-*/bin/
+    if let Ok(entries) = std::fs::read_dir(staging_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.path().is_dir() {
+                let nested = entry.path().join("bin");
+                if nested.exists() {
+                    return nested;
+                }
+            }
+        }
+    }
+
+    // Fallback: staging dir itself (flat layout)
+    staging_dir.to_path_buf()
+}
+
+fn install_binaries(bin_dir: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    println!("  Installing binaries...");
+
+    for name in BINARIES {
+        let src = bin_dir.join(name);
+        let dest = Path::new(BIN_DIR).join(name);
+
+        if src.exists() {
+            std::fs::copy(&src, &dest)?;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
+            println!("    {} -> {}", name, dest.display());
+        }
+    }
+
+    for name in SCRIPTS {
+        let src = bin_dir.join(name);
+        let dest = Path::new(BIN_DIR).join(name);
+
+        if src.exists() {
+            std::fs::copy(&src, &dest)?;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
+            println!("    {} -> {}", name, dest.display());
+        }
+    }
+
+    Ok(())
+}
+
+fn install_companions(bin_dir: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let companions_src = bin_dir.join("companions");
+    if !companions_src.exists() {
+        return Ok(());
+    }
+
+    let companions_dest = Path::new(BIN_DIR).join("companions");
+    std::fs::create_dir_all(&companions_dest)?;
+
+    println!("  Installing companions...");
+
+    if let Ok(entries) = std::fs::read_dir(&companions_src) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let src = entry.path();
+            let dest = companions_dest.join(entry.file_name());
+            if src.is_file() {
+                std::fs::copy(&src, &dest)?;
+                std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
+                println!("    companions/{}", entry.file_name().to_string_lossy());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Install scripts/ directory contents using filesystem-mirrored paths
+/// (scripts/X/Y/Z -> /X/Y/Z)
+fn install_scripts(staging_dir: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Find scripts/ in the package
+    let scripts_dir = find_scripts_dir(staging_dir);
+    if !scripts_dir.exists() {
+        return Ok(());
+    }
+
+    println!("  Installing scripts...");
+    let mut needs_daemon_reload = false;
+
+    for entry in walkdir(& scripts_dir)? {
+        let rel_path = entry.strip_prefix(&scripts_dir)?;
+        let target_path = Path::new("/").join(rel_path);
+        let target_dir = target_path.parent().unwrap_or(Path::new("/"));
+
+        std::fs::create_dir_all(target_dir)?;
+        std::fs::copy(&entry, &target_path)?;
+
+        // Apply post-install hooks based on path
+        let target_str = target_path.to_string_lossy();
+        if target_str.starts_with("/etc/systemd/system/") {
+            needs_daemon_reload = true;
+            std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o644))?;
+        } else if target_str.starts_with("/usr/local/bin/") {
+            std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o755))?;
+        }
+
+        println!("    {} -> {}", rel_path.display(), target_path.display());
+    }
+
+    if needs_daemon_reload {
+        let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+    }
+
+    Ok(())
+}
+
+/// Find scripts/ directory inside extracted package
+fn find_scripts_dir(staging_dir: &Path) -> std::path::PathBuf {
+    let direct = staging_dir.join("scripts");
+    if direct.exists() {
+        return direct;
+    }
+
+    // Inside a version subdirectory
+    if let Ok(entries) = std::fs::read_dir(staging_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.path().is_dir() {
+                let nested = entry.path().join("scripts");
+                if nested.exists() {
+                    return nested;
+                }
+            }
+        }
+    }
+
+    staging_dir.join("scripts")
+}
+
+/// Walk a directory tree and return all file paths
+fn walkdir(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    walk_recursive(dir, &mut files)?;
+    Ok(files)
+}
+
+fn walk_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_recursive(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn install_service_unit() -> anyhow::Result<()> {
+    println!("  Installing service...");
+
+    // Generate the unit file content
+    let unit_contents = generate_unit_file();
+    std::fs::write(UNIT_FILE_PATH, unit_contents)?;
+    println!("    {} -> {}", "garden-moss.service", UNIT_FILE_PATH);
+
+    // Reload systemd
+    print!("    systemctl daemon-reload...");
+    match Command::new("systemctl").args(["daemon-reload"]).output() {
+        Ok(o) if o.status.success() => println!(" done."),
+        Ok(o) => println!(" warning: {}", String::from_utf8_lossy(&o.stderr).trim()),
+        Err(e) => println!(" warning: {e}"),
+    }
+
+    // Enable (start on boot)
+    match Command::new("systemctl")
+        .args(["enable", SERVICE_NAME])
+        .output()
+    {
+        Ok(o) if o.status.success() => println!("    Service enabled (start on boot)"),
+        Ok(o) => println!(
+            "    Warning: could not enable service: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => println!("    Warning: could not enable service: {e}"),
+    }
+
+    Ok(())
+}
+
+fn generate_unit_file() -> String {
+    // Use the same unit file content as the package-assets template
+    "\
+[Unit]
+Description=Garden Moss Daemon - Zen Garden Stone Manager
+Documentation=https://github.com/koan-framework/zen-garden
+After=network-online.target docker.service avahi-daemon.service
+Wants=network-online.target
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=/usr/local/bin/moss-update-helper.sh
+ExecStart=/usr/local/bin/garden-moss
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=garden-moss
+
+# Environment
+Environment=\"RUST_LOG=info\"
+Environment=\"PORT=7185\"
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/stone/bin /usr/local/bin /etc/hostname /etc/hosts /etc/docker /etc/network /etc/netplan /run/network /etc/resolv.conf
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+"
+    .to_string()
+}
+
+// ── Uninstall ────────────────────────────────────────────────────────
+
+pub fn uninstall_platform() -> anyhow::Result<()> {
+    // Stop service if running
+    if systemctl_check("is-active") {
+        print!("  Stopping service...");
+        let _ = Command::new("systemctl")
+            .args(["stop", SERVICE_NAME])
+            .output();
+        println!(" done.");
+    }
+
+    // Disable service
+    if systemctl_check("is-enabled") {
+        match Command::new("systemctl")
+            .args(["disable", SERVICE_NAME])
+            .output()
+        {
+            Ok(o) if o.status.success() => println!("  Service disabled."),
+            _ => {}
+        }
+    }
+
+    // Remove unit file
+    let unit_path = Path::new(UNIT_FILE_PATH);
+    if unit_path.exists() {
+        print!("  Removing {}...", UNIT_FILE_PATH);
+        match std::fs::remove_file(unit_path) {
+            Ok(()) => println!(" done."),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!(" already removed."),
+            Err(e) => println!(" warning: {e}"),
+        }
+
+        // Reload systemd
+        let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+    }
+
+    // Remove binaries
+    println!("  Removing binaries...");
+    for name in BINARIES.iter().chain(SCRIPTS.iter()) {
+        let path = Path::new(BIN_DIR).join(name);
+        if path.exists() {
+            match std::fs::remove_file(&path) {
+                Ok(()) => println!("    {}", path.display()),
+                Err(e) => println!("    {} (warning: {e})", path.display()),
+            }
+        }
+    }
+
+    // Remove companions directory
+    let companions_dir = Path::new(BIN_DIR).join("companions");
+    if companions_dir.exists() {
+        match std::fs::remove_dir_all(&companions_dir) {
+            Ok(()) => println!("    {}/", companions_dir.display()),
+            Err(e) => println!("    {}/ (warning: {e})", companions_dir.display()),
+        }
+    }
+
+    Ok(())
+}
+
+fn systemctl_check(query: &str) -> bool {
+    Command::new("systemctl")
+        .args([query, SERVICE_NAME])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}

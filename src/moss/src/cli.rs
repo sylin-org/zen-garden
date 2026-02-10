@@ -54,13 +54,28 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Commands {
-    /// Install moss as a system service and start it (Zen: take-root)
+    /// Install Zen Garden as a system service
+    ///
+    /// Creates directories, extracts package contents (if available),
+    /// registers the service, and starts it. Works as both fresh install
+    /// and upgrade. Requires root (Linux) or Administrator (Windows).
+    Install,
+
+    /// Remove Zen Garden service and binaries (preserves data)
+    ///
+    /// Stops the service, removes binaries and scripts, and unregisters
+    /// the service. Data and configuration are preserved.
+    /// Requires root (Linux) or Administrator (Windows).
+    Uninstall,
+
+    /// Alias: install (Zen naming)
     #[cfg(target_os = "windows")]
+    #[command(name = "take-root", hide = true)]
     TakeRoot,
 
-    /// Install moss as a system service and start it (Normative: install-service)
+    /// Alias: install (legacy naming)
     #[cfg(target_os = "windows")]
-    #[command(name = "install-service")]
+    #[command(name = "install-service", hide = true)]
     InstallService,
 }
 

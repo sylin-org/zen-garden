@@ -235,26 +235,26 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Failed to create container" }
     }
 
-    # Clean cached binaries to force version update
-    # Cross-compiled binaries: target/{RUST_TARGET}/{profile}/
-    # Host-arch build scripts: target/{profile}/build/ (build scripts always compile for host)
+    # Clean cached garden binaries to force version update
+    # i386 uses a separate target dir (target-i386/) to avoid glibc conflicts
+    # with the amd64 builder which uses target/ and a different base image.
     Write-Host "  -> Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-    $targetBase = "/build/target/$RUST_TARGET"
+    $targetBase = "/build/target-i386/$RUST_TARGET"
     docker exec $CONTAINER_NAME sh -c "rm -f $targetBase/debug/garden-* $targetBase/release/garden-* $targetBase/fast-release/garden-*" 2>$null | Out-Null
     docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/build/garden-* $targetBase/release/build/garden-* $targetBase/fast-release/build/garden-*" 2>$null | Out-Null
     docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/incremental/garden* $targetBase/release/incremental/garden* $targetBase/fast-release/incremental/garden*" 2>$null | Out-Null
     docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/.fingerprint/garden-* $targetBase/release/.fingerprint/garden-* $targetBase/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
 
-    # Execute build
-    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
+    # Execute build with separate target directory
+    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-i386 -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
 
     if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
     # Copy binaries from container
-    # Cross-compiled binaries are at target/{RUST_TARGET}/{profile}/{binary}
+    # Cross-compiled binaries are at target-i386/{RUST_TARGET}/{profile}/{binary}
     Write-Host "  -> Copying binaries from container..." -ForegroundColor DarkGray
     $copyFailed = $false
-    $containerBuildDir = "/build/target/$RUST_TARGET/$buildProfile"
+    $containerBuildDir = "/build/target-i386/$RUST_TARGET/$buildProfile"
 
     foreach ($target in $buildTargets) {
         docker cp "${CONTAINER_NAME}:${containerBuildDir}/${target}" "$LINUX_I386_DIR\$target" 2>$null

@@ -1,5 +1,6 @@
 /dist
 /target
+/target-i386
 
 # Environment (local dev secrets/config)
 .env

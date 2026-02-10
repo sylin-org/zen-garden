@@ -128,7 +128,7 @@ if (-not $SkipPackage) {
     Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
 
     # Copy external tools (pre-built binaries from external repos)
-    $externalTools = Get-ExternalTools -Config $config -Platform "linux"
+    $externalTools = @(Get-ExternalTools -Config $config -Platform "linux")
     $toolsIncluded = 0
     $toolsSkipped = 0
     foreach ($tool in $externalTools) {

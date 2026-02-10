@@ -14,6 +14,7 @@ use crate::suggestions;
 use crate::tending;
 use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use colored::Colorize;
 use garden_common::{CliFormatter, GardenApiResponse, TopologyEntry};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -21,10 +22,15 @@ use std::time::Duration;
 /// Global counter for stones displayed (for footer)
 static STONE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Stone data from topology cache (lightweight, no HTTP calls)
-struct TopologyStoneData<'a> {
-    entry: &'a TopologyEntry,
-}
+/// Max offerings shown per row before truncation (+N)
+const MAX_OFFERINGS_SHOWN: usize = 3;
+
+/// Column widths for compact table
+const COL_NAME: usize = 24;
+const COL_OS: usize = 4;
+const COL_CORES: usize = 5;
+const COL_MEM: usize = 7;
+const COL_AI: usize = 16;
 
 /// Observe command for garden overview
 pub struct ObserveCommand {
@@ -116,13 +122,7 @@ async fn observe_garden(
             .print();
     }
 
-    // Main header
-    layout.blank();
-    layout.header("GARDEN OBSERVE")
-        .level(IndentLevel::Card)
-        .underline()
-        .underline_len(47)
-        .print();
+    // Header is printed by display functions (print_summary_header) with stone counts
 
     // Fresh mode: For detailed stone info with resource metrics
     // Requires UDP discovery + HTTP fetches per stone (not yet implemented)
@@ -226,8 +226,7 @@ async fn observe_garden(
 
     // If execute_on_stone succeeded, display and return
     if let Ok((stones, responding_stone)) = topology_result {
-        display_topology_entries(&stones, &stone_filter, &offerings_filter, Some(&responding_stone.stone_name), ctx.verbose);
-        display_footer();
+        display_topology_compact(&stones, &stone_filter, &offerings_filter, Some(&responding_stone.stone_name), ctx.verbose);
         return Ok(());
     }
 
@@ -242,8 +241,7 @@ async fn observe_garden(
         match ctx.client.get(&topology_url).timeout(Duration::from_secs(5)).send().await {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(topology) = resp.json::<garden_common::LanternTopology>().await {
-                    display_lantern_topology(&topology, offering_filter.as_deref(), tended_stone_name.as_deref());
-                    display_footer();
+                    display_lantern_compact(&topology, offering_filter.as_deref(), tended_stone_name.as_deref());
                     return Ok(());
                 }
             }
@@ -266,17 +264,202 @@ async fn observe_garden(
         .tag("hint")
         .print();
 
-    display_footer();
+    display_footer_empty();
     Ok(())
 }
 
 
 
-/// Display stones from topology API response (from tended Moss's cache)
-/// 
-/// This function uses data already in the topology cache - NO HTTP calls per stone.
-/// The TopologyEntry already contains services and capabilities from the chirp broadcasts.
-fn display_topology_entries(
+// ── Compact table display ────────────────────────────────────────────
+
+/// Build the summary header: "GARDEN OBSERVE — 7 stones, all thriving"
+/// or "GARDEN OBSERVE — 7 stones (5 thriving, 1 degraded, 1 dormant)"
+fn print_summary_header(count: usize, health_counts: &HealthCounts, term: &ui::TerminalInfo) {
+    let fmt = CliFormatter::new();
+    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+
+    let summary = if count == 0 {
+        "no stones".to_string()
+    } else if health_counts.all_thriving() {
+        let label = if count == 1 { "stone" } else { "stones" };
+        if term.supports_color {
+            format!("{} {}, {}", count, label, "all thriving".green())
+        } else {
+            format!("{} {}, all thriving", count, label)
+        }
+    } else {
+        let label = if count == 1 { "stone" } else { "stones" };
+        let mut parts: Vec<String> = Vec::new();
+        if health_counts.thriving > 0 {
+            let s = format!("{} thriving", health_counts.thriving);
+            parts.push(if term.supports_color { s.green().to_string() } else { s });
+        }
+        if health_counts.degraded > 0 {
+            let s = format!("{} degraded", health_counts.degraded);
+            parts.push(if term.supports_color { s.yellow().to_string() } else { s });
+        }
+        if health_counts.withering > 0 {
+            let s = format!("{} withering", health_counts.withering);
+            parts.push(if term.supports_color { s.red().to_string() } else { s });
+        }
+        if health_counts.dormant > 0 {
+            let s = format!("{} dormant", health_counts.dormant);
+            parts.push(if term.supports_color { s.truecolor(128, 128, 128).to_string() } else { s });
+        }
+        format!("{} {} ({})", count, label, parts.join(", "))
+    };
+
+    println!();
+    println!("{}{} \u{2014} {}", indent, fmt.title("GARDEN OBSERVE"), summary);
+}
+
+/// Health classification counters
+struct HealthCounts {
+    thriving: usize,
+    degraded: usize,
+    withering: usize,
+    dormant: usize,
+}
+
+impl HealthCounts {
+    fn new() -> Self {
+        Self { thriving: 0, degraded: 0, withering: 0, dormant: 0 }
+    }
+
+    fn add(&mut self, health: &str) {
+        match ui::classify_health(health) {
+            ui::VitalityClass::Thriving => self.thriving += 1,
+            ui::VitalityClass::Degraded => self.degraded += 1,
+            ui::VitalityClass::Withering => self.withering += 1,
+            ui::VitalityClass::Dormant => self.dormant += 1,
+        }
+    }
+
+    fn all_thriving(&self) -> bool {
+        self.degraded == 0 && self.withering == 0 && self.dormant == 0
+    }
+}
+
+/// Print the table header row
+fn print_table_header(_term: &ui::TerminalInfo, table_width: usize) {
+    let fmt = CliFormatter::new();
+    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+    let divider = "\u{2500}".repeat(table_width);
+
+    println!("{}{}", indent, fmt.divider(&divider));
+
+    let header = format!(
+        " {:<name_w$} {:>os_w$}  {:>cores_w$}  {:>mem_w$}  {:<ai_w$}  {}",
+        "NAME", "OS", "CORES", "MEM", "AI", "OFFERINGS",
+        name_w = COL_NAME,
+        os_w = COL_OS,
+        cores_w = COL_CORES,
+        mem_w = COL_MEM,
+        ai_w = COL_AI,
+    );
+    println!("{}{}", indent, fmt.group(&header));
+    println!("{}{}", indent, fmt.divider(&divider));
+}
+
+/// Print a single stone row in the compact table
+#[allow(clippy::too_many_arguments)]
+fn print_stone_row(
+    name: &str,
+    health: &str,
+    is_tended: bool,
+    os_str: &str,
+    cores: usize,
+    mem_gb: u64,
+    ai: &str,
+    offerings: &str,
+    term: &ui::TerminalInfo,
+) {
+    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+
+    // Status prefix: symbol only when NOT thriving
+    let status_sym = ui::compact_status_symbol(health, term.supports_unicode);
+    let tended_mark = if is_tended {
+        if term.supports_color { "" } else { "*" }
+    } else {
+        ""
+    };
+
+    // Compose the prefix column (status + tended markers)
+    let prefix = match (status_sym, tended_mark) {
+        (Some(sym), "*") => format!("{}{}", sym, tended_mark),
+        (Some(sym), _) => format!("{} ", sym),
+        (None, "*") => " *".to_string(),
+        _ => "  ".to_string(),
+    };
+
+    // Color the stone name by vitality (tended = gold)
+    let colored_name = ui::colored_stone_name(name, health, is_tended, term.supports_color);
+    let name_padded = ui::pad_visible(&colored_name, COL_NAME);
+
+    // OS indicator
+    let os_icon = ui::os_indicator(os_str, term.supports_unicode);
+
+    // Color the status symbol if present
+    let colored_prefix = if term.supports_color {
+        match ui::classify_health(health) {
+            ui::VitalityClass::Thriving => prefix.clone(),
+            ui::VitalityClass::Degraded => prefix.yellow().to_string(),
+            ui::VitalityClass::Withering => prefix.red().to_string(),
+            ui::VitalityClass::Dormant => prefix.truecolor(128, 128, 128).to_string(),
+        }
+    } else {
+        prefix
+    };
+
+    println!(
+        "{}{}{} {:>os_w$}  {:>cores_w$}  {:>mem_w$}  {:<ai_w$}  {}",
+        indent,
+        colored_prefix,
+        name_padded,
+        os_icon,
+        cores,
+        format!("{} GB", mem_gb),
+        ai,
+        offerings,
+        os_w = COL_OS,
+        cores_w = COL_CORES,
+        mem_w = COL_MEM,
+        ai_w = COL_AI,
+    );
+}
+
+/// Print footer with adaptive legend
+fn print_table_footer(
+    has_tended: bool,
+    has_windows: bool,
+    has_linux: bool,
+    table_width: usize,
+    term: &ui::TerminalInfo,
+) {
+    let fmt = CliFormatter::new();
+    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+    let divider = "\u{2500}".repeat(table_width);
+
+    println!("{}{}", indent, fmt.divider(&divider));
+
+    let legend = ui::compact_legend(has_tended, has_windows, has_linux, term);
+    println!("{} {}", indent, fmt.hint(&legend));
+
+    println!();
+    println!("{} {}", indent, fmt.hint("garden-rake <stone>? for details"));
+}
+
+/// Display footer when no stones are available
+fn display_footer_empty() {
+    // No-op: summary header already communicates the stone count
+}
+
+// ── Topology display (primary path) ─────────────────────────────────
+
+/// Display stones from topology API as a compact table.
+///
+/// Uses data already in the topology cache — NO HTTP calls per stone.
+fn display_topology_compact(
     stones: &[TopologyEntry],
     stone_filter: &Option<String>,
     offerings_filter: &Option<Vec<String>>,
@@ -284,12 +467,14 @@ fn display_topology_entries(
     verbose: u8,
 ) {
     let layout = Layout::new();
+    let term = ui::TerminalInfo::detect();
 
     if stones.is_empty() {
+        print_summary_header(0, &HealthCounts::new(), &term);
+        layout.blank();
         layout.line("No stones in topology cache")
             .level(IndentLevel::Card)
             .print();
-        layout.blank();
         layout.line("Try: garden-rake observe --fresh  (to scan network)")
             .level(IndentLevel::Card)
             .tag("hint")
@@ -307,6 +492,7 @@ fn display_topology_entries(
     };
 
     if filtered_stones.is_empty() && stone_filter.is_some() {
+        print_summary_header(0, &HealthCounts::new(), &term);
         layout.status(&format!("Stone '{}' not found in topology", stone_filter.as_ref().unwrap()))
             .level(IndentLevel::Card)
             .error()
@@ -314,259 +500,180 @@ fn display_topology_entries(
         return;
     }
 
-    // Display each stone using TopologyEntry data directly (no HTTP calls, no conversion)
-    for stone in filtered_stones {
-        // Skip stones without capabilities
-        if stone.capabilities.is_none() {
-            if verbose > 0 {
-                layout.status(&format!("Stone {} has no capabilities data (may be offline)", stone.stone_name))
+    // Collect displayable stones (those with capabilities data)
+    let displayable: Vec<&TopologyEntry> = filtered_stones.iter()
+        .filter(|s| {
+            if s.capabilities.is_none() && verbose > 0 {
+                layout.status(&format!("Stone {} has no capabilities data (may be offline)", s.stone_name))
                     .level(IndentLevel::Card)
                     .tag("verbose")
                     .print();
             }
-            continue;
-        }
+            s.capabilities.is_some()
+        })
+        .copied()
+        .collect();
 
-        // Compare stone names case-insensitively for tended marker
+    // Compute health summary
+    let mut health_counts = HealthCounts::new();
+    let mut has_tended = false;
+    let mut has_windows = false;
+    let mut has_linux = false;
+
+    for stone in &displayable {
+        health_counts.add(&stone.health);
+        let is_tended = tended_stone_name
+            .map(|t| t.eq_ignore_ascii_case(&stone.stone_name))
+            .unwrap_or(false);
+        if is_tended { has_tended = true; }
+
+        if let Some(ref caps) = stone.capabilities {
+            if let Some(ref rt) = caps.runtime {
+                let family = ui::os_family_from_runtime(&rt.os);
+                if family.starts_with("windows") || family.starts_with("microsoft") {
+                    has_windows = true;
+                } else {
+                    has_linux = true;
+                }
+            }
+        }
+    }
+
+    STONE_COUNT.store(displayable.len(), Ordering::SeqCst);
+
+    // Print header + table
+    let table_width = COL_NAME + COL_OS + COL_CORES + COL_MEM + COL_AI + 20 + 12; // padding + OFFERINGS label room
+    print_summary_header(displayable.len(), &health_counts, &term);
+    print_table_header(&term, table_width);
+
+    for stone in &displayable {
+        let caps = stone.capabilities.as_ref().unwrap();
         let is_tended = tended_stone_name
             .map(|t| t.eq_ignore_ascii_case(&stone.stone_name))
             .unwrap_or(false);
 
-        // Display directly from TopologyEntry - no conversion needed
-        let topology_data = TopologyStoneData { entry: stone };
-        let _ = display_topology_stone(&topology_data, offerings_filter, is_tended);
-    }
-}
+        let os_str = caps.runtime.as_ref()
+            .map(|r| ui::os_family_from_runtime(&r.os))
+            .unwrap_or("unknown");
 
+        let cores = caps.hardware.cpu.cores;
+        let mem_gb = caps.hardware.memory.total_mb / 1024;
+        let ai = ui::compact_ai(caps);
 
-
-/// Display topology from Lantern registry
-fn display_lantern_topology(topology: &garden_common::LanternTopology, offering_filter: Option<&str>, tended_stone_name: Option<&str>) {
-    let fmt = CliFormatter::new();
-    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
-    let term = ui::TerminalInfo::detect();
-
-    if topology.stones.is_empty() {
-        println!("{}No stones registered", indent);
-        return;
-    }
-
-    for stone in &topology.stones {
-        STONE_COUNT.fetch_add(1, Ordering::SeqCst);
-
-        // Compare stone names case-insensitively
-        let is_tended = tended_stone_name
-            .map(|t| t.eq_ignore_ascii_case(&stone.name))
-            .unwrap_or(false);
-        let tended_marker = if is_tended { ui::tended_marker(term.supports_color) } else { String::new() };
-
-        // Stone name with status and tended marker on same line - preserve original case
-        let status_indicator = ui::status_indicator(&stone.status, term.supports_color);
-        let status_with_tended = format!("{}{}", status_indicator, tended_marker);
-        
-        // Build complete left side: indent + formatted name
-        let name_display = fmt.title(&stone.name);
-        let left_side = format!("{}{}", indent, name_display);
-        println!("{}", ui::place_value(&left_side, &status_with_tended));
-
-        // Stone ID if available
-        if let Some(ref stone_id) = stone.stone_id {
-            println!("{}{}", indent, fmt.hint(&format!("id: {}", stone_id)));
-        }
-
-        println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
-
-        // ACCESS section
-        println!();
-        println!("{}    {}", indent, fmt.group("ACCESS"));
-        let endpoint_display = stone.endpoint.trim_start_matches("http://").trim_end_matches('/');
-        println!("{}", ui::place_value(&format!("{}        ENDPOINT", indent), endpoint_display));
-        println!();
-
-        // Filter services if needed
-        let filtered_services: Vec<_> = if let Some(filter) = offering_filter {
+        // Filter offerings if needed
+        let filtered_services: Vec<_> = if let Some(ref filters) = offerings_filter {
             stone.services.iter()
-                .filter(|s| s.name.to_lowercase().contains(&filter.to_lowercase()) ||
-                           s.service_type.to_lowercase().contains(&filter.to_lowercase()))
+                .filter(|s| filters.contains(&s.offering.to_lowercase()))
                 .collect()
         } else {
             stone.services.iter().collect()
         };
 
-        // OFFERINGS section
-        println!("{}    {}", indent, fmt.group("OFFERINGS"));
-        if filtered_services.is_empty() && offering_filter.is_some() {
-            println!("{}", ui::place_value(&format!("{}        ", indent), "No matching offerings"));
-        } else if filtered_services.is_empty() {
-            println!("{}", ui::place_value(&format!("{}        ", indent), "No offerings installed"));
+        let offerings_text = if offerings_filter.is_some() && filtered_services.is_empty() {
+            "\u{2014}".to_string()
         } else {
-            for svc in filtered_services.iter() {
-                let status = ui::status_indicator(&svc.status, term.supports_color);
-                println!("{}", ui::place_value(&format!("{}        {}", indent, svc.name), &status));
-            }
-        }
-
-        println!(); // Blank line between stones
-    }
-}
-
-/// Display stone from topology cache (lightweight view, no HTTP calls)
-fn display_topology_stone(stone: &TopologyStoneData, offering_filter: &Option<Vec<String>>, is_tended: bool) -> anyhow::Result<()> {
-    let entry = stone.entry;
-    let caps = entry.capabilities.as_ref().unwrap(); // Already filtered out None in caller
-    let term = ui::TerminalInfo::detect();
-    let fmt = CliFormatter::new();
-    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
-
-    // Increment stone counter
-    STONE_COUNT.fetch_add(1, Ordering::SeqCst);
-
-    // Stone health from topology
-    let status_text = entry.health.as_str();
-
-    // Stone name with status and tended marker
-    let status_indicator = ui::status_indicator(status_text, term.supports_color);
-    let tended_marker = if is_tended { ui::tended_marker(term.supports_color) } else { String::new() };
-    let status_with_tended = format!("{}{}", status_indicator, tended_marker);
-    
-    // Build complete left side: indent + formatted name
-    let name_display = fmt.title(&entry.stone_name);
-    let left_side = format!("{}{}", indent, name_display);
-    println!("{}", ui::place_value(&left_side, &status_with_tended));
-
-    // Stone ID
-    println!("{}{}", indent, fmt.hint(&format!("id: {}", entry.stone_id)));
-    println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
-
-    // === ACCESS SECTION ===
-    println!();
-    println!("{}    {}", indent, fmt.group("ACCESS"));
-    let endpoint_clean = entry.endpoint.trim_start_matches("http://").trim_end_matches('/');
-    let (ip_addr, port) = if let Some(colon_pos) = endpoint_clean.rfind(':') {
-        (&endpoint_clean[..colon_pos], &endpoint_clean[colon_pos + 1..])
-    } else {
-        (endpoint_clean, "7185")
-    };
-    let mdns_name = format!("{}.local", entry.stone_name.to_lowercase());
-    println!("{}", ui::place_value(&format!("{}        HTTP Endpoint", indent), &format!("http://{}:{}", ip_addr, port)));
-    println!("{}", ui::place_value(&format!("{}        mDNS Name", indent), &mdns_name));
-    println!("{}", ui::place_value(&format!("{}        IP Address", indent), ip_addr));
-
-    // === ENVIRONMENT SECTION ===
-    println!();
-    println!("{}    {}", indent, fmt.group("ENVIRONMENT"));
-    
-    // Operating System
-    if let Some(ref runtime) = caps.runtime {
-        // runtime.os format: "windows/Windows 11 Pro" or just "windows"
-        // Extract version if present, otherwise show OS family as-is
-        let os_display = if runtime.os.contains('/') {
-            let parts: Vec<&str> = runtime.os.split('/').collect();
-            if parts.len() == 2 {
-                parts[1]  // "Windows 11 Pro"
-            } else {
-                &runtime.os
-            }
-        } else {
-            &runtime.os  // "windows", "linux", etc.
+            // Use TopologyServiceEntry vec for compact_offerings
+            let svc_refs: Vec<garden_common::TopologyServiceEntry> = filtered_services.iter()
+                .map(|s| (*s).clone())
+                .collect();
+            ui::compact_offerings(&svc_refs, MAX_OFFERINGS_SHOWN)
         };
-        println!("{}", ui::place_value(&format!("{}        Operating System", indent), os_display));
-        
-        // Docker (only show if available)
-        if let Some(ref docker_ver) = runtime.docker_version {
-            println!("{}", ui::place_value(&format!("{}        Docker", indent), docker_ver));
-        }
+
+        print_stone_row(
+            &stone.stone_name,
+            &stone.health,
+            is_tended,
+            os_str,
+            cores,
+            mem_gb,
+            &ai,
+            &offerings_text,
+            &term,
+        );
     }
 
-    // === HARDWARE SECTION ===
-    println!();
-    println!("{}    {}", indent, fmt.group("HARDWARE"));
-    println!("{}", ui::place_value(&format!("{}        Architecture", indent), &caps.hardware.cpu.architecture));
-    println!("{}", ui::place_value(&format!("{}        CPU Cores", indent), &format!("{} cores", caps.hardware.cpu.cores)));
-    println!("{}", ui::place_value(&format!("{}        Memory", indent), &format!("{} GB", caps.hardware.memory.total_mb / 1024)));
-
-    // AI capabilities
-    if let Some(ref ai_caps) = caps.hardware.ai_capabilities {
-        if ai_caps.gpu_count > 0 {
-            let gpu_text = if ai_caps.gpu_count == 1 { "1 GPU".to_string() } else { format!("{} GPUs", ai_caps.gpu_count) };
-            let vram_text = if ai_caps.total_vram_mb >= 1024 {
-                format!(" ({} GB)", ai_caps.total_vram_mb / 1024)
-            } else if ai_caps.total_vram_mb > 0 {
-                format!(" ({} MB)", ai_caps.total_vram_mb)
-            } else {
-                String::new()
-            };
-            let runtime_text = if !ai_caps.runtimes.is_empty() {
-                let base_runtimes: Vec<String> = ai_caps.runtimes.iter()
-                    .filter(|r| !r.contains(':'))
-                    .map(|r| match r.as_str() {
-                        "cuda" => "CUDA".to_string(),
-                        "rocm" => "ROCm".to_string(),
-                        "directml" => "DirectML".to_string(),
-                        "openvino" => "OpenVINO".to_string(),
-                        _ => r.to_uppercase(),
-                    })
-                    .collect();
-                if !base_runtimes.is_empty() { format!(" - {}", base_runtimes.join(", ")) } else { String::new() }
-            } else {
-                String::new()
-            };
-            println!("{}", ui::place_value(&format!("{}        AI", indent), &format!("{}{}{}", gpu_text, vram_text, runtime_text)));
-        }
-    }
-
-    // === OFFERINGS SECTION (lightweight from topology) ===
-    println!();
-    println!("{}    {}", indent, fmt.group("OFFERINGS"));
-
-    // Filter services from topology
-    let filtered_services: Vec<_> = if let Some(ref filters) = offering_filter {
-        entry.services.iter()
-            .filter(|s| filters.contains(&s.offering.to_lowercase()))
-            .collect()
-    } else {
-        entry.services.iter().collect()
-    };
-
-    if filtered_services.is_empty() && offering_filter.is_some() {
-        println!("{}", ui::place_value(&format!("{}        ", indent), "No matching offerings"));
-        let hidden = entry.services.len();
-        if hidden > 0 {
-            println!("{}        ({} other service{})", indent, hidden, if hidden == 1 { "" } else { "s" });
-        }
-    } else if filtered_services.is_empty() {
-        println!("{}", ui::place_value(&format!("{}        ", indent), "No offerings installed"));
-    } else {
-        // Simple list (no resource metrics in topology cache)
-        for svc in filtered_services {
-            let status_indicator = ui::status_indicator(&svc.status, term.supports_color);
-            // Only show offering type if name differs from offering (e.g., "db-primary (mongodb)")
-            let display_name = if svc.name == svc.offering {
-                svc.name.clone()
-            } else {
-                format!("{} ({})", svc.name, svc.offering)
-            };
-            println!("{}", ui::place_value(&format!("{}        {}", indent, display_name), &status_indicator));
-        }
-    }
-
-    println!(); // Blank line between stones
-    Ok(())
+    print_table_footer(has_tended, has_windows, has_linux, table_width, &term);
 }
 
-/// Display footer with stone count and hints
-fn display_footer() {
-    let layout = Layout::new();
-    let fmt = CliFormatter::new();
-    let count = STONE_COUNT.load(Ordering::SeqCst);
+// ── Lantern fallback display ─────────────────────────────────────────
 
-    // Footer at Card level (matching stone header level)
-    let indent_card = IndentLevel::Card.indent();
+/// Display topology from Lantern registry as a compact table.
+///
+/// Lantern has less data than topology (no capabilities), so some columns
+/// show abbreviated info.
+fn display_lantern_compact(
+    topology: &garden_common::LanternTopology,
+    offering_filter: Option<&str>,
+    tended_stone_name: Option<&str>,
+) {
+    let term = ui::TerminalInfo::detect();
 
-    println!("{}{}", indent_card, fmt.divider(&"─".repeat(47)));
-    println!("{}{} stone{} discovered", indent_card, count, if count == 1 { "" } else { "s" });
-    layout.blank();
-    println!("{}{}", indent_card, fmt.hint("For stone details:      garden-rake <stone>?"));
-    println!("{}{}", indent_card, fmt.hint("To tend a stone:        garden-rake tend <stone>"));
-    // Related commands are printed by suggestions::print_suggestions() after execute()
+    if topology.stones.is_empty() {
+        print_summary_header(0, &HealthCounts::new(), &term);
+        let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+        println!("{}No stones registered", indent);
+        return;
+    }
+
+    // Compute summary
+    let mut health_counts = HealthCounts::new();
+    let mut has_tended = false;
+
+    for stone in &topology.stones {
+        health_counts.add(&stone.status);
+        let is_tended = tended_stone_name
+            .map(|t| t.eq_ignore_ascii_case(&stone.name))
+            .unwrap_or(false);
+        if is_tended { has_tended = true; }
+    }
+
+    STONE_COUNT.store(topology.stones.len(), Ordering::SeqCst);
+
+    let table_width = COL_NAME + COL_OS + COL_CORES + COL_MEM + COL_AI + 20 + 12;
+    print_summary_header(topology.stones.len(), &health_counts, &term);
+    print_table_header(&term, table_width);
+
+    for stone in &topology.stones {
+        let is_tended = tended_stone_name
+            .map(|t| t.eq_ignore_ascii_case(&stone.name))
+            .unwrap_or(false);
+
+        // Lantern doesn't have capabilities — show what we can
+        let filtered_services: Vec<_> = if let Some(filter) = offering_filter {
+            stone.services.iter()
+                .filter(|s| s.name.to_lowercase().contains(&filter.to_lowercase())
+                    || s.service_type.to_lowercase().contains(&filter.to_lowercase()))
+                .collect()
+        } else {
+            stone.services.iter().collect()
+        };
+
+        let offerings_text = if filtered_services.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            let names: Vec<&str> = filtered_services.iter().map(|s| s.name.as_str()).collect();
+            if names.len() <= MAX_OFFERINGS_SHOWN {
+                names.join(" ")
+            } else {
+                let shown: Vec<&str> = names[..MAX_OFFERINGS_SHOWN].to_vec();
+                format!("{} +{}", shown.join(" "), names.len() - MAX_OFFERINGS_SHOWN)
+            }
+        };
+
+        // Lantern lacks hardware info — use dashes
+        print_stone_row(
+            &stone.name,
+            &stone.status,
+            is_tended,
+            "unknown",
+            0,
+            0,
+            "\u{2014}",
+            &offerings_text,
+            &term,
+        );
+    }
+
+    // Lantern doesn't know OS — only show what we know
+    print_table_footer(has_tended, false, false, table_width, &term);
 }

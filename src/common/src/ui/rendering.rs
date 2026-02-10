@@ -526,6 +526,190 @@ pub fn tended_marker(color: bool) -> String {
     }
 }
 
+// ── Compact observe helpers ─────────────────────────────────────────
+
+/// OS indicator for compact table view.
+/// Returns emoji (🪟/🐧) when unicode is supported, [W]/[L] fallback otherwise.
+pub fn os_indicator(os_string: &str, supports_unicode: bool) -> &'static str {
+    let os_lower = os_string.to_lowercase();
+    if os_lower.starts_with("windows") || os_lower.starts_with("microsoft") {
+        if supports_unicode { "\u{1FAA8}" } else { "[W]" }  // 🪟
+    } else if supports_unicode {
+        "\u{1F427}"  // 🐧
+    } else {
+        "[L]"
+    }
+}
+
+/// Compact status symbol for non-thriving stones.
+/// Returns None for thriving (no symbol needed — name color conveys health).
+pub fn compact_status_symbol(health: &str, supports_unicode: bool) -> Option<&'static str> {
+    let h = health.to_lowercase();
+    if h == crate::VITALITY_THRIVING || h == crate::SERVICE_RUNNING
+        || h == "ok" || h == crate::HEALTH_HEALTHY
+        || h == "starting" || h == "initializing"
+    {
+        None // Thriving = no symbol
+    } else if h == crate::VITALITY_DORMANT || h == crate::SERVICE_STOPPED {
+        Some(if supports_unicode { "\u{25CB}" } else { "o" }) // ○
+    } else if h == crate::HEALTH_DEGRADED || h == crate::VITALITY_NEEDS_ATTENTION
+        || h == "warn" || h == "warning"
+    {
+        Some("!")
+    } else {
+        // withering, error, failed, unhealthy
+        Some(if supports_unicode { "\u{2717}" } else { "x" }) // ✗
+    }
+}
+
+/// Classify health status into a vitality category for coloring.
+pub enum VitalityClass {
+    Thriving,
+    Degraded,
+    Withering,
+    Dormant,
+}
+
+/// Map a health/status string to its vitality class.
+pub fn classify_health(health: &str) -> VitalityClass {
+    let h = health.to_lowercase();
+    if h == crate::VITALITY_THRIVING || h == crate::SERVICE_RUNNING
+        || h == "ok" || h == crate::HEALTH_HEALTHY
+        || h == "starting" || h == "initializing"
+    {
+        VitalityClass::Thriving
+    } else if h == crate::VITALITY_DORMANT || h == crate::SERVICE_STOPPED {
+        VitalityClass::Dormant
+    } else if h == crate::HEALTH_DEGRADED || h == crate::VITALITY_NEEDS_ATTENTION
+        || h == "warn" || h == "warning"
+    {
+        VitalityClass::Degraded
+    } else {
+        VitalityClass::Withering
+    }
+}
+
+/// Color a stone name according to its vitality class.
+/// Tended stones get gold (255, 215, 0) regardless of health.
+pub fn colored_stone_name(name: &str, health: &str, is_tended: bool, color: bool) -> String {
+    if !color {
+        return name.to_string();
+    }
+    if is_tended {
+        return name.truecolor(255, 215, 0).bold().to_string();
+    }
+    match classify_health(health) {
+        VitalityClass::Thriving => name.green().to_string(),
+        VitalityClass::Degraded => name.yellow().to_string(),
+        VitalityClass::Withering => name.red().to_string(),
+        VitalityClass::Dormant => name.truecolor(128, 128, 128).to_string(),
+    }
+}
+
+/// Format AI capabilities into a compact string like "GPU 8G/DML" or "2xGPU 16G/CUDA".
+pub fn compact_ai(caps: &crate::types::HardwareCapabilities) -> String {
+    if let Some(ref ai) = caps.hardware.ai_capabilities {
+        if ai.gpu_count == 0 {
+            return "\u{2014}".to_string(); // —
+        }
+        let gpu_prefix = if ai.gpu_count == 1 {
+            "GPU".to_string()
+        } else {
+            format!("{}xGPU", ai.gpu_count)
+        };
+        let vram = if ai.total_vram_mb >= 1024 {
+            format!(" {}G", ai.total_vram_mb / 1024)
+        } else if ai.total_vram_mb > 0 {
+            format!(" {}M", ai.total_vram_mb)
+        } else {
+            String::new()
+        };
+        let runtime = if !ai.runtimes.is_empty() {
+            let base: Vec<&str> = ai.runtimes.iter()
+                .filter(|r| !r.contains(':'))
+                .map(|r| match r.as_str() {
+                    "cuda" => "CUDA",
+                    "rocm" => "ROCm",
+                    "directml" => "DML",
+                    "openvino" => "VINO",
+                    _ => r.as_str(),
+                })
+                .collect();
+            if !base.is_empty() { format!("/{}", base.join(",")) } else { String::new() }
+        } else {
+            String::new()
+        };
+        format!("{}{}{}", gpu_prefix, vram, runtime)
+    } else {
+        "\u{2014}".to_string() // —
+    }
+}
+
+/// Format offerings list compactly with truncation: "memcached redis vault +2"
+pub fn compact_offerings(services: &[crate::types::TopologyServiceEntry], max_shown: usize) -> String {
+    if services.is_empty() {
+        return "\u{2014}".to_string(); // —
+    }
+    let names: Vec<&str> = services.iter().map(|s| s.offering.as_str()).collect();
+    if names.len() <= max_shown {
+        names.join(" ")
+    } else {
+        let shown: Vec<&str> = names[..max_shown].to_vec();
+        format!("{} +{}", shown.join(" "), names.len() - max_shown)
+    }
+}
+
+/// Extract OS family string from runtime info for OS indicator.
+/// Handles formats like "windows/Windows 11 Pro" or "linux/Debian GNU/Linux 13".
+pub fn os_family_from_runtime(os_string: &str) -> &str {
+    if let Some(slash) = os_string.find('/') {
+        &os_string[..slash]
+    } else {
+        os_string
+    }
+}
+
+/// Build the adaptive legend line for compact observe footer.
+pub fn compact_legend(has_tended: bool, has_windows: bool, has_linux: bool, term: &TerminalInfo) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Tended marker (only in monochrome — in color, gold name is self-evident)
+    if has_tended && !term.supports_color {
+        parts.push("* tended".to_string());
+    }
+
+    // OS indicators
+    if has_windows {
+        let icon = os_indicator("windows", term.supports_unicode);
+        parts.push(format!("{} Windows", icon));
+    }
+    if has_linux {
+        let icon = os_indicator("linux", term.supports_unicode);
+        parts.push(format!("{} Linux", icon));
+    }
+
+    // Status symbols — always show the full palette
+    if term.supports_unicode {
+        if term.supports_color {
+            parts.push(format!("{} thriving", "✓".green()));
+            parts.push(format!("{} degraded", "!".yellow()));
+            parts.push(format!("{} withering", "\u{2717}".red()));
+            parts.push(format!("{} dormant", "\u{25CB}".truecolor(128, 128, 128)));
+        } else {
+            parts.push("✓ thriving".to_string());
+            parts.push("! degraded".to_string());
+            parts.push("\u{2717} withering".to_string());
+            parts.push("\u{25CB} dormant".to_string());
+        }
+    } else {
+        parts.push("! degraded".to_string());
+        parts.push("x withering".to_string());
+        parts.push("o dormant".to_string());
+    }
+
+    parts.join("  ")
+}
+
 /// Render empty state message with optional action hint
 pub fn empty_state(message: &str, action_hint: Option<&str>) -> String {
     let mut output = String::new();

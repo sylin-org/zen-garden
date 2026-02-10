@@ -176,11 +176,10 @@ if ($IncludeI386) {
     Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
 
     $i386Script = Join-Path $PSScriptRoot $config.'linux-i386'.buildScript
-    $i386Tier = $config.'linux-i386'.tier  # i386 always builds core only
     try {
         & $i386Script `
             -Version $version `
-            -Tier $i386Tier `
+            -Tier $Tier `
             -DebugBuild:$DebugBuild `
             -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
             -ForceRebuild:$ForceRebuild `

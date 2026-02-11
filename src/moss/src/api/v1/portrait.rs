@@ -204,16 +204,9 @@ pub struct PortraitResponse {
     pub horizon: PortraitHorizon,
 }
 
-/// Derive a unique HSL color from stone ID
-///
-/// Uses hash of stone_id to generate a consistent hue (0-360),
-/// with fixed saturation (55%) and lightness (50%) for balanced visibility.
+/// Derive a unique HSL color from stone ID (delegates to garden_common)
 fn derive_stone_color(stone_id: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    stone_id.hash(&mut hasher);
-    let hash = hasher.finish();
-    let hue = (hash % 360) as u16;
-    format!("hsl({}, 55%, 50%)", hue)
+    garden_common::utils::derive_stone_color(stone_id)
 }
 
 /// Parse normalized OS family and friendly version from runtime OS text.

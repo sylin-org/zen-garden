@@ -1323,7 +1323,7 @@ impl Command for OfferCommand {
                                 }
                             }
 
-                            if code == garden_common::error_codes::COMPATIBILITY_FAILED {
+                            if code == garden_common::constants::COMPATIBILITY_FAILED {
                                 let derived_query = print_alternatives_for_failed_install(&ctx.client, endpoint, &offering_type, &self.prefer)
                                     .await
                                     .ok()

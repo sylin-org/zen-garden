@@ -126,7 +126,7 @@ pub struct TaskStore {
 impl TaskStore {
     /// Create a new task store
     pub fn new() -> Self {
-        let config_dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+        let config_dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
         let tasks_dir = config_dir.join("tasks");
 
         Self {

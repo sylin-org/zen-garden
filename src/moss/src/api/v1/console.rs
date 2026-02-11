@@ -141,9 +141,9 @@ async fn persist_console_mode(
     use std::path::PathBuf;
     
     let config_path = if cfg!(windows) {
-        PathBuf::from(format!("./{}", garden_common::names::MOSS_CONFIG))
+        PathBuf::from(format!("./{}", garden_common::constants::MOSS_CONFIG))
     } else {
-        PathBuf::from(format!("{}/{}", garden_common::names::CONFIG_DIR, garden_common::names::MOSS_CONFIG))
+        PathBuf::from(format!("{}/{}", garden_common::constants::CONFIG_DIR, garden_common::constants::MOSS_CONFIG))
     };
 
     // Read existing config or create new one

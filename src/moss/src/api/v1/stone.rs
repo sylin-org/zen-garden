@@ -20,7 +20,7 @@ use crate::AppState;
 use crate::api::responses::ApiResponse;
 use garden_common::api_utils::ApiErrorResponse;
 use crate::domain::validate_binary_architecture;
-use garden_common::{names::{MOSS_BINARY, RAKE_BINARY}, HardwareCapabilities, Offering};
+use garden_common::{constants::{MOSS_BINARY, RAKE_BINARY}, HardwareCapabilities, Offering};
 
 // ============================================================================
 // Stone Info Endpoint (for observe command)

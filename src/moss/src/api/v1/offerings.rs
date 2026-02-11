@@ -16,7 +16,7 @@ use garden_common::offerings::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::{error_codes, error_response, AppState};
+use crate::{error_response, AppState};
 use crate::infra::embedded::EmbeddedManifests;
 
 /// Query parameters for filtering offerings
@@ -204,7 +204,7 @@ pub async fn get_offering_v1(
     details.insert("name".to_string(), serde_json::json!(name));
     Err(error_response(
         StatusCode::NOT_FOUND,
-        error_codes::OFFERING_NOT_FOUND,
+        garden_common::constants::OFFERING_NOT_FOUND,
         format!("Offering '{}' not found in catalog", name),
         Some(details),
     ))
@@ -238,7 +238,7 @@ pub async fn get_offering_manifest_v1(
             details.insert("name".to_string(), serde_json::json!(offering_type));
             Err(error_response(
                 StatusCode::NOT_FOUND,
-                error_codes::TEMPLATE_NOT_FOUND,
+                garden_common::constants::TEMPLATE_NOT_FOUND,
                 format!("Manifest for '{}' not found", offering_type),
                 Some(details),
             ))
@@ -321,7 +321,7 @@ pub async fn refresh_catalog_v1(
         details.insert("error".to_string(), serde_json::json!(format!("{}", e)));
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
+            garden_common::constants::INTERNAL_ERROR,
             "Failed to rebuild offerings catalog".to_string(),
             Some(details),
         )
@@ -331,7 +331,7 @@ pub async fn refresh_catalog_v1(
     let idx = idx_guard.as_ref().ok_or_else(|| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
+            garden_common::constants::INTERNAL_ERROR,
             "Offerings catalog unavailable after rebuild".to_string(),
             None,
         )
@@ -392,7 +392,7 @@ pub async fn search_offerings_v1(
         details.insert("query".to_string(), serde_json::json!(query.q));
         return Err(error_response(
             StatusCode::BAD_REQUEST,
-            error_codes::INVALID_REQUEST,
+            garden_common::constants::INVALID_REQUEST,
             "Search query is empty after normalization".to_string(),
             Some(details),
         ));

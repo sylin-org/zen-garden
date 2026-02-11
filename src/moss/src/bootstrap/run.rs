@@ -671,6 +671,7 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
     // Listens for mDNS announcements from neighbor stones to populate topology cache
     let topology_cache_for_mdns = state.topology_cache.clone();
     let topology_dirty_for_mdns = state.topology_dirty.clone();
+    let self_stone_name_for_mdns = stone_name.clone();
     if let Ok(mut mdns_rx) = mdns::start_mdns_lurk_listener(stone_name.clone()).await {
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Discovery,
@@ -681,6 +682,11 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
             loop {
                 match mdns_rx.recv().await {
                     Ok(discovered) => {
+                        // Skip self-announcements (common parser no longer filters these)
+                        if discovered.stone_name == self_stone_name_for_mdns {
+                            continue;
+                        }
+
                         tracing::debug!(
                             stone_id = ?discovered.stone_id,
                             stone_name = %discovered.stone_name,

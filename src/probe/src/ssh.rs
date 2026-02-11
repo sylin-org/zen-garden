@@ -255,7 +255,7 @@ impl Default for SshExecutor {
 /// tests should check `stone.is_linux()` before calling these functions.
 pub mod validation {
     use super::*;
-    use garden_common::paths;
+    use garden_common::constants::paths;
 
     /// Validate that a nurturing snapshot exists on disk (Linux only)
     ///

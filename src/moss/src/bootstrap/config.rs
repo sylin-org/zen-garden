@@ -53,7 +53,7 @@ impl DaemonConfig {
         // Merge port
         let port = cli.port
             .or_else(|| file_config.as_ref().and_then(|c| c.port))
-            .unwrap_or(garden_common::ports::MOSS_HTTP);
+            .unwrap_or(garden_common::constants::MOSS_HTTP);
 
         // Merge fast sync timeout
         let fast_sync_timeout = cli.fast_sync_timeout

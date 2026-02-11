@@ -17,6 +17,16 @@ pub const CONFIG_DIR: &str = ".zen-garden";
 pub const CONFIG_DIR: &str = "/etc/zen-garden";
 
 // ============================================================================
+// mDNS Discovery
+// ============================================================================
+
+/// mDNS service type for Koi HTTP API (no trailing `.local.`)
+pub const MDNS_SERVICE_TYPE: &str = "_moss._tcp";
+
+/// mDNS service type for native mdns-sd (fully qualified with `.local.`)
+pub const MDNS_SERVICE_TYPE_LOCAL: &str = "_moss._tcp.local.";
+
+// ============================================================================
 // Network Ports
 // ============================================================================
 

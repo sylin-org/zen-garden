@@ -31,7 +31,7 @@ impl CeremonyJournal {
 
     /// Create using default path from configuration
     pub fn default_journal() -> Self {
-        Self::new(garden_common::paths::ceremony_journal_dir())
+        Self::new(garden_common::constants::paths::ceremony_journal_dir())
     }
 
     /// Get path for an active ceremony

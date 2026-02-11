@@ -206,8 +206,8 @@ fn register_service(install_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn setup_firewall(exe_path: &Path) -> anyhow::Result<()> {
-    let http_port = garden_common::ports::MOSS_HTTP;
-    let mdns_port = garden_common::ports::DISCOVERY_UDP;
+    let http_port = garden_common::constants::MOSS_HTTP;
+    let mdns_port = garden_common::constants::DISCOVERY_UDP;
 
     let fw_http = create_firewall_rule(FIREWALL_RULE_HTTP, "TCP", http_port, exe_path);
     let fw_mdns = create_firewall_rule(FIREWALL_RULE_MDNS, "UDP", mdns_port, exe_path);

@@ -25,7 +25,7 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
-use garden_common::paths;
+use garden_common::constants::paths;
 use garden_common::storage::{
     DeviceState, PrepareSeedBankRequest, RenameSeedBankRequest, SeedBankInfo, SetVisibilityRequest,
     StorageDetectedInfo, DEFAULT_SEED_BANK_NAME,

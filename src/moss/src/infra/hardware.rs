@@ -115,7 +115,7 @@ fn detect_system_product() -> Option<String> {
 /// Returns None if cache doesn't exist or is invalid.
 /// This allows instant startup while background detection runs.
 pub async fn load_cached_capabilities() -> Option<HardwareCapabilities> {
-    let path = PathBuf::from(garden_common::names::CONFIG_DIR).join("capabilities.json");
+    let path = PathBuf::from(garden_common::constants::CONFIG_DIR).join("capabilities.json");
 
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => {
@@ -141,7 +141,7 @@ pub async fn load_cached_capabilities() -> Option<HardwareCapabilities> {
 ///
 /// Uses atomic write (temp file + rename) for consistency.
 pub async fn save_capabilities_cache(capabilities: &HardwareCapabilities) -> Result<()> {
-    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
     tokio::fs::create_dir_all(&dir).await?;
 
     let path = dir.join("capabilities.json");

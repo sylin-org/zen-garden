@@ -81,7 +81,7 @@ use tokio::sync::{broadcast, mpsc, Mutex, OnceCell, RwLock};
 use tokio::time::Instant;
 
 use crate::utils::ids::generate_guidv7;
-use crate::{ports, UdpAnnouncement};
+use crate::UdpAnnouncement;
 
 // ===== Configuration =====
 
@@ -101,7 +101,7 @@ struct DiscoveryConfig {
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
-            port: ports::DISCOVERY_UDP,
+            port: crate::constants::DISCOVERY_UDP,
             mcast_group: Ipv4Addr::new(239, 255, 42, 99),
             enable_bcast_fallback: true,
             enable_limited_bcast: false,

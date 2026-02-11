@@ -60,6 +60,21 @@ pub fn format_uptime(seconds: u64) -> String {
     }
 }
 
+/// Derive a deterministic HSL color from a stone identifier.
+///
+/// Uses a hash of the provided string (typically `stone_id`) to generate a
+/// consistent hue (0–360) with fixed saturation (55%) and lightness (50%)
+/// for balanced visibility on dark backgrounds.
+pub fn derive_stone_color(stone_id: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    stone_id.hash(&mut hasher);
+    let hash = hasher.finish();
+    let hue = (hash % 360) as u16;
+    format!("hsl({}, 55%, 50%)", hue)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +114,18 @@ mod tests {
         assert_eq!(format_uptime(3661), "1h 1m");
         assert_eq!(format_uptime(86400), "1d 0h 0m");
         assert_eq!(format_uptime(90061), "1d 1h 1m");
+    }
+
+    #[test]
+    fn test_derive_stone_color() {
+        let c1 = derive_stone_color("abc-123");
+        assert!(c1.starts_with("hsl("));
+        assert!(c1.ends_with(", 55%, 50%)"));
+
+        // Deterministic — same input always gives same output
+        assert_eq!(c1, derive_stone_color("abc-123"));
+
+        // Different inputs give different colors (probabilistically)
+        assert_ne!(derive_stone_color("abc-123"), derive_stone_color("xyz-789"));
     }
 }

@@ -38,7 +38,7 @@ use tracing::{debug, warn};
 
 use crate::infra::storage::{ObjectStore, SeedBankRegistry};
 use crate::AppState;
-use garden_common::paths;
+use garden_common::constants::paths;
 use garden_common::constants::headers::HEADER_SEED_BANK;
 use garden_common::storage::DEFAULT_SEED_BANK_NAME;
 

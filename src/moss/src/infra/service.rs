@@ -423,7 +423,7 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         println!("Waiting for port 7185 to become available...");
         log_update("Checking port 7185 availability...");
 
-        let port = garden_common::ports::MOSS_HTTP;
+        let port = garden_common::constants::MOSS_HTTP;
         for attempt in 1..=20 {
             match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
                 Ok(listener) => {

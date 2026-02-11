@@ -2225,7 +2225,7 @@ async fn refresh_component(
     // Normalize component name
     let normalized_component = match component.to_lowercase().as_str() {
         "moss" => "moss",
-        "rake" | "garden-rake" => garden_common::names::RAKE_BINARY,
+        "rake" | "garden-rake" => garden_common::constants::RAKE_BINARY,
         _ => bail!("Unknown component '{}'. Use 'moss' or 'rake'", component),
     };
     

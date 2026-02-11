@@ -44,7 +44,7 @@ impl Command for TendCommand {
                 tend_target::THIS | tend_target::LOCAL => {
                     // Tend to localhost - validate moss is running
                     let local_endpoint =
-                        format!("http://127.0.0.1:{}", garden_common::ports::MOSS_HTTP);
+                        format!("http://127.0.0.1:{}", garden_common::constants::MOSS_HTTP);
 
                     // Fast-skip: check if already tending to localhost
                     if let Ok(current) = tending::read_tending() {

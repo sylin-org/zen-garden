@@ -233,11 +233,10 @@ pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
     let mdns = ServiceDaemon::new()
         .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
 
-    let service_type = "_moss._tcp.local.";
-    let receiver = mdns.browse(service_type)
+    let receiver = mdns.browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)
         .map_err(|e| anyhow::anyhow!("Failed to browse mDNS services: {}", e))?;
 
-    tracing::debug!(service_type = %service_type, "Starting mDNS service browse");
+    tracing::debug!(service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL, "Starting mDNS service browse");
 
     let mut stones = Vec::new();
     let start = Instant::now();
@@ -301,7 +300,7 @@ pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
     }
 
     // Stop the browse
-    let _ = mdns.stop_browse(service_type);
+    let _ = mdns.stop_browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL);
 
     tracing::debug!(count = stones.len(), "mDNS discovery complete");
     Ok(stones)
@@ -322,11 +321,10 @@ where
     let mdns = ServiceDaemon::new()
         .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
 
-    let service_type = "_moss._tcp.local.";
-    let receiver = mdns.browse(service_type)
+    let receiver = mdns.browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)
         .map_err(|e| anyhow::anyhow!("Failed to browse mDNS services: {}", e))?;
 
-    tracing::debug!(service_type = %service_type, "Starting mDNS service browse (streaming)");
+    tracing::debug!(service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL, "Starting mDNS service browse (streaming)");
 
     let mut discovered_endpoints = HashSet::new();
     let start = Instant::now();
@@ -389,7 +387,7 @@ where
         }
     }
 
-    let _ = mdns.stop_browse(service_type);
+    let _ = mdns.stop_browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL);
     Ok(discovered_endpoints.len())
 }
 

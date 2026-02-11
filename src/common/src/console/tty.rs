@@ -345,11 +345,11 @@ async fn generate_unique_name_from_dictionary(adjectives: &[&str], nouns: &[&str
 async fn check_mdns_collision(name: &str) -> bool {
     // Query mDNS for _moss._tcp.local with instance name matching stone name
     // Timeout after 2 seconds
-    let mdns_name = format!("{}._moss._tcp.local", name);
-    
+    let mdns_name = format!("{}.{}", name, crate::constants::MDNS_SERVICE_TYPE_LOCAL.trim_end_matches('.'));
+
     // Use avahi-browse to check for existing service
     match tokio::process::Command::new("avahi-browse")
-        .args(["-t", "-r", "-p", "_moss._tcp"])
+        .args(["-t", "-r", "-p", crate::constants::MDNS_SERVICE_TYPE])
         .output()
         .await
     {

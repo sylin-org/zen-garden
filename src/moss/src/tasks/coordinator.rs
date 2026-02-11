@@ -129,7 +129,7 @@ pub async fn start_discovery_listener(
             EventStatus::Started,
             format!(
                 "UDP listener on port {}",
-                garden_common::ports::DISCOVERY_UDP
+                garden_common::constants::DISCOVERY_UDP
             ),
         ));
 

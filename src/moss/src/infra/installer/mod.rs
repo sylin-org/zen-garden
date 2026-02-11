@@ -299,7 +299,7 @@ fn start_and_verify() -> anyhow::Result<()> {
     // Health check: poll for a few seconds
     println!();
     print!("Checking health...");
-    let port = garden_common::ports::MOSS_HTTP;
+    let port = garden_common::constants::MOSS_HTTP;
     let health_url = format!("http://localhost:{}/health", port);
     let mut healthy = false;
 

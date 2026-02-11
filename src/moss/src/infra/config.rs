@@ -343,8 +343,8 @@ impl MossConfig {
     ///
     /// Returns None if file not found or contains errors (falls back to defaults)
     pub fn load() -> Option<Self> {
-        let config_path = std::path::PathBuf::from(garden_common::names::CONFIG_DIR)
-            .join(garden_common::names::MOSS_CONFIG);
+        let config_path = std::path::PathBuf::from(garden_common::constants::CONFIG_DIR)
+            .join(garden_common::constants::MOSS_CONFIG);
 
         match std::fs::read_to_string(&config_path) {
             Ok(content) => match toml::from_str::<MossConfig>(&content) {
@@ -445,10 +445,10 @@ impl MossConfig {
     ///
     /// Returns Ok(()) on success, Err on write failure
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let config_dir = std::path::PathBuf::from(garden_common::names::CONFIG_DIR);
+        let config_dir = std::path::PathBuf::from(garden_common::constants::CONFIG_DIR);
         std::fs::create_dir_all(&config_dir)?;
 
-        let config_path = config_dir.join(garden_common::names::MOSS_CONFIG);
+        let config_path = config_dir.join(garden_common::constants::MOSS_CONFIG);
 
         let toml_content = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::other(e.to_string()))?;

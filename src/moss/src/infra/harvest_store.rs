@@ -22,7 +22,7 @@ impl HarvestStore {
 
     /// Create a harvest store using the default path from configuration
     pub fn default_store() -> Self {
-        Self::new(garden_common::paths::harvest_dir())
+        Self::new(garden_common::constants::paths::harvest_dir())
     }
 
     /// Get the base directory

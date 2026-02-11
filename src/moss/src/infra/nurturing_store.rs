@@ -29,7 +29,7 @@ use crate::infra::{HarvestStore, create_harvest};
 use crate::docker::DockerManager;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use garden_common::paths;
+use garden_common::constants::paths;
 use garden_common::storage::MemoriesOfferingManifest;
 
 /// Store for nurturing A/B slots
@@ -43,7 +43,7 @@ pub struct NurturingStore {
 impl NurturingStore {
     /// Create a new nurturing store
     pub fn new(harvest_store: HarvestStore) -> Self {
-        let config_dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+        let config_dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
         let index_path = config_dir.join("nurturing").join("index.json");
 
         Self {

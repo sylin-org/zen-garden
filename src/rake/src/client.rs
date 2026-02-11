@@ -41,7 +41,7 @@ pub async fn resolve_target_endpoint(client: &reqwest::Client, target: &str, cac
 		return Ok(format!(
 			"http://{}:{}",
 			trimmed,
-			garden_common::ports::MOSS_HTTP
+			garden_common::constants::MOSS_HTTP
 		));
 	}
 
@@ -73,7 +73,7 @@ async fn resolve_stone_name_to_endpoint(client: &reqwest::Client, stone_name: &s
 	let mdns_endpoint = format!(
 		"http://{}:{}",
 		mdns_host,
-		garden_common::ports::MOSS_HTTP
+		garden_common::constants::MOSS_HTTP
 	);
 	if probe_moss_health(client, &mdns_endpoint).await {
 		return Ok(mdns_endpoint);

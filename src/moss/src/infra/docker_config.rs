@@ -248,7 +248,7 @@ async fn restart_docker_windows() -> Result<()> {
 
 /// Get the path to the garden registries state file
 fn garden_registries_path() -> PathBuf {
-    PathBuf::from(garden_common::paths::data_dir()).join("garden-registries.json")
+    PathBuf::from(garden_common::constants::paths::data_dir()).join("garden-registries.json")
 }
 
 /// Read the list of garden-managed registries from state file

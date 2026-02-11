@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 /// Get offerings cache file path
 fn offerings_cache_path() -> PathBuf {
-    PathBuf::from(garden_common::names::CONFIG_DIR).join("offerings_cache.json")
+    PathBuf::from(garden_common::constants::CONFIG_DIR).join("offerings_cache.json")
 }
 
 // ============================================================================
@@ -20,7 +20,7 @@ fn offerings_cache_path() -> PathBuf {
 ///
 /// Returns empty vec if file doesn't exist.
 pub async fn load_offerings() -> Result<Vec<garden_common::Offering>> {
-    let path = PathBuf::from(garden_common::names::CONFIG_DIR).join("moss-offerings.json");
+    let path = PathBuf::from(garden_common::constants::CONFIG_DIR).join("moss-offerings.json");
 
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => {
@@ -46,7 +46,7 @@ pub async fn load_offerings() -> Result<Vec<garden_common::Offering>> {
 
 /// Save offerings to disk (atomic write)
 pub async fn save_offerings(offerings: &[garden_common::Offering]) -> Result<()> {
-    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
     let path = dir.join("moss-offerings.json");
     tokio::fs::create_dir_all(&dir).await?;
 
@@ -209,7 +209,7 @@ pub async fn load_offerings_cache<T: serde::de::DeserializeOwned>() -> Result<Op
 
 /// Save offerings cache to disk (atomic write)
 pub async fn save_offerings_cache<T: serde::Serialize>(cache: &T) -> Result<()> {
-    let dir = PathBuf::from(garden_common::names::CONFIG_DIR);
+    let dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
     tokio::fs::create_dir_all(&dir).await?;
 
     let path = offerings_cache_path();

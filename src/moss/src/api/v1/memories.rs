@@ -20,7 +20,7 @@ use garden_common::audit::{AuditAccessEntry, log_access};
 use garden_common::constants::headers::{
     HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME, HEADER_SEED_BANK,
 };
-use garden_common::paths;
+use garden_common::constants::paths;
 use garden_common::storage::{DEFAULT_SEED_BANK_NAME, MemoriesOfferingManifest};
 use serde::{Deserialize, Serialize};
 

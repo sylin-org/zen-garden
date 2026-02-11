@@ -30,7 +30,7 @@ pub use app_state::{
 };
 
 // Re-export API helpers from infra
-pub use infra::{error_response, error_codes};
+pub use infra::error_response;
 
 // Re-export commonly used job event utilities
 pub use api::v1::events::{emit_job_progress, emit_job_started, emit_job_completed, emit_job_failed};

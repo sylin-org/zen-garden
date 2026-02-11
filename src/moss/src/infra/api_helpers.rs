@@ -42,7 +42,7 @@ pub fn require_docker(state: &AppState) -> Result<(), (StatusCode, Json<ApiError
     if !state.subsystems.docker.ready.load(Ordering::Relaxed) {
         return Err(error_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            garden_common::error_codes::DOCKER_UNAVAILABLE,
+            garden_common::constants::DOCKER_UNAVAILABLE,
             "Docker daemon is currently unavailable. The service will automatically reconnect when Docker becomes available.",
             None,
         ));
@@ -50,5 +50,3 @@ pub fn require_docker(state: &AppState) -> Result<(), (StatusCode, Json<ApiError
     Ok(())
 }
 
-// Re-export error codes from common for convenience
-pub use garden_common::error_codes;

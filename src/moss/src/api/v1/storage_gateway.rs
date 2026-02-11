@@ -15,7 +15,7 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
-use garden_common::paths;
+use garden_common::constants::paths;
 use garden_common::constants::headers::HEADER_SEED_BANK;
 use garden_common::storage::DEFAULT_SEED_BANK_NAME;
 use serde::{Deserialize, Serialize};

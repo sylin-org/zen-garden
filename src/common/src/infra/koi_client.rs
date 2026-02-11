@@ -1,11 +1,11 @@
-//! HTTP client for Koi mDNS proxy (Windows only)
+//! HTTP client for Koi mDNS proxy
 //!
 //! Koi is a local mDNS proxy that exposes mDNS operations via HTTP/SSE.
-//! This module provides a client that Moss uses on Windows to achieve
-//! mDNS feature parity with Linux.
+//! This module provides a reusable client for any Zen Garden binary that
+//! needs mDNS discovery on Windows (Moss, Lantern, etc.).
 //!
-//! All methods are fail-safe — errors are logged but never break Moss operation.
-//! If Koi is unavailable, Moss degrades gracefully to UDP-only discovery.
+//! All methods are fail-safe — errors are logged but never break operation.
+//! If Koi is unavailable, callers degrade gracefully to UDP-only discovery.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -37,7 +37,7 @@ struct RegisteredInfo {
 /// Handles both nested format (`{ "event": "...", "service": {...} }`)
 /// and flat format (`{ "name": "...", "ip": "...", ... }`).
 #[derive(Debug, serde::Deserialize)]
-pub(crate) struct KoiEventData {
+pub struct KoiEventData {
     // Nested format (current Koi)
     #[allow(dead_code)]
     pub event: Option<String>,
@@ -51,7 +51,7 @@ pub(crate) struct KoiEventData {
 
 /// Service info within a Koi SSE event
 #[derive(Debug, serde::Deserialize)]
-pub(crate) struct KoiServiceInfo {
+pub struct KoiServiceInfo {
     pub name: String,
     pub ip: Option<String>,
     pub port: Option<u16>,
@@ -203,7 +203,7 @@ impl KoiClient {
 }
 
 /// Build TXT record properties for mDNS registration
-pub(crate) fn build_txt_properties(
+pub fn build_txt_properties(
     stone_id: Option<&str>,
     stone_name: &str,
     mac: Option<&str>,
@@ -228,7 +228,7 @@ pub(crate) fn build_txt_properties(
 /// Extract service info from SSE event data (handles both nested and flat formats)
 ///
 /// Returns `(name, ip, port, txt_properties)` or None if required fields are missing.
-pub(crate) fn extract_service_info(
+pub fn extract_service_info(
     data: &KoiEventData,
 ) -> Option<(String, String, u16, HashMap<String, String>)> {
     if let Some(ref svc) = data.service {
@@ -253,7 +253,7 @@ pub(crate) fn extract_service_info(
 /// Check if an IP address is LAN-routable
 ///
 /// Accepts private ranges (RFC 1918), rejects loopback, link-local, and Docker bridge.
-pub(crate) fn is_lan_routable(ip: &str) -> bool {
+pub fn is_lan_routable(ip: &str) -> bool {
     let addr: std::net::Ipv4Addr = match ip.parse() {
         Ok(a) => a,
         Err(_) => return false, // IPv6 or invalid — skip
@@ -279,17 +279,33 @@ pub(crate) fn is_lan_routable(ip: &str) -> bool {
     false
 }
 
-/// Parse a single SSE event block into an MdnsDiscoveredStone
+// ============================================================================
+// High-level discovery API
+// ============================================================================
+
+/// A stone discovered via mDNS (either Koi SSE or native mdns-sd).
 ///
-/// SSE format:
-/// ```text
-/// event: resolved
-/// data: {"name":"stone-name","type":"_moss._tcp.local.","ip":"192.168.1.x","port":7185,"txt":{...}}
-/// ```
-pub(crate) fn parse_sse_event(
-    event_block: &str,
-    self_stone_name: &str,
-) -> Option<crate::mdns::MdnsDiscoveredStone> {
+/// This is the canonical discovery result type used by all consumers.
+/// Self-filtering (skip own stone_name) is the caller's responsibility.
+#[derive(Debug, Clone)]
+pub struct DiscoveredStone {
+    pub stone_id: Option<String>,
+    pub stone_name: String,
+    pub endpoint: String,
+    pub mac: Option<String>,
+    pub version: Option<String>,
+    pub health: Option<String>,
+    pub discovered_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Parse a single SSE event block into a [`DiscoveredStone`].
+///
+/// Checks both the SSE `event:` header and the JSON body `event` field
+/// for `"resolved"` — either match is sufficient. Returns `None` for
+/// non-resolved events, unparseable data, or non-LAN-routable IPs.
+///
+/// Self-filtering is NOT performed here — the caller decides.
+pub fn parse_sse_event(event_block: &str) -> Option<DiscoveredStone> {
     let mut event_type = String::new();
     let mut data_line = String::new();
 
@@ -301,75 +317,166 @@ pub(crate) fn parse_sse_event(
         }
     }
 
-    // Only process "resolved" events
-    if event_type != "resolved" || data_line.is_empty() {
-        if event_type == "removed" {
-            tracing::debug!(
-                data = %data_line,
-                "Koi: service removed event (topology handles TTL)"
-            );
-        }
+    if data_line.is_empty() {
+        return None;
+    }
+
+    // Skip removed events — consumers that care (Lantern) handle these locally
+    if event_type == "removed" {
         return None;
     }
 
     let event_data: KoiEventData = match serde_json::from_str(&data_line) {
         Ok(d) => d,
         Err(e) => {
-            tracing::debug!(
-                error = ?e,
-                data = %data_line,
-                "Failed to parse Koi SSE event data"
-            );
+            tracing::debug!(error = ?e, data = %data_line, "Failed to parse Koi SSE event data");
             return None;
         }
     };
 
-    let (name, ip, port, txt) = extract_service_info(&event_data)?;
+    // Check event type from BOTH the SSE header and the JSON body.
+    // Koi's events endpoint only sets the event type in the JSON body
+    // (Event::default().data()), not as an SSE event: header.
+    let resolved = event_type == "resolved"
+        || event_data
+            .event
+            .as_deref()
+            .is_some_and(|e| e == "resolved");
 
-    // Prefer stone_name from TXT, fall back to service name
-    let stone_name = txt
-        .get("stone_name")
-        .cloned()
-        .unwrap_or_else(|| name.clone());
-
-    // Skip self-announcements
-    if stone_name == self_stone_name {
+    if !resolved {
         return None;
     }
 
-    // Filter non-LAN IPs (defense-in-depth for non-pinned registrations)
+    let (_name, ip, port, txt) = extract_service_info(&event_data)?;
+
     if !is_lan_routable(&ip) {
-        tracing::debug!(
-            ip = %ip,
-            stone_name = %stone_name,
-            "Koi: filtered non-LAN IP from discovery"
-        );
+        tracing::debug!(ip = %ip, "Koi: filtered non-LAN IP from discovery");
         return None;
     }
 
-    let stone_id = txt.get("stone_id").cloned();
-    let mac = txt.get("mac").cloned();
-    let version = txt.get("version").cloned();
-    let health = txt.get("health").cloned();
+    let stone_name = txt.get("stone_name").cloned()?;
     let endpoint = format!("http://{}:{}", ip, port);
 
     tracing::info!(
-        stone_id = ?stone_id,
         stone_name = %stone_name,
         endpoint = %endpoint,
-        mac = ?mac,
-        version = ?version,
-        health = ?health,
-        "Koi: Discovered neighbor stone via mDNS"
+        "Koi: discovered stone via mDNS"
     );
 
-    Some(crate::mdns::MdnsDiscoveredStone {
-        stone_id,
+    Some(DiscoveredStone {
+        stone_id: txt.get("stone_id").cloned(),
         stone_name,
         endpoint,
-        mac,
-        version,
-        health,
+        mac: txt.get("mac").cloned(),
+        version: txt.get("version").cloned(),
+        health: txt.get("health").cloned(),
+        discovered_at: chrono::Utc::now(),
+    })
+}
+
+/// Stream SSE events from Koi, parsing each into [`DiscoveredStone`].
+///
+/// Buffers incoming chunks by `\n\n` delimiters and parses each complete
+/// event block. Discovered stones are sent to the broadcast channel.
+/// Returns `Ok(())` on clean disconnect, `Err` on connection errors.
+pub async fn stream_sse_events(
+    koi: &KoiClient,
+    service_type: &str,
+    tx: &tokio::sync::broadcast::Sender<DiscoveredStone>,
+) -> anyhow::Result<()> {
+    let mut resp = koi.open_events_stream(service_type).await?;
+
+    tracing::debug!(base_url = %koi.base_url(), "Connected to Koi SSE events stream");
+
+    let mut buffer = String::new();
+
+    while let Some(chunk) = resp.chunk().await? {
+        let text = String::from_utf8_lossy(&chunk);
+        buffer.push_str(&text);
+
+        while let Some(pos) = buffer.find("\n\n") {
+            let event_block = buffer[..pos].to_string();
+            buffer = buffer[pos + 2..].to_string();
+
+            if let Some(discovered) = parse_sse_event(&event_block) {
+                let _ = tx.send(discovered);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Connect to Koi SSE and stream discovery events with automatic reconnection.
+///
+/// On disconnect or error, backs off exponentially (1s → max_reconnect_backoff).
+/// On clean disconnect, resets to 1s. Runs forever — caller spawns this.
+pub async fn run_koi_discovery_loop(
+    koi: std::sync::Arc<KoiClient>,
+    service_type: &str,
+    tx: tokio::sync::broadcast::Sender<DiscoveredStone>,
+) {
+    let mut backoff = Duration::from_secs(1);
+    let max_backoff = KoiClient::max_reconnect_backoff();
+
+    tracing::info!("Koi mDNS discovery loop started (passive topology discovery via SSE)");
+
+    loop {
+        match stream_sse_events(&koi, service_type, &tx).await {
+            Ok(()) => {
+                backoff = Duration::from_secs(1);
+                tracing::debug!("Koi SSE stream ended, reconnecting");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    backoff_secs = backoff.as_secs(),
+                    "Koi SSE stream error, will reconnect"
+                );
+            }
+        }
+
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(max_backoff);
+    }
+}
+
+/// Extract a [`DiscoveredStone`] from an `mdns_sd::ServiceInfo`.
+///
+/// Shared helper for Linux native mDNS discovery. Returns `None` if
+/// the service has no LAN-routable IP addresses.
+pub fn extract_stone_from_service_info(
+    info: &mdns_sd::ServiceInfo,
+) -> Option<DiscoveredStone> {
+    let ip = info.get_addresses().iter().next()?;
+    let ip_str = ip.to_string();
+
+    if !is_lan_routable(&ip_str) {
+        return None;
+    }
+
+    let get_txt = |key: &str| -> Option<String> {
+        info.get_properties()
+            .iter()
+            .find(|p| p.key() == key)
+            .map(|p| p.val_str().to_string())
+    };
+
+    let stone_name = get_txt("stone_name").unwrap_or_else(|| {
+        info.get_fullname()
+            .split('.')
+            .next()
+            .unwrap_or("unknown")
+            .to_string()
+    });
+
+    Some(DiscoveredStone {
+        stone_id: get_txt("stone_id"),
+        stone_name,
+        endpoint: format!("http://{}:{}", ip, info.get_port()),
+        mac: get_txt("mac"),
+        version: get_txt("version"),
+        health: get_txt("health"),
         discovered_at: chrono::Utc::now(),
     })
 }

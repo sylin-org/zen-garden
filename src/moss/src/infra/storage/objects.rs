@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
-use garden_common::paths;
+use garden_common::constants::paths;
 
 /// Metadata about a stored object
 #[derive(Debug, Clone)]

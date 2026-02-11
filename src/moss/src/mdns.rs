@@ -36,7 +36,7 @@ impl MdnsHandle {
         use mdns_sd::ServiceInfo;
         use std::collections::HashMap;
 
-        let service_type = "_moss._tcp.local.";
+        let service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL;
         let host_name = format!("{}.local.", self.stone_name);
 
         // Build TXT record properties
@@ -200,7 +200,7 @@ pub async fn announce_moss(
 #[cfg(target_os = "windows")]
 pub struct MdnsHandle {
     /// Koi client (None = Koi not available, degraded to no-op mode)
-    koi: Option<std::sync::Arc<crate::infra::koi_client::KoiClient>>,
+    koi: Option<std::sync::Arc<garden_common::infra::koi_client::KoiClient>>,
     /// Current registration ID (shared with heartbeat task)
     reg_id: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// Stone metadata for re-registration
@@ -235,7 +235,7 @@ impl MdnsHandle {
 
         // Register with updated IP
         let health = self.health.read().unwrap_or_else(|e| e.into_inner()).clone();
-        let txt = crate::infra::koi_client::build_txt_properties(
+        let txt = garden_common::infra::koi_client::build_txt_properties(
             self.stone_id.as_deref(),
             &self.stone_name,
             mac,
@@ -247,11 +247,11 @@ impl MdnsHandle {
         match koi
             .register(
                 &self.stone_name,
-                "_moss._tcp",
+                garden_common::constants::MDNS_SERVICE_TYPE,
                 self.port,
                 ip,
                 txt,
-                crate::infra::koi_client::KoiClient::registration_lease_secs(),
+                garden_common::infra::koi_client::KoiClient::registration_lease_secs(),
             )
             .await
         {
@@ -354,7 +354,7 @@ pub async fn announce_moss(
     current_ip: &str,
     version: &str,
 ) -> anyhow::Result<MdnsHandle> {
-    use crate::infra::koi_client::{self, KoiClient};
+    use garden_common::infra::koi_client::{self, KoiClient};
     use std::sync::{Arc, RwLock};
 
     let koi = KoiClient::try_connect().await;
@@ -385,7 +385,7 @@ pub async fn announce_moss(
                 match client
                     .register(
                         stone_name,
-                        "_moss._tcp",
+                        garden_common::constants::MDNS_SERVICE_TYPE,
                         port,
                         current_ip,
                         txt,
@@ -451,7 +451,7 @@ pub async fn announce_moss(
 #[cfg(target_os = "windows")]
 #[allow(clippy::too_many_arguments)]
 async fn koi_heartbeat_loop(
-    koi: std::sync::Arc<crate::infra::koi_client::KoiClient>,
+    koi: std::sync::Arc<garden_common::infra::koi_client::KoiClient>,
     reg_id: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     stone_name: String,
@@ -461,7 +461,7 @@ async fn koi_heartbeat_loop(
     version: String,
     health: std::sync::Arc<std::sync::RwLock<String>>,
 ) {
-    use crate::infra::koi_client::{self, KoiClient};
+    use garden_common::infra::koi_client::{self, KoiClient};
 
     loop {
         tokio::select! {
@@ -505,7 +505,7 @@ async fn koi_heartbeat_loop(
                 match koi
                     .register(
                         &stone_name,
-                        "_moss._tcp",
+                        garden_common::constants::MDNS_SERVICE_TYPE,
                         port,
                         &ip,
                         txt,
@@ -534,20 +534,7 @@ async fn koi_heartbeat_loop(
 // Shared types
 // ============================================================================
 
-/// Discovered stone from mDNS
-#[derive(Debug, Clone)]
-pub struct MdnsDiscoveredStone {
-    pub stone_id: Option<String>,
-    pub stone_name: String,
-    pub endpoint: String,
-    /// MAC address for Wake-on-LAN support
-    pub mac: Option<String>,
-    /// Moss version (from TXT `version` field)
-    pub version: Option<String>,
-    /// Stone health status (from TXT `health` field)
-    pub health: Option<String>,
-    pub discovered_at: chrono::DateTime<chrono::Utc>,
-}
+use garden_common::infra::koi_client::DiscoveredStone;
 
 // ============================================================================
 // Linux lurk-listener — uses mdns-sd browse loop
@@ -565,13 +552,12 @@ pub struct MdnsDiscoveredStone {
 #[allow(clippy::unused_async)]
 pub async fn start_mdns_lurk_listener(
     self_stone_name: String,
-) -> anyhow::Result<tokio::sync::broadcast::Receiver<MdnsDiscoveredStone>> {
+) -> anyhow::Result<tokio::sync::broadcast::Receiver<DiscoveredStone>> {
     use mdns_sd::{ServiceDaemon, ServiceEvent};
     use tokio::sync::broadcast;
 
-    let (tx, rx) = broadcast::channel::<MdnsDiscoveredStone>(32);
+    let (tx, rx) = broadcast::channel::<DiscoveredStone>(32);
 
-    // Spawn background listener
     let listener_tx = tx.clone();
     std::thread::spawn(move || {
         let mdns = match ServiceDaemon::new() {
@@ -582,8 +568,7 @@ pub async fn start_mdns_lurk_listener(
             }
         };
 
-        let service_type = "_moss._tcp.local.";
-        let receiver = match mdns.browse(service_type) {
+        let receiver = match mdns.browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = ?e, "mDNS lurk-listener: Failed to browse");
@@ -596,76 +581,20 @@ pub async fn start_mdns_lurk_listener(
         loop {
             match receiver.recv() {
                 Ok(ServiceEvent::ServiceResolved(info)) => {
-                    // Extract stone_id from TXT records
-                    let stone_id: Option<String> = info
-                        .get_properties()
-                        .iter()
-                        .find(|p| p.key() == "stone_id")
-                        .map(|p| p.val_str().to_string());
-
-                    // Extract stone_name from TXT record, or fall back to instance name
-                    let stone_name: String = info
-                        .get_properties()
-                        .iter()
-                        .find(|p| p.key() == "stone_name")
-                        .map(|p| p.val_str().to_string())
-                        .unwrap_or_else(|| {
-                            info.get_fullname()
-                                .split('.')
-                                .next()
-                                .unwrap_or("unknown")
-                                .to_string()
-                        });
-
-                    // Extract MAC address for WoL support
-                    let mac: Option<String> = info
-                        .get_properties()
-                        .iter()
-                        .find(|p| p.key() == "mac")
-                        .map(|p| p.val_str().to_string());
-
-                    // Extract version and health from TXT records
-                    let version: Option<String> = info
-                        .get_properties()
-                        .iter()
-                        .find(|p| p.key() == "version")
-                        .map(|p| p.val_str().to_string());
-
-                    let health: Option<String> = info
-                        .get_properties()
-                        .iter()
-                        .find(|p| p.key() == "health")
-                        .map(|p| p.val_str().to_string());
-
-                    // Skip self-announcements
-                    if stone_name == self_stone_name {
-                        continue;
-                    }
-
-                    if let Some(ip) = info.get_addresses().iter().next() {
-                        let endpoint = format!("http://{}:{}", ip, info.get_port());
-
-                        let discovered = MdnsDiscoveredStone {
-                            stone_id: stone_id.clone(),
-                            stone_name: stone_name.clone(),
-                            endpoint: endpoint.clone(),
-                            mac: mac.clone(),
-                            version: version.clone(),
-                            health: health.clone(),
-                            discovered_at: chrono::Utc::now(),
-                        };
+                    if let Some(discovered) =
+                        garden_common::infra::koi_client::extract_stone_from_service_info(&info)
+                    {
+                        // Skip self-announcements
+                        if discovered.stone_name == self_stone_name {
+                            continue;
+                        }
 
                         tracing::info!(
-                            stone_id = ?stone_id,
-                            stone_name = %stone_name,
-                            endpoint = %endpoint,
-                            mac = ?mac,
-                            version = ?version,
-                            health = ?health,
+                            stone_name = %discovered.stone_name,
+                            endpoint = %discovered.endpoint,
                             "mDNS lurk-listener: Discovered neighbor stone"
                         );
 
-                        // Send to subscribers (ignore if no subscribers)
                         let _ = listener_tx.send(discovered);
                     }
                 }
@@ -675,7 +604,6 @@ pub async fn start_mdns_lurk_listener(
                 Ok(_) => {}
                 Err(e) => {
                     tracing::debug!(error = ?e, "mDNS lurk-listener: recv error");
-                    // Small delay before retrying
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
@@ -686,103 +614,33 @@ pub async fn start_mdns_lurk_listener(
 }
 
 // ============================================================================
-// Windows lurk-listener — uses Koi SSE events stream
+// Windows lurk-listener — uses Koi SSE events stream via common
 // ============================================================================
 
-/// Start mDNS lurk-listener via Koi SSE events stream
+/// Start mDNS lurk-listener via Koi SSE events stream.
 ///
-/// Connects to Koi's `/v1/events?type=_moss._tcp&idle_for=0` SSE endpoint.
-/// Parses resolved events and feeds `MdnsDiscoveredStone` into the broadcast
-/// channel — same interface as the Linux mdns-sd listener.
-///
-/// Includes automatic reconnection with exponential backoff (1s -> 30s).
-/// If Koi is unavailable, returns a dummy receiver (same as previous stub).
+/// Delegates to `garden_common::infra::koi_client::run_koi_discovery_loop`
+/// for SSE parsing, chunk buffering, and reconnection. Self-filtering is
+/// the caller's responsibility (see `run.rs` consumer loop).
 #[cfg(target_os = "windows")]
 pub async fn start_mdns_lurk_listener(
-    self_stone_name: String,
-) -> anyhow::Result<tokio::sync::broadcast::Receiver<MdnsDiscoveredStone>> {
-    use crate::infra::koi_client::KoiClient;
+    _self_stone_name: String,
+) -> anyhow::Result<tokio::sync::broadcast::Receiver<DiscoveredStone>> {
+    use garden_common::infra::koi_client::KoiClient;
     use tokio::sync::broadcast;
 
-    let (tx, rx) = broadcast::channel::<MdnsDiscoveredStone>(32);
+    let (tx, rx) = broadcast::channel::<DiscoveredStone>(32);
 
     if let Some(client) = KoiClient::try_connect().await {
         let client = std::sync::Arc::new(client);
-        tokio::spawn(koi_lurk_loop(client, tx, self_stone_name));
+        tokio::spawn(garden_common::infra::koi_client::run_koi_discovery_loop(
+            client,
+            garden_common::constants::MDNS_SERVICE_TYPE,
+            tx,
+        ));
     } else {
         tracing::debug!("Koi not available, mDNS lurk-listener disabled on Windows");
-        // tx is dropped here — rx.recv() will return Closed, which run.rs handles
     }
 
     Ok(rx)
-}
-
-/// SSE lurk loop — connects to Koi events stream with automatic reconnection
-#[cfg(target_os = "windows")]
-async fn koi_lurk_loop(
-    koi: std::sync::Arc<crate::infra::koi_client::KoiClient>,
-    tx: tokio::sync::broadcast::Sender<MdnsDiscoveredStone>,
-    self_stone_name: String,
-) {
-    use crate::infra::koi_client::KoiClient;
-
-    let mut backoff = std::time::Duration::from_secs(1);
-    let max_backoff = KoiClient::max_reconnect_backoff();
-
-    tracing::info!("Koi mDNS lurk-listener started (passive topology discovery via SSE)");
-
-    loop {
-        match koi_stream_events(&koi, &tx, &self_stone_name).await {
-            Ok(()) => {
-                // Clean disconnect — reconnect quickly
-                backoff = std::time::Duration::from_secs(1);
-                tracing::debug!("Koi SSE stream ended, reconnecting");
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = ?e,
-                    backoff_secs = backoff.as_secs(),
-                    "Koi SSE stream error, will reconnect"
-                );
-            }
-        }
-
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(max_backoff);
-    }
-}
-
-/// Stream SSE events from Koi and feed discovered stones into broadcast channel
-#[cfg(target_os = "windows")]
-async fn koi_stream_events(
-    koi: &crate::infra::koi_client::KoiClient,
-    tx: &tokio::sync::broadcast::Sender<MdnsDiscoveredStone>,
-    self_stone_name: &str,
-) -> anyhow::Result<()> {
-    use crate::infra::koi_client;
-
-    let mut resp = koi.open_events_stream("_moss._tcp").await?;
-
-    tracing::debug!(base_url = %koi.base_url(), "Connected to Koi SSE events stream");
-
-    let mut buffer = String::new();
-
-    while let Some(chunk) = resp.chunk().await? {
-        let text = String::from_utf8_lossy(&chunk);
-        buffer.push_str(&text);
-
-        // Process complete events (delimited by blank line)
-        while let Some(pos) = buffer.find("\n\n") {
-            let event_block = buffer[..pos].to_string();
-            buffer = buffer[pos + 2..].to_string();
-
-            if let Some(discovered) =
-                koi_client::parse_sse_event(&event_block, self_stone_name)
-            {
-                let _ = tx.send(discovered);
-            }
-        }
-    }
-
-    Ok(())
 }

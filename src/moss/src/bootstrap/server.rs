@@ -24,7 +24,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            port: garden_common::ports::MOSS_HTTP,
+            port: garden_common::constants::MOSS_HTTP,
             graceful_shutdown_timeout_secs: 5,
         }
     }

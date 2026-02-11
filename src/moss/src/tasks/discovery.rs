@@ -39,7 +39,7 @@ pub async fn lantern_registration_loop(
     );
 
     let client = Client::new();
-    let register_url = format!("{}/api/register", lantern_endpoint);
+    let register_url = format!("{}/api/v1/register", lantern_endpoint);
 
     loop {
         // TODO: Build service list from actual running containers

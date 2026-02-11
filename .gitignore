@@ -14,3 +14,7 @@
 .zen-garden/adapter-ports.json
 rake-errors.txt
 /docs/presentations/node_modules
+
+# Lantern frontend build artifacts
+/src/lantern/frontend/node_modules
+/src/lantern/frontend/dist

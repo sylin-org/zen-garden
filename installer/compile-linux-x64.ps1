@@ -202,6 +202,43 @@ if ($UseDocker) {
     # Determine parallel jobs (Docker container typically sees host CPUs)
     $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
+    # Build Lantern frontend (on host, before Docker cargo build)
+    if ($buildTargets -contains "garden-lantern") {
+        $frontendDir = Join-Path $WORKSPACE_ROOT "src/lantern/frontend"
+        if (Test-Path (Join-Path $frontendDir "package.json")) {
+            Write-Host "Building Lantern frontend SPA..." -ForegroundColor Yellow
+
+            $hasBun = Get-Command bun -ErrorAction SilentlyContinue
+            $hasNpm = Get-Command npm -ErrorAction SilentlyContinue
+
+            Push-Location $frontendDir
+            try {
+                if ($hasBun) {
+                    Write-Host "  Using bun..." -ForegroundColor DarkGray
+                    bun install --frozen-lockfile 2>$null
+                    if ($LASTEXITCODE -ne 0) { bun install }
+                    & ./node_modules/.bin/vite build
+                } elseif ($hasNpm) {
+                    Write-Host "  Using npm..." -ForegroundColor DarkGray
+                    npm ci 2>$null
+                    if ($LASTEXITCODE -ne 0) { npm install }
+                    npx vite build
+                } else {
+                    Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
+                }
+
+                if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
+                    Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -ne 0) {
+                    Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
+
     # Docker-based build
     Write-Host "Building binaries in container..." -ForegroundColor Cyan
     $buildTypeDesc = switch ($buildProfile) {
@@ -332,6 +369,47 @@ if ($UseDocker) {
     
 }
 else {
+    # Build Lantern frontend (on host, before native cargo build)
+    # Determine which binaries to build (need this early for frontend check)
+    $defaultTargets = @("garden-moss", "garden-lantern", "garden-rake", "garden-cricket", "garden-firefly")
+    $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
+
+    if ($buildTargets -contains "garden-lantern") {
+        $frontendDir = Join-Path $WORKSPACE_ROOT "src/lantern/frontend"
+        if (Test-Path (Join-Path $frontendDir "package.json")) {
+            Write-Host "Building Lantern frontend SPA..." -ForegroundColor Yellow
+
+            $hasBun = Get-Command bun -ErrorAction SilentlyContinue
+            $hasNpm = Get-Command npm -ErrorAction SilentlyContinue
+
+            Push-Location $frontendDir
+            try {
+                if ($hasBun) {
+                    Write-Host "  Using bun..." -ForegroundColor DarkGray
+                    bun install --frozen-lockfile 2>$null
+                    if ($LASTEXITCODE -ne 0) { bun install }
+                    & ./node_modules/.bin/vite build
+                } elseif ($hasNpm) {
+                    Write-Host "  Using npm..." -ForegroundColor DarkGray
+                    npm ci 2>$null
+                    if ($LASTEXITCODE -ne 0) { npm install }
+                    npx vite build
+                } else {
+                    Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
+                }
+
+                if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
+                    Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -ne 0) {
+                    Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
+
     # Native Linux build
     Write-Host "Building binaries natively..." -ForegroundColor Cyan
 

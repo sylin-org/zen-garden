@@ -12,7 +12,7 @@
 
 .PARAMETER Targets
     List of cargo package names to build (e.g., "garden-moss", "garden-rake")
-    If not specified, builds core binaries (moss + rake).
+    If not specified, builds all binaries (moss, lantern, rake, cricket, firefly).
 
 .PARAMETER DebugBuild
     Compile debug binaries instead of optimized release
@@ -28,10 +28,10 @@
 
 .EXAMPLE
     .\compile-linux-x86.ps1
-    # Build core binaries (moss + rake) for x86
+    # Build all binaries for x86
 
 .EXAMPLE
-    .\compile-linux-x86.ps1 -Targets "garden-moss","garden-rake","garden-lantern"
+    .\compile-linux-x86.ps1 -Targets "garden-moss","garden-rake"
     # Build specific binaries for x86
 
 .EXAMPLE
@@ -188,9 +188,45 @@ try {
         Write-Host "  Build Number: $env:CARGO_BUILD_NUMBER" -ForegroundColor Cyan
     }
 
-    # Default to core binaries only (moss + rake) for x86
-    $defaultTargets = @("garden-moss", "garden-rake")
+    $defaultTargets = @("garden-moss", "garden-lantern", "garden-rake", "garden-cricket", "garden-firefly")
     $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
+
+    # Build Lantern frontend (on host, before Docker cargo build)
+    if ($buildTargets -contains "garden-lantern") {
+        $frontendDir = Join-Path $WORKSPACE_ROOT "src/lantern/frontend"
+        if (Test-Path (Join-Path $frontendDir "package.json")) {
+            Write-Host "Building Lantern frontend SPA..." -ForegroundColor Yellow
+
+            $hasBun = Get-Command bun -ErrorAction SilentlyContinue
+            $hasNpm = Get-Command npm -ErrorAction SilentlyContinue
+
+            Push-Location $frontendDir
+            try {
+                if ($hasBun) {
+                    Write-Host "  Using bun..." -ForegroundColor DarkGray
+                    bun install --frozen-lockfile 2>$null
+                    if ($LASTEXITCODE -ne 0) { bun install }
+                    & ./node_modules/.bin/vite build
+                } elseif ($hasNpm) {
+                    Write-Host "  Using npm..." -ForegroundColor DarkGray
+                    npm ci 2>$null
+                    if ($LASTEXITCODE -ne 0) { npm install }
+                    npx vite build
+                } else {
+                    Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
+                }
+
+                if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
+                    Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -ne 0) {
+                    Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
 
     foreach ($target in $buildTargets) {
         Write-Host "  -> Building $target (x86)..."

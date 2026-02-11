@@ -1,0 +1,138 @@
+.sb-header {
+  margin-bottom: 1rem;
+}
+
+.sb-summary {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--s6);
+}
+
+.sb-summary strong {
+  color: var(--s9);
+}
+
+.sb-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sb-group {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  padding: 0.7rem 0.8rem;
+}
+
+.sb-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.sb-group-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.sb-replica-badge {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  text-transform: uppercase;
+  padding: 0.1rem 0.3rem;
+  background: rgba(132, 165, 157, 0.12);
+  border: 1px solid rgba(132, 165, 157, 0.2);
+  border-radius: 3px;
+  color: var(--sage);
+}
+
+.sb-group-usage {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--s5);
+}
+
+.sb-group-bar {
+  height: 4px;
+  background: var(--s3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.sb-group-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s var(--ease);
+}
+
+.sb-members {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sb-member {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  padding: 0.2rem 0;
+}
+
+.sb-status {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sb-status.on {
+  background: var(--sage);
+}
+.sb-status.off {
+  background: var(--s4);
+}
+
+a.sb-stone {
+  min-width: 120px;
+  color: var(--s6);
+  text-decoration: none;
+}
+
+a.sb-stone:hover {
+  color: var(--sage);
+}
+
+.sb-vis {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  text-transform: uppercase;
+  color: var(--s4);
+  min-width: 50px;
+}
+
+.sb-mini-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--s3);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 120px;
+}
+
+.sb-mini-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.sb-usage-text {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s5);
+  min-width: 100px;
+  text-align: right;
+}

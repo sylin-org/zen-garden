@@ -1,0 +1,75 @@
+/* ═══════════════════════════════════════════════════════════════
+   Lantern Design Tokens
+   Extracted from the 6 prototype JSX files — canonical source.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Backgrounds */
+  --bg: #1a1a1a;
+  --bg2: #222220;
+
+  /* Stone palette (light-to-dark) */
+  --s9: #fafaf9;
+  --s7: #d6d3d1;
+  --s6: #a8a29e;
+  --s5: #8a8580;
+  --s4: #78716c;
+  --s3: #57534e;
+
+  /* Vellum (translucent layers) */
+  --vb: rgba(255, 255, 255, 0.08);
+  --vh: rgba(255, 255, 255, 0.04);
+
+  /* Semantic accents */
+  --sage: #84a59d;
+  --clay: #d4a373;
+  --gold: #c4b060;
+  --red: #c45050;
+
+  /* Typography */
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body,
+#root {
+  background: var(--bg);
+  color: var(--s9);
+  font-family: var(--sans);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--s3);
+  border-radius: 2px;
+}
+
+/* Breathing animation for health pips */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.6;
+    box-shadow: 0 0 4px var(--sage);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 10px var(--sage);
+  }
+}

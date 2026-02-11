@@ -1,0 +1,319 @@
+.stone-detail {
+  max-width: 900px;
+}
+
+.sd-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.sd-back {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--s5);
+  text-decoration: none;
+}
+.sd-back:hover {
+  color: var(--sage);
+}
+
+.sd-sep {
+  color: var(--s4);
+  font-size: 0.7rem;
+}
+
+.sd-bar {
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+}
+
+.sd-name {
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.sd-hdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.sd-health {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--s5);
+  text-transform: uppercase;
+}
+
+.sd-meta {
+  display: flex;
+  gap: 1rem;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--s5);
+  margin-bottom: 1.25rem;
+  padding-left: 0.5rem;
+}
+
+/* ── Resource gauges ───────────────────────────── */
+
+.sd-resources {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.res-gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 100px;
+}
+
+.res-gauge-val {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.res-gauge-track {
+  width: 100%;
+  height: 4px;
+  background: var(--s3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.res-gauge-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s var(--ease);
+}
+
+.res-gauge-label {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--s4);
+}
+
+/* ── Sections ──────────────────────────────────── */
+
+.sd-section {
+  margin-bottom: 1.25rem;
+}
+
+.sd-section-title {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--s4);
+  margin-bottom: 0.5rem;
+}
+
+.sd-empty {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s4);
+  padding: 0.5rem 0;
+}
+
+/* ── Offering cards ────────────────────────────── */
+
+.sd-offerings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.5rem;
+}
+
+.offering-card {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 5px;
+  padding: 0.6rem;
+}
+
+.offering-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+
+.offering-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: inherit;
+  text-decoration: none;
+}
+
+.offering-name:hover {
+  color: var(--sage);
+}
+
+.inst-name {
+  color: var(--gold);
+  font-weight: 400;
+}
+
+.offering-hdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.offering-meta {
+  display: flex;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s5);
+  margin-bottom: 0.4rem;
+}
+
+.offering-status {
+  text-transform: uppercase;
+}
+
+.offering-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.act-btn {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--vb);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--s6);
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+
+.act-btn:hover {
+  border-color: var(--sage);
+  color: var(--sage);
+}
+
+.act-btn.rest:hover {
+  border-color: var(--clay);
+  color: var(--clay);
+}
+
+/* ── Seed bank cards ───────────────────────────── */
+
+.sd-seeds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.5rem;
+}
+
+.seed-card {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 5px;
+  padding: 0.6rem;
+}
+
+.seed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.seed-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.seed-status {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  text-transform: uppercase;
+}
+
+.seed-status.on {
+  color: var(--sage);
+}
+.seed-status.off {
+  color: var(--s4);
+}
+
+.seed-bar-wrap {
+  height: 3px;
+  background: var(--s3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.3rem;
+}
+
+.seed-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s var(--ease);
+}
+
+.seed-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  color: var(--s5);
+}
+
+/* ── Companions ────────────────────────────────── */
+
+.sd-companions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.companion-card {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.companion-name {
+  font-weight: 500;
+}
+
+.companion-status {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s5);
+  text-transform: uppercase;
+}
+
+.companion-port {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s4);
+}
+
+.back-link {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--sage);
+  text-decoration: none;
+  margin-top: 0.5rem;
+}
+.back-link:hover {
+  text-decoration: underline;
+}

@@ -1,0 +1,163 @@
+/* ═══════════════════════════════════════════════════════════════
+   Sidebar — extracted from prototype CSS
+   ═══════════════════════════════════════════════════════════════ */
+
+.side {
+  background: var(--bg2);
+  border-right: 1px solid var(--vb);
+  display: flex;
+  flex-direction: column;
+  width: 200px;
+  min-width: 200px;
+}
+
+.side-brand {
+  padding: 1.25rem 1rem;
+  border-bottom: 1px solid var(--vb);
+}
+
+.side-brand h1 {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--s5);
+  margin-bottom: 0.3rem;
+}
+
+.side-brand .gname {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.side-health {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--s5);
+  text-transform: uppercase;
+}
+
+.pip-b {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: breathe 3s ease-in-out infinite;
+}
+
+/* ── Navigation ────────────────────────────────── */
+
+.side-nav {
+  flex: 1;
+  padding: 0.5rem 0;
+  overflow-y: auto;
+}
+
+.nav-label {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--s4);
+  padding: 0.6rem 1rem 0.25rem;
+}
+
+.nav-item {
+  display: block;
+  padding: 0.35rem 1rem;
+  font-size: 0.78rem;
+  color: var(--s6);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  transition: all 0.3s var(--ease);
+}
+
+.nav-item:hover {
+  background: var(--vh);
+  color: var(--s9);
+}
+
+.nav-item.active {
+  background: var(--vh);
+  border-left-color: var(--sage);
+  color: var(--s9);
+}
+
+/* ── Stone list ────────────────────────────────── */
+
+.stn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 1rem;
+  cursor: pointer;
+  transition: all 0.3s var(--ease);
+  border-left: 2px solid transparent;
+  text-decoration: none;
+}
+
+.stn:hover {
+  background: var(--vh);
+}
+
+.stn.active {
+  background: var(--vh);
+  border-left-color: var(--sage);
+}
+
+.stn .pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.stn .nm {
+  font-size: 0.72rem;
+  color: var(--s6);
+  flex: 1;
+}
+
+.stn.active .nm,
+.stn:hover .nm {
+  color: var(--s9);
+}
+
+.stn .hdot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Footer ────────────────────────────────────── */
+
+.side-foot {
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--vb);
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.sse-dot.on {
+  background: var(--sage);
+  box-shadow: 0 0 6px var(--sage);
+}
+
+.sse-dot.off {
+  background: var(--s4);
+}

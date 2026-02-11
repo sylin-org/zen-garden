@@ -1,0 +1,95 @@
+.pond-header {
+  margin-bottom: 1rem;
+}
+
+.pond-summary {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--s6);
+}
+
+.pond-summary strong {
+  color: var(--s9);
+}
+
+.pond-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+
+.pond-card {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  padding: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  transition: border-color 0.2s var(--ease);
+}
+
+.pond-card:hover {
+  border-color: var(--sage);
+}
+
+.pond-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.pond-hdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pond-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  flex: 1;
+}
+
+.pond-status {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  color: var(--s5);
+}
+
+.pond-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--s5);
+  margin-bottom: 0.4rem;
+}
+
+.pond-tags {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.pond-tag {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  text-transform: uppercase;
+  padding: 0.1rem 0.3rem;
+  background: rgba(212, 163, 115, 0.1);
+  border: 1px solid rgba(212, 163, 115, 0.2);
+  border-radius: 3px;
+  color: var(--clay);
+}
+
+.pond-mac {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s4);
+  margin-top: 0.3rem;
+}

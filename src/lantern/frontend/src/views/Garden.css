@@ -1,0 +1,161 @@
+.garden-header {
+  margin-bottom: 1rem;
+}
+
+.garden-summary {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--s6);
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.garden-summary strong {
+  color: var(--s9);
+}
+
+.gs-sep {
+  color: var(--s4);
+}
+
+.garden-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+
+/* ── Stone card ────────────────────────────────── */
+
+.stone-card {
+  display: flex;
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.3s var(--ease), transform 0.2s var(--ease);
+}
+
+.stone-card:hover {
+  border-color: var(--sage);
+  transform: translateY(-1px);
+}
+
+.stone-card-bar {
+  width: 3px;
+  flex-shrink: 0;
+}
+
+.stone-card-body {
+  flex: 1;
+  padding: 0.8rem;
+  min-width: 0;
+}
+
+.stone-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.stone-card-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.stone-card-hdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Resource bars ─────────────────────────────── */
+
+.stone-card-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.6rem;
+}
+
+.res-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.res-label {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  color: var(--s4);
+  text-transform: uppercase;
+  width: 24px;
+}
+
+.res-track {
+  flex: 1;
+  height: 3px;
+  background: var(--s3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.res-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s var(--ease);
+}
+
+.res-val {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s5);
+  width: 28px;
+  text-align: right;
+}
+
+/* ── Service chips ─────────────────────────────── */
+
+.stone-card-services {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.svc-chip {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  padding: 0.15rem 0.4rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--vb);
+  border-radius: 3px;
+  color: var(--s6);
+}
+
+.svc-chip.empty {
+  color: var(--s4);
+  font-style: italic;
+}
+
+/* ── Seed chips ────────────────────────────────── */
+
+.stone-card-seeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+}
+
+.seed-chip {
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  padding: 0.1rem 0.35rem;
+  background: rgba(132, 165, 157, 0.08);
+  border: 1px solid rgba(132, 165, 157, 0.15);
+  border-radius: 3px;
+  color: var(--sage);
+}

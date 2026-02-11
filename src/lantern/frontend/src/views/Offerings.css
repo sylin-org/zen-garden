@@ -1,0 +1,110 @@
+.off-header {
+  margin-bottom: 1rem;
+}
+
+.off-summary {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--s6);
+}
+
+.off-summary strong {
+  color: var(--s9);
+}
+
+.off-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.off-group {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.off-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--vb);
+}
+
+.off-group-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.off-group-cat {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s5);
+  text-transform: uppercase;
+  padding: 0.1rem 0.3rem;
+  background: var(--vh);
+  border-radius: 3px;
+}
+
+.off-group-count {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--s4);
+  margin-left: auto;
+}
+
+.off-instances {
+  padding: 0.3rem 0;
+}
+
+.off-inst {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.75rem;
+  transition: background 0.2s var(--ease);
+}
+
+.off-inst:hover {
+  background: var(--vh);
+}
+
+.off-inst-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+a.off-inst-stone {
+  color: var(--s6);
+  min-width: 120px;
+  text-decoration: none;
+}
+
+a.off-inst-stone:hover {
+  color: var(--sage);
+}
+
+.off-inst-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.off-inst-port {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--s4);
+}
+
+.off-inst-status {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  color: var(--s5);
+  min-width: 60px;
+  text-align: right;
+}

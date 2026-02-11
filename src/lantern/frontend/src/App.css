@@ -1,0 +1,16 @@
+.shell {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  height: 100vh;
+}
+
+.main {
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.main-full {
+  padding: 0;
+  overflow: hidden;
+  height: 100vh;
+}

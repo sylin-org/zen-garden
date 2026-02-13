@@ -1705,6 +1705,20 @@ function Main {
         Copy-IsoContents -IsoPath $isoPath -UsbDrive $wizardState.UsbDrive
     }
     
+    # Clear read-only flag on USB disk (Windows sometimes sets this after dirty unmount)
+    try {
+        $usbLetter = ($wizardState.UsbDrive -replace ':', '')
+        $usbPartition = Get-Partition -DriveLetter $usbLetter -ErrorAction Stop
+        $usbDisk = Get-Disk -Number $usbPartition.DiskNumber -ErrorAction Stop
+        if ($usbDisk.IsReadOnly) {
+            Set-Disk -Number $usbDisk.Number -IsReadOnly $false
+            Write-Step "Cleared read-only flag on USB disk" "OK"
+        }
+    }
+    catch {
+        # Non-fatal — will fail naturally at file write if still protected
+    }
+
     # Write stone setup files to USB
     Write-StoneFiles -UsbDrive $wizardState.UsbDrive
     

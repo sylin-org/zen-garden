@@ -4,6 +4,17 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-13
+
+- Fixed systemd service: removed /etc/netplan from ReadWritePaths (doesn't exist on Debian 13, caused NAMESPACE crash loop)
+- NewStone USB creator: auto-clear read-only flag on USB disk before writing
+- **BREAKING**: Updated Koi mDNS client for refactored API (announce/unregister/heartbeat/subscribe/discover)
+
+## 2026-02-12
+
+- Fixed Koi mDNS client endpoints to use `/v1/mdns/*` paths
+- Hardened Koi mDNS discovery with fallback browse, dedupe, and config knobs
+
 - **`garden-moss install` / `garden-moss uninstall`** - cross-platform self-install from a single binary
   - Three tiers: online (GitHub download, future), offline (sibling package), USB (removable media)
   - Linux: systemd unit generation, binary + script deployment, directory creation

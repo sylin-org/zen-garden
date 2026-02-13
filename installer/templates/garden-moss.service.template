@@ -26,7 +26,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/{{USERNAME}}/bin /usr/local/bin /etc/hostname /etc/hosts /etc/docker /etc/network /etc/netplan /run/network /etc/resolv.conf
+ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/{{USERNAME}}/bin /usr/local/bin /etc/hostname /etc/hosts /etc/docker /etc/network /run/network /etc/resolv.conf
 
 # Resource limits
 LimitNOFILE=65536

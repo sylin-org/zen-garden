@@ -48,9 +48,8 @@ async fn run_discovery(state: AppState) -> anyhow::Result<()> {
 #[cfg(target_os = "windows")]
 async fn run_koi_discovery(state: AppState) -> anyhow::Result<()> {
     use garden_common::infra::koi_client::{
-        extract_service_info, is_lan_routable, KoiClient, KoiEventData,
+        KoiClient, KoiDiscoveryEvent, run_koi_discovery_loop_with_removals,
     };
-    use std::time::Duration;
 
     let koi = match KoiClient::try_connect().await {
         Some(client) => {
@@ -71,111 +70,34 @@ async fn run_koi_discovery(state: AppState) -> anyhow::Result<()> {
 
     tracing::info!("Lantern mDNS discovery started via Koi SSE (passive topology discovery)");
 
-    let mut backoff = Duration::from_secs(1);
-    let max_backoff = KoiClient::max_reconnect_backoff();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+    let koi = std::sync::Arc::new(koi);
+
+    tokio::spawn(run_koi_discovery_loop_with_removals(
+        koi,
+        garden_common::constants::MDNS_SERVICE_TYPE,
+        tx,
+    ));
 
     loop {
-        match koi
-            .open_events_stream(garden_common::constants::MDNS_SERVICE_TYPE)
-            .await
-        {
-            Ok(mut resp) => {
-                backoff = Duration::from_secs(1);
-                let mut buffer = String::new();
-
-                while let Some(chunk) = resp.chunk().await.unwrap_or(None) {
-                    let text = String::from_utf8_lossy(&chunk);
-                    buffer.push_str(&text);
-
-                    while let Some(pos) = buffer.find("\n\n") {
-                        let event_block = buffer[..pos].to_string();
-                        buffer = buffer[pos + 2..].to_string();
-
-                        // Parse SSE event header and data
-                        let mut event_type = String::new();
-                        let mut data_line = String::new();
-
-                        for line in event_block.lines() {
-                            if let Some(value) = line.strip_prefix("event:") {
-                                event_type = value.trim().to_string();
-                            } else if let Some(value) = line.strip_prefix("data:") {
-                                data_line = value.trim().to_string();
-                            }
-                        }
-
-                        if data_line.is_empty() {
-                            continue;
-                        }
-
-                        let event_data: KoiEventData = match serde_json::from_str(&data_line) {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
-
-                        let json_event = event_data.event.as_deref().unwrap_or("");
-                        let is_removed = event_type == "removed" || json_event == "removed";
-                        let is_resolved = event_type == "resolved" || json_event == "resolved";
-
-                        if is_removed {
-                            let stone_name = extract_stone_name_from_event(&event_data);
-                            if let Some(name) = stone_name {
-                                mark_discovered_stone_offline(&state, &name).await;
-                            }
-                        } else if is_resolved {
-                            if let Some((_, ip, port, txt)) = extract_service_info(&event_data) {
-                                if !is_lan_routable(&ip) {
-                                    continue;
-                                }
-                                if let Some(stone_name) = txt.get("stone_name").cloned() {
-                                    let discovered = DiscoveredStone {
-                                        stone_id: txt.get("stone_id").cloned(),
-                                        stone_name,
-                                        endpoint: format!("http://{}:{}", ip, port),
-                                        mac: txt.get("mac").cloned(),
-                                        version: txt.get("version").cloned(),
-                                        health: txt.get("health").cloned(),
-                                        discovered_at: chrono::Utc::now(),
-                                    };
-                                    upsert_discovered_stone(&state, &discovered).await;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                tracing::debug!("Koi SSE stream ended, reconnecting");
+        match rx.recv().await {
+            Ok(KoiDiscoveryEvent::Resolved(stone)) => {
+                upsert_discovered_stone(&state, &stone).await;
             }
-            Err(e) => {
-                tracing::warn!(
-                    error = ?e,
-                    backoff_secs = backoff.as_secs(),
-                    "Koi SSE stream error, will reconnect"
-                );
+            Ok(KoiDiscoveryEvent::Removed(stone_name)) => {
+                mark_discovered_stone_offline(&state, &stone_name).await;
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::warn!(skipped = skipped, "Lantern discovery lagged on Koi events");
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                tracing::warn!("Lantern discovery channel closed");
+                break;
             }
         }
-
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(max_backoff);
     }
-}
 
-/// Extract stone_name from a Koi SSE event (for removed/goodbye events)
-#[cfg(target_os = "windows")]
-fn extract_stone_name_from_event(
-    event_data: &garden_common::infra::koi_client::KoiEventData,
-) -> Option<String> {
-    if let Some(ref svc) = event_data.service {
-        svc.txt
-            .as_ref()
-            .and_then(|t| t.get("stone_name").cloned())
-            .or_else(|| Some(svc.name.clone()))
-    } else {
-        event_data
-            .txt
-            .as_ref()
-            .and_then(|t| t.get("stone_name").cloned())
-            .or(event_data.name.clone())
-    }
+    Ok(())
 }
 
 /// Linux: Discover stones via mdns-sd native browse

@@ -8,12 +8,12 @@
 //! - tasks/   - Background async tasks (health monitor, job executors)
 //! - bootstrap/ - Startup and initialization logic
 
-pub mod domain;
-pub mod infra;
 pub mod api;
-pub mod tasks;
 pub mod bootstrap;
 pub mod cli;
+pub mod domain;
+pub mod infra;
+pub mod tasks;
 
 // Core modules
 pub mod announcement;
@@ -25,59 +25,73 @@ pub mod app_state;
 
 // Re-export AppState and related types
 pub use app_state::{
-    AppState, Job, JobStatus,
-    CompiledOffering, OfferingsFingerprint, OfferingsIndexCache,
+    AppState, CompiledOffering, Job, JobStatus, OfferingsFingerprint, OfferingsIndexCache,
 };
 
 // Re-export API helpers from infra
 pub use infra::error_response;
 
 // Re-export commonly used job event utilities
-pub use api::v1::events::{emit_job_progress, emit_job_started, emit_job_completed, emit_job_failed};
+pub use api::v1::events::{
+    emit_job_completed, emit_job_failed, emit_job_progress, emit_job_started,
+};
 
 // Re-export common types for convenience
 pub use garden_common::ServiceInfo;
 
 // Re-export domain functions and types
 pub use domain::{
-    adopt_offering_container, adopt_existing_containers,
-    ensure_offerings_index, get_compiled_offering,
-    reconcile_services,
-    compatibility::CompiledCompatibility,
+    adopt_existing_containers, adopt_offering_container, compatibility::CompiledCompatibility,
+    ensure_offerings_index, get_compiled_offering, reconcile_services,
 };
 
 // Re-export tasks for background execution
 pub use tasks::{
     auto_adoption_task,
-    install_service_task, install_batch_task,
-    health_monitor_task,
     detect_capabilities_background,
+    health_monitor_task,
+    install_batch_task,
+    install_service_task,
     lantern_registration_loop,
-    NetworkMonitor, NetworkMonitorConfig, NetworkEvent,
-    DockerMonitor, DockerMonitorConfig, DockerEvent,
     // Task coordination
     start_all_background_tasks,
-    start_discovery_listener, start_hardware_detection,
-    start_registry_loader, start_catalog_builder,
-    start_health_monitor, start_auto_adoption, start_auto_adoption_with_config,
+    start_auto_adoption,
+    start_auto_adoption_with_config,
+    start_catalog_builder,
+    start_discovery_listener,
+    start_hardware_detection,
+    start_health_monitor,
     start_lantern_registration,
+    start_registry_loader,
+    DockerEvent,
+    DockerMonitor,
+    DockerMonitorConfig,
+    NetworkEvent,
+    NetworkMonitor,
+    NetworkMonitorConfig,
 };
 
 // Re-export bootstrap utilities
-pub use bootstrap::{
-    load_preinstall_manifest, PreInstallManifest,
-    run_first_boot_initialization,
-    router,
-    bind_server, run_server, ServerConfig,
-    // Startup utilities
-    DockerConfig, connect_docker, init_capabilities,
-    // Configuration
-    DaemonConfig, init_tracing,
-    // Main orchestration
-    run_daemon,
-};
 #[cfg(target_os = "windows")]
 pub use bootstrap::ensure_windows_stone_name_config;
+pub use bootstrap::{
+    bind_server,
+    connect_docker,
+    init_capabilities,
+    init_tracing,
+    load_preinstall_manifest,
+    router,
+    // Main orchestration
+    run_daemon,
+    run_first_boot_initialization,
+    run_server,
+    // Configuration
+    DaemonConfig,
+    // Startup utilities
+    DockerConfig,
+    PreInstallManifest,
+    ServerConfig,
+};
 
 // Re-export CLI utilities
-pub use cli::{Cli, Commands, parse as parse_cli, version_string};
+pub use cli::{parse as parse_cli, version_string, Cli, Commands};

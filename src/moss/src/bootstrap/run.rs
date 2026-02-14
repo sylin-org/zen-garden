@@ -52,7 +52,10 @@ use tokio::sync::RwLock;
 ///
 /// This is the main entry point after CLI parsing and config loading.
 /// Handles all startup phases and background task coordination.
-pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<String>) -> anyhow::Result<()> {
+pub async fn run(
+    config: DaemonConfig,
+    log_tx: tokio::sync::broadcast::Sender<String>,
+) -> anyhow::Result<()> {
     let stone_name = config.stone_name.clone();
     let port = config.port;
 
@@ -86,7 +89,8 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
 
     // TOPO-0002: Dirty flag for topology persistence + ensure directory exists
     let topology_dirty = crate::domain::topology::new_dirty_flag();
-    if let Err(e) = tokio::fs::create_dir_all(garden_common::constants::paths::topology_dir()).await {
+    if let Err(e) = tokio::fs::create_dir_all(garden_common::constants::paths::topology_dir()).await
+    {
         tracing::warn!(error = %e, "Failed to create topology directory (will retry on first write)");
     }
 
@@ -282,12 +286,42 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
         }
     }
 
-    // Phase 4: mDNS announcement (Linux only) - includes stone_id and MAC in TXT records
+    // Phase 4: Initialize Koi embedded (mDNS + all capabilities ready for future phases)
+    // All capabilities are enabled so their dependencies compile in; inactive ones
+    // (certmesh, dns, proxy, health) remain dormant until explicitly started in later phases.
+    let koi_data_dir =
+        std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi");
+    let koi_handle = {
+        let koi = koi_embedded::Builder::new()
+            .data_dir(koi_data_dir)
+            .service_mode(koi_embedded::ServiceMode::EmbeddedOnly)
+            .mdns(true)
+            .dns_enabled(false)
+            .health(false)
+            .certmesh(false)
+            .proxy(false)
+            .events(|event| {
+                tracing::debug!(?event, "koi event");
+            })
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Koi embedded: {}", e))?;
+
+        let handle = koi
+            .start()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to start Koi embedded: {}", e))?;
+
+        tracing::info!("Koi embedded started (mDNS active)");
+        Arc::new(handle)
+    };
+
+    // Phase 4.1: mDNS announcement — includes stone_id and MAC in TXT records
     // Must happen before IP change handler so we can pass the handle
     // Note: If current IP is loopback, registration is deferred until valid IP is available
     let current_ip = network_monitor.get_ip().await;
     let (_, mac_for_mdns) = garden_common::infra::network::get_local_ip_and_mac();
     let mdns_handle: Option<Arc<mdns::MdnsHandle>> = match mdns::announce_moss(
+        koi_handle.clone(),
         Some(stone_id.as_str()),
         &stone_name,
         port,
@@ -443,6 +477,7 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
         tools_tx: tools_tx.clone(),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
+        koi_handle: koi_handle.clone(),
         ceremony_registry,
         ceremony_journal,
         harvest_store,
@@ -672,7 +707,9 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
     let topology_cache_for_mdns = state.topology_cache.clone();
     let topology_dirty_for_mdns = state.topology_dirty.clone();
     let self_stone_name_for_mdns = stone_name.clone();
-    if let Ok(mut mdns_rx) = mdns::start_mdns_lurk_listener(stone_name.clone()).await {
+    if let Ok(mut mdns_rx) =
+        mdns::start_mdns_lurk_listener(koi_handle.clone(), stone_name.clone()).await
+    {
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Discovery,
             console::EventStatus::MdnsActive,
@@ -700,10 +737,14 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
                                 stone_id: sid,
                                 stone_name: discovered.stone_name,
                                 endpoint: discovered.endpoint,
-                                moss_version: discovered.version.unwrap_or_else(|| "unknown".to_string()),
+                                moss_version: discovered
+                                    .version
+                                    .unwrap_or_else(|| "unknown".to_string()),
                                 services: vec![], // mDNS doesn't provide services
                                 mac: discovered.mac,
-                                health: discovered.health.unwrap_or_else(|| garden_common::constants::STONE_INITIALIZING.to_string()),
+                                health: discovered.health.unwrap_or_else(|| {
+                                    garden_common::constants::STONE_INITIALIZING.to_string()
+                                }),
                                 capabilities: None, // mDNS doesn't provide capabilities
                                 status: garden_common::StoneStatus::Online,
                                 discovered_at: chrono::Utc::now(),
@@ -786,7 +827,12 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
                         last_seen: chrono::Utc::now(),
                         tags: vec![], // Will be populated by later chirps
                     };
-                    crate::domain::topology::upsert_from_chirp_dirty(&state.topology_cache, entry, &state.topology_dirty).await;
+                    crate::domain::topology::upsert_from_chirp_dirty(
+                        &state.topology_cache,
+                        entry,
+                        &state.topology_dirty,
+                    )
+                    .await;
                 }
             }
         }
@@ -936,7 +982,8 @@ pub async fn run(config: DaemonConfig, log_tx: tokio::sync::broadcast::Sender<St
                 &goodbye_state.topology_cache,
                 &goodbye_state.topology_dirty,
                 &goodbye_state.self_entry,
-            ).await;
+            )
+            .await;
 
             if let Err(e) = crate::announcement::send_goodbye(&goodbye_state).await {
                 tracing::warn!(error = ?e, "Failed to send goodbye announcement");

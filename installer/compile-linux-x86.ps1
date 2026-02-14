@@ -180,6 +180,17 @@ if ($RunningOnWindows) {
     $unixPath = $WORKSPACE_ROOT
 }
 
+# Koi repo is a sibling directory — mount it so path dependency resolves
+# Cargo.toml: koi-embedded = { path = "../koi/crates/koi-embedded" }
+# Inside container: /build/../koi → /koi
+$koiHostPath = (Resolve-Path (Join-Path $WORKSPACE_ROOT "../koi")).Path
+if ($RunningOnWindows) {
+    $koiDriveLetter = $koiHostPath.Substring(0, 1).ToLower()
+    $koiUnixPath = "/$koiDriveLetter" + $koiHostPath.Substring(2).Replace('\', '/')
+} else {
+    $koiUnixPath = $koiHostPath
+}
+
 Push-Location $WORKSPACE_ROOT
 try {
     # Build number
@@ -263,6 +274,7 @@ try {
         docker run -d `
             --name $CONTAINER_NAME `
             -v "${unixPath}:/build" `
+            -v "${koiUnixPath}:/koi" `
             -v "${CARGO_CACHE_VOLUME}:/root/.cargo" `
             -w /build `
             $IMAGE_NAME `

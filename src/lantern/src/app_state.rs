@@ -38,10 +38,17 @@ pub struct AppState {
 
     /// HTTP client for proxying actions to Moss instances
     pub http_client: MossClient,
+
+    /// Koi embedded handle — provides mDNS discovery (and future capabilities)
+    pub koi_handle: Arc<koi_embedded::KoiHandle>,
 }
 
 impl AppState {
-    pub fn new(lantern_name: String, api_port: u16) -> Self {
+    pub fn new(
+        lantern_name: String,
+        api_port: u16,
+        koi_handle: Arc<koi_embedded::KoiHandle>,
+    ) -> Self {
         let (sse_tx, _) = broadcast::channel(256);
 
         Self {
@@ -58,6 +65,7 @@ impl AppState {
                     .build()
                     .expect("Failed to create HTTP client"),
             ),
+            koi_handle,
         }
     }
 

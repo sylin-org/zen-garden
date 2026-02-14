@@ -7,15 +7,15 @@
 //!
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use garden_common::{
-    CpuCapabilities, DetectionStatus, HardwareCapabilities,
-    HardwareInventory, MemoryCapabilities, RuntimeInfo,
-};
-use garden_common::console::{ConsolePrinter, ConsoleEvent, EventCategory, EventStatus};
 use crate::docker::DockerManager;
 use crate::infra;
+use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
+use garden_common::{
+    CpuCapabilities, DetectionStatus, HardwareCapabilities, HardwareInventory, MemoryCapabilities,
+    RuntimeInfo,
+};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Docker connection configuration
 pub struct DockerConfig {
@@ -26,7 +26,7 @@ pub struct DockerConfig {
 impl Default for DockerConfig {
     fn default() -> Self {
         Self {
-            max_retries: 30,      // 30 attempts = ~60 seconds
+            max_retries: 30, // 30 attempts = ~60 seconds
             retry_delay_secs: 2,
         }
     }
@@ -50,7 +50,7 @@ pub async fn connect_docker(
                 console.emit(ConsoleEvent::new(
                     EventCategory::Docker,
                     EventStatus::Connected,
-                    "Docker daemon".to_string()
+                    "Docker daemon".to_string(),
                 ));
 
                 return Ok(Arc::new(dm));
@@ -61,7 +61,7 @@ pub async fn connect_docker(
                 console.emit(ConsoleEvent::new(
                     EventCategory::Docker,
                     EventStatus::Retry,
-                    format!("Attempt {}/{}", retries, config.max_retries)
+                    format!("Attempt {}/{}", retries, config.max_retries),
                 ));
 
                 tracing::warn!(
@@ -77,7 +77,7 @@ pub async fn connect_docker(
                 console.emit(ConsoleEvent::new(
                     EventCategory::Docker,
                     EventStatus::Failed,
-                    format!("After {} retries", config.max_retries)
+                    format!("After {} retries", config.max_retries),
                 ));
 
                 tracing::error!(error = ?e, "Failed to connect to Docker daemon after {} retries", config.max_retries);
@@ -142,7 +142,7 @@ pub async fn init_capabilities(
         console.emit(ConsoleEvent::new(
             EventCategory::System,
             EventStatus::Loaded,
-            "Hardware capabilities".to_string()
+            "Hardware capabilities".to_string(),
         ));
     }
 
@@ -163,7 +163,7 @@ fn create_capabilities_skeleton(stone_id: &str, stone_name: &str) -> HardwareCap
                 features: None,
             },
             memory: MemoryCapabilities { total_mb: 0 },
-            gpus: vec![],  // CRITICAL: Must be present, even if empty
+            gpus: vec![], // CRITICAL: Must be present, even if empty
             disk: None,
             swap_mb: None,
             ai_capabilities: None,

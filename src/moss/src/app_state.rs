@@ -133,9 +133,13 @@ pub struct AppState {
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
 
-    /// mDNS handle for re-registration on resolution changes (Linux only)
+    /// mDNS handle for re-registration on resolution changes
     /// Used when IP/MAC changes to update mDNS service advertisement
     pub mdns_handle: Option<Arc<MdnsHandle>>,
+
+    /// Koi embedded handle — provides mDNS, DNS, certmesh, proxy, and health capabilities
+    /// Shared across all subsystems; sub-handles accessed via `koi_handle.mdns()`, `.dns()`, etc.
+    pub koi_handle: Arc<koi_embedded::KoiHandle>,
 
     // === Ceremony Infrastructure ===
     /// Active ceremony registry (in-memory state)
@@ -205,15 +209,13 @@ pub struct AppState {
 ///
 /// Background tasks set these flags when subsystems become operational.
 /// Consumers check flags before attempting operations that require readiness.
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SubSystems {
     /// Network subsystem state
     pub network: NetworkSubSystem,
     /// Docker subsystem state
     pub docker: DockerSubSystem,
 }
-
 
 /// Network subsystem state
 ///

@@ -1,24 +1,23 @@
-//! Stone discovery via mDNS (Koi on Windows, mdns-sd on Linux)
+//! Stone discovery via Koi embedded mDNS
 //!
 //! Passively listens for `_moss._tcp` service announcements on the local
 //! network and registers discovered stones into Lantern's topology.
-//! This gives Lantern the same discovery capability as Moss — stones appear
+//! This gives Lantern the same discovery capability as Moss - stones appear
 //! automatically without requiring `LANTERN_ENDPOINT` to be configured.
 //!
 //! Unlike Moss, Lantern also handles `removed` / goodbye events to mark
 //! stones offline immediately. TTL cleanup remains as a fallback for
 //! ungraceful disconnects (crash, network loss).
 
-use garden_common::infra::koi_client::DiscoveredStone;
+use garden_common::constants::MDNS_SERVICE_TYPE;
 
 use crate::domain::registration::{mark_stone_offline, register_stone};
 use crate::AppState;
 
-/// Spawn the mDNS discovery listener.
+/// Spawn the mDNS discovery listener via Koi embedded.
 ///
-/// On Windows, connects to Koi's SSE events stream for `_moss._tcp`.
-/// On Linux, uses mdns-sd native browse. Discovered stones are registered
-/// into Lantern's topology cache and trigger domain events.
+/// Uses `koi_handle.mdns().browse()` for unified cross-platform discovery.
+/// Discovered stones are registered into Lantern's topology cache and trigger domain events.
 pub fn spawn_discovery(state: &AppState) -> tokio::task::JoinHandle<()> {
     let state = state.clone();
     tokio::spawn(async move {
@@ -29,131 +28,67 @@ pub fn spawn_discovery(state: &AppState) -> tokio::task::JoinHandle<()> {
 }
 
 async fn run_discovery(state: AppState) -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        run_koi_discovery(state).await
-    }
+    let mdns = state
+        .koi_handle
+        .mdns()
+        .map_err(|e| anyhow::anyhow!("mDNS not available for discovery: {}", e))?;
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        run_mdns_discovery(state).await
-    }
-}
+    let browse = mdns
+        .browse(MDNS_SERVICE_TYPE)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to start mDNS browse: {}", e))?;
 
-/// Windows: Discover stones via Koi mDNS proxy SSE stream.
-///
-/// Reads the raw SSE stream directly to handle both `resolved` (online)
-/// and `removed` (offline/goodbye) events. Does NOT delegate to the common
-/// `run_koi_discovery_loop` because that only emits `DiscoveredStone`.
-#[cfg(target_os = "windows")]
-async fn run_koi_discovery(state: AppState) -> anyhow::Result<()> {
-    use garden_common::infra::koi_client::{
-        KoiClient, KoiDiscoveryEvent, run_koi_discovery_loop_with_removals,
-    };
+    tracing::info!("Lantern mDNS discovery started via koi-embedded (passive topology discovery)");
 
-    let koi = match KoiClient::try_connect().await {
-        Some(client) => {
-            tracing::info!(
-                base_url = %client.base_url(),
-                "Lantern discovery: connected to Koi mDNS proxy"
-            );
-            client
-        }
-        None => {
-            tracing::info!(
-                "Lantern discovery: Koi not available, mDNS discovery disabled. \
-                 Stones must use LANTERN_ENDPOINT heartbeat to register."
-            );
-            return Ok(());
-        }
-    };
-
-    tracing::info!("Lantern mDNS discovery started via Koi SSE (passive topology discovery)");
-
-    let (tx, mut rx) = tokio::sync::broadcast::channel(64);
-    let koi = std::sync::Arc::new(koi);
-
-    tokio::spawn(run_koi_discovery_loop_with_removals(
-        koi,
-        garden_common::constants::MDNS_SERVICE_TYPE,
-        tx,
-    ));
-
-    loop {
-        match rx.recv().await {
-            Ok(KoiDiscoveryEvent::Resolved(stone)) => {
-                upsert_discovered_stone(&state, &stone).await;
-            }
-            Ok(KoiDiscoveryEvent::Removed(stone_name)) => {
-                mark_discovered_stone_offline(&state, &stone_name).await;
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                tracing::warn!(skipped = skipped, "Lantern discovery lagged on Koi events");
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                tracing::warn!("Lantern discovery channel closed");
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Linux: Discover stones via mdns-sd native browse
-#[cfg(not(target_os = "windows"))]
-async fn run_mdns_discovery(state: AppState) -> anyhow::Result<()> {
-    use mdns_sd::{ServiceDaemon, ServiceEvent};
-
-    let mdns = ServiceDaemon::new()?;
-    let receiver = mdns.browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)?;
-
-    tracing::info!("Lantern mDNS discovery started via mdns-sd (passive topology discovery)");
-
-    enum MdnsEvent {
-        Discovered(DiscoveredStone),
-        Removed(String),
-    }
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<MdnsEvent>(32);
-
-    std::thread::spawn(move || {
-        loop {
-            match receiver.recv() {
-                Ok(ServiceEvent::ServiceResolved(info)) => {
-                    if let Some(discovered) =
-                        garden_common::infra::koi_client::extract_stone_from_service_info(&info)
-                    {
-                        let _ = tx.blocking_send(MdnsEvent::Discovered(discovered));
-                    }
-                }
-                Ok(ServiceEvent::ServiceRemoved(_, fullname)) => {
-                    // Extract stone name from mDNS fullname (e.g. "stone-crystal-forest._moss._tcp.local.")
-                    let stone_name = fullname.split('.').next().unwrap_or("").to_string();
-                    if !stone_name.is_empty() {
-                        let _ = tx.blocking_send(MdnsEvent::Removed(stone_name));
-                    }
-                }
-                Ok(_) => {}
-                Err(_) => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            }
-        }
-    });
-
-    while let Some(event) = rx.recv().await {
+    while let Some(event) = browse.recv().await {
         match event {
-            MdnsEvent::Discovered(stone) => {
-                upsert_discovered_stone(&state, &stone).await;
+            koi_embedded::MdnsEvent::Resolved(record) => {
+                if let Some(discovered) = extract_stone_from_record(&record) {
+                    upsert_discovered_stone(&state, &discovered).await;
+                }
             }
-            MdnsEvent::Removed(stone_name) => {
-                mark_discovered_stone_offline(&state, &stone_name).await;
+            koi_embedded::MdnsEvent::Removed { ref name, .. } => {
+                // Extract stone name from mDNS name (e.g. "stone-crystal-forest")
+                let stone_name = name.split('.').next().unwrap_or("").to_string();
+                if !stone_name.is_empty() {
+                    mark_discovered_stone_offline(&state, &stone_name).await;
+                }
             }
+            _ => {}
         }
     }
 
+    tracing::warn!("Lantern mDNS browse stream ended");
     Ok(())
+}
+
+/// Extract a discovered stone from a Koi `ServiceRecord`.
+///
+/// Returns `None` if the record has no LAN-routable IP address.
+fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option<DiscoveredStone> {
+    let ip = record.ip.as_deref()?;
+
+    if !garden_common::infra::koi_client::is_lan_routable(ip) {
+        return None;
+    }
+
+    let port = record.port.unwrap_or(7185);
+    let txt = &record.txt;
+
+    let stone_name = txt
+        .get("stone_name")
+        .cloned()
+        .unwrap_or_else(|| record.name.clone());
+
+    Some(DiscoveredStone {
+        stone_id: txt.get("stone_id").cloned(),
+        stone_name,
+        endpoint: format!("http://{}:{}", ip, port),
+        mac: txt.get("mac").cloned(),
+        version: txt.get("version").cloned(),
+        health: txt.get("health").cloned(),
+        discovered_at: chrono::Utc::now(),
+    })
 }
 
 /// Register a discovered stone into Lantern's topology and emit domain event.
@@ -165,7 +100,7 @@ async fn upsert_discovered_stone(state: &AppState, stone: &DiscoveredStone) {
             stone.stone_id.as_deref(),
             &stone.stone_name,
             &stone.endpoint,
-            vec![], // mDNS doesn't provide services — enrichment task fills those in
+            vec![], // mDNS doesn't provide services - enrichment task fills those in
         )
     };
 
@@ -194,3 +129,8 @@ async fn mark_discovered_stone_offline(state: &AppState, stone_name: &str) {
         state.event_bus.emit(event);
     }
 }
+
+/// A stone discovered via mDNS.
+///
+/// Re-used from the common crate's canonical type.
+use garden_common::infra::koi_client::DiscoveredStone;

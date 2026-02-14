@@ -4,6 +4,18 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-15
+
+- Embedded koi-embedded for unified mDNS: replaced platform-split mdns-sd + KoiClient HTTP with single KoiHandle
+- Rewrote moss/mdns.rs (647→315 lines) and lantern/discovery.rs (197→137 lines) — no #[cfg] conditionals
+- Slimmed koi_client.rs (900→50 lines): removed HTTP/SSE client, kept DiscoveredStone + is_lan_routable
+- Removed mdns-sd direct dependency from moss, lantern, and common Cargo.toml
+
+## 2026-02-14
+
+- Upgraded workspace deps to Koi-aligned versions: axum 0.8, reqwest 0.12, thiserror 2, mdns-sd 0.17, tower-http 0.6
+- Proposed Koi embedded integration: certmesh-backed Pond security, DNS, TLS proxy (docs/proposals)
+
 ## 2026-02-13
 
 - Fixed systemd service: removed /etc/netplan from ReadWritePaths (doesn't exist on Debian 13, caused NAMESPACE crash loop)

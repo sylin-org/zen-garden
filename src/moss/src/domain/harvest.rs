@@ -9,9 +9,9 @@
 //! and can be used for rollback or manual restoration.
 
 use chrono::{DateTime, Utc};
+use garden_common::offerings::parse_offering_fqn;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use garden_common::offerings::parse_offering_fqn;
 
 /// Harvest identifier (format: "{offering}-{timestamp}")
 pub type HarvestId = String;
@@ -110,9 +110,7 @@ impl HarvestManifest {
 
     /// Check if harvest has expired
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| Utc::now() > exp)
-            .unwrap_or(false)
+        self.expires_at.map(|exp| Utc::now() > exp).unwrap_or(false)
     }
 
     /// Format size for display

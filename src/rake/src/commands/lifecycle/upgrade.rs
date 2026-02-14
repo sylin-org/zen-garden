@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// Upgrade (nourish) services
 pub struct UpgradeCommand {
@@ -119,10 +119,7 @@ impl Command for UpgradeCommand {
                 s if s.is_success() => {
                     // Parse v1 API response
                     if let Ok(body) = response.json::<serde_json::Value>().await {
-                        let message = body
-                            .get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
                         let api_status = body
                             .get("status")
                             .and_then(|v| v.as_str())

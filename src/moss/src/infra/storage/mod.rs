@@ -1,4 +1,4 @@
-﻿//! Storage and seed bank infrastructure
+//! Storage and seed bank infrastructure
 //!
 //! Handles USB storage device detection, preparation, and management.
 //! Linux-only: Uses udev for device monitoring.
@@ -7,7 +7,7 @@
 //! The registry is built in-memory by scanning mounted devices.
 //!
 //! ## Object Storage
-//! 
+//!
 //! The `objects` module provides S3-compatible object storage on seed banks:
 //! - Objects stored at: `{mount}/garden/storage/{bucket}/{key}`
 //! - Metadata in sidecar files: `{key}.meta.json`
@@ -27,9 +27,15 @@ mod registry;
 #[cfg(target_os = "linux")]
 mod monitor;
 
-pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon, update_local_storage_cache, update_and_broadcast};
-pub use device::{DeviceAnalyzer, UnmountedDevice, analyze_device, list_usb_partitions, list_unmounted_removable_devices};
-pub use objects::{ObjectStore, ObjectMetadata, ListResult, PutResult};
+pub use beacon::{
+    broadcast_beacon, broadcast_if_has_storage, build_beacon, update_and_broadcast,
+    update_local_storage_cache,
+};
+pub use device::{
+    analyze_device, list_unmounted_removable_devices, list_usb_partitions, DeviceAnalyzer,
+    UnmountedDevice,
+};
+pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
 pub use registry::SeedBankRegistry;
 
 #[cfg(target_os = "linux")]

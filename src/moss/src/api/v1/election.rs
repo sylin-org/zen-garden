@@ -56,7 +56,12 @@ pub async fn start_election(
 
     // Start election
     match election_service
-        .start_election(election_id.clone(), req.election_type, req.criteria, req.timeout)
+        .start_election(
+            election_id.clone(),
+            req.election_type,
+            req.criteria,
+            req.timeout,
+        )
         .await
     {
         Ok(winner) => {

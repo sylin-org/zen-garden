@@ -1,4 +1,4 @@
-﻿//! System dependency management for Companions
+//! System dependency management for Companions
 //!
 //! Provides infrastructure for Companions to declare and auto-install
 //! system dependencies at startup.
@@ -54,7 +54,7 @@ impl SystemDependency {
     }
 
     /// Create a dependency for an apt package
-    /// 
+    ///
     /// - `package`: The apt package name (e.g., "alsa-utils")
     /// - `binary`: The binary to check for (e.g., "aplay")
     #[cfg(target_os = "linux")]
@@ -66,12 +66,7 @@ impl SystemDependency {
             check_command: "which".into(),
             check_args: vec![binary],
             install_command: "sudo".into(),
-            install_args: vec![
-                "apt-get".into(),
-                "install".into(),
-                "-y".into(),
-                package,
-            ],
+            install_args: vec!["apt-get".into(), "install".into(), "-y".into(), package],
         }
     }
 
@@ -80,7 +75,7 @@ impl SystemDependency {
     pub fn apt_package(_package: impl Into<String>, _binary: impl Into<String>) -> Self {
         Self {
             name: "n/a".into(),
-            check_command: "true".into(),  // Always succeeds
+            check_command: "true".into(), // Always succeeds
             check_args: vec![],
             install_command: "true".into(),
             install_args: vec![],
@@ -99,7 +94,7 @@ impl SystemDependency {
     /// Install the dependency
     pub fn install(&self) -> Result<()> {
         tracing::info!(dependency = %self.name, "Installing system dependency");
-        
+
         let output = Command::new(&self.install_command)
             .args(&self.install_args)
             .output()
@@ -110,11 +105,7 @@ impl SystemDependency {
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "Failed to install {}: {}",
-                self.name,
-                stderr.trim()
-            )
+            anyhow::bail!("Failed to install {}: {}", self.name, stderr.trim())
         }
     }
 }
@@ -138,20 +129,20 @@ impl DependencyCheckResult {
 }
 
 /// Check and install system dependencies
-/// 
+///
 /// For each dependency:
 /// 1. Check if it's available (runs check_command)
 /// 2. If not, attempt to install it (runs install_command)
 /// 3. Report results
-/// 
+///
 /// # Example
-/// 
+///
 /// ```ignore
 /// let deps = vec![
 ///     SystemDependency::apt_package("alsa-utils", "aplay"),
 ///     SystemDependency::apt_package("alsa-utils", "amixer"),
 /// ];
-/// 
+///
 /// let result = ensure_dependencies(&deps)?;
 /// if !result.all_ok() {
 ///     tracing::error!("Some dependencies failed to install");
@@ -176,10 +167,9 @@ pub fn ensure_dependencies(dependencies: &[SystemDependency]) -> Result<Dependen
                     if dep.is_available() {
                         result.installed.push(dep.name.clone());
                     } else {
-                        result.failed.push((
-                            dep.name.clone(),
-                            "Installed but still not available".into(),
-                        ));
+                        result
+                            .failed
+                            .push((dep.name.clone(), "Installed but still not available".into()));
                     }
                 }
                 Err(e) => {
@@ -261,13 +251,7 @@ mod tests {
             vec!["skip".into()],
         );
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        let dep = SystemDependency::new(
-            "test-fake",
-            "false",
-            vec![],
-            "echo",
-            vec!["skip".into()],
-        );
+        let dep = SystemDependency::new("test-fake", "false", vec![], "echo", vec!["skip".into()]);
         assert!(!dep.is_available());
     }
 }

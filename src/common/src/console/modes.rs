@@ -1,4 +1,4 @@
-﻿//! Console output modes
+//! Console output modes
 
 /// Console output mode - determines what events are displayed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -16,7 +16,6 @@ pub enum ConsoleMode {
     Verbose,
 }
 
-
 impl std::fmt::Display for ConsoleMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -30,7 +29,7 @@ impl std::fmt::Display for ConsoleMode {
 
 impl std::str::FromStr for ConsoleMode {
     type Err = anyhow::Error;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "silent" => Ok(Self::Silent),

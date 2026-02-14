@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
 use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
+use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -102,15 +102,17 @@ impl FireflyEventHandler {
 
     /// Send OLED command for health change
     fn send_oled_health(&self, health: &str) {
-        let _ = self.connection.with_device(|serial| serial.oled_health(health));
+        let _ = self
+            .connection
+            .with_device(|serial| serial.oled_health(health));
     }
 
     /// Send OLED command for metrics update
     fn send_oled_metrics(&self, cpu: f64, memory: f64, uptime_secs: u64) {
         let uptime = oled::format_uptime(uptime_secs);
-        let _ = self.connection.with_device(|serial| {
-            serial.oled_metrics(cpu as u8, memory as u8, &uptime)
-        });
+        let _ = self
+            .connection
+            .with_device(|serial| serial.oled_metrics(cpu as u8, memory as u8, &uptime));
     }
 
     /// Send OLED wipe-in animation
@@ -130,13 +132,17 @@ impl FireflyEventHandler {
     /// Send OLED blink animation
     #[allow(dead_code)] // API method for future use
     fn send_oled_blink(&self, count: u8) {
-        let _ = self.connection.with_device(|serial| serial.oled_blink(count));
+        let _ = self
+            .connection
+            .with_device(|serial| serial.oled_blink(count));
     }
 
     /// Send OLED pulse animation
     #[allow(dead_code)] // API method for future use
     fn send_oled_pulse(&self, count: u8) {
-        let _ = self.connection.with_device(|serial| serial.oled_pulse(count));
+        let _ = self
+            .connection
+            .with_device(|serial| serial.oled_pulse(count));
     }
 }
 
@@ -197,9 +203,8 @@ impl EventHandler for FireflyEventHandler {
                     ctx.health = Self::parse_health(&snapshot.stone.health);
 
                     // Update load (average of CPU and memory)
-                    ctx.load =
-                        ((snapshot.stone.cpu_percent + snapshot.stone.memory_percent) / 200.0)
-                            as f32;
+                    ctx.load = ((snapshot.stone.cpu_percent + snapshot.stone.memory_percent)
+                        / 200.0) as f32;
                     ctx.load = ctx.load.clamp(0.0, 1.0);
 
                     // Store CPU/memory for OLED

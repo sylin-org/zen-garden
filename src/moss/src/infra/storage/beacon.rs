@@ -1,4 +1,4 @@
-﻿//! Storage beacon broadcasting
+//! Storage beacon broadcasting
 //!
 //! Broadcasts STORAGE_BEACON announcements to notify other stones
 //! about this stone's storage capabilities.
@@ -21,7 +21,8 @@ pub async fn build_beacon(
     endpoint: &str,
 ) -> Result<StorageBeacon> {
     // Scan current seed banks
-    let registry = SeedBankRegistry::scan().await
+    let registry = SeedBankRegistry::scan()
+        .await
         .context("Failed to scan seed banks")?;
 
     let seed_banks: Vec<SeedBankAnnouncement> = registry
@@ -45,11 +46,7 @@ pub async fn build_beacon(
 /// - Seed bank mount/unmount
 /// - Visibility change
 /// - Stone online (triggered by STONE_CHIRP from new stone)
-pub async fn broadcast_beacon(
-    stone_id: &str,
-    stone_name: &str,
-    endpoint: &str,
-) -> Result<()> {
+pub async fn broadcast_beacon(stone_id: &str, stone_name: &str, endpoint: &str) -> Result<()> {
     let beacon = build_beacon(stone_id, stone_name, endpoint).await?;
 
     let seed_bank_count = beacon.seed_banks.len();
@@ -117,13 +114,13 @@ pub async fn update_local_storage_cache(
     endpoint: &str,
 ) -> Result<()> {
     let beacon = build_beacon(stone_id, stone_name, endpoint).await?;
-    
+
     debug!(
         stone = %stone_name,
         seed_banks = beacon.seed_banks.len(),
         "Updating local storage cache"
     );
-    
+
     crate::domain::storage_cache::update_from_beacon(storage_cache, beacon).await;
     Ok(())
 }
@@ -140,10 +137,10 @@ pub async fn update_and_broadcast(
 ) -> Result<()> {
     // Update local cache
     update_local_storage_cache(storage_cache, stone_id, stone_name, endpoint).await?;
-    
+
     // Broadcast to network
     broadcast_beacon(stone_id, stone_name, endpoint).await?;
-    
+
     Ok(())
 }
 

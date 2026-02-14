@@ -45,7 +45,6 @@ pub enum NetworkMode {
     },
 }
 
-
 impl NetworkMode {
     /// Create a new static mode
     pub fn static_ip(address: Ipv4Addr) -> Self {
@@ -316,7 +315,9 @@ pub enum NetworkError {
 impl std::fmt::Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PoolNotConfigured => write!(f, "Static IP pool not configured in garden-moss.toml"),
+            Self::PoolNotConfigured => {
+                write!(f, "Static IP pool not configured in garden-moss.toml")
+            }
             Self::PoolExhausted(e) => write!(f, "{}", e),
             Self::PlatformNotSupported(p) => write!(f, "Platform not supported: {}", p),
             Self::PrivilegeRequired(msg) => write!(f, "Privilege required: {}", msg),

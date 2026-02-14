@@ -1,23 +1,23 @@
 // Offerings API - Human Layer
-// 
+//
 // Purpose: Simplified, beginner-friendly API for managing offerings
 // Target audience: 90% of users - scripters, beginners, simple automation
 // Philosophy: Hide Docker complexity, provide safety rails, optimize for common case
 
+use crate::api::responses::ApiResponse;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
-use crate::api::responses::ApiResponse;
 use garden_common::offerings::{
     parse_offering_fqn, OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::{error_response, AppState};
 use crate::infra::embedded::EmbeddedManifests;
+use crate::{error_response, AppState};
 
 /// Query parameters for filtering offerings
 #[derive(Debug, Deserialize)]
@@ -57,7 +57,10 @@ pub struct CompatibilityView {
 pub async fn list_offerings_v1(
     State(state): State<AppState>,
     Query(query): Query<OfferingsQuery>,
-) -> Result<(StatusCode, Json<ApiResponse<Vec<OfferingView>>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<ApiResponse<Vec<OfferingView>>>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     // Get installed services from unified offerings registry
     let offerings_guard = state.offerings.read().await;
     let installed: HashMap<String, &garden_common::Offering> = offerings_guard
@@ -75,8 +78,15 @@ pub async fn list_offerings_v1(
     // Add installed offerings with runtime details
     if query.state.as_deref() != Some("available") {
         for offering in offerings_guard.iter() {
-            let image = state.docker.get_service_image(&offering.name).await.unwrap_or_else(|_| "<unknown>".to_string());
-            let uptime = state.docker.get_service_uptime(&offering.name).await
+            let image = state
+                .docker
+                .get_service_image(&offering.name)
+                .await
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            let uptime = state
+                .docker
+                .get_service_uptime(&offering.name)
+                .await
                 .ok()
                 .filter(|&s| s > 0)
                 .map(garden_common::format_uptime);
@@ -93,7 +103,7 @@ pub async fn list_offerings_v1(
             });
         }
     }
-    
+
     // Add available offerings (not yet installed) - only if catalog loaded
     if query.state.as_deref() != Some("installed") {
         if let Some(offerings_index) = offerings_index {
@@ -117,13 +127,15 @@ pub async fn list_offerings_v1(
             }
         }
     }
-    
+
     let suggestions = if catalog_building {
-        Some(vec!["Catalog still building - available offerings may be incomplete".to_string()])
+        Some(vec![
+            "Catalog still building - available offerings may be incomplete".to_string(),
+        ])
     } else {
         None
     };
-    
+
     Ok((
         StatusCode::OK,
         Json(ApiResponse {
@@ -138,7 +150,10 @@ pub async fn list_offerings_v1(
 pub async fn get_offering_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<(StatusCode, Json<ApiResponse<serde_json::Value>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<ApiResponse<serde_json::Value>>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     let offering_fqn = parse_offering_fqn(&name).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
@@ -167,7 +182,7 @@ pub async fn get_offering_v1(
             }),
         ));
     }
-    
+
     // Check if available
     let idx_guard = state.offerings_index.read().await;
     let offerings_index = idx_guard.as_ref().ok_or_else(|| {
@@ -178,8 +193,12 @@ pub async fn get_offering_v1(
             None,
         )
     })?;
-    
-    if let Some(offering) = offerings_index.offerings.iter().find(|o| o.name == offering_type) {
+
+    if let Some(offering) = offerings_index
+        .offerings
+        .iter()
+        .find(|o| o.name == offering_type)
+    {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse {
@@ -198,7 +217,7 @@ pub async fn get_offering_v1(
             }),
         ));
     }
-    
+
     // Not found
     let mut details = HashMap::new();
     details.insert("name".to_string(), serde_json::json!(name));
@@ -228,7 +247,9 @@ pub async fn get_offering_manifest_v1(
 
     match state.manifest_registry.sw.get(&offering_type) {
         Some(entry) => {
-            let yaml = entry.managed.as_ref()
+            let yaml = entry
+                .managed
+                .as_ref()
                 .map(|m| m.snippet_yaml.clone())
                 .unwrap_or_default();
             Ok((StatusCode::OK, yaml))
@@ -257,11 +278,14 @@ pub struct PlantOfferingRequest {
 pub async fn plant_offering_v1(
     State(_state): State<AppState>,
     Json(payload): Json<PlantOfferingRequest>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     // Forward to services API with simplified configuration
     // TODO: Transform simplified config to full service creation request
     tracing::info!(offering = %payload.name, "Planting offering (simplified)");
-    
+
     let mut details = HashMap::new();
     details.insert("offering".to_string(), serde_json::json!(payload.name));
     Err(error_response(
@@ -277,10 +301,15 @@ pub async fn plant_offering_v1(
 pub async fn take_away_offering_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     use axum::http::HeaderMap;
     // Forward to services delete
-    let result = crate::api::v1::services::delete_service_v1(State(state), Path(name), HeaderMap::new()).await;
+    let result =
+        crate::api::v1::services::delete_service_v1(State(state), Path(name), HeaderMap::new())
+            .await;
     match result {
         Ok(Json(response)) => Ok((StatusCode::OK, Json(serde_json::json!(response.data)))),
         Err((status, error)) => Err((status, error)),
@@ -298,7 +327,10 @@ pub struct HealRequest {
 pub async fn heal_garden_v1(
     State(state): State<AppState>,
     Json(payload): Json<HealRequest>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     // Forward to services reconcile (same operation, zen terminology)
     crate::api::v1::services::reconcile_inventory_v1(
         State(state),
@@ -313,20 +345,25 @@ pub async fn heal_garden_v1(
 /// Refresh the offerings catalog from disk
 pub async fn refresh_catalog_v1(
     State(state): State<AppState>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     // Rebuild offerings index
-    crate::ensure_offerings_index(&state, true).await.map_err(|e| {
-        tracing::error!(error = ?e, "Failed to rebuild offerings catalog");
-        let mut details = HashMap::new();
-        details.insert("error".to_string(), serde_json::json!(format!("{}", e)));
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            garden_common::constants::INTERNAL_ERROR,
-            "Failed to rebuild offerings catalog".to_string(),
-            Some(details),
-        )
-    })?;
-    
+    crate::ensure_offerings_index(&state, true)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Failed to rebuild offerings catalog");
+            let mut details = HashMap::new();
+            details.insert("error".to_string(), serde_json::json!(format!("{}", e)));
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                garden_common::constants::INTERNAL_ERROR,
+                "Failed to rebuild offerings catalog".to_string(),
+                Some(details),
+            )
+        })?;
+
     let idx_guard = state.offerings_index.read().await;
     let idx = idx_guard.as_ref().ok_or_else(|| {
         error_response(
@@ -336,7 +373,7 @@ pub async fn refresh_catalog_v1(
             None,
         )
     })?;
-    
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
@@ -351,11 +388,15 @@ pub async fn refresh_catalog_v1(
 // Helper functions
 
 fn simplify_health(status: &garden_common::OfferingStatus) -> String {
-    use garden_common::{OfferingStatus, constants};
+    use garden_common::{constants, OfferingStatus};
     match status {
         OfferingStatus::Running => constants::HEALTH_HEALTHY.to_string(),
-        OfferingStatus::Stopped | OfferingStatus::Unknown => constants::HEALTH_UNHEALTHY.to_string(),
-        OfferingStatus::Maintenance | OfferingStatus::Degraded => constants::HEALTH_DEGRADED.to_string(),
+        OfferingStatus::Stopped | OfferingStatus::Unknown => {
+            constants::HEALTH_UNHEALTHY.to_string()
+        }
+        OfferingStatus::Maintenance | OfferingStatus::Degraded => {
+            constants::HEALTH_DEGRADED.to_string()
+        }
         OfferingStatus::Installing => constants::HEALTH_INSTALLING.to_string(),
     }
 }
@@ -383,10 +424,13 @@ pub struct SearchQuery {
 pub async fn search_offerings_v1(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
-) -> Result<(StatusCode, Json<ApiResponse<OfferingSearchResponse>>), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
+) -> Result<
+    (StatusCode, Json<ApiResponse<OfferingSearchResponse>>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
     let dict = load_taxonomy_dictionary();
     let tokens = normalize_tokens(&query.q, &dict);
-    
+
     if tokens.is_empty() {
         let mut details = HashMap::new();
         details.insert("query".to_string(), serde_json::json!(query.q));
@@ -397,16 +441,21 @@ pub async fn search_offerings_v1(
             Some(details),
         ));
     }
-    
+
     // Parse prefer preferences (reserved for future stone hardware preference scoring)
     let _prefer: Vec<String> = query
         .prefer
         .as_ref()
-        .map(|p| p.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect())
+        .map(|p| {
+            p.split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
-    
+
     let limit = query.limit.unwrap_or(5).min(50); // Cap at 50
-    
+
     // Get offerings from index
     let idx_guard = state.offerings_index.read().await;
     let offerings_index = idx_guard.as_ref().ok_or_else(|| {
@@ -417,9 +466,9 @@ pub async fn search_offerings_v1(
             None,
         )
     })?;
-    
+
     let total_offerings = offerings_index.offerings.len();
-    
+
     // Score and rank offerings
     let mut ranked: Vec<(i32, &crate::domain::offerings::CompiledOffering)> = offerings_index
         .offerings
@@ -431,9 +480,9 @@ pub async fn search_offerings_v1(
         })
         .filter(|(s, _)| *s > 0)
         .collect();
-    
+
     ranked.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then_with(|| a.name.cmp(&b.name)));
-    
+
     // Convert to response format
     let results: Vec<OfferingSearchResult> = ranked
         .into_iter()
@@ -449,7 +498,7 @@ pub async fn search_offerings_v1(
             compatibility_reason: o.compatibility.reason.clone(),
         })
         .collect();
-    
+
     Ok((
         StatusCode::OK,
         Json(ApiResponse {
@@ -469,7 +518,7 @@ fn load_taxonomy_dictionary() -> TaxonomyDictionary {
     // Try filesystem first (overlay pattern)
     let data_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir());
     let fs_path = data_dir.join("manifests").join("taxonomy.dictionary.yaml");
-    
+
     if fs_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&fs_path) {
             if let Ok(dict) = serde_yaml::from_str::<TaxonomyDictionary>(&content) {
@@ -478,7 +527,7 @@ fn load_taxonomy_dictionary() -> TaxonomyDictionary {
             }
         }
     }
-    
+
     // Fall back to embedded
     if let Some(content) = EmbeddedManifests::get_string("taxonomy.dictionary.yaml") {
         if let Ok(dict) = serde_yaml::from_str::<TaxonomyDictionary>(&content) {
@@ -486,7 +535,7 @@ fn load_taxonomy_dictionary() -> TaxonomyDictionary {
             return dict;
         }
     }
-    
+
     tracing::warn!("Failed to load taxonomy dictionary, using empty");
     TaxonomyDictionary::default()
 }
@@ -521,14 +570,13 @@ fn token_matches_category(token: &str, category: &str) -> bool {
 }
 
 /// Calculate relevance score for an offering against search tokens.
-fn offering_relevance_score(tokens: &[String], offering: &crate::domain::offerings::CompiledOffering) -> i32 {
+fn offering_relevance_score(
+    tokens: &[String],
+    offering: &crate::domain::offerings::CompiledOffering,
+) -> i32 {
     let name_lc = offering.name.to_lowercase();
     let desc_lc = offering.description.to_lowercase();
-    let tags_lc: HashSet<String> = offering
-        .tags
-        .iter()
-        .map(|t| t.to_lowercase())
-        .collect();
+    let tags_lc: HashSet<String> = offering.tags.iter().map(|t| t.to_lowercase()).collect();
 
     let mut score = 0i32;
     for token in tokens {

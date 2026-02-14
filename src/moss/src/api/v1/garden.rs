@@ -1,14 +1,20 @@
+use crate::api::responses::{ApiResponse, GardenOverview, StoneInfo};
+use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::domain::{
+    placement::{PlacementRequest, PlacementResponse},
+    topology, TopologyEntry,
+};
+use crate::{error_response, AppState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use crate::api::responses::{GardenOverview, StoneInfo, ApiResponse};
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
-use crate::{error_response, AppState};
 use garden_common::metrics::system as metrics;
-use crate::domain::{placement::{PlacementRequest, PlacementResponse}, topology, TopologyEntry};
-use garden_common::{api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo};
+use garden_common::{
+    api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities,
+    HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
+};
 
 /// GET /api/v1/garden - Get garden overview (all stones)
 pub async fn get_garden_v1(
@@ -145,7 +151,7 @@ pub async fn recommend_placement_v1(
         Ok(response) => {
             let ctx = SuggestionContext::from_headers(&headers, "placement_success");
             let suggestions = generate_suggestions(&ctx);
-            
+
             Ok(Json(ApiResponse {
                 data: response,
                 suggestions,
@@ -157,7 +163,7 @@ pub async fn recommend_placement_v1(
                 error = ?e,
                 "Placement recommendation failed"
             );
-            
+
             Err(error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PLACEMENT_ERROR",
@@ -169,23 +175,33 @@ pub async fn recommend_placement_v1(
 }
 // Helper function to build consolidated capabilities (based on main.rs capabilities handler)
 async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
-    let (cpu_model, cpu_features, architecture) = metrics::get_cpu_info()
-        .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
-    
+    let (cpu_model, cpu_features, architecture) = metrics::get_cpu_info().unwrap_or_else(|_| {
+        (
+            "Unknown".to_string(),
+            vec![],
+            std::env::consts::ARCH.to_string(),
+        )
+    });
+
     let resources = metrics::collect_stone_resources().ok();
-    let total_memory_mb = resources.as_ref()
+    let total_memory_mb = resources
+        .as_ref()
         .map(|r| r.memory.total_bytes / 1024 / 1024)
         .unwrap_or(0);
-    
+
     let gpus = metrics::detect_gpus();
-    
+
     let disk = resources.as_ref().map(|r| DiskCapabilities {
-        total_gb: r.storage.iter()
+        total_gb: r
+            .storage
+            .iter()
             .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
             .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
             .map(|s| s.total_gb)
             .unwrap_or(0),
-        disk_type: r.storage.iter()
+        disk_type: r
+            .storage
+            .iter()
             .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
             .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
             .map(|s| match &s.disk_type {
@@ -195,9 +211,9 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
                 garden_common::DiskType::Unknown => "Unknown".to_string(),
             }),
     });
-    
+
     let cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
-    
+
     let os_version = metrics::detect_os_version();
     let kernel_version = metrics::detect_kernel_version();
     let swap_mb = metrics::detect_swap();
@@ -208,11 +224,19 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
         stone_name: state.stone_name.clone(),
         hardware: HardwareInventory {
             cpu: CpuCapabilities {
-                model: if cpu_model == "Unknown" { None } else { Some(cpu_model) },
+                model: if cpu_model == "Unknown" {
+                    None
+                } else {
+                    Some(cpu_model)
+                },
                 cores,
                 threads: None,
                 architecture,
-                features: if cpu_features.is_empty() { None } else { Some(cpu_features) },
+                features: if cpu_features.is_empty() {
+                    None
+                } else {
+                    Some(cpu_features)
+                },
             },
             memory: MemoryCapabilities {
                 total_mb: total_memory_mb,
@@ -226,7 +250,11 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
         },
         runtime: Some(RuntimeInfo {
             docker_version,
-            os: format!("{}/{}", std::env::consts::OS, os_version.unwrap_or_else(|| "Unknown".to_string())),
+            os: format!(
+                "{}/{}",
+                std::env::consts::OS,
+                os_version.unwrap_or_else(|| "Unknown".to_string())
+            ),
             kernel: kernel_version,
         }),
         detection_status: DetectionStatus::Complete, // Synchronous detection
@@ -245,7 +273,7 @@ pub async fn get_topology_v1(
 ) -> Result<Json<ApiResponse<Vec<TopologyEntry>>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Step 1: Read self entry (single source of truth for local stone)
     let self_entry = state.self_entry.read().await.clone();
-    
+
     tracing::debug!(
         stone_id = %self_entry.stone_id,
         stone_name = %self_entry.stone_name,
@@ -272,10 +300,7 @@ pub async fn get_topology_v1(
         stones.push(entry);
     }
 
-    tracing::debug!(
-        total_stones = stones.len(),
-        "Topology: response built"
-    );
+    tracing::debug!(total_stones = stones.len(), "Topology: response built");
 
     let ctx = SuggestionContext::from_headers(&headers, "topology_query");
     let suggestions = generate_suggestions(&ctx);

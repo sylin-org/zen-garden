@@ -1,4 +1,4 @@
-﻿// Stone Software Operations API
+// Stone Software Operations API
 //
 // Purpose: Software-level operations on the stone (upgrade, deploy, info)
 // Custom actions using single-colon format: :upgrade, :deploy
@@ -14,13 +14,16 @@ use axum::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
-use crate::AppState;
 use crate::api::responses::ApiResponse;
-use garden_common::api_utils::ApiErrorResponse;
 use crate::domain::validate_binary_architecture;
-use garden_common::{constants::{MOSS_BINARY, RAKE_BINARY}, HardwareCapabilities, Offering};
+use crate::AppState;
+use garden_common::api_utils::ApiErrorResponse;
+use garden_common::{
+    constants::{MOSS_BINARY, RAKE_BINARY},
+    HardwareCapabilities, Offering,
+};
 
 // ============================================================================
 // Stone Info Endpoint (for observe command)
@@ -53,9 +56,10 @@ pub async fn get_stone_info_v1(
     // Get capabilities from cached state
     let capabilities = {
         let caps_guard = state.capabilities.read().await;
-        caps_guard.as_ref().cloned().unwrap_or_else(|| {
-            crate::infra::hardware::create_skeleton(state.stone_name.clone())
-        })
+        caps_guard
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| crate::infra::hardware::create_skeleton(state.stone_name.clone()))
     };
 
     // Get offerings from registry
@@ -205,7 +209,8 @@ pub async fn upgrade_stone_v1(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o755)) {
+        if let Err(e) = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o755))
+        {
             tracing::error!(error = ?e, temp_path = %temp_path, "Failed to set permissions");
             let _ = std::fs::remove_file(&temp_path);
             return (
@@ -387,17 +392,15 @@ pub async fn deploy_stone_v1(
 
     // Find extracted directory (zen-garden-*)
     let package_dir = match std::fs::read_dir(&temp_dir) {
-        Ok(entries) => {
-            entries
-                .filter_map(|e| e.ok())
-                .find(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|n| n.starts_with("zen-garden-"))
-                        .unwrap_or(false)
-                })
-                .map(|e| e.path())
-        }
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| n.starts_with("zen-garden-"))
+                    .unwrap_or(false)
+            })
+            .map(|e| e.path()),
         Err(e) => {
             tracing::error!(error = ?e, "Failed to read extraction directory");
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -461,10 +464,17 @@ pub async fn deploy_stone_v1(
     };
 
     // Validate platform
-    let platform = manifest.get("platform").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let platform = manifest
+        .get("platform")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let expected_platform = if cfg!(windows) { "windows" } else { "linux" };
     if platform != expected_platform {
-        tracing::error!(expected = expected_platform, actual = platform, "Platform mismatch");
+        tracing::error!(
+            expected = expected_platform,
+            actual = platform,
+            "Platform mismatch"
+        );
         let _ = std::fs::remove_dir_all(&temp_dir);
         return (
             StatusCode::BAD_REQUEST,
@@ -521,7 +531,7 @@ pub async fn deploy_stone_v1(
         }
         Ok(())
     }
-    
+
     // Copy bin/ directory recursively (includes Companions subdirectories)
     let validated_bin_dir = std::path::Path::new(&validated_dir).join("bin");
     if let Err(e) = copy_dir_recursive(&bin_dir, &validated_bin_dir) {
@@ -536,7 +546,7 @@ pub async fn deploy_stone_v1(
             })),
         );
     }
-    
+
     // Log what was copied and check for moss
     fn log_staged_files(dir: &std::path::Path, base: &std::path::Path) {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -551,9 +561,13 @@ pub async fn deploy_stone_v1(
         }
     }
     log_staged_files(&validated_bin_dir, &validated_bin_dir);
-    
+
     // Check if moss is included (Windows: garden-moss.exe, Linux: garden-moss)
-    let moss_name = if cfg!(windows) { "garden-moss.exe" } else { "garden-moss" };
+    let moss_name = if cfg!(windows) {
+        "garden-moss.exe"
+    } else {
+        "garden-moss"
+    };
     let moss_path = validated_bin_dir.join(moss_name);
     let contains_moss = moss_path.exists();
     tracing::info!(moss_path = %moss_path.display(), contains_moss, "Checked for moss binary in package");
@@ -597,10 +611,12 @@ pub async fn deploy_stone_v1(
         tracing::info!("Package contains garden-moss, initiating upgrade sequence");
 
         // Show update banner on TTY (Linux) for visual feedback
-        garden_common::console::try_update_banner(Some(&garden_common::console::UpdateBannerInfo {
-            stone_name: state.stone_name.clone(),
-            new_version: None, // Version extracted earlier but not easily accessible here
-        }));
+        garden_common::console::try_update_banner(Some(
+            &garden_common::console::UpdateBannerInfo {
+                stone_name: state.stone_name.clone(),
+                new_version: None, // Version extracted earlier but not easily accessible here
+            },
+        ));
 
         #[cfg(target_os = "windows")]
         {
@@ -610,10 +626,15 @@ pub async fn deploy_stone_v1(
             use std::path::Path;
 
             // Log to update file
-            let log_path = Path::new(&garden_common::constants::paths::data_dir()).join("moss-update.log");
+            let log_path =
+                Path::new(&garden_common::constants::paths::data_dir()).join("moss-update.log");
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                let _ = writeln!(file, "[{}] API deploy_stone_v1: Package contains moss, triggering Windows updater", timestamp);
+                let _ = writeln!(
+                    file,
+                    "[{}] API deploy_stone_v1: Package contains moss, triggering Windows updater",
+                    timestamp
+                );
             }
 
             // Stop all companions BEFORE spawning updater
@@ -622,7 +643,11 @@ pub async fn deploy_stone_v1(
             tracing::info!("Stopping all companions before update");
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                let _ = writeln!(file, "[{}] API deploy_stone_v1: Stopping all companions before update", timestamp);
+                let _ = writeln!(
+                    file,
+                    "[{}] API deploy_stone_v1: Stopping all companions before update",
+                    timestamp
+                );
             }
 
             let stop_results = state.companion_registry.stop_all().await;
@@ -630,14 +655,22 @@ pub async fn deploy_stone_v1(
                 match result {
                     Ok(()) => {
                         tracing::info!(companion = %id, "Companion stopped for update");
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                        if let Ok(mut file) =
+                            OpenOptions::new().create(true).append(true).open(&log_path)
+                        {
                             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                            let _ = writeln!(file, "[{}] API deploy_stone_v1: Stopped companion {}", timestamp, id);
+                            let _ = writeln!(
+                                file,
+                                "[{}] API deploy_stone_v1: Stopped companion {}",
+                                timestamp, id
+                            );
                         }
                     }
                     Err(e) => {
                         tracing::warn!(companion = %id, error = %e, "Failed to stop companion");
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                        if let Ok(mut file) =
+                            OpenOptions::new().create(true).append(true).open(&log_path)
+                        {
                             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                             let _ = writeln!(file, "[{}] API deploy_stone_v1: WARNING - Failed to stop companion {}: {}", timestamp, id, e);
                         }
@@ -650,12 +683,16 @@ pub async fn deploy_stone_v1(
 
             if let Err(e) = spawn_windows_updater().await {
                 tracing::error!(error = ?e, "Failed to spawn updater");
-                
+
                 if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                    let _ = writeln!(file, "[{}] API deploy_stone_v1: ERROR - Failed to spawn updater: {}", timestamp, e);
+                    let _ = writeln!(
+                        file,
+                        "[{}] API deploy_stone_v1: ERROR - Failed to spawn updater: {}",
+                        timestamp, e
+                    );
                 }
-                
+
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({
@@ -665,16 +702,20 @@ pub async fn deploy_stone_v1(
                     })),
                 );
             }
-            
+
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                let _ = writeln!(file, "[{}] API deploy_stone_v1: Updater spawned successfully, triggering shutdown", timestamp);
+                let _ = writeln!(
+                    file,
+                    "[{}] API deploy_stone_v1: Updater spawned successfully, triggering shutdown",
+                    timestamp
+                );
             }
-            
+
             // Shutdown will be triggered after updater spawns
             state.shutdown_tx.notify_one();
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         {
             // Linux: systemd ExecStartPre handles binary installation

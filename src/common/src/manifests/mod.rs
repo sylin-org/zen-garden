@@ -15,60 +15,41 @@ pub mod ports;
 pub mod registry;
 
 pub use category::{
-    CategoryConfig,
+    get_category_registry, init_category_registry, load_categories, CategoryConfig,
     CategoryRegistry,
-    get_category_registry,
-    init_category_registry,
-    load_categories,
 };
 
 // Detection and control types
 pub use detection::{
-    OsDetectionRules,
-    DetectionRule,
-    DetectionMethod,
-    DetectionConfig,
-    CommandDetection,
-    ContainerInspectDetection,
-    HttpProbeDetection,
-    ControlConfig,
-    LocationConfig,
-    HealthConfig,
+    CommandDetection, ContainerInspectDetection, ControlConfig, DetectionConfig, DetectionMethod,
+    DetectionRule, HealthConfig, HttpProbeDetection, LocationConfig, OsDetectionRules,
 };
 
-pub use ceremony::{
-    CeremonyMode,
-    CeremonyPolicy,
-    ExecConfig,
-    RollbackConfig,
-};
+pub use ceremony::{CeremonyMode, CeremonyPolicy, ExecConfig, RollbackConfig};
 
 pub use connectivity::{
-    ConnectivityConfig,
-    ConnectivityRules,
-    CommandAction as ConnectivityCommandAction,
+    CommandAction as ConnectivityCommandAction, ConnectivityConfig, ConnectivityRules,
 };
 
 // Re-export manifest loaders
 pub use hw::{HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR};
-pub use ports::{get_ports_catalog, init_ports_catalog, init_ports_catalog_from_str, load_ports_catalog};
-pub use registry::{ManifestRegistry, discover_subdirectories, RUNTIME_MANIFESTS_DIR};
+pub use ports::{
+    get_ports_catalog, init_ports_catalog, init_ports_catalog_from_str, load_ports_catalog,
+};
+pub use registry::{discover_subdirectories, ManifestRegistry, RUNTIME_MANIFESTS_DIR};
 
 // Unified Offering Model
 pub use offering::{
-    Offering, OfferingRegistry, OfferingMetadata,
-    ManagedConfig, AdoptedConfig, BorrowedConfig,
-    ServiceTemplate, TemplateInfo, runtime_manifests_dir,
-    NetworkRequirements, StaticIpPreference,
+    runtime_manifests_dir, AdoptedConfig, BorrowedConfig, ManagedConfig, NetworkRequirements,
+    Offering, OfferingMetadata, OfferingRegistry, ServiceTemplate, StaticIpPreference,
+    TemplateInfo,
 };
 
 pub use connection::ConnectionProfile;
 
 // Capability Manifest Schema
 pub use capabilities::{
-    CapabilityManifest, CapabilityTypeConfig, CapabilityDisplayConfig,
-    MutabilityMode, ModeCommands, PlatformCommands,
-    ListOperationConfig, AddOperationConfig, RemoveOperationConfig,
-    TransformSpec, FieldMappings, OutputFormat,
-    ProgressConfig, SummaryConfig,
+    AddOperationConfig, CapabilityDisplayConfig, CapabilityManifest, CapabilityTypeConfig,
+    FieldMappings, ListOperationConfig, ModeCommands, MutabilityMode, OutputFormat,
+    PlatformCommands, ProgressConfig, RemoveOperationConfig, SummaryConfig, TransformSpec,
 };

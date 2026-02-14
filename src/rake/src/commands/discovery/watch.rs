@@ -10,9 +10,9 @@ use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::discovery;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
 use futures_util::StreamExt;
+use garden_common::ui::rendering as ui;
 use garden_common::{GardenApiResponse, HardwareCapabilities};
 use std::time::Duration;
 
@@ -44,7 +44,10 @@ impl WatchCommand {
 
     /// Create for offering log watching
     pub fn offering_logs(name: String, timestamps: bool, quiet_mode: bool) -> Self {
-        Self::new(WatchTargetType::OfferingLogs { name, timestamps }, quiet_mode)
+        Self::new(
+            WatchTargetType::OfferingLogs { name, timestamps },
+            quiet_mode,
+        )
     }
 
     /// Create for stone log watching
@@ -91,12 +94,9 @@ async fn resolve_stone_endpoint(
 ) -> anyhow::Result<String> {
     // Try to discover stones
     let mut endpoints = Vec::new();
-    let _ = discovery::discover_all_moss_stream(
-        Duration::from_secs(2),
-        |response, _instant| {
-            endpoints.push(response);
-        },
-    );
+    let _ = discovery::discover_all_moss_stream(Duration::from_secs(2), |response, _instant| {
+        endpoints.push(response);
+    });
 
     if endpoints.is_empty() {
         eprintln!(
@@ -111,7 +111,8 @@ async fn resolve_stone_endpoint(
         let ep = &response.stone_endpoint;
         let caps_url = format!("{}/api/v1/stone/capabilities", ep.trim_end_matches('/'));
         if let Ok(resp) = client.get(&caps_url).send().await {
-            if let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
+            if let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await
+            {
                 if caps_response.data.stone_name.to_lowercase() == stone_name.to_lowercase() {
                     return Ok(ep.clone());
                 }
@@ -258,13 +259,16 @@ async fn watch_events(
                         if let Some(data) = line.strip_prefix("data: ") {
                             // Try to parse as JSON
                             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                                let timestamp = parsed.get("timestamp")
+                                let timestamp = parsed
+                                    .get("timestamp")
                                     .and_then(|t| t.as_str())
                                     .unwrap_or("");
-                                let message = parsed.get("message")
+                                let message = parsed
+                                    .get("message")
                                     .and_then(|m| m.as_str())
                                     .unwrap_or(data);
-                                let level = parsed.get("level")
+                                let level = parsed
+                                    .get("level")
                                     .and_then(|l| l.as_str())
                                     .unwrap_or("info");
 

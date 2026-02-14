@@ -31,9 +31,9 @@
 //! }
 //! ```
 
-use anyhow::{Context, Result};
-use crate::manifests::{OfferingRegistry, HwManifests, Offering};
+use crate::manifests::{HwManifests, Offering, OfferingRegistry};
 use crate::OfferingMode;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 /// Runtime manifests directory
@@ -66,8 +66,9 @@ impl ManifestRegistry {
             .with_context(|| format!("Failed to load offerings from {}", sw_dir.display()))?;
 
         let hw = if let Some(dir) = hw_dir {
-            HwManifests::load(dir)
-                .with_context(|| format!("Failed to load hardware manifests from {}", dir.display()))?
+            HwManifests::load(dir).with_context(|| {
+                format!("Failed to load hardware manifests from {}", dir.display())
+            })?
         } else {
             HwManifests::empty()
         };
@@ -93,8 +94,9 @@ impl ManifestRegistry {
     /// Create registry from pre-loaded OfferingRegistry
     pub fn from_sw_manifests(sw: OfferingRegistry, hw_dir: Option<&Path>) -> Result<Self> {
         let hw = if let Some(dir) = hw_dir {
-            HwManifests::load(dir)
-                .with_context(|| format!("Failed to load hardware manifests from {}", dir.display()))?
+            HwManifests::load(dir).with_context(|| {
+                format!("Failed to load hardware manifests from {}", dir.display())
+            })?
         } else {
             HwManifests::empty()
         };
@@ -157,8 +159,8 @@ pub fn discover_subdirectories(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_empty_registry() {

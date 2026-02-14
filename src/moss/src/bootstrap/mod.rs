@@ -18,11 +18,11 @@ pub mod run;
 pub mod server;
 pub mod startup;
 
-pub use config::{DaemonConfig, init_tracing};
 #[cfg(target_os = "windows")]
 pub use config::ensure_windows_stone_name_config;
+pub use config::{init_tracing, DaemonConfig};
 pub use first_boot::run_first_boot_initialization;
 pub use preinstall::{load_preinstall_manifest, PreInstallManifest};
 pub use run::run as run_daemon;
-pub use server::{ServerConfig, bind as bind_server, run as run_server};
-pub use startup::{DockerConfig, connect_docker, init_capabilities};
+pub use server::{bind as bind_server, run as run_server, ServerConfig};
+pub use startup::{connect_docker, init_capabilities, DockerConfig};

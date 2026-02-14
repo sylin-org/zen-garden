@@ -1,8 +1,8 @@
-﻿//! Command handler for Firefly Companion
+//! Command handler for Firefly Companion
 //!
 //! Implements the SDK's CommandHandler trait for Firefly-specific commands.
 
-use garden_companion_sdk::{async_trait, CompanionState, CommandHandler, CommandResponse};
+use garden_companion_sdk::{async_trait, CommandHandler, CommandResponse, CompanionState};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -23,7 +23,11 @@ impl FireflyHandler {
         state: Arc<CompanionState>,
         animation: Arc<RwLock<AnimationContext>>,
     ) -> Self {
-        Self { connection, state, animation }
+        Self {
+            connection,
+            state,
+            animation,
+        }
     }
 }
 
@@ -98,12 +102,14 @@ impl FireflyHandler {
         let valid_states = ["healthy", "warning", "error", "offline"];
 
         if !valid_states.contains(&state.as_str()) {
-            return CommandResponse::error(format!("Invalid status: {}", state)).with_suggestions([
-                "status healthy",
-                "status warning",
-                "status error",
-                "status offline",
-            ]);
+            return CommandResponse::error(format!("Invalid status: {}", state)).with_suggestions(
+                [
+                    "status healthy",
+                    "status warning",
+                    "status error",
+                    "status offline",
+                ],
+            );
         }
 
         match self.connection.with_device(|serial| serial.status(&state)) {
@@ -276,9 +282,13 @@ impl FireflyHandler {
         let valid_anims = ["rainbow", "pulse", "chase", "sparkle"];
 
         if !valid_anims.contains(&name.as_str()) {
-            return CommandResponse::error(format!("Unknown animation: {}", name)).with_suggestions(
-                ["animate rainbow", "animate pulse", "animate chase", "animate sparkle"],
-            );
+            return CommandResponse::error(format!("Unknown animation: {}", name))
+                .with_suggestions([
+                    "animate rainbow",
+                    "animate pulse",
+                    "animate chase",
+                    "animate sparkle",
+                ]);
         }
 
         match self.connection.with_device(|serial| serial.animate(&name)) {

@@ -8,13 +8,12 @@ use std::time::Duration;
 /// Get count of running services on local stone
 ///
 /// Fast, zero-latency check of local offerings registry.
-pub async fn get_local_service_count(
-    state: &crate::AppState,
-) -> Result<usize> {
+pub async fn get_local_service_count(state: &crate::AppState) -> Result<usize> {
     let offerings = state.offerings.read().await;
 
     // Count offerings that are in running state
-    let count = offerings.iter()
+    let count = offerings
+        .iter()
         .filter(|o| o.status == garden_common::OfferingStatus::Running)
         .count();
 
@@ -24,36 +23,34 @@ pub async fn get_local_service_count(
 /// Fetch service count from remote stone via HTTP
 ///
 /// Calls the `/api/v1/services` endpoint and counts running services.
-pub async fn fetch_remote_service_count(
-    endpoint: &str,
-    timeout: Duration,
-) -> Result<usize> {
+pub async fn fetch_remote_service_count(endpoint: &str, timeout: Duration) -> Result<usize> {
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
         .context("Failed to build HTTP client")?;
-    
+
     let services_url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
     let response = client
         .get(&services_url)
         .send()
         .await
         .context("Failed to fetch services from remote stone")?;
-    
+
     if !response.status().is_success() {
         anyhow::bail!("Remote stone returned error: {}", response.status());
     }
-    
+
     let services: Vec<garden_common::ServiceInfo> = response
         .json()
         .await
         .context("Failed to parse services response")?;
-    
+
     // Count running services
-    let count = services.iter()
+    let count = services
+        .iter()
         .filter(|svc| svc.status == garden_common::ServiceStatus::Running)
         .count();
-    
+
     Ok(count)
 }
 

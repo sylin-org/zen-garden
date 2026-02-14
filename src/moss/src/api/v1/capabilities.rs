@@ -3,10 +3,10 @@
 //! Returns static hardware inventory detected at startup.
 //! Capabilities are cached and updated in the background.
 
-use axum::{extract::State, Json};
-use garden_common::HardwareCapabilities;
 use crate::api::responses::ApiResponse;
 use crate::AppState;
+use axum::{extract::State, Json};
+use garden_common::HardwareCapabilities;
 
 /// GET /api/capabilities - Hardware inventory and capabilities
 ///

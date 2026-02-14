@@ -1,4 +1,4 @@
-﻿//! File system utilities
+//! File system utilities
 //!
 //! Helpers for directory creation, path operations, and file I/O
 //! with consistent error handling and logging.
@@ -86,14 +86,14 @@ pub async fn write_file_async<P: AsRef<Path>>(path: P, content: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_join_path() {
         let path = join_path("/var/lib", &["zen-garden", "data", "test.json"]);
         assert!(path.to_string_lossy().contains("zen-garden"));
         assert!(path.to_string_lossy().contains("test.json"));
     }
-    
+
     #[test]
     fn test_path_to_string() {
         let path = PathBuf::from("/tmp/test");
@@ -105,11 +105,11 @@ mod tests {
     fn test_ensure_parent_dir() {
         let temp_dir = std::env::temp_dir().join("zen-test-ensure-parent");
         let test_file = temp_dir.join("subdir").join("test.txt");
-        
+
         // Ensure parent should create the parent directory
         ensure_parent_dir(&test_file).expect("Should create parent dir");
         assert!(test_file.parent().unwrap().exists());
-        
+
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -117,10 +117,12 @@ mod tests {
     #[tokio::test]
     async fn test_ensure_dir_async() {
         let temp_dir = std::env::temp_dir().join("zen-test-async-dir");
-        
-        ensure_dir_async(&temp_dir).await.expect("Should create dir");
+
+        ensure_dir_async(&temp_dir)
+            .await
+            .expect("Should create dir");
         assert!(temp_dir.exists());
-        
+
         // Cleanup
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
@@ -130,13 +132,15 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("zen-test-write-read");
         let test_file = temp_dir.join("nested").join("test.txt");
         let content = "test content";
-        
-        write_file_async(&test_file, content).await.expect("Should write file");
+
+        write_file_async(&test_file, content)
+            .await
+            .expect("Should write file");
         assert!(test_file.exists());
-        
+
         let read_content = read_file_async(&test_file).await.expect("Should read file");
         assert_eq!(read_content, content);
-        
+
         // Cleanup
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }

@@ -7,8 +7,8 @@
 //!
 //! No I/O here - delegates to metrics and docker modules.
 
+use garden_common::{ComponentHealth, HealthCheck};
 use std::collections::HashMap;
-use garden_common::{HealthCheck, ComponentHealth};
 
 /// Check disk health based on available space
 ///
@@ -19,22 +19,23 @@ pub fn check_disk_health() -> HealthCheck {
     match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
             // Find primary storage mount
-            let primary = resources.storage.iter()
+            let primary = resources
+                .storage
+                .iter()
                 .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
                 .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
-            
+
             match primary {
                 Some(disk) => {
                     let available_percent = disk.used_percent;
                     let free_percent = 100.0 - available_percent;
-                    
+
                     if free_percent < 10.0 {
                         HealthCheck {
                             status: garden_common::CHECK_WARN.to_string(),
                             message: Some(format!(
                                 "Low disk space: {:.1}% free ({} GB available)",
-                                free_percent,
-                                disk.available_gb
+                                free_percent, disk.available_gb
                             )),
                         }
                     } else {
@@ -43,13 +44,11 @@ pub fn check_disk_health() -> HealthCheck {
                             message: None,
                         }
                     }
-                },
-                None => {
-                    HealthCheck {
-                        status: garden_common::CHECK_WARN.to_string(),
-                        message: Some("No storage devices found".to_string()),
-                    }
                 }
+                None => HealthCheck {
+                    status: garden_common::CHECK_WARN.to_string(),
+                    message: Some("No storage devices found".to_string()),
+                },
             }
         }
         Err(e) => HealthCheck {
@@ -103,18 +102,29 @@ pub fn build_disk_component() -> ComponentHealth {
     match garden_common::metrics::system::collect_stone_resources() {
         Ok(resources) => {
             // Use primary mount point (root or largest)
-            let primary = resources.storage.iter()
+            let primary = resources
+                .storage
+                .iter()
                 .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
                 .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
-            
+
             if let Some(disk) = primary {
                 let total_gb = disk.total_gb as f64;
                 let free_gb = disk.available_gb as f64;
                 let usage_percent = disk.used_percent;
 
-                details.insert("free_gb".to_string(), serde_json::json!(format!("{:.1}", free_gb)));
-                details.insert("total_gb".to_string(), serde_json::json!(format!("{:.1}", total_gb)));
-                details.insert("usage_percent".to_string(), serde_json::json!(format!("{:.2}", usage_percent)));
+                details.insert(
+                    "free_gb".to_string(),
+                    serde_json::json!(format!("{:.1}", free_gb)),
+                );
+                details.insert(
+                    "total_gb".to_string(),
+                    serde_json::json!(format!("{:.1}", total_gb)),
+                );
+                details.insert(
+                    "usage_percent".to_string(),
+                    serde_json::json!(format!("{:.2}", usage_percent)),
+                );
 
                 // Thresholds: >95% unhealthy, >90% degraded, else healthy
                 if usage_percent > 95.0 {
@@ -130,7 +140,10 @@ pub fn build_disk_component() -> ComponentHealth {
             }
         }
         Err(_) => {
-            details.insert("error".to_string(), serde_json::json!("Unable to collect disk metrics"));
+            details.insert(
+                "error".to_string(),
+                serde_json::json!("Unable to collect disk metrics"),
+            );
             ComponentHealth::unhealthy(details)
         }
     }
@@ -151,9 +164,18 @@ pub fn build_memory_component() -> ComponentHealth {
             let available_gb = resources.memory.available_bytes as f64 / 1_073_741_824.0;
             let usage_percent = resources.memory.used_percent;
 
-            details.insert("available_gb".to_string(), serde_json::json!(format!("{:.1}", available_gb)));
-            details.insert("total_gb".to_string(), serde_json::json!(format!("{:.1}", total_gb)));
-            details.insert("usage_percent".to_string(), serde_json::json!(format!("{:.2}", usage_percent)));
+            details.insert(
+                "available_gb".to_string(),
+                serde_json::json!(format!("{:.1}", available_gb)),
+            );
+            details.insert(
+                "total_gb".to_string(),
+                serde_json::json!(format!("{:.1}", total_gb)),
+            );
+            details.insert(
+                "usage_percent".to_string(),
+                serde_json::json!(format!("{:.2}", usage_percent)),
+            );
 
             // Thresholds: >95% unhealthy, >85% degraded, else healthy
             if usage_percent > 95.0 {
@@ -165,7 +187,10 @@ pub fn build_memory_component() -> ComponentHealth {
             }
         }
         Err(_) => {
-            details.insert("error".to_string(), serde_json::json!("Unable to collect memory metrics"));
+            details.insert(
+                "error".to_string(),
+                serde_json::json!("Unable to collect memory metrics"),
+            );
             ComponentHealth::unhealthy(details)
         }
     }
@@ -206,10 +231,7 @@ mod tests {
     #[test]
     fn test_determine_overall_status_all_healthy() {
         let mut components = HashMap::new();
-        components.insert(
-            "disk".to_string(),
-            ComponentHealth::healthy(HashMap::new()),
-        );
+        components.insert("disk".to_string(), ComponentHealth::healthy(HashMap::new()));
         components.insert(
             "memory".to_string(),
             ComponentHealth::healthy(HashMap::new()),
@@ -222,10 +244,7 @@ mod tests {
     #[test]
     fn test_determine_overall_status_one_degraded() {
         let mut components = HashMap::new();
-        components.insert(
-            "disk".to_string(),
-            ComponentHealth::healthy(HashMap::new()),
-        );
+        components.insert("disk".to_string(), ComponentHealth::healthy(HashMap::new()));
         components.insert(
             "memory".to_string(),
             ComponentHealth::degraded(HashMap::new()),

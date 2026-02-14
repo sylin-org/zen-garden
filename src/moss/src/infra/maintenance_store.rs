@@ -25,14 +25,10 @@ pub async fn save_sweep_run(run: &SweepRun) -> Result<()> {
         .await
         .context("Failed to create maintenance directory")?;
 
-    let filename = format!(
-        "sweep-{}.json",
-        run.timestamp.format("%Y%m%dT%H%M%SZ")
-    );
+    let filename = format!("sweep-{}.json", run.timestamp.format("%Y%m%dT%H%M%SZ"));
     let path = dir.join(&filename);
 
-    let content =
-        serde_json::to_string_pretty(run).context("Failed to serialize sweep run")?;
+    let content = serde_json::to_string_pretty(run).context("Failed to serialize sweep run")?;
     tokio::fs::write(&path, content)
         .await
         .context("Failed to write sweep file")?;
@@ -59,11 +55,7 @@ pub async fn load_sweep_history() -> Result<Vec<SweepRun>> {
         .context("Failed to read maintenance directory")?;
 
     while let Some(entry) = entries.next_entry().await? {
-        let name = entry
-            .file_name()
-            .to_str()
-            .unwrap_or_default()
-            .to_string();
+        let name = entry.file_name().to_str().unwrap_or_default().to_string();
         if name.starts_with("sweep-") && name.ends_with(".json") {
             files.push(entry.path());
         }
@@ -99,11 +91,7 @@ async fn prune_old_sweeps(dir: &std::path::Path) -> Result<()> {
         .context("Failed to read maintenance directory for pruning")?;
 
     while let Some(entry) = entries.next_entry().await? {
-        let name = entry
-            .file_name()
-            .to_str()
-            .unwrap_or_default()
-            .to_string();
+        let name = entry.file_name().to_str().unwrap_or_default().to_string();
         if name.starts_with("sweep-") && name.ends_with(".json") {
             files.push((name, entry.path()));
         }

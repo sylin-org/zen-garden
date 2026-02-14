@@ -9,7 +9,10 @@ use garden_common::infra::process;
 ///
 /// Moss-specific wrapper that uses the standard Moss HTTP port and binary name.
 pub async fn kill_existing_moss_processes_graceful() -> anyhow::Result<()> {
-    let shutdown_url = format!("http://127.0.0.1:{}/admin/shutdown", garden_common::constants::MOSS_HTTP);
+    let shutdown_url = format!(
+        "http://127.0.0.1:{}/admin/shutdown",
+        garden_common::constants::MOSS_HTTP
+    );
     process::kill_process_graceful(garden_common::constants::MOSS_BINARY, &shutdown_url).await
 }
 

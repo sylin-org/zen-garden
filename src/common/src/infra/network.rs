@@ -1,4 +1,4 @@
-﻿//! Network infrastructure utilities
+//! Network infrastructure utilities
 //!
 //! Provides network operations:
 //! - Wake-on-LAN (WoL) magic packet transmission
@@ -48,7 +48,7 @@ pub async fn send_wol_packet(mac: &str) -> Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0")
         .await
         .context("Failed to bind UDP socket for WoL")?;
-    
+
     socket
         .set_broadcast(true)
         .context("Failed to enable broadcast mode")?;
@@ -83,7 +83,10 @@ fn parse_mac_address(mac: &str) -> Result<[u8; 6]> {
     let parts: Vec<&str> = mac.split(':').collect();
 
     if parts.len() != 6 {
-        anyhow::bail!("Invalid MAC address format: expected 6 hex pairs, got {}", parts.len());
+        anyhow::bail!(
+            "Invalid MAC address format: expected 6 hex pairs, got {}",
+            parts.len()
+        );
     }
 
     let mut bytes = [0u8; 6];

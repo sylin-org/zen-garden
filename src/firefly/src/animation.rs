@@ -10,8 +10,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tokio::sync::RwLock;
 
-use crate::serial::FireflyConnection;
 use crate::oled::DEFAULT_HEALTH_LABEL;
+use crate::serial::FireflyConnection;
 
 /// Matrix dimensions
 const GRID_SIZE: u8 = 5;
@@ -35,10 +35,22 @@ const CENTER: (u8, u8) = (2, 2);
 
 /// Edge pixels for swarm spawn points (all pixels on the border)
 const EDGE_PIXELS: [(u8, u8); 16] = [
-    (0, 0), (1, 0), (2, 0), (3, 0), (4, 0),  // top edge
-    (4, 1), (4, 2), (4, 3),                   // right edge (excluding corners)
-    (4, 4), (3, 4), (2, 4), (1, 4), (0, 4),  // bottom edge
-    (0, 3), (0, 2), (0, 1),                   // left edge (excluding corners)
+    (0, 0),
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (4, 0), // top edge
+    (4, 1),
+    (4, 2),
+    (4, 3), // right edge (excluding corners)
+    (4, 4),
+    (3, 4),
+    (2, 4),
+    (1, 4),
+    (0, 4), // bottom edge
+    (0, 3),
+    (0, 2),
+    (0, 1), // left edge (excluding corners)
 ];
 
 /// Firefly lifecycle phase
@@ -177,15 +189,13 @@ pub struct AnimationContext {
     pub memory_percent: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Health {
     #[default]
     Thriving,
     Withering,
     Wilting,
 }
-
 
 /// Default brightness (fairly dim for ambient use)
 const DEFAULT_BRIGHTNESS: u8 = 30;
@@ -282,11 +292,11 @@ impl Tempo {
         // Idle: slow, meditative rhythm
         // Busy: quick, energetic rhythm
         Self {
-            fade_in: Duration::from_secs_f32(5.0 - load * 4.0),      // 5s → 1s
-            peak: Duration::from_secs_f32(1.0 - load * 0.7),         // 1s → 0.3s
-            fade_out: Duration::from_secs_f32(5.0 - load * 4.0),     // 5s → 1s
+            fade_in: Duration::from_secs_f32(5.0 - load * 4.0), // 5s → 1s
+            peak: Duration::from_secs_f32(1.0 - load * 0.7),    // 1s → 0.3s
+            fade_out: Duration::from_secs_f32(5.0 - load * 4.0), // 5s → 1s
             spawn_interval: Duration::from_secs_f32(3.0 - load * 2.8), // 3s → 0.2s
-            max_concurrent: 1 + (load * 3.0) as usize,               // 1 → 4
+            max_concurrent: 1 + (load * 3.0) as usize,          // 1 → 4
         }
     }
 }
@@ -309,10 +319,7 @@ pub struct AnimationEngine {
 }
 
 impl AnimationEngine {
-    pub fn new(
-        connection: Arc<FireflyConnection>,
-        context: Arc<RwLock<AnimationContext>>,
-    ) -> Self {
+    pub fn new(connection: Arc<FireflyConnection>, context: Arc<RwLock<AnimationContext>>) -> Self {
         Self {
             connection,
             context,
@@ -456,7 +463,8 @@ impl AnimationEngine {
         }
 
         // Find available position
-        let available: Vec<usize> = self.occupied
+        let available: Vec<usize> = self
+            .occupied
             .iter()
             .enumerate()
             .filter(|(_, &occ)| !occ)
@@ -527,7 +535,8 @@ impl AnimationEngine {
         // Send to device
         if let Err(e) = self.connection.with_device(|serial| {
             // Clear pixels that were lit before but aren't now
-            for (idx, (&prev, &curr)) in self.prev_lit.iter().zip(currently_lit.iter()).enumerate() {
+            for (idx, (&prev, &curr)) in self.prev_lit.iter().zip(currently_lit.iter()).enumerate()
+            {
                 if prev && !curr {
                     let x = (idx % GRID_SIZE as usize) as u8;
                     let y = (idx / GRID_SIZE as usize) as u8;
@@ -557,12 +566,16 @@ impl AnimationEngine {
             Override::Tended => {
                 // Use firmware sparkle animation (only send once at start)
                 if self.swarm_frame == 0 {
-                    let _ = self.connection.with_device(|serial| serial.animate("sparkle"));
+                    let _ = self
+                        .connection
+                        .with_device(|serial| serial.animate("sparkle"));
                 }
             }
             Override::HealthWarning => {
                 if self.swarm_frame == 0 {
-                    let _ = self.connection.with_device(|serial| serial.status("warning"));
+                    let _ = self
+                        .connection
+                        .with_device(|serial| serial.status("warning"));
                 }
             }
             Override::HealthError => {
@@ -579,7 +592,8 @@ impl AnimationEngine {
                 // Brief dim then restore
                 if self.swarm_frame == 0 {
                     let _ = self.connection.with_device(|serial| serial.brightness(20));
-                } else if self.swarm_frame == 15 { // ~500ms at 30fps
+                } else if self.swarm_frame == 15 {
+                    // ~500ms at 30fps
                     let _ = self.connection.with_device(|serial| serial.brightness(50));
                 }
             }
@@ -617,12 +631,15 @@ impl AnimationEngine {
                 let jitter = ((i * 7 + frame) % 3) as f32 * 0.15;
                 let move_progress = (converge_progress + jitter).min(1.0);
 
-                let x = start_x as f32 + (CENTER.0 as f32 - start_x as f32) * ease_in_out(move_progress);
-                let y = start_y as f32 + (CENTER.1 as f32 - start_y as f32) * ease_in_out(move_progress);
+                let x = start_x as f32
+                    + (CENTER.0 as f32 - start_x as f32) * ease_in_out(move_progress);
+                let y = start_y as f32
+                    + (CENTER.1 as f32 - start_y as f32) * ease_in_out(move_progress);
 
                 let flicker = ((frame + i * 13) % 4) != 0;
                 if flicker {
-                    let brightness = 0.5 + 0.5 * ((frame as f32 * 0.3 + i as f32).sin() * 0.5 + 0.5);
+                    let brightness =
+                        0.5 + 0.5 * ((frame as f32 * 0.3 + i as f32).sin() * 0.5 + 0.5);
                     let (r, g, b) = STORAGE_GREEN;
                     let _ = self.connection.with_device(|serial| {
                         serial.pixel(
@@ -637,7 +654,8 @@ impl AnimationEngine {
             }
         } else {
             // Phase 2: Settled glow at center
-            let settle_progress = (frame - settle_start) as f32 / (total_frames - settle_start) as f32;
+            let settle_progress =
+                (frame - settle_start) as f32 / (total_frames - settle_start) as f32;
             let pulse = 0.7 + 0.3 * (settle_progress * std::f32::consts::PI * 2.0).sin();
 
             for dy in -1i8..=1 {
@@ -650,7 +668,8 @@ impl AnimationEngine {
                     let (r, g, b) = STORAGE_GREEN;
                     let _ = self.connection.with_device(|serial| {
                         serial.pixel(
-                            px, py,
+                            px,
+                            py,
                             (r as f32 * intensity) as u8,
                             (g as f32 * intensity) as u8,
                             (b as f32 * intensity) as u8,
@@ -684,7 +703,8 @@ impl AnimationEngine {
             let (r, g, b) = STORAGE_AMBER;
             let _ = self.connection.with_device(|serial| {
                 serial.pixel(
-                    CENTER.0, CENTER.1,
+                    CENTER.0,
+                    CENTER.1,
                     (r as f32 * center_brightness) as u8,
                     (g as f32 * center_brightness) as u8,
                     (b as f32 * center_brightness) as u8,
@@ -709,7 +729,8 @@ impl AnimationEngine {
             }
         } else {
             // Phase 2: Fireflies dispersing outward
-            let disperse_progress = (frame - liftoff_frames) as f32 / (total_frames - liftoff_frames) as f32;
+            let disperse_progress =
+                (frame - liftoff_frames) as f32 / (total_frames - liftoff_frames) as f32;
 
             let num_fireflies = 12;
             for i in 0..num_fireflies {

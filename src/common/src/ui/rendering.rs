@@ -18,13 +18,14 @@ impl TerminalInfo {
         let width = terminal_size::terminal_size()
             .map(|(w, _)| w.0 as usize)
             .unwrap_or(constants::DEFAULT_TERMINAL_WIDTH);
-        
+
         // Check NO_COLOR environment variable first (universal override)
         let no_color = std::env::var(crate::ENV_NO_COLOR).is_ok();
-        
+
         // Use supports-color crate for proper terminal detection
-        let supports_color = !no_color && supports_color::on(supports_color::Stream::Stdout).is_some();
-        
+        let supports_color =
+            !no_color && supports_color::on(supports_color::Stream::Stdout).is_some();
+
         // Unicode support: disabled on Windows by default (PowerShell encoding issues)
         // Can be enabled with GARDEN_UNICODE=1 environment variable
         let supports_unicode = if cfg!(windows) {
@@ -32,8 +33,12 @@ impl TerminalInfo {
         } else {
             true // Unix terminals generally handle Unicode well
         };
-        
-        Self { width, supports_color, supports_unicode }
+
+        Self {
+            width,
+            supports_color,
+            supports_unicode,
+        }
     }
 }
 
@@ -155,16 +160,14 @@ impl Default for OutputWriter {
 
 /// Verbosity level for command output (Phase 3)
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Verbosity {
-    Minimal = 0,    // -v0
+    Minimal = 0, // -v0
     #[default]
-    Standard = 1,   // -v1 (DEFAULT)
-    Verbose = 2,    // -v2
-    Debug = 3,      // -v3
+    Standard = 1, // -v1 (DEFAULT)
+    Verbose = 2, // -v2
+    Debug = 3,   // -v3
 }
-
 
 #[allow(dead_code)]
 impl Verbosity {
@@ -186,15 +189,24 @@ impl Verbosity {
 pub fn stone_banner(name: &str, status: &str, color: bool) -> String {
     let term = TerminalInfo::detect();
     let max_width = term.width.min(80);
-    
+
     let status_lower = status.to_lowercase();
     let status_with_brackets = format!("[{}]", status);
     let status_colored = if color {
-        if status_lower.contains(crate::VITALITY_THRIVING) || status_lower.contains(crate::HEALTH_HEALTHY) {
+        if status_lower.contains(crate::VITALITY_THRIVING)
+            || status_lower.contains(crate::HEALTH_HEALTHY)
+        {
             status_with_brackets.green().to_string()
-        } else if status_lower.contains(crate::VITALITY_WITHERING) || status_lower.contains(crate::HEALTH_UNHEALTHY) || status.contains("ERROR") {
+        } else if status_lower.contains(crate::VITALITY_WITHERING)
+            || status_lower.contains(crate::HEALTH_UNHEALTHY)
+            || status.contains("ERROR")
+        {
             status_with_brackets.red().to_string()
-        } else if status_lower.contains(crate::VITALITY_DORMANT) || status_lower.contains(crate::VITALITY_NEEDS_ATTENTION) || status_lower.contains(crate::HEALTH_DEGRADED) || status.contains("WARN") {
+        } else if status_lower.contains(crate::VITALITY_DORMANT)
+            || status_lower.contains(crate::VITALITY_NEEDS_ATTENTION)
+            || status_lower.contains(crate::HEALTH_DEGRADED)
+            || status.contains("WARN")
+        {
             status_with_brackets.yellow().to_string()
         } else {
             status_with_brackets
@@ -202,19 +214,19 @@ pub fn stone_banner(name: &str, status: &str, color: bool) -> String {
     } else {
         status_with_brackets
     };
-    
+
     let prefix = "=== ";
     let middle = format!("{} - {}", name, status_colored);
     // For length calculation, use the uncolored version
     let middle_len = format!("{} - [{}]", name, status).len();
     let total_len = prefix.len() + middle_len + 1; // +1 for space before equals
-    
+
     let equals = if max_width > total_len {
         " ".to_string() + &"=".repeat(max_width - total_len)
     } else {
         String::new()
     };
-    
+
     format!("{}{}{}", prefix, middle, equals)
 }
 
@@ -241,13 +253,13 @@ pub fn section_header(title: &str, term: &TerminalInfo) -> String {
 pub fn section_header_v2(title: &str, bold: bool, color: bool) -> String {
     const UNDERLINE_LENGTH: usize = 21;
     let underline = "─".repeat(UNDERLINE_LENGTH);
-    
+
     let title_display = if color && bold {
         title.to_uppercase().bold().to_string()
     } else {
         title.to_uppercase()
     };
-    
+
     format!("{}\n{}", title_display, underline)
 }
 
@@ -260,7 +272,13 @@ pub fn section_header_v2(title: &str, bold: bool, color: bool) -> String {
 pub fn kv_line(label: &str, value: &str, indent_spaces: usize) -> String {
     let label_width = constants::VALUE_COLUMN - 1;
     let indent = " ".repeat(indent_spaces);
-    format!("{}{:<width$} {}", indent, label.to_uppercase(), value, width = label_width)
+    format!(
+        "{}{:<width$} {}",
+        indent,
+        label.to_uppercase(),
+        value,
+        width = label_width
+    )
 }
 
 /// Render indented label: value line
@@ -286,7 +304,7 @@ pub fn colored_text(text: &str, color: &str, term: &TerminalInfo) -> String {
     if !term.supports_color {
         return text.to_string();
     }
-    
+
     match color {
         "red" => text.red().to_string(),
         "green" => text.green().to_string(),
@@ -329,29 +347,29 @@ impl TableBuilder {
             indent: constants::DEFAULT_INDENT,
         }
     }
-    
+
     /// Add a column with specified width and alignment
     pub fn add_column(mut self, width: usize, align: Align) -> Self {
         self.columns.push(Column { width, align });
         self
     }
-    
+
     /// Set custom indentation (default is DEFAULT_INDENT)
     pub fn with_indent(mut self, indent: usize) -> Self {
         self.indent = indent;
         self
     }
-    
+
     /// Add a data row to the table
     pub fn add_row(&mut self, values: Vec<String>) {
         self.rows.push(values);
     }
-    
+
     /// Render the table to a string
     pub fn render(&self) -> String {
         let mut output = String::new();
         let indent_str = " ".repeat(self.indent);
-        
+
         for row in &self.rows {
             output.push_str(&indent_str);
             for (i, value) in row.iter().enumerate() {
@@ -394,7 +412,7 @@ impl CategoryGrid {
         let item_width = 16;
         let available = term.width.saturating_sub(indent + category_width);
         let items_per_row = (available / item_width).max(1);
-        
+
         Self {
             items_per_row,
             category_width,
@@ -402,24 +420,28 @@ impl CategoryGrid {
             indent,
         }
     }
-    
+
     /// Render a category with its items in multi-column layout
     /// First row shows category name, continuation rows have blank category column
     pub fn render_category(&self, category: &str, items: &[String]) -> String {
         let mut output = String::new();
         let indent_str = " ".repeat(self.indent);
-        
+
         for (i, chunk) in items.chunks(self.items_per_row).enumerate() {
             output.push_str(&indent_str);
-            
+
             if i == 0 {
                 // First row: category name
-                output.push_str(&format!("{:<width$}", category, width = self.category_width));
+                output.push_str(&format!(
+                    "{:<width$}",
+                    category,
+                    width = self.category_width
+                ));
             } else {
                 // Continuation rows: blank category column
                 output.push_str(&" ".repeat(self.category_width));
             }
-            
+
             for item in chunk {
                 output.push_str(&format!("{:<width$}", item, width = self.item_width));
             }
@@ -450,7 +472,7 @@ pub fn status_indicator(status: &str, color: bool) -> String {
             bracketed
         };
     }
-    
+
     // Nourishing/updating status - updates in progress
     if status_str == "nourishing" || status_str == "updating" {
         let bracketed = "[nourishing]".to_string();
@@ -461,21 +483,28 @@ pub fn status_indicator(status: &str, color: bool) -> String {
         };
     }
 
-    let indicator = if status_str == crate::SERVICE_RUNNING || status_str == crate::VITALITY_THRIVING {
-        crate::VITALITY_THRIVING
-    } else if status_str == crate::SERVICE_STOPPED || status_str == crate::VITALITY_DORMANT {
-        crate::VITALITY_DORMANT
-    } else if status_str == crate::VITALITY_NEEDS_ATTENTION || status_str == crate::VITALITY_WITHERING {
-        crate::VITALITY_NEEDS_ATTENTION
-    } else if status_str == "ok" || status_str == crate::HEALTH_HEALTHY {
-        crate::VITALITY_THRIVING
-    } else if status_str == "error" || status_str == "failed" || status_str == crate::HEALTH_UNHEALTHY
-        || status_str == "warn" || status_str == "warning" || status_str == crate::HEALTH_DEGRADED
-    {
-        crate::VITALITY_NEEDS_ATTENTION
-    } else {
-        return status.to_string();  // Unknown status, pass through without brackets
-    };
+    let indicator =
+        if status_str == crate::SERVICE_RUNNING || status_str == crate::VITALITY_THRIVING {
+            crate::VITALITY_THRIVING
+        } else if status_str == crate::SERVICE_STOPPED || status_str == crate::VITALITY_DORMANT {
+            crate::VITALITY_DORMANT
+        } else if status_str == crate::VITALITY_NEEDS_ATTENTION
+            || status_str == crate::VITALITY_WITHERING
+        {
+            crate::VITALITY_NEEDS_ATTENTION
+        } else if status_str == "ok" || status_str == crate::HEALTH_HEALTHY {
+            crate::VITALITY_THRIVING
+        } else if status_str == "error"
+            || status_str == "failed"
+            || status_str == crate::HEALTH_UNHEALTHY
+            || status_str == "warn"
+            || status_str == "warning"
+            || status_str == crate::HEALTH_DEGRADED
+        {
+            crate::VITALITY_NEEDS_ATTENTION
+        } else {
+            return status.to_string(); // Unknown status, pass through without brackets
+        };
 
     // Always bracket known statuses
     let bracketed = format!("[{}]", indicator);
@@ -486,13 +515,14 @@ pub fn status_indicator(status: &str, color: bool) -> String {
             || status_str == crate::HEALTH_HEALTHY
             || status_str == crate::VITALITY_THRIVING;
 
-        let is_dormant = status_str == crate::SERVICE_STOPPED
-            || status_str == crate::VITALITY_DORMANT;
+        let is_dormant =
+            status_str == crate::SERVICE_STOPPED || status_str == crate::VITALITY_DORMANT;
 
-        let is_degraded = status_str == "warn" || status_str == "warning"
-            || status_str == crate::HEALTH_DEGRADED;
+        let is_degraded =
+            status_str == "warn" || status_str == "warning" || status_str == crate::HEALTH_DEGRADED;
 
-        let is_unhealthy = status_str == "error" || status_str == "failed"
+        let is_unhealthy = status_str == "error"
+            || status_str == "failed"
             || status_str == crate::HEALTH_UNHEALTHY
             || status_str == crate::VITALITY_WITHERING
             || status_str == crate::VITALITY_NEEDS_ATTENTION;
@@ -533,9 +563,13 @@ pub fn tended_marker(color: bool) -> String {
 pub fn os_indicator(os_string: &str, supports_unicode: bool) -> &'static str {
     let os_lower = os_string.to_lowercase();
     if os_lower.starts_with("windows") || os_lower.starts_with("microsoft") {
-        if supports_unicode { "\u{1FAA8}" } else { "[W]" }  // 🪟
+        if supports_unicode {
+            "\u{1FAA8}"
+        } else {
+            "[W]"
+        } // 🪟
     } else if supports_unicode {
-        "\u{1F427}"  // 🐧
+        "\u{1F427}" // 🐧
     } else {
         "[L]"
     }
@@ -545,15 +579,20 @@ pub fn os_indicator(os_string: &str, supports_unicode: bool) -> &'static str {
 /// Returns None for thriving (no symbol needed — name color conveys health).
 pub fn compact_status_symbol(health: &str, supports_unicode: bool) -> Option<&'static str> {
     let h = health.to_lowercase();
-    if h == crate::VITALITY_THRIVING || h == crate::SERVICE_RUNNING
-        || h == "ok" || h == crate::HEALTH_HEALTHY
-        || h == "starting" || h == "initializing"
+    if h == crate::VITALITY_THRIVING
+        || h == crate::SERVICE_RUNNING
+        || h == "ok"
+        || h == crate::HEALTH_HEALTHY
+        || h == "starting"
+        || h == "initializing"
     {
         None // Thriving = no symbol
     } else if h == crate::VITALITY_DORMANT || h == crate::SERVICE_STOPPED {
         Some(if supports_unicode { "\u{25CB}" } else { "o" }) // ○
-    } else if h == crate::HEALTH_DEGRADED || h == crate::VITALITY_NEEDS_ATTENTION
-        || h == "warn" || h == "warning"
+    } else if h == crate::HEALTH_DEGRADED
+        || h == crate::VITALITY_NEEDS_ATTENTION
+        || h == "warn"
+        || h == "warning"
     {
         Some("!")
     } else {
@@ -573,15 +612,20 @@ pub enum VitalityClass {
 /// Map a health/status string to its vitality class.
 pub fn classify_health(health: &str) -> VitalityClass {
     let h = health.to_lowercase();
-    if h == crate::VITALITY_THRIVING || h == crate::SERVICE_RUNNING
-        || h == "ok" || h == crate::HEALTH_HEALTHY
-        || h == "starting" || h == "initializing"
+    if h == crate::VITALITY_THRIVING
+        || h == crate::SERVICE_RUNNING
+        || h == "ok"
+        || h == crate::HEALTH_HEALTHY
+        || h == "starting"
+        || h == "initializing"
     {
         VitalityClass::Thriving
     } else if h == crate::VITALITY_DORMANT || h == crate::SERVICE_STOPPED {
         VitalityClass::Dormant
-    } else if h == crate::HEALTH_DEGRADED || h == crate::VITALITY_NEEDS_ATTENTION
-        || h == "warn" || h == "warning"
+    } else if h == crate::HEALTH_DEGRADED
+        || h == crate::VITALITY_NEEDS_ATTENTION
+        || h == "warn"
+        || h == "warning"
     {
         VitalityClass::Degraded
     } else {
@@ -625,7 +669,9 @@ pub fn compact_ai(caps: &crate::types::HardwareCapabilities) -> String {
             String::new()
         };
         let runtime = if !ai.runtimes.is_empty() {
-            let base: Vec<&str> = ai.runtimes.iter()
+            let base: Vec<&str> = ai
+                .runtimes
+                .iter()
                 .filter(|r| !r.contains(':'))
                 .map(|r| match r.as_str() {
                     "cuda" => "CUDA",
@@ -635,7 +681,11 @@ pub fn compact_ai(caps: &crate::types::HardwareCapabilities) -> String {
                     _ => r.as_str(),
                 })
                 .collect();
-            if !base.is_empty() { format!("/{}", base.join(",")) } else { String::new() }
+            if !base.is_empty() {
+                format!("/{}", base.join(","))
+            } else {
+                String::new()
+            }
         } else {
             String::new()
         };
@@ -646,7 +696,10 @@ pub fn compact_ai(caps: &crate::types::HardwareCapabilities) -> String {
 }
 
 /// Format offerings list compactly with truncation: "memcached redis vault +2"
-pub fn compact_offerings(services: &[crate::types::TopologyServiceEntry], max_shown: usize) -> String {
+pub fn compact_offerings(
+    services: &[crate::types::TopologyServiceEntry],
+    max_shown: usize,
+) -> String {
     if services.is_empty() {
         return "\u{2014}".to_string(); // —
     }
@@ -670,7 +723,12 @@ pub fn os_family_from_runtime(os_string: &str) -> &str {
 }
 
 /// Build the adaptive legend line for compact observe footer.
-pub fn compact_legend(has_tended: bool, has_windows: bool, has_linux: bool, term: &TerminalInfo) -> String {
+pub fn compact_legend(
+    has_tended: bool,
+    has_windows: bool,
+    has_linux: bool,
+    term: &TerminalInfo,
+) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     // Tended marker (only in monochrome — in color, gold name is self-evident)
@@ -725,12 +783,20 @@ pub fn empty_state(message: &str, action_hint: Option<&str>) -> String {
 /// Get appropriate bullet character based on terminal capabilities
 /// Uses Unicode on terminals that support it, ASCII fallback otherwise
 pub fn bullet(supports_unicode: bool) -> &'static str {
-    if supports_unicode { "●" } else { "*" }
+    if supports_unicode {
+        "●"
+    } else {
+        "*"
+    }
 }
 
 /// Get appropriate hollow bullet based on terminal capabilities  
 pub fn hollow_bullet(supports_unicode: bool) -> &'static str {
-    if supports_unicode { "○" } else { "o" }
+    if supports_unicode {
+        "○"
+    } else {
+        "o"
+    }
 }
 
 /// Render progress indicator for operations
@@ -755,7 +821,7 @@ pub fn category_label(name: &str, color: bool) -> String {
 pub fn format_elapsed_time(elapsed: std::time::Duration) -> String {
     let secs = elapsed.as_secs();
     let millis = elapsed.subsec_millis();
-    
+
     if secs > 0 {
         format!("{}.{}s", secs, millis / 100)
     } else {
@@ -775,14 +841,14 @@ pub fn format_wall_clock() -> String {
 fn visible_length(s: &str) -> usize {
     let mut visible = 0;
     let mut chars = s.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         if ch == '\x1b' {
             // Skip ANSI escape sequence
             // Format: ESC [ ... m  OR  ESC [ ... K  OR  ESC [ ... H, etc.
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
-                // Skip until we hit a letter (the final character of the sequence)
+                              // Skip until we hit a letter (the final character of the sequence)
                 for c in chars.by_ref() {
                     if c.is_ascii_alphabetic() {
                         break;
@@ -810,7 +876,7 @@ fn visible_length(s: &str) -> usize {
 /// ```
 pub fn pad_visible(s: &str, width: usize) -> String {
     let visible = visible_length(s);
-    
+
     if visible >= width {
         s.to_string()
     } else {
@@ -915,7 +981,7 @@ mod tests {
         // Bold white: \x1b[1m \x1b[0m
         let bold = format!("\x1b[1mhello\x1b[0m");
         assert_eq!(visible_length(&bold), 5);
-        
+
         // Bold + color: \x1b[1;97m ... \x1b[0m
         let colored = format!("\x1b[1;97mstone-coral-prairie\x1b[0m");
         assert_eq!(visible_length(&colored), 19);
@@ -925,7 +991,7 @@ mod tests {
     fn test_pad_visible() {
         let plain = "hello";
         assert_eq!(pad_visible(plain, 10), "hello     ");
-        
+
         let colored = format!("\x1b[1;97mhello\x1b[0m");
         let padded = pad_visible(&colored, 10);
         // Should have colored "hello" + 5 spaces
@@ -940,7 +1006,7 @@ mod tests {
         let left_side = format!("{}{}", indent, title_name);
         let status = "[thriving] [tended]";
         let result = place_value(&left_side, status);
-        
+
         // Visible length should be 4 (indent) + 20 (name) = 24
         assert_eq!(visible_length(&left_side), 24);
         // After padding to 48 + space + status, visible should be 48 + 1 + 19 = 68
@@ -950,9 +1016,11 @@ mod tests {
         assert!(
             (actual_visible as i32 - expected_visible as i32).abs() <= 1,
             "Expected visible length {}, got {} (diff: {})",
-            expected_visible, actual_visible, (actual_visible as i32 - expected_visible as i32).abs()
+            expected_visible,
+            actual_visible,
+            (actual_visible as i32 - expected_visible as i32).abs()
         );
-        
+
         println!("Result: {}", result);
         println!("Visible length: {}", visible_length(&result));
     }
@@ -963,116 +1031,152 @@ mod tests {
         let banner = stone_banner("stone-01", "Thriving", false);
         assert!(banner.starts_with("=== stone-01 - [Thriving]"));
         assert!(banner.contains("="));
-        
+
         // Test with different status
         let banner = stone_banner("stone-02", "ERROR", false);
         assert!(banner.starts_with("=== stone-02 - [ERROR]"));
         assert!(banner.contains("="));
     }
-    
+
     #[test]
     fn test_section_header_respects_cap() {
         // Wide terminal: should cap at 40 chars
-        let wide_term = TerminalInfo { width: 120, supports_color: false, supports_unicode: false };
+        let wide_term = TerminalInfo {
+            width: 120,
+            supports_color: false,
+            supports_unicode: false,
+        };
         let header = section_header("TEST", &wide_term);
-        assert_eq!(header.len(), 40, "Should cap at 40 chars even on wide terminals");
+        assert_eq!(
+            header.len(),
+            40,
+            "Should cap at 40 chars even on wide terminals"
+        );
         // Format: "--- TEST " (9 chars) + 31 dashes = 40
         assert_eq!(header, "--- TEST -------------------------------");
-        
+
         // Exactly 40-char terminal: should use full width
-        let exact_term = TerminalInfo { width: 40, supports_color: false, supports_unicode: false };
+        let exact_term = TerminalInfo {
+            width: 40,
+            supports_color: false,
+            supports_unicode: false,
+        };
         let header = section_header("TEST", &exact_term);
         assert_eq!(header.len(), 40);
         assert_eq!(header, "--- TEST -------------------------------");
-        
+
         // Narrow terminal: should respect narrow width
-        let narrow_term = TerminalInfo { width: 20, supports_color: false, supports_unicode: false };
+        let narrow_term = TerminalInfo {
+            width: 20,
+            supports_color: false,
+            supports_unicode: false,
+        };
         let header = section_header("TEST", &narrow_term);
         assert_eq!(header.len(), 20, "Should respect narrow terminal width");
         assert_eq!(header, "--- TEST -----------");
-        
+
         // Very narrow terminal: should not add trailing dashes if title doesn't fit
-        let tiny_term = TerminalInfo { width: 8, supports_color: false, supports_unicode: false };
+        let tiny_term = TerminalInfo {
+            width: 8,
+            supports_color: false,
+            supports_unicode: false,
+        };
         let header = section_header("TEST", &tiny_term);
         assert_eq!(header, "--- TEST ");
     }
-    
+
     #[test]
     fn test_section_header_long_title() {
         // Long title should still work without panicking
-        let term = TerminalInfo { width: 40, supports_color: false, supports_unicode: false };
+        let term = TerminalInfo {
+            width: 40,
+            supports_color: false,
+            supports_unicode: false,
+        };
         let header = section_header("VERY LONG SECTION TITLE HERE", &term);
         assert!(header.starts_with("--- VERY LONG SECTION TITLE HERE "));
         // Should have no trailing dashes since title fills the width
     }
-    
+
     #[test]
     fn test_truncate_name_edge_cases() {
         // Short name: no truncation
         assert_eq!(truncate_name("short", 24), "short");
-        
+
         // Exact length: no truncation
-        assert_eq!(truncate_name("exactly-twenty-four!", 20), "exactly-twenty-four!");
-        
+        assert_eq!(
+            truncate_name("exactly-twenty-four!", 20),
+            "exactly-twenty-four!"
+        );
+
         // One char over: should truncate (takes first 17 chars + "...")
-        assert_eq!(truncate_name("exactly-twenty-four!x", 20), "exactly-twenty-fo...");
-        
+        assert_eq!(
+            truncate_name("exactly-twenty-four!x", 20),
+            "exactly-twenty-fo..."
+        );
+
         // Very long: should truncate properly (first 21 chars + "...")
-        assert_eq!(truncate_name("very-long-service-name-that-exceeds", 24), "very-long-service-nam...");
-        
+        assert_eq!(
+            truncate_name("very-long-service-name-that-exceeds", 24),
+            "very-long-service-nam..."
+        );
+
         // Edge case: max_len <= 3 returns first chars without ellipsis
         assert_eq!(truncate_name("test", 3), "tes");
-        
+
         // Empty string
         assert_eq!(truncate_name("", 24), "");
     }
-    
+
     #[test]
     fn test_verbosity_parsing() {
         assert_eq!(Verbosity::from_arg("-v0"), Some(Verbosity::Minimal));
         assert_eq!(Verbosity::from_arg("-v1"), Some(Verbosity::Standard));
         assert_eq!(Verbosity::from_arg("-v2"), Some(Verbosity::Verbose));
         assert_eq!(Verbosity::from_arg("-v3"), Some(Verbosity::Debug));
-        
+
         // Invalid cases
         assert_eq!(Verbosity::from_arg("invalid"), None);
         assert_eq!(Verbosity::from_arg("-v4"), None);
         assert_eq!(Verbosity::from_arg("v1"), None);
         assert_eq!(Verbosity::from_arg(""), None);
     }
-    
+
     #[test]
     fn test_table_builder_alignment() {
         let mut table = TableBuilder::new()
             .add_column(15, Align::Left)
             .add_column(10, Align::Right);
-        
+
         table.add_row(vec!["mongodb".to_string(), "3m".to_string()]);
         table.add_row(vec!["postgresql".to_string(), "15m 12s".to_string()]);
-        
+
         let output = table.render();
         let lines: Vec<&str> = output.lines().collect();
-        
+
         // Should have 2 rows
         assert_eq!(lines.len(), 2);
-        
+
         // Each line should start with default indent
         for line in &lines {
-            assert!(line.starts_with("    "), "Each line should start with 4-space indent");
+            assert!(
+                line.starts_with("    "),
+                "Each line should start with 4-space indent"
+            );
         }
-        
+
         // Check column widths are respected
         assert!(lines[0].contains("mongodb"));
         assert!(lines[1].contains("postgresql"));
     }
-    
+
     #[test]
     fn test_status_indicator_mappings() {
         // Test vitality language mappings (no color)
         assert_eq!(status_indicator("running", false), "[thriving]");
         assert_eq!(status_indicator("stopped", false), "[dormant]");
         assert_eq!(status_indicator("ok", false), "[thriving]");
-        assert_eq!(status_indicator("healthy", false), "[thriving]");  // Legacy maps to vitality
+        assert_eq!(status_indicator("healthy", false), "[thriving]"); // Legacy maps to vitality
         assert_eq!(status_indicator("thriving", false), "[thriving]");
         assert_eq!(status_indicator("dormant", false), "[dormant]");
         assert_eq!(status_indicator("error", false), "[needs attention]");
@@ -1081,15 +1185,15 @@ mod tests {
         assert_eq!(status_indicator("warning", false), "[needs attention]");
         assert_eq!(status_indicator("degraded", false), "[needs attention]");
         assert_eq!(status_indicator("withering", false), "[needs attention]");
-        
+
         // Case insensitivity
         assert_eq!(status_indicator("OK", false), "[thriving]");
         assert_eq!(status_indicator("Running", false), "[thriving]");
-        
+
         // Unknown status should pass through
         assert_eq!(status_indicator("unknown", false), "unknown");
     }
-    
+
     #[test]
     fn test_label_value_line_formatting() {
         // Test basic formatting
@@ -1097,48 +1201,60 @@ mod tests {
         assert!(line.starts_with("    "));
         assert!(line.contains("Status"));
         assert!(line.contains("Running"));
-        
+
         // Test different indentation
         let line = label_value_line("Name", "test-service", 0);
         assert!(!line.starts_with(" "));
-        
+
         let line = label_value_line("Port", "8080", 8);
         assert!(line.starts_with("        "));
     }
-    
+
     #[test]
     fn test_category_grid_formatting() {
-        let term = TerminalInfo { width: 80, supports_color: false, supports_unicode: false };
+        let term = TerminalInfo {
+            width: 80,
+            supports_color: false,
+            supports_unicode: false,
+        };
         let grid = CategoryGrid::new(&term);
-        
+
         // Test with multiple items
-        let output = grid.render_category("DATA", &[
-            "mongodb".to_string(),
-            "postgresql".to_string(),
-            "redis".to_string()
-        ]);
-        
+        let output = grid.render_category(
+            "DATA",
+            &[
+                "mongodb".to_string(),
+                "postgresql".to_string(),
+                "redis".to_string(),
+            ],
+        );
+
         assert!(output.contains("DATA"), "Should contain category name");
         assert!(output.contains("mongodb"), "Should contain first item");
         assert!(output.contains("postgresql"), "Should contain second item");
         assert!(output.contains("redis"), "Should contain third item");
-        
+
         // Test with empty items - returns empty string
         let output = grid.render_category("EMPTY", &[]);
-        assert_eq!(output, "", "Empty category should return empty string (no header row)");
+        assert_eq!(
+            output, "",
+            "Empty category should return empty string (no header row)"
+        );
     }
-    
+
     #[test]
     fn test_empty_state_with_and_without_hint() {
         // With hint
-        let output = empty_state("No services found", Some("Try: garden-rake offer install <name>"));
+        let output = empty_state(
+            "No services found",
+            Some("Try: garden-rake offer install <name>"),
+        );
         assert!(output.contains("No services found"));
         assert!(output.contains("Try: garden-rake offer install <name>"));
-        
+
         // Without hint
         let output = empty_state("No items", None);
         assert!(output.contains("No items"));
         assert!(!output.contains("Try:"));
     }
 }
-

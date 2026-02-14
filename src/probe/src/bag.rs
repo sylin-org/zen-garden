@@ -1,4 +1,4 @@
-﻿//! The Bag - accumulates all state and history across test steps
+//! The Bag - accumulates all state and history across test steps
 //!
 //! This is the valuable part: a holistic view of what happened during test execution.
 
@@ -164,7 +164,10 @@ impl Bag {
 
     /// Count successful steps
     pub fn successful_steps(&self) -> usize {
-        self.history.iter().filter(|s| s.result.is_success()).count()
+        self.history
+            .iter()
+            .filter(|s| s.result.is_success())
+            .count()
     }
 
     /// Count failed steps

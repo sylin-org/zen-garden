@@ -170,7 +170,10 @@ impl SshExecutor {
 
     /// Get MD5 hash of a file
     pub fn file_hash(&self, stone: &Stone, path: &str) -> Result<Option<String>> {
-        let result = self.exec(stone, &format!("md5sum {} 2>/dev/null | cut -d' ' -f1", path))?;
+        let result = self.exec(
+            stone,
+            &format!("md5sum {} 2>/dev/null | cut -d' ' -f1", path),
+        )?;
         if result.success && !result.stdout.trim().is_empty() {
             Ok(Some(result.stdout.trim().to_string()))
         } else {
@@ -185,7 +188,13 @@ impl SshExecutor {
 
     /// Check if a Docker volume exists
     pub fn docker_volume_exists(&self, stone: &Stone, volume: &str) -> Result<bool> {
-        let result = self.exec(stone, &format!("docker volume inspect {} >/dev/null 2>&1 && echo EXISTS", volume))?;
+        let result = self.exec(
+            stone,
+            &format!(
+                "docker volume inspect {} >/dev/null 2>&1 && echo EXISTS",
+                volume
+            ),
+        )?;
         Ok(result.stdout.contains("EXISTS"))
     }
 
@@ -297,7 +306,9 @@ pub mod validation {
 
         // List harvests to count them
         if let Ok(harvests) = ssh.list_files(stone, &harvest_dir) {
-            result.metadata.insert("harvest_count".to_string(), harvests.len().to_string());
+            result
+                .metadata
+                .insert("harvest_count".to_string(), harvests.len().to_string());
         }
 
         // Get index file content to verify offering is tracked
@@ -305,7 +316,10 @@ pub mod validation {
             if content.success {
                 let has_offering = content.stdout.contains(offering_id);
                 result.add_check(
-                    &format!("Offering {} in index", &offering_id[..8.min(offering_id.len())]),
+                    &format!(
+                        "Offering {} in index",
+                        &offering_id[..8.min(offering_id.len())]
+                    ),
                     has_offering,
                 );
             }
@@ -331,10 +345,7 @@ pub mod validation {
         let mut result = ValidationResult::new("Seed Bank Snapshot");
 
         // Check seed bank mount
-        result.add_check(
-            "Seed bank mounted",
-            ssh.dir_exists(stone, seed_bank_mount)?,
-        );
+        result.add_check("Seed bank mounted", ssh.dir_exists(stone, seed_bank_mount)?);
 
         // Check nurturing directory on seed bank using path constant
         let nurturing_path = paths::seed_bank_memories_dir(seed_bank_mount);
@@ -351,21 +362,26 @@ pub mod validation {
         );
 
         // Check harvest tarball
-        let tarball_path = paths::seed_bank_memory_harvest_path(seed_bank_mount, offering_id, harvest_id);
+        let tarball_path =
+            paths::seed_bank_memory_harvest_path(seed_bank_mount, offering_id, harvest_id);
         let tarball_exists = ssh.file_exists(stone, &tarball_path)?;
         result.add_check("Harvest tarball exists", tarball_exists);
 
         // Get tarball size if it exists
         if tarball_exists {
             if let Ok(Some(size)) = ssh.file_size(stone, &tarball_path) {
-                result.metadata.insert("tarball_size_bytes".to_string(), size.to_string());
+                result
+                    .metadata
+                    .insert("tarball_size_bytes".to_string(), size.to_string());
             }
         }
 
         // List all harvests for this offering
         if let Ok(files) = ssh.list_files(stone, &offering_path) {
             let harvest_count = files.iter().filter(|f| f.ends_with(".tar.gz")).count();
-            result.metadata.insert("harvest_count".to_string(), harvest_count.to_string());
+            result
+                .metadata
+                .insert("harvest_count".to_string(), harvest_count.to_string());
         }
 
         Ok(result)
@@ -396,7 +412,9 @@ pub mod validation {
         // List files in volume
         let files = ssh.docker_volume_files(stone, volume_name)?;
         result.add_check("Volume is not empty", !files.is_empty());
-        result.metadata.insert("file_count".to_string(), files.len().to_string());
+        result
+            .metadata
+            .insert("file_count".to_string(), files.len().to_string());
 
         // Check expected files if provided
         if let Some(expected) = expected_files {
@@ -410,7 +428,9 @@ pub mod validation {
 
         // Get volume size
         if let Ok(Some(size)) = ssh.docker_volume_size(stone, volume_name) {
-            result.metadata.insert("volume_size_bytes".to_string(), size.to_string());
+            result
+                .metadata
+                .insert("volume_size_bytes".to_string(), size.to_string());
         }
 
         Ok(result)
@@ -434,11 +454,18 @@ pub mod validation {
         let files = ssh.list_files(stone, &offering_path)?;
         let harvest_count = files.iter().filter(|f| f.ends_with(".tar.gz")).count();
 
-        result.metadata.insert("harvest_count".to_string(), harvest_count.to_string());
-        result.metadata.insert("max_retention".to_string(), max_retention.to_string());
+        result
+            .metadata
+            .insert("harvest_count".to_string(), harvest_count.to_string());
+        result
+            .metadata
+            .insert("max_retention".to_string(), max_retention.to_string());
 
         result.add_check(
-            &format!("Retention within limit ({}<={})", harvest_count, max_retention),
+            &format!(
+                "Retention within limit ({}<={})",
+                harvest_count, max_retention
+            ),
             harvest_count <= max_retention,
         );
 

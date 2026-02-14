@@ -65,7 +65,10 @@ impl CeremonyRegistry {
     pub async fn has_active_for_offering(&self, offering: &str) -> bool {
         self.ceremonies.read().await.values().any(|c| {
             c.state.is_active()
-                && c.ceremony_type.target().map(|t| t == offering).unwrap_or(false)
+                && c.ceremony_type
+                    .target()
+                    .map(|t| t == offering)
+                    .unwrap_or(false)
         })
     }
 

@@ -179,16 +179,8 @@ mod tests {
         let handler = DockerRegistryHandler::new();
 
         // Matches: devops category with container-registry tag
-        assert!(handler.matches(
-            "registry",
-            "devops",
-            &["container-registry".to_string()]
-        ));
-        assert!(handler.matches(
-            "zot",
-            "devops",
-            &["container-registry".to_string()]
-        ));
+        assert!(handler.matches("registry", "devops", &["container-registry".to_string()]));
+        assert!(handler.matches("zot", "devops", &["container-registry".to_string()]));
         assert!(handler.matches(
             "any-future-registry",
             "devops",
@@ -207,11 +199,7 @@ mod tests {
         ));
 
         // Does NOT match: wrong tag
-        assert!(!handler.matches(
-            "custom-registry",
-            "devops",
-            &["some-other-tag".to_string()]
-        ));
+        assert!(!handler.matches("custom-registry", "devops", &["some-other-tag".to_string()]));
     }
 
     #[test]

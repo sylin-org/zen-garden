@@ -188,10 +188,7 @@ impl NotificationRegistry {
     pub fn compile(&self) -> Vec<String> {
         let entries = self.entries.read().expect("lock poisoned");
 
-        let mut tags: Vec<String> = entries
-            .values()
-            .map(|t| t.as_str().to_string())
-            .collect();
+        let mut tags: Vec<String> = entries.values().map(|t| t.as_str().to_string()).collect();
 
         // Deduplicate and sort for deterministic output
         tags.sort();

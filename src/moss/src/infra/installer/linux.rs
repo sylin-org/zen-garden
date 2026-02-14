@@ -9,17 +9,10 @@ const UNIT_FILE_PATH: &str = "/etc/systemd/system/garden-moss.service";
 const BIN_DIR: &str = "/usr/local/bin";
 
 /// Linux binaries to install from package bin/ directory
-const BINARIES: &[&str] = &[
-    "garden-moss",
-    "garden-rake",
-    "garden-lantern",
-];
+const BINARIES: &[&str] = &["garden-moss", "garden-rake", "garden-lantern"];
 
 /// Scripts to install from package bin/ directory
-const SCRIPTS: &[&str] = &[
-    "moss-update-helper.sh",
-    "garden-upgrade.sh",
-];
+const SCRIPTS: &[&str] = &["moss-update-helper.sh", "garden-upgrade.sh"];
 
 /// Install on Linux: deploy binaries, scripts, systemd unit, create directories.
 pub fn install_platform(staging_dir: &Path) -> anyhow::Result<()> {
@@ -154,7 +147,7 @@ fn install_scripts(staging_dir: &Path) -> anyhow::Result<()> {
     println!("  Installing scripts...");
     let mut needs_daemon_reload = false;
 
-    for entry in walkdir(& scripts_dir)? {
+    for entry in walkdir(&scripts_dir)? {
         let rel_path = entry.strip_prefix(&scripts_dir)?;
         let target_path = Path::new("/").join(rel_path);
         let target_dir = target_path.parent().unwrap_or(Path::new("/"));

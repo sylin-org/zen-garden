@@ -25,20 +25,28 @@ pub struct StoneMetrics {
 pub fn get_local_metrics() -> Result<StoneMetrics> {
     let resources = garden_common::metrics::system::collect_stone_resources()
         .context("Failed to collect local stone resources")?;
-    
-    let (_, _, architecture) = garden_common::metrics::system::get_cpu_info()
-        .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
-    
+
+    let (_, _, architecture) =
+        garden_common::metrics::system::get_cpu_info().unwrap_or_else(|_| {
+            (
+                "Unknown".to_string(),
+                vec![],
+                std::env::consts::ARCH.to_string(),
+            )
+        });
+
     // Find primary storage mount
-    let primary = resources.storage.iter()
+    let primary = resources
+        .storage
+        .iter()
         .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
         .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
-    
+
     let storage_type = primary
         .map(|s| &s.disk_type)
         .cloned()
         .unwrap_or(DiskType::Unknown);
-    
+
     Ok(normalize_metrics(&resources, &architecture, &storage_type))
 }
 
@@ -46,10 +54,7 @@ pub fn get_local_metrics() -> Result<StoneMetrics> {
 ///
 /// Uses the `/metrics` endpoint for real-time data.
 /// Architecture is fetched from `/capabilities` since it's not in metrics.
-pub async fn fetch_stone_metrics(
-    endpoint: &str,
-    timeout: Duration,
-) -> Result<StoneMetrics> {
+pub async fn fetch_stone_metrics(endpoint: &str, timeout: Duration) -> Result<StoneMetrics> {
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
@@ -82,11 +87,12 @@ pub async fn fetch_stone_metrics(
     let snapshot = api_response.data;
 
     // Architecture from /capabilities (not in metrics)
-    let architecture = fetch_architecture(&client, base).await
+    let architecture = fetch_architecture(&client, base)
+        .await
         .unwrap_or_else(|_| std::env::consts::ARCH.to_string());
 
     // MetricsSnapshot uses old disk field for backward compat
-    let storage_type = DiskType::Unknown;  // Type not available in MetricsSnapshot
+    let storage_type = DiskType::Unknown; // Type not available in MetricsSnapshot
 
     let (storage_free_gb, storage_total_gb) = (
         snapshot.disk.available_bytes / 1024 / 1024 / 1024,
@@ -129,12 +135,10 @@ pub async fn fetch_metrics_batch(
         .into_iter()
         .map(|endpoint| {
             let ep = endpoint.clone();
-            async move {
-                fetch_stone_metrics(&ep, timeout).await
-            }
+            async move { fetch_stone_metrics(&ep, timeout).await }
         })
         .collect();
-    
+
     futures_util::future::join_all(futures).await
 }
 
@@ -147,7 +151,9 @@ pub fn normalize_metrics(
     storage_type: &DiskType,
 ) -> StoneMetrics {
     // Find primary storage mount
-    let primary = resources.storage.iter()
+    let primary = resources
+        .storage
+        .iter()
         .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
         .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
 
@@ -169,7 +175,7 @@ pub fn normalize_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use garden_common::{CpuMetrics, MemoryMetrics, StorageMetrics, DiskType};
+    use garden_common::{CpuMetrics, DiskType, MemoryMetrics, StorageMetrics};
 
     fn make_test_resources() -> StoneResources {
         StoneResources {
@@ -179,8 +185,8 @@ mod tests {
                 usage_friendly: "25%".to_string(),
             },
             memory: MemoryMetrics {
-                total_bytes: 32 * 1024 * 1024 * 1024, // 32 GB
-                used_bytes: 16 * 1024 * 1024 * 1024,  // 16 GB used
+                total_bytes: 32 * 1024 * 1024 * 1024,     // 32 GB
+                used_bytes: 16 * 1024 * 1024 * 1024,      // 16 GB used
                 available_bytes: 16 * 1024 * 1024 * 1024, // 16 GB free
                 used_percent: 50.0,
                 total_friendly: "32 GB".to_string(),
@@ -206,9 +212,9 @@ mod tests {
     fn test_normalize_metrics() {
         let resources = make_test_resources();
         let metrics = normalize_metrics(&resources, "x86_64", &DiskType::NVMe);
-        
-        assert_eq!(metrics.memory_total_mb, 32768);  // 32 GB in MB
-        assert_eq!(metrics.memory_free_mb, 16384);   // 16 GB in MB
+
+        assert_eq!(metrics.memory_total_mb, 32768); // 32 GB in MB
+        assert_eq!(metrics.memory_free_mb, 16384); // 16 GB in MB
         assert_eq!(metrics.cpu_load_percent, 25);
         assert_eq!(metrics.storage_total_gb, 500);
         assert_eq!(metrics.storage_free_gb, 250);
@@ -246,9 +252,9 @@ mod tests {
             uptime_seconds: 5000,
             uptime_friendly: "1h 23m".to_string(),
         };
-        
+
         let metrics = normalize_metrics(&resources, "aarch64", &DiskType::HDD);
-        
+
         assert_eq!(metrics.memory_total_mb, 8192);
         assert_eq!(metrics.memory_free_mb, 2048);
         assert_eq!(metrics.cpu_load_percent, 50);
@@ -263,13 +269,22 @@ mod tests {
         // This test validates the function executes without panicking
         // Actual values depend on the system
         let result = get_local_metrics();
-        
+
         // Should succeed on any system with sysinfo
         match result {
             Ok(metrics) => {
-                assert!(metrics.memory_total_mb > 0, "Should have non-zero total memory");
-                assert!(metrics.cpu_load_percent <= 100, "CPU load should be <= 100%");
-                assert!(!metrics.architecture.is_empty(), "Architecture should not be empty");
+                assert!(
+                    metrics.memory_total_mb > 0,
+                    "Should have non-zero total memory"
+                );
+                assert!(
+                    metrics.cpu_load_percent <= 100,
+                    "CPU load should be <= 100%"
+                );
+                assert!(
+                    !metrics.architecture.is_empty(),
+                    "Architecture should not be empty"
+                );
             }
             Err(e) => {
                 // Log but don't fail - test environments may have restricted access

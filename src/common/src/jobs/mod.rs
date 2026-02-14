@@ -6,12 +6,12 @@
 //! - Executor pattern for different job types
 //! - Restart capability on daemon crash
 
-pub mod types;
-pub mod persistence;
 pub mod manager;
+pub mod persistence;
 pub mod retry;
+pub mod types;
 
-pub use types::{Job, JobId, JobStatus, JobInput, JobOutput};
-pub use persistence::JsonJobPersistence;
 pub use manager::JobManager;
-pub use retry::{RetryPolicy, retry_with_policy, retry_simple};
+pub use persistence::JsonJobPersistence;
+pub use retry::{retry_simple, retry_with_policy, RetryPolicy};
+pub use types::{Job, JobId, JobInput, JobOutput, JobStatus};

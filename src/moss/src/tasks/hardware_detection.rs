@@ -8,14 +8,14 @@
 //! This non-blocking approach allows the daemon to start serving requests
 //! while GPU detection completes in the background.
 
-use crate::AppState;
 use crate::domain::ensure_offerings_index;
+use crate::infra::save_capabilities_cache;
+use crate::AppState;
 use garden_common::console;
 use garden_common::metrics::system as metrics;
-use crate::infra::save_capabilities_cache;
 use garden_common::{
-    AiCapabilitiesSummary, CpuCapabilities, DetectionStatus, DiskCapabilities,
-    GpuInfo, HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
+    AiCapabilitiesSummary, CpuCapabilities, DetectionStatus, DiskCapabilities, GpuInfo,
+    HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -75,7 +75,10 @@ use tokio::sync::RwLock;
 /// ```
 ///
 /// Build AI capabilities summary from GPU list
-fn build_ai_capabilities_summary(gpus: &[GpuInfo], detection_complete: bool) -> AiCapabilitiesSummary {
+fn build_ai_capabilities_summary(
+    gpus: &[GpuInfo],
+    detection_complete: bool,
+) -> AiCapabilitiesSummary {
     let mut runtimes: HashSet<String> = HashSet::new();
     let mut vendors: HashSet<String> = HashSet::new();
     let mut total_vram_mb: u64 = 0;
@@ -125,31 +128,40 @@ pub async fn detect_capabilities_background(
     console.emit(console::ConsoleEvent::new(
         console::EventCategory::Ops,
         console::EventStatus::Active,
-        "[CAPABILITY DETECTION] Detecting CPU features".to_string()
+        "[CAPABILITY DETECTION] Detecting CPU features".to_string(),
     ));
 
     let (cpu_model, cpu_features, architecture) = match metrics::get_cpu_info() {
         Ok(result) => result,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to get CPU info");
-            ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string())
+            (
+                "Unknown".to_string(),
+                vec![],
+                std::env::consts::ARCH.to_string(),
+            )
         }
     };
 
     let resources = metrics::collect_stone_resources().ok();
     let cpu_cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
-    let total_memory_mb = resources.as_ref()
+    let total_memory_mb = resources
+        .as_ref()
         .map(|r| r.memory.total_bytes / 1024 / 1024)
         .unwrap_or(0);
 
     let disk = resources.as_ref().map(|r| DiskCapabilities {
         // Use primary storage mount for disk capabilities summary
-        total_gb: r.storage.iter()
+        total_gb: r
+            .storage
+            .iter()
             .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
             .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
             .map(|s| s.total_gb)
             .unwrap_or(0),
-        disk_type: r.storage.iter()
+        disk_type: r
+            .storage
+            .iter()
             .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
             .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
             .map(|s| match &s.disk_type {
@@ -164,7 +176,11 @@ pub async fn detect_capabilities_background(
     console.emit(console::ConsoleEvent::new(
         console::EventCategory::Ops,
         console::EventStatus::Active,
-        format!("[CAPABILITY DETECTION] CPU: {} cores, {} features", cpu_cores, cpu_features.len())
+        format!(
+            "[CAPABILITY DETECTION] CPU: {} cores, {} features",
+            cpu_cores,
+            cpu_features.len()
+        ),
     ));
 
     // Update CPU data incrementally (preserve existing data, update CPU fields)
@@ -199,13 +215,23 @@ pub async fn detect_capabilities_background(
 
         // Update CPU fields only
         caps.hardware.cpu = CpuCapabilities {
-            model: if cpu_model == "Unknown" { None } else { Some(cpu_model.clone()) },
+            model: if cpu_model == "Unknown" {
+                None
+            } else {
+                Some(cpu_model.clone())
+            },
             cores: cpu_cores,
             threads: None,
             architecture: architecture.clone(),
-            features: if cpu_features.is_empty() { None } else { Some(cpu_features.clone()) },
+            features: if cpu_features.is_empty() {
+                None
+            } else {
+                Some(cpu_features.clone())
+            },
         };
-        caps.hardware.memory = MemoryCapabilities { total_mb: total_memory_mb };
+        caps.hardware.memory = MemoryCapabilities {
+            total_mb: total_memory_mb,
+        };
         caps.hardware.disk = disk.clone();
 
         // Upgrade status if needed (Scanning → Partial, but preserve Complete)
@@ -225,7 +251,7 @@ pub async fn detect_capabilities_background(
     console.emit(console::ConsoleEvent::new(
         console::EventCategory::System,
         console::EventStatus::Updated,
-        "Hardware capabilities (CPU ready)".to_string()
+        "Hardware capabilities (CPU ready)".to_string(),
     ));
 
     // === PHASE 2: GPU Detection (slow, 2-6 seconds on Windows) ===
@@ -233,7 +259,7 @@ pub async fn detect_capabilities_background(
     console.emit(console::ConsoleEvent::new(
         console::EventCategory::Ops,
         console::EventStatus::Active,
-        "[CAPABILITY DETECTION] Detecting GPUs (DXDiag, 2-6 sec)".to_string()
+        "[CAPABILITY DETECTION] Detecting GPUs (DXDiag, 2-6 sec)".to_string(),
     ));
 
     let gpus = metrics::detect_gpus();
@@ -242,7 +268,7 @@ pub async fn detect_capabilities_background(
     console.emit(console::ConsoleEvent::new(
         console::EventCategory::Ops,
         console::EventStatus::Completed,
-        format!("[CAPABILITY DETECTION] Found {} GPU(s)", gpu_count)
+        format!("[CAPABILITY DETECTION] Found {} GPU(s)", gpu_count),
     ));
 
     // === PHASE 3: OS, Kernel, Swap Detection ===
@@ -256,20 +282,21 @@ pub async fn detect_capabilities_background(
     // Update complete capabilities incrementally (update GPU + system info fields)
     let complete_caps = {
         let mut guard = caps_arc.write().await;
-        let mut caps = guard.take().expect("capabilities should exist after CPU phase");
+        let mut caps = guard
+            .take()
+            .expect("capabilities should exist after CPU phase");
 
         // Update GPU fields
         caps.hardware.gpus = gpus.clone();
 
         // Build and update AI capabilities summary
         caps.hardware.ai_capabilities = Some(build_ai_capabilities_summary(
-            &gpus,
-            true  // detection_complete = true
+            &gpus, true, // detection_complete = true
         ));
 
         // Update swap (storage moved to live metrics)
         caps.hardware.swap_mb = swap_mb;
-        
+
         // Update runtime info with OS version and kernel
         if let Some(ref mut runtime) = caps.runtime {
             // Enhance OS string with version
@@ -295,9 +322,9 @@ pub async fn detect_capabilities_background(
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Ops,
                 console::EventStatus::Completed,
-                "[CAPABILITY DETECTION] Cache persisted to disk".to_string()
+                "[CAPABILITY DETECTION] Cache persisted to disk".to_string(),
             ));
-        },
+        }
         Err(e) => tracing::warn!(error = ?e, "Failed to save complete capabilities"),
     }
 
@@ -312,7 +339,7 @@ pub async fn detect_capabilities_background(
         console.emit(console::ConsoleEvent::new(
             console::EventCategory::Ops,
             console::EventStatus::Completed,
-            "[OFFERINGS] Compatibility re-evaluated".to_string()
+            "[OFFERINGS] Compatibility re-evaluated".to_string(),
         ));
     }
 }

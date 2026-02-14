@@ -16,10 +16,7 @@ const TTL_CHECK_INTERVAL_SECS: u64 = 10;
 /// Run the TTL cleanup loop.
 ///
 /// Checks stone heartbeats every 10 seconds and emits offline events.
-pub async fn run_ttl_cleanup(
-    topology: Arc<RwLock<GardenTopology>>,
-    event_bus: EventBus,
-) {
+pub async fn run_ttl_cleanup(topology: Arc<RwLock<GardenTopology>>, event_bus: EventBus) {
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(TTL_CHECK_INTERVAL_SECS)).await;
 

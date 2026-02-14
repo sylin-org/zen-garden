@@ -1,4 +1,4 @@
-﻿//! HTTP server for Companion command handling
+//! HTTP server for Companion command handling
 //!
 //! Provides standard endpoints:
 //! - `POST /command` - Execute Companion commands
@@ -120,8 +120,8 @@ async fn handle_health<H: CommandHandler>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use garden_common::command_manifest::CommandResponse;
     use async_trait::async_trait;
+    use garden_common::command_manifest::CommandResponse;
 
     struct TestHandler;
 

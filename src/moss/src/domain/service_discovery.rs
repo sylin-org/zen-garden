@@ -321,8 +321,7 @@ pub async fn find_local_services(
             .manifest_registry
             .get_offering(&offering.offering)
             .and_then(|entry| entry.connection.as_ref());
-        let uri_template =
-            connection::select_uri_template(connection_profile, &category);
+        let uri_template = connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
             &state.stone_name,
@@ -378,8 +377,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
             .manifest_registry
             .get_offering(&offering.offering)
             .and_then(|entry| entry.connection.as_ref());
-        let uri_template =
-            connection::select_uri_template(connection_profile, &category);
+        let uri_template = connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
             &state.stone_name,
@@ -456,13 +454,10 @@ pub async fn find_services(
     // Compute cache age from the most recent topology entry's last_seen
     let cache_age_seconds = {
         let map = state.topology_cache.read().await;
-        map.values()
-            .map(|e| e.last_seen)
-            .max()
-            .map(|newest| {
-                let age = Utc::now().signed_duration_since(newest);
-                age.num_seconds().max(0) as u64
-            })
+        map.values().map(|e| e.last_seen).max().map(|newest| {
+            let age = Utc::now().signed_duration_since(newest);
+            age.num_seconds().max(0) as u64
+        })
     };
 
     ServiceDiscoveryResponse {
@@ -514,8 +509,7 @@ async fn find_services_in_topology_cache(
                 .manifest_registry
                 .get_offering(&svc.offering)
                 .and_then(|entry| entry.connection.as_ref());
-            let uri_template =
-                connection::select_uri_template(connection_profile, &svc.category);
+            let uri_template = connection::select_uri_template(connection_profile, &svc.category);
 
             let conn = connection::resolve_connection(
                 &stone.stone_name,
@@ -658,8 +652,7 @@ async fn fetch_remote_services(
             .manifest_registry
             .get_offering(&service.offering)
             .and_then(|entry| entry.connection.as_ref());
-        let uri_template =
-            connection::select_uri_template(connection_profile, &category);
+        let uri_template = connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
             &stone.stone_name,

@@ -8,9 +8,9 @@
 use crate::docker::DockerManager;
 use crate::domain::harvest::{HarvestManifest, VolumeArchive};
 use crate::infra::HarvestStore;
+use anyhow::{Context, Result};
 use garden_common::infra::archive;
 use garden_common::offerings::parse_offering_fqn;
-use anyhow::{Context, Result};
 use std::path::Path;
 
 /// Create a harvest for an offering
@@ -163,7 +163,10 @@ pub async fn restore_harvest(
     for volume in &manifest.volumes {
         let valid = archive::verify_checksum(Path::new(&volume.archive_path), &volume.checksum)
             .await
-            .context(format!("Failed to verify checksum for volume {}", volume.name))?;
+            .context(format!(
+                "Failed to verify checksum for volume {}",
+                volume.name
+            ))?;
 
         if !valid {
             anyhow::bail!(
@@ -191,9 +194,12 @@ pub async fn restore_harvest(
                 "Restoring volume"
             );
 
-            archive::extract_archive(Path::new(&volume_archive.archive_path), Path::new(host_path))
-                .await
-                .context(format!("Failed to restore volume {}", volume_archive.name))?;
+            archive::extract_archive(
+                Path::new(&volume_archive.archive_path),
+                Path::new(host_path),
+            )
+            .await
+            .context(format!("Failed to restore volume {}", volume_archive.name))?;
 
             tracing::info!(volume = %volume_archive.name, "Volume restored");
         } else {

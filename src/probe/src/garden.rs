@@ -1,4 +1,4 @@
-﻿//! Live Garden - connects to real stones for testing
+//! Live Garden - connects to real stones for testing
 //!
 //! Supports two discovery modes:
 //! 1. **UDP Discovery** (like Rake) - broadcasts to find all stones on the network
@@ -70,9 +70,10 @@ impl LiveGarden {
         let mut seen_endpoints = HashSet::new();
 
         // Subscribe to discovery responses before sending request
-        let mut response_rx = p2p::subscribe_to_announcement(announcement_types::DISCOVERY_RESPONSE)
-            .await
-            .context("Failed to subscribe to discovery responses")?;
+        let mut response_rx =
+            p2p::subscribe_to_announcement(announcement_types::DISCOVERY_RESPONSE)
+                .await
+                .context("Failed to subscribe to discovery responses")?;
 
         // Send discovery request
         let request_id = uuid::Uuid::now_v7().to_string();
@@ -146,9 +147,7 @@ impl LiveGarden {
     /// Fallback when UDP discovery isn't available (e.g., firewall issues)
     pub async fn discover(initial_endpoint: &str) -> Result<Self> {
         let start = Instant::now();
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
         // Query topology from initial stone
         let url = format!("{}/api/v1/garden", initial_endpoint);
@@ -231,10 +230,7 @@ impl LiveGarden {
     /// Auto-discover using best available method
     ///
     /// Tries UDP discovery first, falls back to HTTP topology if provided.
-    pub async fn auto_discover(
-        timeout: Duration,
-        fallback_endpoint: Option<&str>,
-    ) -> Result<Self> {
+    pub async fn auto_discover(timeout: Duration, fallback_endpoint: Option<&str>) -> Result<Self> {
         // Try UDP discovery first
         match Self::discover_udp(timeout).await {
             Ok(garden) if !garden.stones.is_empty() => {
@@ -367,12 +363,12 @@ impl Stone {
             .send()
             .await
             .with_context(|| format!("GET {} failed", url))?;
-        
+
         let status = response.status();
         if !status.is_success() {
             anyhow::bail!("GET {} returned {}", url, status.as_u16());
         }
-        
+
         let resp = response
             .json()
             .await
@@ -396,12 +392,12 @@ impl Stone {
             .send()
             .await
             .with_context(|| format!("POST {} failed", url))?;
-        
+
         let status = response.status();
         if !status.is_success() {
             anyhow::bail!("POST {} returned {}", url, status.as_u16());
         }
-        
+
         let resp = response
             .json()
             .await
@@ -424,12 +420,12 @@ impl Stone {
             .send()
             .await
             .with_context(|| format!("DELETE {} failed", url))?;
-        
+
         let status = response.status();
         if !status.is_success() {
             anyhow::bail!("DELETE {} returned {}", url, status.as_u16());
         }
-        
+
         let resp = response
             .json()
             .await
@@ -452,12 +448,17 @@ impl Stone {
             .send()
             .await
             .with_context(|| format!("DELETE {} failed", url))?;
-        
+
         Ok(response.status().as_u16())
     }
 
     /// HTTP PUT with raw bytes
-    pub async fn put_bytes(&self, path: &str, content_type: &str, body: Vec<u8>) -> Result<serde_json::Value> {
+    pub async fn put_bytes(
+        &self,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<serde_json::Value> {
         let url = format!("{}{}", self.endpoint, path);
         let response = self
             .client
@@ -467,12 +468,12 @@ impl Stone {
             .send()
             .await
             .with_context(|| format!("PUT {} failed", url))?;
-        
+
         let status = response.status();
         if !status.is_success() {
             anyhow::bail!("PUT {} returned {}", url, status.as_u16());
         }
-        
+
         let resp = response
             .json()
             .await
@@ -490,12 +491,12 @@ impl Stone {
             .send()
             .await
             .with_context(|| format!("GET {} failed", url))?;
-        
+
         let status = response.status();
         if !status.is_success() {
             anyhow::bail!("GET {} returned {}", url, status.as_u16());
         }
-        
+
         let bytes = response
             .bytes()
             .await
@@ -517,7 +518,7 @@ impl Stone {
         let os = health
             .get("os")
             .and_then(|v| v.as_str())
-            .unwrap_or("linux")  // Default to Linux for older versions
+            .unwrap_or("linux") // Default to Linux for older versions
             .to_string();
 
         let arch = health

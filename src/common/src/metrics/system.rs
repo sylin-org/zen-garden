@@ -1,9 +1,12 @@
+use crate::{
+    format_bytes, format_uptime, AiRuntime, CpuMetrics, DiskMetrics, DiskType, GpuInfo,
+    InterfaceMetrics, MemoryMetrics, NetworkMetrics, StoneResources, StorageMetrics,
+};
 use anyhow::{Context, Result};
-use sysinfo::{Networks, System};
 #[cfg(not(target_os = "windows"))]
 use std::fs;
 use std::process::Command;
-use crate::{format_bytes, format_uptime, AiRuntime, CpuMetrics, DiskMetrics, DiskType, GpuInfo, InterfaceMetrics, MemoryMetrics, NetworkMetrics, StoneResources, StorageMetrics};
+use sysinfo::{Networks, System};
 
 /// Collect CPU model and features from /proc/cpuinfo (Linux) or WMI (Windows)
 pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
@@ -11,7 +14,7 @@ pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
     {
         get_cpu_info_windows()
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         get_cpu_info_linux()
@@ -20,8 +23,7 @@ pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
 
 #[cfg(not(target_os = "windows"))]
 fn get_cpu_info_linux() -> Result<(String, Vec<String>, String)> {
-    let cpuinfo = fs::read_to_string("/proc/cpuinfo")
-        .context("Failed to read /proc/cpuinfo")?;
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo").context("Failed to read /proc/cpuinfo")?;
 
     let mut model_name = String::from("Unknown");
     let mut features = Vec::new();
@@ -57,45 +59,82 @@ fn get_cpu_info_windows() -> Result<(String, Vec<String>, String)> {
     let mut model_name = String::from("Unknown");
     let architecture = std::env::consts::ARCH.to_string();
     let mut features = Vec::new();
-    
+
     // Get CPU model name from WMI
     let output = Command::new("powershell")
-        .args(["-Command", "Get-WmiObject -Class Win32_Processor | Select-Object -ExpandProperty Name"])
+        .args([
+            "-Command",
+            "Get-WmiObject -Class Win32_Processor | Select-Object -ExpandProperty Name",
+        ])
         .output();
-    
+
     if let Ok(output) = output {
         if let Ok(name) = String::from_utf8(output.stdout) {
             model_name = name.trim().to_string();
         }
     }
-    
+
     // Detect CPU features using CPUID - is_x86_feature_detected! is safe
     {
         // Check basic features
-        if is_x86_feature_detected!("sse") { features.push("sse".to_string()); }
-        if is_x86_feature_detected!("sse2") { features.push("sse2".to_string()); }
-        if is_x86_feature_detected!("sse3") { features.push("sse3".to_string()); }
-        if is_x86_feature_detected!("ssse3") { features.push("ssse3".to_string()); }
-        if is_x86_feature_detected!("sse4.1") { features.push("sse4_1".to_string()); }
-        if is_x86_feature_detected!("sse4.2") { features.push("sse4_2".to_string()); }
-        if is_x86_feature_detected!("avx") { features.push("avx".to_string()); }
-        if is_x86_feature_detected!("avx2") { features.push("avx2".to_string()); }
-        if is_x86_feature_detected!("fma") { features.push("fma".to_string()); }
-        if is_x86_feature_detected!("bmi1") { features.push("bmi1".to_string()); }
-        if is_x86_feature_detected!("bmi2") { features.push("bmi2".to_string()); }
-        if is_x86_feature_detected!("aes") { features.push("aes".to_string()); }
-        if is_x86_feature_detected!("avx512f") { features.push("avx512f".to_string()); }
-        if is_x86_feature_detected!("avx512bw") { features.push("avx512bw".to_string()); }
-        if is_x86_feature_detected!("avx512cd") { features.push("avx512cd".to_string()); }
-        if is_x86_feature_detected!("avx512dq") { features.push("avx512dq".to_string()); }
-        if is_x86_feature_detected!("avx512vl") { features.push("avx512vl".to_string()); }
+        if is_x86_feature_detected!("sse") {
+            features.push("sse".to_string());
+        }
+        if is_x86_feature_detected!("sse2") {
+            features.push("sse2".to_string());
+        }
+        if is_x86_feature_detected!("sse3") {
+            features.push("sse3".to_string());
+        }
+        if is_x86_feature_detected!("ssse3") {
+            features.push("ssse3".to_string());
+        }
+        if is_x86_feature_detected!("sse4.1") {
+            features.push("sse4_1".to_string());
+        }
+        if is_x86_feature_detected!("sse4.2") {
+            features.push("sse4_2".to_string());
+        }
+        if is_x86_feature_detected!("avx") {
+            features.push("avx".to_string());
+        }
+        if is_x86_feature_detected!("avx2") {
+            features.push("avx2".to_string());
+        }
+        if is_x86_feature_detected!("fma") {
+            features.push("fma".to_string());
+        }
+        if is_x86_feature_detected!("bmi1") {
+            features.push("bmi1".to_string());
+        }
+        if is_x86_feature_detected!("bmi2") {
+            features.push("bmi2".to_string());
+        }
+        if is_x86_feature_detected!("aes") {
+            features.push("aes".to_string());
+        }
+        if is_x86_feature_detected!("avx512f") {
+            features.push("avx512f".to_string());
+        }
+        if is_x86_feature_detected!("avx512bw") {
+            features.push("avx512bw".to_string());
+        }
+        if is_x86_feature_detected!("avx512cd") {
+            features.push("avx512cd".to_string());
+        }
+        if is_x86_feature_detected!("avx512dq") {
+            features.push("avx512dq".to_string());
+        }
+        if is_x86_feature_detected!("avx512vl") {
+            features.push("avx512vl".to_string());
+        }
     }
-    
+
     Ok((model_name, features, architecture))
 }
 
 /// Collect fast metrics (CPU, memory, uptime)
-/// 
+///
 /// Fast collection suitable for high-frequency polling (5s intervals).
 /// Only accesses in-memory kernel structures, no I/O.
 pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
@@ -137,13 +176,13 @@ pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
 }
 
 /// Collect storage metrics for all mounted disks (slower, involves filesystem stat calls)
-/// 
+///
 /// Suitable for lower-frequency polling (30s intervals).
 /// Performs stat syscalls on mount points which may be slow on network mounts.
 /// Returns complete storage inventory with live usage data.
 pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
-    
+
     let mut storage = Vec::new();
     for disk in disks.iter() {
         let total = disk.total_space();
@@ -154,9 +193,9 @@ pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
         } else {
             0.0
         };
-        
+
         let mount_point = disk.mount_point().to_string_lossy().to_string();
-        
+
         // Detect disk type from mount point
         let disk_type = detect_disk_type_for_mount(&mount_point)
             .and_then(|s| match s.as_str() {
@@ -166,14 +205,14 @@ pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
                 _ => None,
             })
             .unwrap_or(DiskType::Unknown);
-        
+
         // Extract identifier from mount point or use mount point
         let identifier = if let Some(name) = disk.name().to_str() {
             name.to_string()
         } else {
             mount_point.clone()
         };
-        
+
         storage.push(StorageMetrics {
             identifier,
             mount_point,
@@ -185,11 +224,11 @@ pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
             filesystem: disk.file_system().to_string_lossy().to_string(),
         });
     }
-    
+
     if storage.is_empty() {
         anyhow::bail!("No storage devices found");
     }
-    
+
     Ok(storage)
 }
 
@@ -252,8 +291,12 @@ pub fn calculate_network_rate(
         return current.clone();
     }
 
-    let rx_delta = current.total_rx_bytes.saturating_sub(previous.total_rx_bytes);
-    let tx_delta = current.total_tx_bytes.saturating_sub(previous.total_tx_bytes);
+    let rx_delta = current
+        .total_rx_bytes
+        .saturating_sub(previous.total_rx_bytes);
+    let tx_delta = current
+        .total_tx_bytes
+        .saturating_sub(previous.total_tx_bytes);
 
     let rx_per_sec = (rx_delta as f64 / elapsed_secs) as u64;
     let tx_per_sec = (tx_delta as f64 / elapsed_secs) as u64;
@@ -270,7 +313,7 @@ pub fn calculate_network_rate(
 }
 
 /// Collect all host-level resource metrics (combined fast + slow)
-/// 
+///
 /// Use this for one-shot collection. For continuous monitoring, prefer
 /// separate `get_fast_metrics()` and `get_storage_metrics()` at different intervals.
 pub fn collect_stone_resources() -> Result<StoneResources> {
@@ -361,7 +404,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
     Ok(StoneResources {
         cpu,
         memory,
-        storage: vec![],  // Legacy function - use get_storage_metrics() instead
+        storage: vec![], // Legacy function - use get_storage_metrics() instead
         uptime_seconds,
         uptime_friendly,
     })
@@ -433,22 +476,22 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
 /// Detect GPU hardware
 pub fn detect_gpus() -> Vec<GpuInfo> {
     let mut gpus = Vec::new();
-    
+
     // Try NVIDIA detection first (most common for AI workloads)
     if let Ok(nvidia_gpus) = detect_nvidia_gpus() {
         gpus.extend(nvidia_gpus);
     }
-    
+
     // Try AMD detection
     if let Ok(amd_gpus) = detect_amd_gpus() {
         gpus.extend(amd_gpus);
     }
-    
+
     // Try Intel detection
     if let Ok(intel_gpus) = detect_intel_gpus() {
         gpus.extend(intel_gpus);
     }
-    
+
     // If nothing detected but we're on Windows, try DirectX/DXGI detection
     #[cfg(target_os = "windows")]
     {
@@ -458,7 +501,7 @@ pub fn detect_gpus() -> Vec<GpuInfo> {
             }
         }
     }
-    
+
     // Detect actual AI runtime installations for each GPU
     for gpu in &mut gpus {
         // Detect runtime and convert directly to dual-format strings
@@ -503,14 +546,14 @@ fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>> {
     let output = Command::new("nvidia-smi")
         .args([
             "--query-gpu=name,memory.total",
-            "--format=csv,noheader,nounits"
+            "--format=csv,noheader,nounits",
         ])
         .output()?;
-    
+
     if !output.status.success() {
         anyhow::bail!("nvidia-smi failed");
     }
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let gpus = stdout
         .lines()
@@ -519,12 +562,12 @@ fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>> {
             if parts.len() >= 2 {
                 let model = parts[0].to_string();
                 let vram_mb = parts[1].parse::<u64>().ok();
-                
+
                 let mut capabilities = vec!["cuda".to_string(), "vulkan".to_string()];
                 if cfg!(target_os = "windows") {
                     capabilities.push("directml".to_string());
                 }
-                
+
                 Some(GpuInfo {
                     vendor: "NVIDIA".to_string(),
                     model,
@@ -537,15 +580,13 @@ fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>> {
             }
         })
         .collect();
-    
+
     Ok(gpus)
 }
 
 fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
     // Try rocm-smi first
-    if let Ok(output) = Command::new("rocm-smi")
-        .arg("--showproductname")
-        .output() {
+    if let Ok(output) = Command::new("rocm-smi").arg("--showproductname").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let gpus: Vec<GpuInfo> = stdout
@@ -553,12 +594,12 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                 .filter(|line| line.contains("Card series"))
                 .filter_map(|line| {
                     let model = line.split(':').nth(1)?.trim().to_string();
-                    
+
                     let mut capabilities = vec!["rocm".to_string(), "vulkan".to_string()];
                     if cfg!(target_os = "windows") {
                         capabilities.push("directml".to_string());
                     }
-                    
+
                     Some(GpuInfo {
                         vendor: "AMD".to_string(),
                         model,
@@ -568,13 +609,13 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                     })
                 })
                 .collect();
-            
+
             if !gpus.is_empty() {
                 return Ok(gpus);
             }
         }
     }
-    
+
     // Fallback: check lspci on Linux
     #[cfg(not(target_os = "windows"))]
     {
@@ -583,13 +624,17 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
             let gpus: Vec<GpuInfo> = stdout
                 .lines()
                 .filter(|line| line.contains("VGA") || line.contains("3D"))
-                .filter(|line| line.to_lowercase().contains("amd") || line.to_lowercase().contains("radeon"))
+                .filter(|line| {
+                    line.to_lowercase().contains("amd") || line.to_lowercase().contains("radeon")
+                })
                 .map(|line| {
-                    let model = line.split(':').last()
+                    let model = line
+                        .split(':')
+                        .last()
                         .unwrap_or("AMD GPU")
                         .trim()
                         .to_string();
-                    
+
                     GpuInfo {
                         vendor: "AMD".to_string(),
                         model,
@@ -599,13 +644,13 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                     }
                 })
                 .collect();
-            
+
             if !gpus.is_empty() {
                 return Ok(gpus);
             }
         }
     }
-    
+
     anyhow::bail!("No AMD GPUs detected")
 }
 
@@ -619,11 +664,13 @@ fn detect_intel_gpus() -> Result<Vec<GpuInfo>> {
                 .filter(|line| line.contains("VGA") || line.contains("3D"))
                 .filter(|line| line.to_lowercase().contains("intel"))
                 .map(|line| {
-                    let model = line.split(':').last()
+                    let model = line
+                        .split(':')
+                        .last()
                         .unwrap_or("Intel GPU")
                         .trim()
                         .to_string();
-                    
+
                     GpuInfo {
                         vendor: "Intel".to_string(),
                         model,
@@ -633,13 +680,13 @@ fn detect_intel_gpus() -> Result<Vec<GpuInfo>> {
                     }
                 })
                 .collect();
-            
+
             if !gpus.is_empty() {
                 return Ok(gpus);
             }
         }
     }
-    
+
     anyhow::bail!("No Intel GPUs detected")
 }
 
@@ -653,11 +700,11 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
             "Get-WmiObject Win32_VideoController | Select-Object Name, CompanionRAM, PNPDeviceID, CompanionCompatibility | ConvertTo-Json"
         ])
         .output()?;
-    
+
     if !output.status.success() {
         anyhow::bail!("PowerShell GPU query failed");
     }
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Get accurate VRAM using DXGI (native DirectX API - most reliable)
@@ -679,51 +726,70 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
             vec![&json]
         };
 
-        let gpus: Vec<GpuInfo> = gpu_array.iter()
-        .filter_map(|gpu| {
-            let name = gpu["Name"].as_str()?.to_string();
-            let pnp_id = gpu["PNPDeviceID"].as_str().unwrap_or("");
-            let companion_compat = gpu["CompanionCompatibility"].as_str().unwrap_or("");
+        let gpus: Vec<GpuInfo> = gpu_array
+            .iter()
+            .filter_map(|gpu| {
+                let name = gpu["Name"].as_str()?.to_string();
+                let pnp_id = gpu["PNPDeviceID"].as_str().unwrap_or("");
+                let companion_compat = gpu["CompanionCompatibility"].as_str().unwrap_or("");
 
-            // Filter out non-compute GPUs:
-            // - USB devices (DisplayLink, etc.)
-            // - Microsoft Basic Display Companion
-            // - Virtual/software renderers
-            if pnp_id.starts_with("USB\\") {
-                tracing::debug!("Skipping USB display Companion: {}", name);
-                return None;
-            }
-            if name.contains("DisplayLink") || name.contains("Basic Display") || name.contains("Microsoft Basic") {
-                tracing::debug!("Skipping virtual/display-only Companion: {}", name);
-                return None;
-            }
-
-            let vram_bytes = gpu["CompanionRAM"].as_u64();
-            let mut vram_mb = vram_bytes.map(|b| b / 1024 / 1024);
-
-            // If WMI CompanionRAM is unreliable, try to get from enhanced WMI detection
-            // Trigger fallback if: None, < 1GB, or 4000-4096 MB (indicates 32-bit truncation at 4GB)
-            // Try both exact and normalized name matching
-            let needs_fallback = vram_mb.is_none()
-                || vram_mb.unwrap() < 1024
-                || (vram_mb.unwrap() >= 4000 && vram_mb.unwrap() <= 4096);
-
-            if needs_fallback {
-                let normalized_name = normalize_gpu_name(&name);
-                if let Some(enhanced_vram) = wmi_vram.get(&name)
-                    .or_else(|| wmi_vram.get(&normalized_name)) {
-                    vram_mb = Some(*enhanced_vram);
+                // Filter out non-compute GPUs:
+                // - USB devices (DisplayLink, etc.)
+                // - Microsoft Basic Display Companion
+                // - Virtual/software renderers
+                if pnp_id.starts_with("USB\\") {
+                    tracing::debug!("Skipping USB display Companion: {}", name);
+                    return None;
                 }
-            }
-            
-            // Detect vendor and capabilities from name and compatibility
-            let name_lower = name.to_lowercase();
-            let compat_lower = companion_compat.to_lowercase();
-            
-            let (vendor, capabilities): (&str, Vec<String>) = 
-                if name_lower.contains("nvidia") || name_lower.contains("geforce") || name_lower.contains("quadro") || name_lower.contains("rtx") {
-                    ("NVIDIA", vec!["cuda".to_string(), "vulkan".to_string(), "directml".to_string()])
-                } else if name_lower.contains("amd") || name_lower.contains("radeon") || compat_lower.contains("advanced micro devices") {
+                if name.contains("DisplayLink")
+                    || name.contains("Basic Display")
+                    || name.contains("Microsoft Basic")
+                {
+                    tracing::debug!("Skipping virtual/display-only Companion: {}", name);
+                    return None;
+                }
+
+                let vram_bytes = gpu["CompanionRAM"].as_u64();
+                let mut vram_mb = vram_bytes.map(|b| b / 1024 / 1024);
+
+                // If WMI CompanionRAM is unreliable, try to get from enhanced WMI detection
+                // Trigger fallback if: None, < 1GB, or 4000-4096 MB (indicates 32-bit truncation at 4GB)
+                // Try both exact and normalized name matching
+                let needs_fallback = vram_mb.is_none()
+                    || vram_mb.unwrap() < 1024
+                    || (vram_mb.unwrap() >= 4000 && vram_mb.unwrap() <= 4096);
+
+                if needs_fallback {
+                    let normalized_name = normalize_gpu_name(&name);
+                    if let Some(enhanced_vram) = wmi_vram
+                        .get(&name)
+                        .or_else(|| wmi_vram.get(&normalized_name))
+                    {
+                        vram_mb = Some(*enhanced_vram);
+                    }
+                }
+
+                // Detect vendor and capabilities from name and compatibility
+                let name_lower = name.to_lowercase();
+                let compat_lower = companion_compat.to_lowercase();
+
+                let (vendor, capabilities): (&str, Vec<String>) = if name_lower.contains("nvidia")
+                    || name_lower.contains("geforce")
+                    || name_lower.contains("quadro")
+                    || name_lower.contains("rtx")
+                {
+                    (
+                        "NVIDIA",
+                        vec![
+                            "cuda".to_string(),
+                            "vulkan".to_string(),
+                            "directml".to_string(),
+                        ],
+                    )
+                } else if name_lower.contains("amd")
+                    || name_lower.contains("radeon")
+                    || compat_lower.contains("advanced micro devices")
+                {
                     ("AMD", vec!["vulkan".to_string(), "directml".to_string()])
                 } else if name_lower.contains("intel") && pnp_id.starts_with("PCI\\") {
                     ("Intel", vec!["vulkan".to_string(), "directml".to_string()])
@@ -735,22 +801,22 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
                         return None; // Not a real GPU
                     }
                 };
-            
-            Some(GpuInfo {
-                vendor: vendor.to_string(),
-                model: name,
-                vram_mb,
-                capabilities,
-                ai_runtimes: Vec::new(),
+
+                Some(GpuInfo {
+                    vendor: vendor.to_string(),
+                    model: name,
+                    vram_mb,
+                    capabilities,
+                    ai_runtimes: Vec::new(),
+                })
             })
-        })
-        .collect();
-        
+            .collect();
+
         if !gpus.is_empty() {
             return Ok(gpus);
         }
     }
-    
+
     anyhow::bail!("No compute-capable GPUs detected")
 }
 
@@ -827,10 +893,8 @@ fn get_vram_from_wmi() -> std::collections::HashMap<String, u64> {
                 };
 
                 for gpu in gpu_array {
-                    if let (Some(name), Some(vram)) = (
-                        gpu["Name"].as_str(),
-                        gpu["VramMB"].as_u64()
-                    ) {
+                    if let (Some(name), Some(vram)) = (gpu["Name"].as_str(), gpu["VramMB"].as_u64())
+                    {
                         // Only add if VRAM is reasonable (> 0)
                         if vram > 0 {
                             let normalized = normalize_gpu_name(name);
@@ -921,7 +985,10 @@ fn get_vram_from_dxgi() -> std::collections::HashMap<String, u64> {
     }
 
     if !vram_map.is_empty() {
-        tracing::info!("DXGI detected {} GPU(s) with accurate VRAM data", vram_map.len() / 2);
+        tracing::info!(
+            "DXGI detected {} GPU(s) with accurate VRAM data",
+            vram_map.len() / 2
+        );
     }
 
     vram_map
@@ -932,7 +999,7 @@ fn get_vram_from_dxgi() -> std::collections::HashMap<String, u64> {
 fn detect_ai_runtime(vendor: &str, capabilities: &[String]) -> Option<AiRuntime> {
     let mut runtime = AiRuntime::default();
     let mut has_any = false;
-    
+
     // NVIDIA: Check for CUDA toolkit installation
     if vendor == "NVIDIA" || capabilities.iter().any(|c| c == "cuda") {
         if let Some(cuda_version) = detect_cuda_toolkit() {
@@ -940,7 +1007,7 @@ fn detect_ai_runtime(vendor: &str, capabilities: &[String]) -> Option<AiRuntime>
             has_any = true;
         }
     }
-    
+
     // AMD: Check for ROCm installation
     if vendor == "AMD" || capabilities.iter().any(|c| c == "rocm") {
         if let Some(rocm_version) = detect_rocm_installation() {
@@ -948,7 +1015,7 @@ fn detect_ai_runtime(vendor: &str, capabilities: &[String]) -> Option<AiRuntime>
             has_any = true;
         }
     }
-    
+
     // Windows: Check for DirectML (part of Windows ML)
     #[cfg(target_os = "windows")]
     {
@@ -957,14 +1024,13 @@ fn detect_ai_runtime(vendor: &str, capabilities: &[String]) -> Option<AiRuntime>
             has_any = true;
         }
     }
-    
+
     // Intel: Check for OpenVINO
-    if vendor == "Intel"
-        && detect_openvino() {
-            runtime.has_openvino = true;
-            has_any = true;
-        }
-    
+    if vendor == "Intel" && detect_openvino() {
+        runtime.has_openvino = true;
+        has_any = true;
+    }
+
     if has_any {
         Some(runtime)
     } else {
@@ -1005,23 +1071,19 @@ fn ai_runtime_to_strings(runtime: &AiRuntime) -> Vec<String> {
 /// Detect CUDA toolkit installation (not just driver)
 fn detect_cuda_toolkit() -> Option<String> {
     // Try nvcc --version (compiler presence indicates toolkit)
-    if let Ok(output) = Command::new("nvcc")
-        .arg("--version")
-        .output() {
+    if let Ok(output) = Command::new("nvcc").arg("--version").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // Parse version from: "Cuda compilation tools, release 12.2, V12.2.140"
             if let Some(line) = stdout.lines().find(|l| l.contains("release")) {
                 if let Some(version_part) = line.split("release").nth(1) {
-                    let version = version_part.trim().split(',').next()?
-                        .trim()
-                        .to_string();
+                    let version = version_part.trim().split(',').next()?.trim().to_string();
                     return Some(version);
                 }
             }
         }
     }
-    
+
     // Check environment variable (toolkit sets this)
     if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
         if !cuda_path.is_empty() {
@@ -1035,16 +1097,14 @@ fn detect_cuda_toolkit() -> Option<String> {
             return Some("installed".to_string());
         }
     }
-    
+
     None
 }
 
 /// Detect ROCm installation
 fn detect_rocm_installation() -> Option<String> {
     // Try rocm-smi --version
-    if let Ok(output) = Command::new("rocm-smi")
-        .arg("--version")
-        .output() {
+    if let Ok(output) = Command::new("rocm-smi").arg("--version").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = stdout.lines().find(|l| l.contains("version")) {
@@ -1055,7 +1115,7 @@ fn detect_rocm_installation() -> Option<String> {
             return Some("installed".to_string());
         }
     }
-    
+
     // Check for ROCm paths
     #[cfg(target_os = "linux")]
     {
@@ -1067,7 +1127,7 @@ fn detect_rocm_installation() -> Option<String> {
             return Some("installed".to_string());
         }
     }
-    
+
     None
 }
 
@@ -1076,15 +1136,16 @@ fn detect_rocm_installation() -> Option<String> {
 fn detect_directml() -> bool {
     // DirectML is part of Windows 10 1903+ and comes with DirectX 12
     // Check if DirectML.dll is available (shipped with Windows ML)
-    let system_dir = std::env::var("SystemRoot")
-        .unwrap_or_else(|_| "C:\\Windows".to_string());
-    
+    let system_dir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+
     let directml_paths = [
         format!("{}\\System32\\DirectML.dll", system_dir),
         format!("{}\\SysWOW64\\DirectML.dll", system_dir),
     ];
-    
-    directml_paths.iter().any(|path| std::path::Path::new(path).exists())
+
+    directml_paths
+        .iter()
+        .any(|path| std::path::Path::new(path).exists())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1099,7 +1160,7 @@ fn detect_openvino() -> bool {
     if std::env::var("INTEL_OPENVINO_DIR").is_ok() {
         return true;
     }
-    
+
     // Check common installation paths
     #[cfg(target_os = "windows")]
     {
@@ -1107,25 +1168,29 @@ fn detect_openvino() -> bool {
             "C:\\Program Files (x86)\\Intel\\openvino",
             "C:\\Program Files\\Intel\\openvino",
         ];
-        if common_paths.iter().any(|p| std::path::Path::new(p).exists()) {
+        if common_paths
+            .iter()
+            .any(|p| std::path::Path::new(p).exists())
+        {
             return true;
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
-        let home_openvino = std::env::var("HOME").ok()
+        let home_openvino = std::env::var("HOME")
+            .ok()
             .map(|h| format!("{}/intel/openvino", h))
             .unwrap_or_default();
-        let common_paths = [
-            "/opt/intel/openvino",
-            home_openvino.as_str(),
-        ];
-        if common_paths.iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists()) {
+        let common_paths = ["/opt/intel/openvino", home_openvino.as_str()];
+        if common_paths
+            .iter()
+            .any(|p| !p.is_empty() && std::path::Path::new(p).exists())
+        {
             return true;
         }
     }
-    
+
     false
 }
 
@@ -1135,29 +1200,30 @@ pub fn detect_os_version() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
-            .args(["-Command", 
-                "(Get-WmiObject -Class Win32_OperatingSystem).Caption"])
+            .args([
+                "-Command",
+                "(Get-WmiObject -Class Win32_OperatingSystem).Caption",
+            ])
             .output()
             .ok()?;
-        String::from_utf8(output.stdout).ok()
+        String::from_utf8(output.stdout)
+            .ok()
             .map(|s| s.trim().to_string())
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         // Try /etc/os-release first
         if let Ok(content) = fs::read_to_string("/etc/os-release") {
             for line in content.lines() {
                 if line.starts_with("PRETTY_NAME=") {
-                    return Some(line.split('=').nth(1)?
-                        .trim_matches('"')
-                        .to_string());
+                    return Some(line.split('=').nth(1)?.trim_matches('"').to_string());
                 }
             }
         }
         None
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         None
@@ -1169,24 +1235,25 @@ pub fn detect_kernel_version() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
-            .args(["-Command", 
-                "(Get-WmiObject -Class Win32_OperatingSystem).Version"])
+            .args([
+                "-Command",
+                "(Get-WmiObject -Class Win32_OperatingSystem).Version",
+            ])
             .output()
             .ok()?;
-        String::from_utf8(output.stdout).ok()
+        String::from_utf8(output.stdout)
+            .ok()
             .map(|s| s.trim().to_string())
     }
-    
+
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("uname")
-            .arg("-r")
-            .output()
-            .ok()?;
-        String::from_utf8(output.stdout).ok()
+        let output = Command::new("uname").arg("-r").output().ok()?;
+        String::from_utf8(output.stdout)
+            .ok()
             .map(|s| s.trim().to_string())
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         None
@@ -1200,16 +1267,17 @@ pub fn detect_swap() -> Option<u64> {
         if let Ok(content) = fs::read_to_string("/proc/meminfo") {
             for line in content.lines() {
                 if line.starts_with("SwapTotal:") {
-                    return line.split_whitespace()
+                    return line
+                        .split_whitespace()
                         .nth(1)
                         .and_then(|s| s.parse::<u64>().ok())
-                        .map(|kb| kb / 1024);  // Convert kB to MB
+                        .map(|kb| kb / 1024); // Convert kB to MB
                 }
             }
         }
         None
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
@@ -1217,10 +1285,11 @@ pub fn detect_swap() -> Option<u64> {
                 "(Get-WmiObject -Class Win32_PageFileUsage | Measure-Object -Property AllocatedBaseSize -Sum).Sum"])
             .output()
             .ok()?;
-        String::from_utf8(output.stdout).ok()
+        String::from_utf8(output.stdout)
+            .ok()
             .and_then(|s| s.trim().parse::<u64>().ok())
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         None
@@ -1378,7 +1447,10 @@ fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)
         let version = if let Some(tag) = image.split(':').nth(1) {
             // Extract version like "rocm5.7" ? "5.7"
             if let Some(rocm_part) = tag.split('_').find(|s| s.starts_with("rocm")) {
-                rocm_part.trim_start_matches("rocm").split('_').next()
+                rocm_part
+                    .trim_start_matches("rocm")
+                    .split('_')
+                    .next()
                     .filter(|v| !v.is_empty())
                     .map(|v| v.to_string())
             } else {
@@ -1395,16 +1467,15 @@ fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)
     if image_lower.contains("cuda") {
         let version = if let Some(tag) = image.split(':').nth(1) {
             // Extract version like "12.2.0-base" ? "12.2"
-            tag.split('-').next()
-                .map(|v| {
-                    // Take major.minor from semver (12.2.0 ? 12.2)
-                    let parts: Vec<&str> = v.split('.').collect();
-                    if parts.len() >= 2 {
-                        format!("{}.{}", parts[0], parts[1])
-                    } else {
-                        v.to_string()
-                    }
-                })
+            tag.split('-').next().map(|v| {
+                // Take major.minor from semver (12.2.0 ? 12.2)
+                let parts: Vec<&str> = v.split('.').collect();
+                if parts.len() >= 2 {
+                    format!("{}.{}", parts[0], parts[1])
+                } else {
+                    v.to_string()
+                }
+            })
         } else {
             None
         };
@@ -1413,12 +1484,16 @@ fn extract_ai_runtime_from_image(image: &str) -> Option<(String, Option<String>)
     }
 
     // TensorFlow GPU images
-    if image_lower.contains("tensorflow") && (image_lower.contains("gpu") || image_lower.contains("cuda")) {
+    if image_lower.contains("tensorflow")
+        && (image_lower.contains("gpu") || image_lower.contains("cuda"))
+    {
         return Some(("tensorflow".to_string(), None));
     }
 
     // PyTorch GPU images (if not ROCm-specific)
-    if image_lower.contains("pytorch") && (image_lower.contains("gpu") || image_lower.contains("cuda")) {
+    if image_lower.contains("pytorch")
+        && (image_lower.contains("gpu") || image_lower.contains("cuda"))
+    {
         return Some(("pytorch".to_string(), None));
     }
 
@@ -1458,9 +1533,6 @@ mod tests {
         );
 
         // Non-AI image
-        assert_eq!(
-            extract_ai_runtime_from_image("nginx:latest"),
-            None
-        );
+        assert_eq!(extract_ai_runtime_from_image("nginx:latest"), None);
     }
 }

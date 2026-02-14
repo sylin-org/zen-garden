@@ -1,7 +1,7 @@
 //! Generic JSON file storage with atomic writes
 
-use super::atomic_file::{atomic_write_file, read_file, file_exists, delete_file};
-use crate::traits::persistence::{PersistenceProvider, PersistenceError};
+use super::atomic_file::{atomic_write_file, delete_file, file_exists, read_file};
+use crate::traits::persistence::{PersistenceError, PersistenceProvider};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -47,12 +47,11 @@ where
                 source: e,
             })?;
 
-        let data: T = serde_json::from_slice(&bytes).map_err(|e| {
-            PersistenceError::CorruptedData {
+        let data: T =
+            serde_json::from_slice(&bytes).map_err(|e| PersistenceError::CorruptedData {
                 path: self.file_path.display().to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         Ok(Some(data))
     }
@@ -99,9 +98,7 @@ mod tests {
     #[tokio::test]
     async fn test_json_storage_save_and_load() {
         let temp_dir = TempDir::new().unwrap();
-        let storage: JsonStorage<TestData> = JsonStorage::new(
-            temp_dir.path().join("test.json"),
-        );
+        let storage: JsonStorage<TestData> = JsonStorage::new(temp_dir.path().join("test.json"));
 
         let data = TestData {
             name: "test".into(),
@@ -120,9 +117,8 @@ mod tests {
     #[tokio::test]
     async fn test_json_storage_load_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
-        let storage: JsonStorage<TestData> = JsonStorage::new(
-            temp_dir.path().join("nonexistent.json"),
-        );
+        let storage: JsonStorage<TestData> =
+            JsonStorage::new(temp_dir.path().join("nonexistent.json"));
 
         let loaded = storage.load().await.unwrap();
         assert!(loaded.is_none());
@@ -131,9 +127,7 @@ mod tests {
     #[tokio::test]
     async fn test_json_storage_overwrite() {
         let temp_dir = TempDir::new().unwrap();
-        let storage: JsonStorage<TestData> = JsonStorage::new(
-            temp_dir.path().join("test.json"),
-        );
+        let storage: JsonStorage<TestData> = JsonStorage::new(temp_dir.path().join("test.json"));
 
         // First save
         let data1 = TestData {
@@ -157,9 +151,7 @@ mod tests {
     #[tokio::test]
     async fn test_json_storage_delete() {
         let temp_dir = TempDir::new().unwrap();
-        let storage: JsonStorage<TestData> = JsonStorage::new(
-            temp_dir.path().join("test.json"),
-        );
+        let storage: JsonStorage<TestData> = JsonStorage::new(temp_dir.path().join("test.json"));
 
         let data = TestData {
             name: "test".into(),
@@ -182,11 +174,16 @@ mod tests {
         let file_path = temp_dir.path().join("corrupted.json");
 
         // Write invalid JSON
-        tokio::fs::write(&file_path, b"{ invalid json }").await.unwrap();
+        tokio::fs::write(&file_path, b"{ invalid json }")
+            .await
+            .unwrap();
 
         let storage: JsonStorage<TestData> = JsonStorage::new(file_path);
         let result = storage.load().await;
 
-        assert!(matches!(result, Err(PersistenceError::CorruptedData { .. })));
+        assert!(matches!(
+            result,
+            Err(PersistenceError::CorruptedData { .. })
+        ));
     }
 }

@@ -9,10 +9,10 @@
 //! Metrics are collected on-demand from the system.
 //! If collection fails, a fallback with zero values is returned.
 
-use axum::{Json, extract::State};
-use garden_common::{MetricsSnapshot, StoneResources, CpuMetrics, MemoryMetrics, DiskMetrics};
 use crate::api::responses::ApiResponse;
 use crate::AppState;
+use axum::{extract::State, Json};
+use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, StoneResources};
 
 /// GET /metrics - Real-time system resource metrics
 ///
@@ -23,13 +23,16 @@ use crate::AppState;
 /// If metrics not yet collected, returns a fallback response with zero values.
 pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<MetricsSnapshot>> {
     let resources_guard = state.system_resources.read().await;
-    let resources = resources_guard.as_ref()
+    let resources = resources_guard
+        .as_ref()
         .cloned()
         .unwrap_or_else(create_fallback_resources);
     drop(resources_guard);
 
     // Convert primary storage mount to DiskMetrics for backward compatibility
-    let disk = resources.storage.iter()
+    let disk = resources
+        .storage
+        .iter()
         .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
         .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb))
         .map(|s| DiskMetrics {
@@ -42,25 +45,32 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
             used_friendly: garden_common::format_bytes(s.used_gb * 1024 * 1024 * 1024),
             available_friendly: garden_common::format_bytes(s.available_gb * 1024 * 1024 * 1024),
         })
-        .unwrap_or_else(|| create_fallback_resources().storage.first().cloned().map(|s| DiskMetrics {
-            total_bytes: s.total_gb * 1024 * 1024 * 1024,
-            used_bytes: s.used_gb * 1024 * 1024 * 1024,
-            available_bytes: s.available_gb * 1024 * 1024 * 1024,
-            used_percent: s.used_percent,
-            path: s.mount_point.clone(),
-            total_friendly: String::new(),
-            used_friendly: String::new(),
-            available_friendly: String::new(),
-        }).unwrap_or_else(|| DiskMetrics {
-            total_bytes: 0,
-            used_bytes: 0,
-            available_bytes: 0,
-            used_percent: 0.0,
-            path: "/".to_string(),
-            total_friendly: "0 B".to_string(),
-            used_friendly: "0 B".to_string(),
-            available_friendly: "0 B".to_string(),
-        }));
+        .unwrap_or_else(|| {
+            create_fallback_resources()
+                .storage
+                .first()
+                .cloned()
+                .map(|s| DiskMetrics {
+                    total_bytes: s.total_gb * 1024 * 1024 * 1024,
+                    used_bytes: s.used_gb * 1024 * 1024 * 1024,
+                    available_bytes: s.available_gb * 1024 * 1024 * 1024,
+                    used_percent: s.used_percent,
+                    path: s.mount_point.clone(),
+                    total_friendly: String::new(),
+                    used_friendly: String::new(),
+                    available_friendly: String::new(),
+                })
+                .unwrap_or_else(|| DiskMetrics {
+                    total_bytes: 0,
+                    used_bytes: 0,
+                    available_bytes: 0,
+                    used_percent: 0.0,
+                    path: "/".to_string(),
+                    total_friendly: "0 B".to_string(),
+                    used_friendly: "0 B".to_string(),
+                    available_friendly: "0 B".to_string(),
+                })
+        });
 
     let network = state.network_metrics_cache.read().await.clone();
 
@@ -97,7 +107,9 @@ fn create_fallback_resources() -> StoneResources {
             total_friendly: "0 B".to_string(),
             used_friendly: "0 B".to_string(),
             available_friendly: "0 B".to_string(),
-        },        storage: Vec::new(),        uptime_seconds: 0,
+        },
+        storage: Vec::new(),
+        uptime_seconds: 0,
         uptime_friendly: "0s".to_string(),
     }
 }

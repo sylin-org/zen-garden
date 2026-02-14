@@ -1,3 +1,3 @@
-pub mod v1;
-pub mod suggestions;
 pub mod responses;
+pub mod suggestions;
+pub mod v1;

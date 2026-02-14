@@ -14,7 +14,7 @@
 //! Uses the local SeedBankRegistry to find available seed banks and selects
 //! targets based on routing strategy. Implements failover if primary fails.
 
-use crate::domain::nurturing::{NurturingResult, ReplicationResult, build_memories_manifest};
+use crate::domain::nurturing::{build_memories_manifest, NurturingResult, ReplicationResult};
 use crate::infra::storage::SeedBankRegistry;
 use crate::AppState;
 use anyhow::{Context, Result};
@@ -66,7 +66,6 @@ pub enum RoutingStrategy {
     /// Use all available seed banks (redundant backup)
     All,
 }
-
 
 /// Configuration for the nurturing workflow
 #[derive(Debug, Clone)]
@@ -147,7 +146,9 @@ impl NurturingScheduler {
                 .iter()
                 .find(|o| o.name == offering_name || o.offering_id == offering_name)
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in registry", offering_name))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Offering '{}' not found in registry", offering_name)
+                })?
         };
         let offering_id = offering_entry.offering_id.clone();
         let actual_name = offering_entry.name.clone();
@@ -326,7 +327,9 @@ impl NurturingScheduler {
             RoutingStrategy::First => seed_banks.first().cloned().into_iter().collect(),
             RoutingStrategy::MostCapacity => {
                 let mut sorted = seed_banks.to_vec();
-                sorted.sort_by_key(|sb| std::cmp::Reverse(sb.capacity_bytes.saturating_sub(sb.used_bytes)));
+                sorted.sort_by_key(|sb| {
+                    std::cmp::Reverse(sb.capacity_bytes.saturating_sub(sb.used_bytes))
+                });
                 sorted.into_iter().take(1).collect()
             }
             RoutingStrategy::All => seed_banks.to_vec(),
@@ -395,7 +398,12 @@ impl NurturingScheduler {
     }
 
     /// Build human-readable summary
-    fn build_summary(&self, offering_name: &str, local_success: bool, replications: &[ReplicationAttempt]) -> String {
+    fn build_summary(
+        &self,
+        offering_name: &str,
+        local_success: bool,
+        replications: &[ReplicationAttempt],
+    ) -> String {
         let mut parts = Vec::new();
 
         if local_success {
@@ -408,12 +416,18 @@ impl NurturingScheduler {
         let failed_replications: Vec<_> = replications.iter().filter(|r| !r.success).collect();
 
         if !successful_replications.is_empty() {
-            let names: Vec<_> = successful_replications.iter().map(|r| r.seed_bank_name.as_str()).collect();
+            let names: Vec<_> = successful_replications
+                .iter()
+                .map(|r| r.seed_bank_name.as_str())
+                .collect();
             parts.push(format!("replicated to: {}", names.join(", ")));
         }
 
         if !failed_replications.is_empty() {
-            let names: Vec<_> = failed_replications.iter().map(|r| r.seed_bank_name.as_str()).collect();
+            let names: Vec<_> = failed_replications
+                .iter()
+                .map(|r| r.seed_bank_name.as_str())
+                .collect();
             parts.push(format!("replication failed: {}", names.join(", ")));
         }
 
@@ -428,7 +442,10 @@ impl NurturingScheduler {
 /// Trigger nurturing workflow for a specific offering
 ///
 /// This is the function called by the API endpoint when a timer fires.
-pub async fn trigger_nurturing(state: &AppState, offering_name: &str) -> Result<NurturingWorkflowResult> {
+pub async fn trigger_nurturing(
+    state: &AppState,
+    offering_name: &str,
+) -> Result<NurturingWorkflowResult> {
     let scheduler = NurturingScheduler::new(state.clone());
     scheduler.execute(offering_name).await
 }

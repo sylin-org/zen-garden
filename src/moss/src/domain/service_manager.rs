@@ -2,14 +2,14 @@
 //!
 //! Handles service operations: install, start, stop, remove, upgrade
 
-use anyhow::Result;
-use garden_common::events::{EventBus, DomainEvent, ServiceEvent};
-use garden_common::traits::job_executor::{JobExecutor, JobResult, JobExecutionError};
 use crate::infra::ContainerRuntime;
+use anyhow::Result;
 use async_trait::async_trait;
+use chrono::Utc;
+use garden_common::events::{DomainEvent, EventBus, ServiceEvent};
+use garden_common::traits::job_executor::{JobExecutionError, JobExecutor, JobResult};
 use serde_json::Value;
 use std::sync::Arc;
-use chrono::Utc;
 
 /// Service manager handles service lifecycle
 pub struct ServiceManager {
@@ -35,11 +35,14 @@ impl ServiceManager {
     /// Start a service
     pub async fn start_service(&self, service_name: &str) -> Result<()> {
         // Publish event
-        let _ = self.event_bus.publish(DomainEvent::Service(ServiceEvent::Started {
-            stone_name: self.stone_name.clone(),
-            service_name: service_name.to_string(),
-            timestamp: Utc::now(),
-        })).await;
+        let _ = self
+            .event_bus
+            .publish(DomainEvent::Service(ServiceEvent::Started {
+                stone_name: self.stone_name.clone(),
+                service_name: service_name.to_string(),
+                timestamp: Utc::now(),
+            }))
+            .await;
 
         self.container_runtime.start_service(service_name).await
     }
@@ -49,11 +52,14 @@ impl ServiceManager {
         self.container_runtime.stop_service(service_name).await?;
 
         // Publish event
-        let _ = self.event_bus.publish(DomainEvent::Service(ServiceEvent::Stopped {
-            stone_name: self.stone_name.clone(),
-            service_name: service_name.to_string(),
-            timestamp: Utc::now(),
-        })).await;
+        let _ = self
+            .event_bus
+            .publish(DomainEvent::Service(ServiceEvent::Stopped {
+                stone_name: self.stone_name.clone(),
+                service_name: service_name.to_string(),
+                timestamp: Utc::now(),
+            }))
+            .await;
 
         Ok(())
     }
@@ -63,11 +69,14 @@ impl ServiceManager {
         self.container_runtime.remove_service(service_name).await?;
 
         // Publish event
-        let _ = self.event_bus.publish(DomainEvent::Service(ServiceEvent::Removed {
-            stone_name: self.stone_name.clone(),
-            service_name: service_name.to_string(),
-            timestamp: Utc::now(),
-        })).await;
+        let _ = self
+            .event_bus
+            .publish(DomainEvent::Service(ServiceEvent::Removed {
+                stone_name: self.stone_name.clone(),
+                service_name: service_name.to_string(),
+                timestamp: Utc::now(),
+            }))
+            .await;
 
         Ok(())
     }
@@ -92,7 +101,9 @@ pub struct InstallServiceExecutor {
 
 impl InstallServiceExecutor {
     pub fn new(service_manager: Arc<ServiceManager>) -> Self {
-        Self { _service_manager: service_manager }
+        Self {
+            _service_manager: service_manager,
+        }
     }
 }
 
@@ -103,15 +114,22 @@ impl JobExecutor for InstallServiceExecutor {
     }
 
     async fn execute(&self, job_id: &str, input: Value) -> Result<JobResult, JobExecutionError> {
-        let service_name = input.get("service_name")
+        let service_name = input
+            .get("service_name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| JobExecutionError::InvalidInput("Missing service_name".into()))?;
 
-        let offering = input.get("offering")
+        let offering = input
+            .get("offering")
             .and_then(|v| v.as_str())
             .ok_or_else(|| JobExecutionError::InvalidInput("Missing offering".into()))?;
 
-        tracing::info!(job_id, service_name, offering, "Starting service installation");
+        tracing::info!(
+            job_id,
+            service_name,
+            offering,
+            "Starting service installation"
+        );
 
         // TODO: Implement full installation logic
         // For now, return success

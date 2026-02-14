@@ -6,10 +6,10 @@
 //! - Timeout handling
 //! - Both HTTP and HTTPS
 
+use super::command::DetectionResult;
+use crate::manifests::HttpProbeDetection;
 use anyhow::{Context, Result};
 use std::time::Duration;
-use crate::manifests::HttpProbeDetection;
-use super::command::DetectionResult;
 
 /// Detect service by probing HTTP endpoint
 ///
@@ -22,9 +22,7 @@ use super::command::DetectionResult;
 /// };
 /// let detected = detect_by_http_probe(&config).await?;
 /// ```
-pub async fn detect_by_http_probe(
-    config: &HttpProbeDetection,
-) -> Result<DetectionResult> {
+pub async fn detect_by_http_probe(config: &HttpProbeDetection) -> Result<DetectionResult> {
     tracing::debug!(url = %config.url, "Probing HTTP endpoint");
 
     let timeout = Duration::from_millis(config.timeout_ms.unwrap_or(2000));
@@ -53,8 +51,7 @@ pub async fn detect_by_http_probe(
                     version: None,
                     details: format!(
                         "HTTP status mismatch: expected {}, got {}",
-                        expected_status,
-                        status
+                        expected_status, status
                     ),
                 });
             }
@@ -96,12 +93,7 @@ async fn extract_version_from_response(response: &reqwest::Response) -> Option<S
     let headers = response.headers();
 
     // Common version header names
-    let version_headers = [
-        "x-version",
-        "server",
-        "x-powered-by",
-        "x-api-version",
-    ];
+    let version_headers = ["x-version", "server", "x-powered-by", "x-api-version"];
 
     for header_name in &version_headers {
         if let Some(value) = headers.get(*header_name) {
@@ -157,10 +149,7 @@ mod tests {
             extract_version_from_text("API version 2.1.0"),
             Some("2.1.0".into())
         );
-        assert_eq!(
-            extract_version_from_text("no version here"),
-            None
-        );
+        assert_eq!(extract_version_from_text("no version here"), None);
     }
 
     #[tokio::test]

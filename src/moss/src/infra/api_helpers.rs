@@ -2,11 +2,11 @@
 //!
 //! Common utilities for HTTP API handlers including error response creation.
 
+use crate::AppState;
 use axum::{http::StatusCode, Json};
 use garden_common::api_utils::ApiErrorResponse;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use crate::AppState;
 
 /// Create an error response for API handlers
 ///
@@ -49,4 +49,3 @@ pub fn require_docker(state: &AppState) -> Result<(), (StatusCode, Json<ApiError
     }
     Ok(())
 }
-

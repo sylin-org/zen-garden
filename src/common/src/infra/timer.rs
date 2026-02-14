@@ -245,7 +245,10 @@ impl PlatformTimer {
     /// Trigger a timer immediately (for testing)
     pub async fn trigger(&self, offering_name: &str) -> Result<TimerResult> {
         // Call the nurture API endpoint directly
-        let url = format!("{}/api/v1/nurturing/{}/trigger", self.api_base_url, offering_name);
+        let url = format!(
+            "{}/api/v1/nurturing/{}/trigger",
+            self.api_base_url, offering_name
+        );
 
         let client = reqwest::Client::new();
         let response = client.post(&url).send().await;
@@ -271,13 +274,18 @@ impl PlatformTimer {
     // ========================================================================
 
     #[cfg(target_os = "linux")]
-    async fn create_systemd_timer(&self, offering_name: &str, config: &TimerConfig) -> Result<TimerResult> {
+    async fn create_systemd_timer(
+        &self,
+        offering_name: &str,
+        config: &TimerConfig,
+    ) -> Result<TimerResult> {
         use tokio::process::Command;
 
         let timer_name = format!("zen-nurturing-{}", offering_name);
-        let description = config.description.clone().unwrap_or_else(|| {
-            format!("Garden nurturing timer for {}", offering_name)
-        });
+        let description = config
+            .description
+            .clone()
+            .unwrap_or_else(|| format!("Garden nurturing timer for {}", offering_name));
 
         // Timer unit content
         let timer_content = format!(
@@ -333,7 +341,10 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
         if !reload.status.success() {
             return Ok(TimerResult::failure(
                 offering_name,
-                &format!("systemctl daemon-reload failed: {}", String::from_utf8_lossy(&reload.stderr)),
+                &format!(
+                    "systemctl daemon-reload failed: {}",
+                    String::from_utf8_lossy(&reload.stderr)
+                ),
             ));
         }
 
@@ -347,7 +358,10 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
         if !enable.status.success() {
             return Ok(TimerResult::failure(
                 offering_name,
-                &format!("Failed to enable timer: {}", String::from_utf8_lossy(&enable.stderr)),
+                &format!(
+                    "Failed to enable timer: {}",
+                    String::from_utf8_lossy(&enable.stderr)
+                ),
             ));
         }
 
@@ -360,7 +374,11 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
 
         Ok(TimerResult::success(
             offering_name,
-            &format!("Timer {} created with {} interval", timer_name, config.systemd_interval()),
+            &format!(
+                "Timer {} created with {} interval",
+                timer_name,
+                config.systemd_interval()
+            ),
         ))
     }
 
@@ -400,9 +418,15 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
                 timer = timer_name,
                 "Removed systemd nurturing timer"
             );
-            Ok(TimerResult::success(offering_name, &format!("Timer {} removed", timer_name)))
+            Ok(TimerResult::success(
+                offering_name,
+                &format!("Timer {} removed", timer_name),
+            ))
         } else {
-            Ok(TimerResult::success(offering_name, "Timer not found (already removed)"))
+            Ok(TimerResult::success(
+                offering_name,
+                "Timer not found (already removed)",
+            ))
         }
     }
 
@@ -446,7 +470,11 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
     // ========================================================================
 
     #[cfg(target_os = "windows")]
-    async fn create_windows_task(&self, offering_name: &str, config: &TimerConfig) -> Result<TimerResult> {
+    async fn create_windows_task(
+        &self,
+        offering_name: &str,
+        config: &TimerConfig,
+    ) -> Result<TimerResult> {
         use tokio::process::Command;
 
         let task_name = format!("ZenGarden-Nurturing-{}", offering_name);
@@ -465,11 +493,16 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
             .args([
                 "/Create",
                 "/F", // Force overwrite if exists
-                "/SC", "MINUTE",
-                "/MO", &interval_minutes.to_string(),
-                "/TN", &task_name,
-                "/TR", &format!("cmd /c {}", trigger_command),
-                "/RL", "LIMITED", // Run with limited privileges
+                "/SC",
+                "MINUTE",
+                "/MO",
+                &interval_minutes.to_string(),
+                "/TN",
+                &task_name,
+                "/TR",
+                &format!("cmd /c {}", trigger_command),
+                "/RL",
+                "LIMITED", // Run with limited privileges
             ])
             .output()
             .await
@@ -492,7 +525,10 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
 
         Ok(TimerResult::success(
             offering_name,
-            &format!("Task {} created with {} minute interval", task_name, interval_minutes),
+            &format!(
+                "Task {} created with {} minute interval",
+                task_name, interval_minutes
+            ),
         ))
     }
 
@@ -514,12 +550,18 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
                 task = task_name,
                 "Removed Windows scheduled task"
             );
-            Ok(TimerResult::success(offering_name, &format!("Task {} removed", task_name)))
+            Ok(TimerResult::success(
+                offering_name,
+                &format!("Task {} removed", task_name),
+            ))
         } else {
             // Check if task simply didn't exist
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("does not exist") {
-                Ok(TimerResult::success(offering_name, "Task not found (already removed)"))
+                Ok(TimerResult::success(
+                    offering_name,
+                    "Task not found (already removed)",
+                ))
             } else {
                 Ok(TimerResult::failure(
                     offering_name,

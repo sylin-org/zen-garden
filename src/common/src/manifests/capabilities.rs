@@ -387,7 +387,10 @@ impl CapabilityTypeConfig {
 
     /// Check if check_updates operation is available
     pub fn can_check_updates(&self) -> bool {
-        self.check_updates.as_ref().map(|c| c.available).unwrap_or(false)
+        self.check_updates
+            .as_ref()
+            .map(|c| c.available)
+            .unwrap_or(false)
     }
 
     /// Check if upgrade operation is available

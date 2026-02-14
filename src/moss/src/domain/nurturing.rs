@@ -17,10 +17,10 @@
 
 use crate::domain::harvest::HarvestManifest;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use garden_common::storage::MemoriesOfferingManifest;
 use garden_common::manifests::Offering as OfferingManifest;
+use garden_common::storage::MemoriesOfferingManifest;
 use garden_common::types::Offering;
+use serde::{Deserialize, Serialize};
 
 /// A/B slot identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,13 +256,16 @@ impl NurturingIndex {
 
     /// Get mutable slots for an offering by ID
     pub fn get_mut(&mut self, offering_id: &str) -> Option<&mut OfferingSlots> {
-        self.offerings.iter_mut().find(|o| o.offering_id == offering_id)
+        self.offerings
+            .iter_mut()
+            .find(|o| o.offering_id == offering_id)
     }
 
     /// Get or create slots for an offering
     pub fn get_or_create(&mut self, offering_id: &str, offering_name: &str) -> &mut OfferingSlots {
         if !self.offerings.iter().any(|o| o.offering_id == offering_id) {
-            self.offerings.push(OfferingSlots::new(offering_id, offering_name));
+            self.offerings
+                .push(OfferingSlots::new(offering_id, offering_name));
         }
         self.offerings
             .iter_mut()
@@ -272,7 +275,11 @@ impl NurturingIndex {
 
     /// Remove slots for an offering
     pub fn remove(&mut self, offering_id: &str) -> Option<OfferingSlots> {
-        if let Some(pos) = self.offerings.iter().position(|o| o.offering_id == offering_id) {
+        if let Some(pos) = self
+            .offerings
+            .iter()
+            .position(|o| o.offering_id == offering_id)
+        {
             Some(self.offerings.remove(pos))
         } else {
             None
@@ -286,7 +293,10 @@ impl NurturingIndex {
 
     /// List all offerings with snapshots
     pub fn list_offerings(&self) -> Vec<&OfferingSlots> {
-        self.offerings.iter().filter(|o| o.has_snapshots()).collect()
+        self.offerings
+            .iter()
+            .filter(|o| o.has_snapshots())
+            .collect()
     }
 }
 
@@ -376,9 +386,9 @@ pub struct RemoteNurturingIndex {
     pub retention_slots: usize,
 }
 
-// ============================================================================ 
+// ============================================================================
 // Hydration Helpers
-// ============================================================================ 
+// ============================================================================
 
 /// Build a hydration manifest for a runtime offering.
 pub fn build_memories_manifest(
@@ -417,7 +427,9 @@ impl RemoteNurturingIndex {
 
     /// Get snapshots for a specific offering, sorted newest first
     pub fn get_for_offering(&self, offering_id: &str) -> Vec<&RemoteSnapshot> {
-        let mut snapshots: Vec<_> = self.snapshots.iter()
+        let mut snapshots: Vec<_> = self
+            .snapshots
+            .iter()
             .filter(|s| s.offering_id == offering_id)
             .collect();
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -427,7 +439,8 @@ impl RemoteNurturingIndex {
     /// Add a snapshot (maintains order by created_at, newest first)
     pub fn add(&mut self, snapshot: RemoteSnapshot) {
         self.snapshots.push(snapshot);
-        self.snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        self.snapshots
+            .sort_by(|a, b| b.created_at.cmp(&a.created_at));
     }
 
     /// Add a snapshot and enforce retention policy for that offering
@@ -444,7 +457,8 @@ impl RemoteNurturingIndex {
     /// Returns the pruned snapshots (for deletion from storage).
     pub fn prune_offering(&mut self, offering_id: &str) -> Vec<RemoteSnapshot> {
         // Get indices of snapshots for this offering, sorted by created_at (newest first)
-        let mut offering_indices: Vec<(usize, &RemoteSnapshot)> = self.snapshots
+        let mut offering_indices: Vec<(usize, &RemoteSnapshot)> = self
+            .snapshots
             .iter()
             .enumerate()
             .filter(|(_, s)| s.offering_id == offering_id)
@@ -477,7 +491,9 @@ impl RemoteNurturingIndex {
 
     /// Get all unique offering IDs in this index
     pub fn offering_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.snapshots.iter()
+        let mut ids: Vec<String> = self
+            .snapshots
+            .iter()
             .map(|s| s.offering_id.clone())
             .collect();
         ids.sort();
@@ -496,7 +512,11 @@ impl RemoteNurturingIndex {
 
     /// Remove a snapshot by harvest_id
     pub fn remove(&mut self, harvest_id: &str) -> Option<RemoteSnapshot> {
-        if let Some(pos) = self.snapshots.iter().position(|s| s.harvest_id == harvest_id) {
+        if let Some(pos) = self
+            .snapshots
+            .iter()
+            .position(|s| s.harvest_id == harvest_id)
+        {
             Some(self.snapshots.remove(pos))
         } else {
             None
@@ -554,30 +574,36 @@ mod tests {
         assert!(slots.previous().is_none());
 
         // Add first snapshot
-        slots.set(NurturingSlot::A, NurturingSnapshot {
-            slot: NurturingSlot::A,
-            offering_id: "test-id".into(),
-            offering_name: "test".into(),
-            harvest_id: "harvest-a".into(),
-            created_at: Utc::now(),
-            size_bytes: 100,
-            is_current: false, // will be set to true by set()
-        });
+        slots.set(
+            NurturingSlot::A,
+            NurturingSnapshot {
+                slot: NurturingSlot::A,
+                offering_id: "test-id".into(),
+                offering_name: "test".into(),
+                harvest_id: "harvest-a".into(),
+                created_at: Utc::now(),
+                size_bytes: 100,
+                is_current: false, // will be set to true by set()
+            },
+        );
 
         assert!(slots.current().is_some());
         assert_eq!(slots.current().unwrap().harvest_id, "harvest-a");
         assert!(slots.previous().is_none()); // only one slot filled
 
         // Add second snapshot
-        slots.set(NurturingSlot::B, NurturingSnapshot {
-            slot: NurturingSlot::B,
-            offering_id: "test-id".into(),
-            offering_name: "test".into(),
-            harvest_id: "harvest-b".into(),
-            created_at: Utc::now(),
-            size_bytes: 200,
-            is_current: false,
-        });
+        slots.set(
+            NurturingSlot::B,
+            NurturingSnapshot {
+                slot: NurturingSlot::B,
+                offering_id: "test-id".into(),
+                offering_name: "test".into(),
+                harvest_id: "harvest-b".into(),
+                created_at: Utc::now(),
+                size_bytes: 200,
+                is_current: false,
+            },
+        );
 
         assert_eq!(slots.current().unwrap().harvest_id, "harvest-b");
         assert_eq!(slots.previous().unwrap().harvest_id, "harvest-a");

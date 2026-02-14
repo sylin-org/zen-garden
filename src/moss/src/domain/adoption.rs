@@ -114,10 +114,8 @@ pub async fn adopt_offering_container(
     let actual_port = docker_ports.first().map(|(h, _)| *h).unwrap_or(native_port);
 
     // Build a lookup from container_port → actual_host_port for guidance substitution
-    let docker_port_map: std::collections::HashMap<u16, u16> = docker_ports
-        .iter()
-        .map(|(h, c)| (*c, *h))
-        .collect();
+    let docker_port_map: std::collections::HashMap<u16, u16> =
+        docker_ports.iter().map(|(h, c)| (*c, *h)).collect();
 
     // Build guidance with template substitution (if guidance template exists)
     let guidance = guidance_template.map(|tmpl| {

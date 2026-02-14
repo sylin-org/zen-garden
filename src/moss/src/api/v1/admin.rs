@@ -36,9 +36,7 @@ use crate::AppState;
 ///
 /// # Returns
 /// - 200 OK: Shutdown initiated successfully
-pub async fn moss_shutdown(
-    State(state): State<AppState>,
-) -> (StatusCode, Json<serde_json::Value>) {
+pub async fn moss_shutdown(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!("Admin moss shutdown requested");
     state.shutdown_tx.notify_one();
 
@@ -68,10 +66,8 @@ pub async fn moss_shutdown(
 /// - 409 CONFLICT: Service already exists
 /// - 500 INTERNAL_SERVER_ERROR: Installation failed
 #[cfg(target_os = "windows")]
-pub async fn moss_take_root() -> Result<
-    (StatusCode, Json<serde_json::Value>),
-    (StatusCode, Json<serde_json::Value>),
-> {
+pub async fn moss_take_root(
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -181,9 +177,7 @@ pub async fn moss_take_root() -> Result<
                 .output();
 
             // Start the service
-            let start_output = Command::new("sc")
-                .args(["start", "ZenGardenMoss"])
-                .output();
+            let start_output = Command::new("sc").args(["start", "ZenGardenMoss"]).output();
 
             let install_message = if is_removable {
                 format!(
@@ -244,10 +238,8 @@ pub async fn moss_take_root() -> Result<
 
 /// POST /api/v1/admin/moss/take-root - Not supported on Linux/Mac
 #[cfg(not(target_os = "windows"))]
-pub async fn moss_take_root() -> Result<
-    (StatusCode, Json<serde_json::Value>),
-    (StatusCode, Json<serde_json::Value>),
-> {
+pub async fn moss_take_root(
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     Err((
         StatusCode::BAD_REQUEST,
         Json(json!({
@@ -330,9 +322,7 @@ pub async fn stone_shutdown(
 /// # Returns
 /// - 200 OK: Reboot command issued
 /// - 500 INTERNAL_SERVER_ERROR: Failed to issue reboot command
-pub async fn stone_reboot(
-    State(_state): State<AppState>,
-) -> (StatusCode, Json<serde_json::Value>) {
+pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     tracing::warn!("Stone reboot requested - initiating system restart");
 
     // Spawn reboot command after brief delay to allow response
@@ -394,7 +384,8 @@ pub async fn stone_wake(
     tracing::info!(stone = %stone_name, "Wake-on-LAN requested");
 
     // Look up stone in topology cache (includes offline stones)
-    let stone = crate::domain::topology::get_stone_by_name(&state.topology_cache, &stone_name).await;
+    let stone =
+        crate::domain::topology::get_stone_by_name(&state.topology_cache, &stone_name).await;
 
     match stone {
         None => {
@@ -408,63 +399,59 @@ pub async fn stone_wake(
                 })),
             )
         }
-        Some(entry) => {
-            match entry.mac {
-                None => {
-                    tracing::warn!(
-                        stone = %stone_name,
-                        status = %entry.status,
-                        "Stone has no MAC address cached"
-                    );
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({
-                            "success": false,
-                            "error": format!("Stone '{}' has no MAC address", stone_name),
-                            "hint": "MAC address was not captured during discovery. The stone may be on a platform that doesn't report MAC."
-                        })),
-                    )
-                }
-                Some(ref mac) => {
-                    tracing::info!(
-                        stone = %stone_name,
-                        mac = %mac,
-                        status = %entry.status,
-                        "Sending Wake-on-LAN magic packet"
-                    );
+        Some(entry) => match entry.mac {
+            None => {
+                tracing::warn!(
+                    stone = %stone_name,
+                    status = %entry.status,
+                    "Stone has no MAC address cached"
+                );
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "success": false,
+                        "error": format!("Stone '{}' has no MAC address", stone_name),
+                        "hint": "MAC address was not captured during discovery. The stone may be on a platform that doesn't report MAC."
+                    })),
+                )
+            }
+            Some(ref mac) => {
+                tracing::info!(
+                    stone = %stone_name,
+                    mac = %mac,
+                    status = %entry.status,
+                    "Sending Wake-on-LAN magic packet"
+                );
 
-                    match garden_common::infra::network::send_wol_packet(mac).await {
-                        Ok(()) => {
-                            (
-                                StatusCode::OK,
-                                Json(json!({
-                                    "success": true,
-                                    "message": format!("Rousing {}...", stone_name),
-                                    "stone": stone_name,
-                                    "mac": mac,
-                                    "status": entry.status.to_string(),
-                                    "last_seen": entry.last_seen.to_rfc3339()
-                                })),
-                            )
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                stone = %stone_name,
-                                mac = %mac,
-                                error = ?e,
-                                "Failed to send WoL packet"
-                            );
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(json!({
-                                    "success": false,
-                                    "error": format!("Failed to send WoL packet: {}", e)
-                                })),
-                            )
-                        }
+                match garden_common::infra::network::send_wol_packet(mac).await {
+                    Ok(()) => (
+                        StatusCode::OK,
+                        Json(json!({
+                            "success": true,
+                            "message": format!("Rousing {}...", stone_name),
+                            "stone": stone_name,
+                            "mac": mac,
+                            "status": entry.status.to_string(),
+                            "last_seen": entry.last_seen.to_rfc3339()
+                        })),
+                    ),
+                    Err(e) => {
+                        tracing::error!(
+                            stone = %stone_name,
+                            mac = %mac,
+                            error = ?e,
+                            "Failed to send WoL packet"
+                        );
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "success": false,
+                                "error": format!("Failed to send WoL packet: {}", e)
+                            })),
+                        )
                     }
                 }
             }
-        }
+        },
     }
 }

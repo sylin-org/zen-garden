@@ -368,9 +368,7 @@ impl Offering {
 
     /// Get connectivity config for adopted mode
     pub fn get_connectivity_config(&self) -> Option<&ConnectivityConfig> {
-        self.adopted
-            .as_ref()
-            .and_then(|a| a.connectivity.as_ref())
+        self.adopted.as_ref().and_then(|a| a.connectivity.as_ref())
     }
 
     /// Get description
@@ -642,8 +640,7 @@ impl OfferingRegistry {
                     // Merge with existing or insert new
                     if let Some(existing) = registry.get_mut(offering_name) {
                         existing.adopted = offering.adopted;
-                        existing.connection =
-                            offering.connection.or(existing.connection.clone());
+                        existing.connection = offering.connection.or(existing.connection.clone());
                     } else {
                         registry.upsert(offering);
                     }

@@ -1,4 +1,4 @@
-﻿//! Platform abstraction utilities
+//! Platform abstraction utilities
 //!
 //! Provides platform-aware path resolution with centralized
 //! OS-specific conditionals.
@@ -19,15 +19,14 @@ pub struct WindowsPaths;
 #[cfg(target_os = "windows")]
 impl PlatformPaths for WindowsPaths {
     fn data_dir(&self) -> PathBuf {
-        let programdata = std::env::var("PROGRAMDATA")
-            .unwrap_or_else(|_| "C:\\ProgramData".into());
+        let programdata = std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".into());
         PathBuf::from(programdata).join("zen-garden")
     }
-    
+
     fn config_dir(&self) -> PathBuf {
         PathBuf::from(".zen-garden")
     }
-    
+
     fn temp_dir(&self) -> PathBuf {
         std::env::temp_dir().join("zen-garden")
     }
@@ -42,11 +41,11 @@ impl PlatformPaths for UnixPaths {
     fn data_dir(&self) -> PathBuf {
         PathBuf::from("/var/lib/zen-garden")
     }
-    
+
     fn config_dir(&self) -> PathBuf {
         PathBuf::from("/etc/zen-garden")
     }
-    
+
     fn temp_dir(&self) -> PathBuf {
         PathBuf::from("/tmp/zen-garden")
     }
@@ -55,10 +54,14 @@ impl PlatformPaths for UnixPaths {
 /// Get platform-specific paths implementation
 pub fn get_platform_paths() -> Box<dyn PlatformPaths> {
     #[cfg(target_os = "windows")]
-    { Box::new(WindowsPaths) }
-    
+    {
+        Box::new(WindowsPaths)
+    }
+
     #[cfg(not(target_os = "windows"))]
-    { Box::new(UnixPaths) }
+    {
+        Box::new(UnixPaths)
+    }
 }
 
 /// Convenience function - get data directory for current platform
@@ -78,15 +81,15 @@ mod tests {
     #[test]
     fn test_platform_paths() {
         let paths = get_platform_paths();
-        
+
         // Data dir should contain "zen-garden"
         let data = paths.data_dir();
         assert!(data.to_string_lossy().contains("zen-garden"));
-        
+
         // Config dir should contain "zen-garden"
         let config = paths.config_dir();
         assert!(config.to_string_lossy().contains("zen-garden"));
-        
+
         // Temp dir should contain "zen-garden"
         let temp = paths.temp_dir();
         assert!(temp.to_string_lossy().contains("zen-garden"));
@@ -96,7 +99,7 @@ mod tests {
     fn test_convenience_functions() {
         let data = data_dir();
         assert!(data.to_string_lossy().contains("zen-garden"));
-        
+
         let config = config_dir();
         assert!(config.to_string_lossy().contains("zen-garden"));
     }
@@ -105,10 +108,10 @@ mod tests {
     #[test]
     fn test_windows_paths() {
         let paths = WindowsPaths;
-        
+
         let data = paths.data_dir();
         assert!(data.to_string_lossy().contains("zen-garden"));
-        
+
         let config = paths.config_dir();
         assert_eq!(config.to_string_lossy(), ".zen-garden");
     }
@@ -117,13 +120,13 @@ mod tests {
     #[test]
     fn test_unix_paths() {
         let paths = UnixPaths;
-        
+
         let data = paths.data_dir();
         assert_eq!(data.to_string_lossy(), "/var/lib/zen-garden");
-        
+
         let config = paths.config_dir();
         assert_eq!(config.to_string_lossy(), "/etc/zen-garden");
-        
+
         let temp = paths.temp_dir();
         assert_eq!(temp.to_string_lossy(), "/tmp/zen-garden");
     }

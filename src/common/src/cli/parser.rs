@@ -1,4 +1,4 @@
-﻿//! Zen syntax parser for CLI commands
+//! Zen syntax parser for CLI commands
 //!
 //! Parses command-line arguments to detect zen syntax and extract positional keywords
 //! before they reach Clap. Supports:
@@ -29,13 +29,13 @@ pub enum CommandStyle {
 
 #[derive(Debug, Clone, Default)]
 pub struct ParsedKeywords {
-    pub on_stone: Option<String>,    // `on <stone>` or `at <stone>` (legacy)
-    pub from_url: Option<String>,    // `from <url>` for borrow
+    pub on_stone: Option<String>, // `on <stone>` or `at <stone>` (legacy)
+    pub from_url: Option<String>, // `from <url>` for borrow
     pub quietly: bool,
-    pub fresh: bool,                 // clear cache and force fresh discovery
+    pub fresh: bool, // clear cache and force fresh discovery
     pub until_condition: Option<String>,
-    pub somewhere: bool,             // intelligent placement
-    pub wishfully: bool,             // auto-provision if not found
+    pub somewhere: bool, // intelligent placement
+    pub wishfully: bool, // auto-provision if not found
 }
 
 #[derive(Debug, Clone)]
@@ -53,11 +53,14 @@ pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
     }
 
     let first_arg = &args[0];
-    
+
     // Detect style based on first argument
     let style = if is_zen_verb(first_arg) {
         CommandStyle::Zen
-    } else if first_arg.starts_with("--") || first_arg.starts_with("-") || is_normative_verb(first_arg) {
+    } else if first_arg.starts_with("--")
+        || first_arg.starts_with("-")
+        || is_normative_verb(first_arg)
+    {
         CommandStyle::Normative
     } else {
         // Unknown verb, let Clap handle the error
@@ -73,7 +76,10 @@ pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
             "Cannot mix normative syntax with zen positional keywords. Use either:\n  \
              Zen:       {} {} quietly\n  \
              Normative: {} {} --quiet",
-            first_arg, filtered_args.join(" "), first_arg, filtered_args.join(" ")
+            first_arg,
+            filtered_args.join(" "),
+            first_arg,
+            filtered_args.join(" ")
         ));
     }
 
@@ -147,13 +153,19 @@ fn is_normative_verb(verb: &str) -> bool {
 /// Check if args contain zen positional keywords
 fn has_zen_keywords(args: &[String], verb: &str) -> bool {
     args.iter().any(|arg| {
-        matches!(arg.as_str(), "on" | "at" | "quietly" | "fresh" | "until" | "somewhere" | "wishfully")
-            || (verb == "borrow" && arg == "from")
+        matches!(
+            arg.as_str(),
+            "on" | "at" | "quietly" | "fresh" | "until" | "somewhere" | "wishfully"
+        ) || (verb == "borrow" && arg == "from")
     })
 }
 
 /// Extract positional keywords from args
-fn extract_keywords(args: &[String], style: &CommandStyle, verb: &str) -> Result<(ParsedKeywords, Vec<String>)> {
+fn extract_keywords(
+    args: &[String],
+    style: &CommandStyle,
+    verb: &str,
+) -> Result<(ParsedKeywords, Vec<String>)> {
     let mut keywords = ParsedKeywords::default();
     let mut filtered_args = Vec::new();
     let mut i = 0;
@@ -255,7 +267,10 @@ mod tests {
         assert_eq!(parsed.style, CommandStyle::Zen);
         assert_eq!(parsed.verb, "borrow");
         assert_eq!(parsed.args, vec!["redis"]);
-        assert_eq!(parsed.keywords.from_url, Some("redis://cache:6379".to_string()));
+        assert_eq!(
+            parsed.keywords.from_url,
+            Some("redis://cache:6379".to_string())
+        );
     }
 
     #[test]
@@ -299,10 +314,7 @@ mod tests {
 
     #[test]
     fn test_normative_services() {
-        let args = vec![
-            "services".to_string(),
-            "list".to_string(),
-        ];
+        let args = vec!["services".to_string(), "list".to_string()];
         let parsed = parse_args(args).unwrap();
         assert_eq!(parsed.style, CommandStyle::Normative);
     }
@@ -320,10 +332,7 @@ mod tests {
 
     #[test]
     fn test_zen_fresh() {
-        let args = vec![
-            "observe".to_string(),
-            "fresh".to_string(),
-        ];
+        let args = vec!["observe".to_string(), "fresh".to_string()];
         let parsed = parse_args(args).unwrap();
         assert!(parsed.keywords.fresh);
     }

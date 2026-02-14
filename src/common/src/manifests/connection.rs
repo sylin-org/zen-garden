@@ -17,4 +17,3 @@ pub struct ConnectionProfile {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub endpoints: BTreeMap<String, String>,
 }
-

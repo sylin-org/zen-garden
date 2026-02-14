@@ -30,7 +30,9 @@ impl Command for LaunchCommand {
             ep.clone()
         } else {
             // No endpoint available - we need discovery
-            anyhow::bail!("No stone endpoint available. Use --at to specify a stone or tend a stone first.");
+            anyhow::bail!(
+                "No stone endpoint available. Use --at to specify a stone or tend a stone first."
+            );
         };
 
         // Construct the URL (base endpoint, portrait is the default page)

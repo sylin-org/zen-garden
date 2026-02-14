@@ -61,7 +61,8 @@ impl CeremonyJournal {
                 .context("Failed to create journal directory")?;
         }
 
-        let json = serde_json::to_string_pretty(ceremony).context("Failed to serialize ceremony")?;
+        let json =
+            serde_json::to_string_pretty(ceremony).context("Failed to serialize ceremony")?;
 
         // Write and sync to disk to ensure durability (auto-flush)
         let file = tokio::fs::File::create(&path)
@@ -75,7 +76,9 @@ impl CeremonyJournal {
             .await
             .context("Failed to flush ceremony journal")?;
         // Sync to disk for durability
-        writer.get_ref().sync_all()
+        writer
+            .get_ref()
+            .sync_all()
             .await
             .context("Failed to sync ceremony journal to disk")?;
 

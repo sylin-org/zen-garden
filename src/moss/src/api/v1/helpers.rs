@@ -74,16 +74,15 @@ pub async fn json_transform(
     Json(request): Json<JsonTransformRequest>,
 ) -> Result<Json<JsonTransformResponse>, (StatusCode, Json<TransformError>)> {
     // Extract items array using items_path
-    let items_array = extract_path(&request.input, &request.transform.items_path)
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(TransformError {
-                    error: "Invalid items_path".to_string(),
-                    details: Some(e),
-                }),
-            )
-        })?;
+    let items_array = extract_path(&request.input, &request.transform.items_path).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(TransformError {
+                error: "Invalid items_path".to_string(),
+                details: Some(e),
+            }),
+        )
+    })?;
 
     let array = items_array.as_array().ok_or_else(|| {
         (
@@ -136,9 +135,9 @@ fn extract_path(value: &serde_json::Value, path: &str) -> Result<serde_json::Val
             continue;
         }
 
-        current = current.get(segment).ok_or_else(|| {
-            format!("Field '{}' not found in path '{}'", segment, path)
-        })?;
+        current = current
+            .get(segment)
+            .ok_or_else(|| format!("Field '{}' not found in path '{}'", segment, path))?;
     }
 
     Ok(current.clone())
@@ -221,14 +220,8 @@ mod tests {
     #[test]
     fn test_extract_path_simple() {
         let value = json!({"name": "llama2", "size": 123});
-        assert_eq!(
-            extract_path(&value, ".name").unwrap(),
-            json!("llama2")
-        );
-        assert_eq!(
-            extract_path(&value, ".size").unwrap(),
-            json!(123)
-        );
+        assert_eq!(extract_path(&value, ".name").unwrap(), json!("llama2"));
+        assert_eq!(extract_path(&value, ".size").unwrap(), json!(123));
     }
 
     #[test]
@@ -268,7 +261,10 @@ mod tests {
             size_bytes: Some(".size".to_string()),
             metadata: [
                 ("family".to_string(), ".details.family".to_string()),
-                ("quantization".to_string(), ".details.quantization".to_string()),
+                (
+                    "quantization".to_string(),
+                    ".details.quantization".to_string(),
+                ),
             ]
             .into_iter()
             .collect(),
@@ -278,10 +274,7 @@ mod tests {
         assert_eq!(result.name, "llama2:7b");
         assert_eq!(result.size_bytes, Some(3826793472));
         assert_eq!(result.size, Some("3.6 GB".to_string()));
-        assert_eq!(
-            result.metadata.get("family"),
-            Some(&json!("llama"))
-        );
+        assert_eq!(result.metadata.get("family"), Some(&json!("llama")));
     }
 
     #[test]

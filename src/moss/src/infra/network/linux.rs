@@ -99,9 +99,11 @@ impl NetworkPlatform for LinuxIfupdown {
         // Step 1: Write config file for persistence (on next boot)
         let cfg_content = generate_ifupdown_config(config);
         let temp_path = "/tmp/zen-garden-network-config.tmp";
-        tokio::fs::write(temp_path, &cfg_content).await.map_err(|e| {
-            NetworkError::ApplyFailed(format!("Failed to write temp config: {}", e))
-        })?;
+        tokio::fs::write(temp_path, &cfg_content)
+            .await
+            .map_err(|e| {
+                NetworkError::ApplyFailed(format!("Failed to write temp config: {}", e))
+            })?;
 
         let output = tokio::process::Command::new("sudo")
             .args(["cp", temp_path, IFUPDOWN_CONFIG_FILE])
@@ -185,7 +187,8 @@ impl NetworkPlatform for LinuxIfupdown {
                 for line in content.lines() {
                     let trimmed = line.trim();
                     if trimmed.starts_with("address ") {
-                        static_ip_to_remove = Some(trimmed.trim_start_matches("address ").to_string());
+                        static_ip_to_remove =
+                            Some(trimmed.trim_start_matches("address ").to_string());
                         break;
                     }
                 }
@@ -196,9 +199,7 @@ impl NetworkPlatform for LinuxIfupdown {
                 .args(["rm", "-f", IFUPDOWN_CONFIG_FILE])
                 .output()
                 .await
-                .map_err(|e| {
-                    NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e))
-                })?;
+                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e)))?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -318,14 +319,19 @@ impl NetworkPlatform for LinuxNetplan {
             )));
         }
 
-        tracing::debug!(path = NETPLAN_CONFIG_PATH, "Wrote netplan config file via sudo cp");
+        tracing::debug!(
+            path = NETPLAN_CONFIG_PATH,
+            "Wrote netplan config file via sudo cp"
+        );
 
         // Apply configuration via sudo
         let output = tokio::process::Command::new("sudo")
             .args([NETPLAN_BINARY, "apply"])
             .output()
             .await
-            .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo netplan apply: {}", e)))?;
+            .map_err(|e| {
+                NetworkError::ApplyFailed(format!("Failed to run sudo netplan apply: {}", e))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -353,9 +359,7 @@ impl NetworkPlatform for LinuxNetplan {
                 .args(["rm", "-f", NETPLAN_CONFIG_PATH])
                 .output()
                 .await
-                .map_err(|e| {
-                    NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e))
-                })?;
+                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e)))?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -365,7 +369,10 @@ impl NetworkPlatform for LinuxNetplan {
                 )));
             }
 
-            tracing::debug!(path = NETPLAN_CONFIG_PATH, "Removed netplan config file via sudo");
+            tracing::debug!(
+                path = NETPLAN_CONFIG_PATH,
+                "Removed netplan config file via sudo"
+            );
 
             // Apply to revert to DHCP (underlying config should have DHCP)
             let output = tokio::process::Command::new("sudo")
@@ -484,10 +491,7 @@ mod tests {
             address: "192.168.1.100".parse().unwrap(),
             prefix_length: 24,
             gateway: "192.168.1.1".parse().unwrap(),
-            dns: vec![
-                "8.8.8.8".parse().unwrap(),
-                "1.1.1.1".parse().unwrap(),
-            ],
+            dns: vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()],
         };
 
         let cfg = generate_ifupdown_config(&config);
@@ -506,10 +510,7 @@ mod tests {
             address: "192.168.1.100".parse().unwrap(),
             prefix_length: 24,
             gateway: "192.168.1.1".parse().unwrap(),
-            dns: vec![
-                "8.8.8.8".parse().unwrap(),
-                "1.1.1.1".parse().unwrap(),
-            ],
+            dns: vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()],
         };
 
         let yaml = generate_netplan_yaml(&config);

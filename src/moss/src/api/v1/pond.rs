@@ -1,10 +1,10 @@
+use crate::api::responses::ApiResponse;
+use crate::{error_response, AppState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use crate::{error_response, AppState};
-use crate::api::responses::ApiResponse;
 use garden_common::api_utils::ApiErrorResponse;
 use serde::{Deserialize, Serialize};
 
@@ -69,14 +69,12 @@ pub async fn pond_init_v1(
     Err(error_response(
         StatusCode::NOT_IMPLEMENTED,
         "POND_NOT_IMPLEMENTED",
-        "Pond security implementation pending (Phase 3b - cryptographic implementation)".to_string(),
-        Some(std::collections::HashMap::from([(
-            "phase".to_string(),
-            serde_json::json!("3b"),
-        ), (
-            "feature".to_string(),
-            serde_json::json!("pond-security"),
-        )])),
+        "Pond security implementation pending (Phase 3b - cryptographic implementation)"
+            .to_string(),
+        Some(std::collections::HashMap::from([
+            ("phase".to_string(), serde_json::json!("3b")),
+            ("feature".to_string(), serde_json::json!("pond-security")),
+        ])),
     ))
 }
 
@@ -145,7 +143,9 @@ pub async fn pond_status_v1(
         cornerstone: None,
         stones: vec![],
         tier: "garden-pond".to_string(),
-        note: "Pond security not initialized. Run 'garden-rake place keystone' to secure your garden.".to_string(),
+        note:
+            "Pond security not initialized. Run 'garden-rake place keystone' to secure your garden."
+                .to_string(),
     };
 
     Ok(Json(ApiResponse::new(response)))

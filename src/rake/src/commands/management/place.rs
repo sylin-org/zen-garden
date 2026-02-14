@@ -8,8 +8,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// Place target type
 pub enum PlaceTarget {
@@ -45,7 +45,10 @@ impl PlaceCommand {
                 })?;
                 PlaceTarget::Stone { code }
             }
-            _ => anyhow::bail!("Invalid target: '{}'. Use 'keystone' or 'stone'", target_type),
+            _ => anyhow::bail!(
+                "Invalid target: '{}'. Use 'keystone' or 'stone'",
+                target_type
+            ),
         };
         Ok(Self::new(target, quiet_mode))
     }

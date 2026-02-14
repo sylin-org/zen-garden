@@ -1,4 +1,4 @@
-﻿// Garden Cricket - Ambient Audio Companion for Stone Presence
+// Garden Cricket - Ambient Audio Companion for Stone Presence
 // Provides audio feedback for garden events and stone presence
 
 use anyhow::Result;
@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
 use garden_companion_sdk::{
-    check_dump_commands, CompanionRuntime, CompanionState, CommandArg, CommandDef, CommandManifest,
+    check_dump_commands, CommandArg, CommandDef, CommandManifest, CompanionRuntime, CompanionState,
 };
 
 mod events;
@@ -79,23 +79,23 @@ fn build_manifest() -> CommandManifest {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    
+
     /// Stone endpoint (e.g., http://10.0.0.5:7185)
     #[arg(short, long, env = "GARDEN_STONE")]
     stone: Option<String>,
-    
+
     /// Tunes directory (contains tune.yaml files)
     #[arg(long, env = "CRICKET_TUNES_DIR")]
     tunes_dir: Option<String>,
-    
+
     /// Active tune name
     #[arg(long, env = "CRICKET_TUNE", default_value = "zen-tech")]
     tune: String,
-    
+
     /// Master volume (0-100)
     #[arg(long, env = "CRICKET_VOLUME", default_value = "50")]
     volume: u8,
-    
+
     /// Command server port (for receiving hey-tell commands)
     /// Default is computed from Companion ID (7188-7199 range)
     #[arg(long, env = "CRICKET_PORT")]
@@ -114,22 +114,22 @@ enum Commands {
         #[arg(long)]
         tunes_dir: Option<String>,
     },
-    
+
     /// Test mode: interactively trigger tune events with keyboard
     Test {
         /// Tune name to test
         tune: String,
-        
+
         /// Tunes directory
         #[arg(long)]
         tunes_dir: Option<String>,
     },
-    
+
     /// Show tune details
     Show {
         /// Tune name
         tune: String,
-        
+
         /// Tunes directory
         #[arg(long)]
         tunes_dir: Option<String>,
@@ -141,40 +141,50 @@ async fn main() -> Result<()> {
     // Check for --dump-commands before any other processing
     // This is used by Moss Companion registry to discover Cricket's commands
     check_dump_commands(&build_manifest());
-    
+
     // Initialize tracing (from SDK)
     garden_companion_sdk::runtime::init_tracing();
-    
+
     let cli = Cli::parse();
-    
+
     // Resolve tunes directory
     let tunes_dir = resolve_tunes_dir(cli.tunes_dir.as_deref());
-    
+
     // Handle subcommands
     if let Some(cmd) = cli.command {
         match cmd {
-            Commands::Load { tunes_dir: override_dir } => {
+            Commands::Load {
+                tunes_dir: override_dir,
+            } => {
                 let dir = resolve_tunes_dir(override_dir.as_deref());
                 return list_tunes(&dir);
             }
-            Commands::Test { tune, tunes_dir: override_dir } => {
+            Commands::Test {
+                tune,
+                tunes_dir: override_dir,
+            } => {
                 let dir = resolve_tunes_dir(override_dir.as_deref());
                 return test_mode::run(&tune, &dir).await;
             }
-            Commands::Show { tune, tunes_dir: override_dir } => {
+            Commands::Show {
+                tune,
+                tunes_dir: override_dir,
+            } => {
                 let dir = resolve_tunes_dir(override_dir.as_deref());
                 return show_tune(&tune, &dir);
             }
         }
     }
-    
+
     // Normal mode: require stone endpoint and port
-    let stone = cli.stone
+    let stone = cli
+        .stone
         .ok_or_else(|| anyhow::anyhow!("--stone endpoint required (or use 'test' subcommand)"))?;
-    
+
     // Port is assigned by Moss and passed via --port
-    let port = cli.port
-        .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss when starting Companion)"))?;
+    let port = cli.port.ok_or_else(|| {
+        anyhow::anyhow!("--port required (assigned by Moss when starting Companion)")
+    })?;
 
     // Create Companion state (handles on/off persistence)
     let state_dir = cli.state_dir.map(std::path::PathBuf::from);
@@ -182,17 +192,17 @@ async fn main() -> Result<()> {
 
     // Ensure audio dependencies are installed (alsa-utils on Linux)
     mixer::ensure_audio_dependencies()?;
-    
+
     // Initialize system audio (unmute, set volume) on Linux
     mixer::init_system_audio(50)?;
-    
+
     // Initialize domain components
     let mixer = Arc::new(Mixer::new(cli.volume as f32 / 100.0)?);
     let tune_manager = Arc::new(TuneManager::new(Some(&tunes_dir))?);
-    
+
     // Select initial tune
     tune_manager.select(&cli.tune)?;
-    
+
     tracing::info!(
         stone = %stone,
         tune = %cli.tune,
@@ -200,7 +210,7 @@ async fn main() -> Result<()> {
         port = port,
         "Starting Garden Cricket"
     );
-    
+
     // Create handlers
     let command_handler = CricketHandler::new(
         Arc::clone(&mixer),
@@ -232,20 +242,20 @@ fn resolve_tunes_dir(override_path: Option<&str>) -> String {
     if let Some(path) = override_path {
         return path.to_string();
     }
-    
+
     // Check standard locations
     let candidates = [
         "./tunes",
         "/usr/share/garden-cricket/tunes",
         "/etc/zen-garden/cricket/tunes",
     ];
-    
+
     for candidate in candidates {
         if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
         }
     }
-    
+
     // Default
     "./tunes".to_string()
 }
@@ -254,7 +264,7 @@ fn resolve_tunes_dir(override_path: Option<&str>) -> String {
 fn list_tunes(tunes_dir: &str) -> Result<()> {
     let manager = TuneManager::new(Some(tunes_dir))?;
     let tunes = manager.list_tunes();
-    
+
     if tunes.is_empty() {
         println!("No tunes found in {}", tunes_dir);
         println!();
@@ -262,27 +272,32 @@ fn list_tunes(tunes_dir: &str) -> Result<()> {
         println!("  {}/my-tune/tune.yaml", tunes_dir);
         return Ok(());
     }
-    
+
     println!("Available Tunes:");
     println!();
-    
+
     for tune in tunes {
-        let source = if tune.embedded { "[embedded]" } else { "[filesystem]" };
+        let source = if tune.embedded {
+            "[embedded]"
+        } else {
+            "[filesystem]"
+        };
         println!("  {} (v{}) {}", tune.name, tune.version, source);
         println!("    {}", tune.description);
         println!("    Events: {}", tune.event_count);
         println!();
     }
-    
+
     Ok(())
 }
 
 /// Show tune details
 fn show_tune(name: &str, tunes_dir: &str) -> Result<()> {
     let manager = TuneManager::new(Some(tunes_dir))?;
-    let tune = manager.get_tune(name)
+    let tune = manager
+        .get_tune(name)
         .ok_or_else(|| anyhow::anyhow!("Tune '{}' not found", name))?;
-    
+
     println!("{}", tune.name);
     println!("  Version:     {}", tune.version);
     println!("  Description: {}", tune.description);
@@ -290,10 +305,10 @@ fn show_tune(name: &str, tunes_dir: &str) -> Result<()> {
     println!("  License:     {}", tune.license);
     println!();
     println!("Event Mappings:");
-    
+
     for (event, mapping) in &tune.events {
         println!("  {} → {} ({})", event, mapping.resource, mapping.channel);
     }
-    
+
     Ok(())
 }

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::{WINDOWS_SERVICE_NAME, WINDOWS_DISPLAY_NAME, WINDOWS_SERVICE_DESCRIPTION};
 use super::{FIREWALL_RULE_HTTP, FIREWALL_RULE_MDNS};
+use super::{WINDOWS_DISPLAY_NAME, WINDOWS_SERVICE_DESCRIPTION, WINDOWS_SERVICE_NAME};
 
 const SERVICE_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVICE_STOP_POLL: Duration = Duration::from_millis(500);
@@ -85,7 +85,11 @@ fn install_binaries(bin_dir: &Path, install_dir: &Path) -> anyhow::Result<()> {
             if src.is_file() {
                 let dest = install_dir.join(entry.file_name());
                 std::fs::copy(&src, &dest)?;
-                println!("    {} -> {}", entry.file_name().to_string_lossy(), dest.display());
+                println!(
+                    "    {} -> {}",
+                    entry.file_name().to_string_lossy(),
+                    dest.display()
+                );
             }
         }
     }
@@ -167,31 +171,44 @@ fn register_service(install_dir: &Path) -> anyhow::Result<()> {
             "create",
             WINDOWS_SERVICE_NAME,
             &bin_path_arg,
-            "start=", "auto",
-            "DisplayName=", WINDOWS_DISPLAY_NAME,
+            "start=",
+            "auto",
+            "DisplayName=",
+            WINDOWS_DISPLAY_NAME,
         ])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        anyhow::bail!("Failed to create service: {} {}", stdout.trim(), stderr.trim());
+        anyhow::bail!(
+            "Failed to create service: {} {}",
+            stdout.trim(),
+            stderr.trim()
+        );
     }
 
     println!("    Service: {} (auto-start)", WINDOWS_SERVICE_NAME);
 
     // Description (best-effort)
     let _ = Command::new("sc")
-        .args(["description", WINDOWS_SERVICE_NAME, WINDOWS_SERVICE_DESCRIPTION])
+        .args([
+            "description",
+            WINDOWS_SERVICE_NAME,
+            WINDOWS_SERVICE_DESCRIPTION,
+        ])
         .output();
 
     // Recovery policy: restart after 5s, restart after 10s, then nothing
     // Reset failure count after 24 hours (86400 seconds)
     let _ = Command::new("sc")
         .args([
-            "failure", WINDOWS_SERVICE_NAME,
-            "reset=", "86400",
-            "actions=", "restart/5000/restart/10000//",
+            "failure",
+            WINDOWS_SERVICE_NAME,
+            "reset=",
+            "86400",
+            "actions=",
+            "restart/5000/restart/10000//",
         ])
         .output();
 
@@ -213,13 +230,22 @@ fn setup_firewall(exe_path: &Path) -> anyhow::Result<()> {
     let fw_mdns = create_firewall_rule(FIREWALL_RULE_MDNS, "UDP", mdns_port, exe_path);
 
     if fw_http && fw_mdns {
-        println!("  Firewall rules set (TCP {}, UDP {})", http_port, mdns_port);
+        println!(
+            "  Firewall rules set (TCP {}, UDP {})",
+            http_port, mdns_port
+        );
     } else {
         if !fw_http {
-            println!("  Warning: could not set firewall rule for TCP {}", http_port);
+            println!(
+                "  Warning: could not set firewall rule for TCP {}",
+                http_port
+            );
         }
         if !fw_mdns {
-            println!("  Warning: could not set firewall rule for UDP {}", mdns_port);
+            println!(
+                "  Warning: could not set firewall rule for UDP {}",
+                mdns_port
+            );
         }
     }
 
@@ -289,7 +315,10 @@ fn wait_for_delete() -> anyhow::Result<()> {
         }
 
         if Instant::now() >= deadline {
-            anyhow::bail!("Old service entry not purged within {:?}", SERVICE_STOP_TIMEOUT);
+            anyhow::bail!(
+                "Old service entry not purged within {:?}",
+                SERVICE_STOP_TIMEOUT
+            );
         }
 
         std::thread::sleep(SERVICE_STOP_POLL);

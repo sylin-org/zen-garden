@@ -84,7 +84,12 @@ pub struct ConfigCommand {
 }
 
 impl ConfigCommand {
-    pub fn new(service: String, quiet_mode: bool, json_output: bool, field: Option<String>) -> Self {
+    pub fn new(
+        service: String,
+        quiet_mode: bool,
+        json_output: bool,
+        field: Option<String>,
+    ) -> Self {
         Self {
             service,
             quiet_mode,
@@ -131,10 +136,8 @@ impl Command for ConfigCommand {
             anyhow::bail!("API error ({}): {}", status, body);
         }
 
-        let api_response: ApiResponse<ServiceDiscoveryResponse> = response
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let api_response: ApiResponse<ServiceDiscoveryResponse> =
+            response.json().await.context("Failed to parse response")?;
 
         let discovery = api_response.data;
 
@@ -151,10 +154,7 @@ impl Command for ConfigCommand {
                 self.service
             );
             println!();
-            println!(
-                "{}Suggestions:",
-                " ".repeat(ui::constants::DEFAULT_INDENT)
-            );
+            println!("{}Suggestions:", " ".repeat(ui::constants::DEFAULT_INDENT));
             println!(
                 "{}  garden-rake find {}              # Search garden-wide",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -254,10 +254,7 @@ impl ConfigCommand {
         );
         println!();
 
-        println!(
-            "{}Connection:",
-            " ".repeat(ui::constants::DEFAULT_INDENT)
-        );
+        println!("{}Connection:", " ".repeat(ui::constants::DEFAULT_INDENT));
         println!(
             "{}  URI:       {}",
             " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -306,7 +303,8 @@ impl ConfigCommand {
 
     /// Render a specific field (for automation)
     fn render_field(&self, config: &ServiceConfigResponse, field_path: &str) -> CommandResult {
-        let json_value = serde_json::to_value(config).context("Failed to convert config to JSON")?;
+        let json_value =
+            serde_json::to_value(config).context("Failed to convert config to JSON")?;
 
         match extract_json_field(&json_value, field_path) {
             Some(value) => {

@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 use std::time::Duration;
 
 /// Reconcile offerings with actual container state
@@ -82,10 +82,7 @@ async fn reconcile_system(
 ) -> anyhow::Result<serde_json::Value> {
     use anyhow::Context;
 
-    let url = format!(
-        "{}/api/v1/system/reconcile",
-        endpoint.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/system/reconcile", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "drop_invalid": drop_invalid });
     let response = client
         .post(&url)

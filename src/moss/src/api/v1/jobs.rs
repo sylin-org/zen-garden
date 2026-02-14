@@ -14,8 +14,8 @@ use axum::{
 };
 use std::collections::HashMap;
 
-use crate::{AppState, Job, JobStatus};
 use crate::api::responses::ApiResponse;
+use crate::{AppState, Job, JobStatus};
 
 /// GET /api/v1/jobs/:job_id - Get status of a specific job
 ///
@@ -71,9 +71,7 @@ pub async fn get_job_status(
                         started_at: std::time::SystemTime::now(),
                         completed_at: Some(std::time::SystemTime::now()),
                     },
-                    suggestions: Some(vec![
-                        "Check job ID is correct".to_string(),
-                    ]),
+                    suggestions: Some(vec!["Check job ID is correct".to_string()]),
                 }),
             )
         }
@@ -104,9 +102,7 @@ pub async fn get_job_status(
 ///   ]
 /// }
 /// ```
-pub async fn list_jobs(
-    State(state): State<AppState>,
-) -> (StatusCode, Json<ApiResponse<Vec<Job>>>) {
+pub async fn list_jobs(State(state): State<AppState>) -> (StatusCode, Json<ApiResponse<Vec<Job>>>) {
     let jobs = state.jobs.read().await;
     let job_list: Vec<Job> = jobs.values().cloned().collect();
 

@@ -1,4 +1,4 @@
-﻿//! Standardized Job and Retry Patterns
+//! Standardized Job and Retry Patterns
 //! Consistent retry policies and background job handling
 
 use std::time::Duration;
@@ -68,17 +68,14 @@ impl RetryPolicy {
             return Duration::from_secs(0);
         }
 
-        let delay_secs = self.base_delay.as_secs_f32()
-            * self.backoff_multiplier.powi((attempt - 1) as i32);
+        let delay_secs =
+            self.base_delay.as_secs_f32() * self.backoff_multiplier.powi((attempt - 1) as i32);
         Duration::from_secs_f32(delay_secs.min(self.max_delay.as_secs_f32()))
     }
 }
 
 /// Retry a fallible async operation according to a policy
-pub async fn retry_with_policy<F, Fut, T, E>(
-    policy: &RetryPolicy,
-    operation: F,
-) -> Result<T, E>
+pub async fn retry_with_policy<F, Fut, T, E>(policy: &RetryPolicy, operation: F) -> Result<T, E>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
@@ -122,11 +119,7 @@ mod tests {
 
     #[test]
     fn test_retry_policy_delays() {
-        let policy = RetryPolicy::exponential(
-            5,
-            Duration::from_secs(1),
-            Duration::from_secs(10),
-        );
+        let policy = RetryPolicy::exponential(5, Duration::from_secs(1), Duration::from_secs(10));
 
         assert_eq!(policy.delay_for_attempt(0).as_secs(), 0); // First attempt, no delay
         assert_eq!(policy.delay_for_attempt(1).as_secs(), 1); // 1s
@@ -148,8 +141,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_policy_success() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
 
         let call_count = Arc::new(AtomicU32::new(0));
         let policy = RetryPolicy::fixed(3, Duration::from_millis(10));
@@ -174,8 +167,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_policy_exhausted() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
 
         let call_count = Arc::new(AtomicU32::new(0));
         let policy = RetryPolicy::fixed(3, Duration::from_millis(10));

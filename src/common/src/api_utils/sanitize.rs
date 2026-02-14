@@ -140,7 +140,9 @@ pub fn is_suspicious(input: &str) -> bool {
     let lower = input.to_lowercase();
 
     // SQL injection patterns
-    let sql_patterns = ["'--", "';", "' or ", "' and ", "1=1", "drop ", "select ", "insert ", "delete ", "update "];
+    let sql_patterns = [
+        "'--", "';", "' or ", "' and ", "1=1", "drop ", "select ", "insert ", "delete ", "update ",
+    ];
 
     // Path traversal
     let path_patterns = ["../", "..\\", "%2e%2e"];
@@ -148,7 +150,11 @@ pub fn is_suspicious(input: &str) -> bool {
     // Script injection
     let script_patterns = ["<script", "javascript:", "onerror=", "onload="];
 
-    for pattern in sql_patterns.iter().chain(path_patterns.iter()).chain(script_patterns.iter()) {
+    for pattern in sql_patterns
+        .iter()
+        .chain(path_patterns.iter())
+        .chain(script_patterns.iter())
+    {
         if lower.contains(pattern) {
             return true;
         }
@@ -170,7 +176,12 @@ pub fn validate_name(name: &str) -> Option<&'static str> {
     if name.starts_with('-') || name.starts_with('_') {
         return Some("Name cannot start with - or _");
     }
-    if !name.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
+    if !name
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_alphabetic())
+        .unwrap_or(false)
+    {
         return Some("Name must start with a letter");
     }
     None

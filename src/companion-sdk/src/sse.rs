@@ -1,11 +1,11 @@
-﻿//! SSE client for presence event subscription
+//! SSE client for presence event subscription
 //!
 //! Connects to Moss SSE endpoint and dispatches events to handler.
 
+use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
-use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
 
 /// Parsed SSE event
 #[derive(Debug, Clone)]
@@ -102,9 +102,15 @@ impl SseClient {
                         let error_str = e.to_string();
                         if error_str.contains("refused") || error_str.contains("10061") {
                             if consecutive_failures <= 3 {
-                                tracing::debug!(attempt = consecutive_failures, "SSE connection refused (service may be starting)");
+                                tracing::debug!(
+                                    attempt = consecutive_failures,
+                                    "SSE connection refused (service may be starting)"
+                                );
                             } else {
-                                tracing::warn!(attempt = consecutive_failures, "SSE connection still refused");
+                                tracing::warn!(
+                                    attempt = consecutive_failures,
+                                    "SSE connection still refused"
+                                );
                             }
                         } else {
                             tracing::warn!(error = %e, attempt = consecutive_failures, "SSE connection error");
@@ -113,7 +119,9 @@ impl SseClient {
                 }
 
                 // Exponential backoff: 1-2-4-8-16-32 seconds
-                let idx = (consecutive_failures as usize).saturating_sub(1).min(backoff_secs.len() - 1);
+                let idx = (consecutive_failures as usize)
+                    .saturating_sub(1)
+                    .min(backoff_secs.len() - 1);
                 let delay = Duration::from_secs(backoff_secs[idx]);
                 tokio::time::sleep(delay).await;
             }

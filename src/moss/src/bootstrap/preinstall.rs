@@ -39,14 +39,16 @@ pub async fn load_preinstall_manifest() -> Option<PreInstallManifest> {
         match tokio::fs::read_to_string(path).await {
             Ok(content) => match serde_json::from_str(&content) {
                 Ok(manifest) => {
-                    tracing::info!("Loaded pre-install manifest with {} offerings",
+                    tracing::info!(
+                        "Loaded pre-install manifest with {} offerings",
                         serde_json::from_str::<serde_json::Value>(&content)
                             .ok()?
                             .get("offerings")?
                             .as_array()?
-                            .len());
+                            .len()
+                    );
                     Some(manifest)
-                },
+                }
                 Err(e) => {
                     tracing::error!(error = ?e, "Failed to parse pre-install manifest");
                     None

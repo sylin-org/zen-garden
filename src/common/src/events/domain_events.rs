@@ -2,8 +2,8 @@
 //!
 //! All events are JSON-serializable for SSE streaming and audit logs.
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Top-level domain event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -403,7 +403,7 @@ pub enum StoneEvent {
         reason: Option<String>,
         timestamp: DateTime<Utc>,
     },
-    
+
     /// Stone load/metrics updated
     LoadUpdated {
         stone_name: String,
@@ -412,7 +412,7 @@ pub enum StoneEvent {
         disk_percent: f64,
         timestamp: DateTime<Utc>,
     },
-    
+
     /// Stone was tended (admin interaction)
     Tended {
         stone_name: String,
@@ -430,7 +430,7 @@ impl StoneEvent {
             StoneEvent::Tended { timestamp, .. } => *timestamp,
         }
     }
-    
+
     pub fn stone_name(&self) -> &str {
         match self {
             StoneEvent::HealthChanged { stone_name, .. } => stone_name,

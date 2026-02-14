@@ -15,15 +15,15 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
-use garden_common::constants::paths;
 use garden_common::constants::headers::HEADER_SEED_BANK;
+use garden_common::constants::paths;
 use garden_common::storage::DEFAULT_SEED_BANK_NAME;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::{error_response, AppState};
 use crate::api::v1::storage::ObjectMeta;
 use crate::infra::storage::{ObjectStore, SeedBankRegistry};
+use crate::{error_response, AppState};
 
 // ============================================================================
 // Constants
@@ -218,14 +218,20 @@ async fn resolve_seed_bank_route(
     state: &AppState,
     name: &str,
 ) -> Result<SeedBankRoute, (StatusCode, String)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to scan seed banks: {}", e)))?;
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to scan seed banks: {}", e),
+        )
+    })?;
 
     if let Some(bank) = registry.get(name) {
         if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
             return Err((StatusCode::CONFLICT, msg));
         }
-        return Ok(SeedBankRoute::Local { mount_path: bank.mount_path.clone() });
+        return Ok(SeedBankRoute::Local {
+            mount_path: bank.mount_path.clone(),
+        });
     }
 
     let cache = state.storage_cache.read().await;
@@ -235,12 +241,17 @@ async fn resolve_seed_bank_route(
         }
         for sb in &beacon.seed_banks {
             if sb.name == name {
-                return Ok(SeedBankRoute::Remote { endpoint: beacon.endpoint.clone() });
+                return Ok(SeedBankRoute::Remote {
+                    endpoint: beacon.endpoint.clone(),
+                });
             }
         }
     }
 
-    Err((StatusCode::SERVICE_UNAVAILABLE, format!("Seed bank '{}' not available", name)))
+    Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("Seed bank '{}' not available", name),
+    ))
 }
 
 async fn proxy_storage_request(
@@ -252,14 +263,21 @@ async fn proxy_storage_request(
     body: Option<Bytes>,
 ) -> Response {
     let client = reqwest::Client::new();
-    let url = format!("{}/{}", endpoint.trim_end_matches('/'), path.trim_start_matches('/'));
+    let url = format!(
+        "{}/{}",
+        endpoint.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
     let mut request = client.request(method, url);
 
     if !query.is_empty() {
         request = request.query(&query);
     }
 
-    if let Some(content_type) = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    if let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         request = request.header(reqwest::header::CONTENT_TYPE, content_type);
     }
 
@@ -274,21 +292,34 @@ async fn proxy_storage_request(
         }
     };
 
-    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let resp_headers = response.headers().clone();
     let body = response.bytes().await.unwrap_or_default();
 
     let mut builder = Response::builder().status(status);
-    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::CONTENT_TYPE, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::CONTENT_LENGTH, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::ETAG, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::LAST_MODIFIED).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::LAST_MODIFIED, value);
     }
 
@@ -304,17 +335,23 @@ pub async fn list_buckets(
     Query(query): Query<StorageListQuery>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<BucketListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let selected = get_seed_bank_name(&headers, &query)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+    let selected =
+        get_seed_bank_name(&headers, &query).unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    let route = resolve_seed_bank_route(&state, &selected).await
+    let route = resolve_seed_bank_route(&state, &selected)
+        .await
         .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
 
     match route {
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
-            let buckets = store.list_buckets().await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "LIST_FAILED", &e.to_string()))?;
+            let buckets = store.list_buckets().await.map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "LIST_FAILED",
+                    &e.to_string(),
+                )
+            })?;
             Ok(Json(ApiResponse::new(BucketListResponse { buckets })))
         }
         SeedBankRoute::Remote { endpoint } => {
@@ -329,15 +366,26 @@ pub async fn list_buckets(
                 query_params,
                 &headers,
                 None,
-            ).await;
+            )
+            .await;
 
             if response.status() != StatusCode::OK {
-                return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", "Failed to list buckets"));
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "UPSTREAM_ERROR",
+                    "Failed to list buckets",
+                ));
             }
 
             let bytes = match axum::body::to_bytes(response.into_body(), usize::MAX).await {
                 Ok(b) => b,
-                Err(e) => return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string())),
+                Err(e) => {
+                    return Err(err(
+                        StatusCode::BAD_GATEWAY,
+                        "UPSTREAM_ERROR",
+                        &e.to_string(),
+                    ))
+                }
             };
             let data: ApiResponse<BucketListResponse> = serde_json::from_slice(&bytes)
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
@@ -356,8 +404,8 @@ pub async fn get_object(
     Query(query): Query<StorageListQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let selected = get_seed_bank_name(&headers, &query)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+    let selected =
+        get_seed_bank_name(&headers, &query).unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -366,7 +414,11 @@ pub async fn get_object(
 
     let (bucket, key) = parse_storage_path(&path);
     if bucket.is_empty() {
-        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_PATH", "Bucket is required");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Bucket is required",
+        );
     }
     if let Err(err) = validate_bucket(&bucket) {
         return path_error_raw(err);
@@ -386,37 +438,56 @@ pub async fn get_object(
 
             if wants_list {
                 if has_path_traversal(&key) {
-                    return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_PATH", "Prefix contains invalid path segments");
+                    return error_response_raw(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_PATH",
+                        "Prefix contains invalid path segments",
+                    );
                 }
                 if let Some(prefix) = &query.prefix {
                     if has_path_traversal(prefix) {
-                        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_PATH", "Prefix contains invalid path segments");
+                        return error_response_raw(
+                            StatusCode::BAD_REQUEST,
+                            "INVALID_PATH",
+                            "Prefix contains invalid path segments",
+                        );
                     }
                 }
                 if let Some(marker) = &query.marker {
                     if has_path_traversal(marker) {
-                        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_PATH", "Marker contains invalid path segments");
+                        return error_response_raw(
+                            StatusCode::BAD_REQUEST,
+                            "INVALID_PATH",
+                            "Marker contains invalid path segments",
+                        );
                     }
                 }
 
                 let max_keys = query.max_keys.unwrap_or(DEFAULT_MAX_KEYS).min(MAX_MAX_KEYS);
                 let prefix = combine_prefix(&key, &query.prefix);
 
-                match store.list_objects(
-                    &bucket,
-                    prefix.as_deref(),
-                    query.delimiter.as_deref(),
-                    query.marker.as_deref(),
-                    max_keys,
-                ).await {
+                match store
+                    .list_objects(
+                        &bucket,
+                        prefix.as_deref(),
+                        query.delimiter.as_deref(),
+                        query.marker.as_deref(),
+                        max_keys,
+                    )
+                    .await
+                {
                     Ok(result) => {
-                        let objects = result.contents.into_iter().map(|o| ObjectMeta {
-                            key: o.key,
-                            size: o.size,
-                            content_type: o.content_type,
-                            etag: o.etag,
-                            last_modified: o.last_modified,
-                        }).collect();
+                        let objects = result
+                            .contents
+                            .into_iter()
+                            .map(|o| ObjectMeta {
+                                key: o.key,
+                                size: o.size,
+                                content_type: o.content_type,
+                                etag: o.etag,
+                                last_modified: o.last_modified,
+                            })
+                            .collect();
                         let response = StorageListResponse {
                             bucket: bucket.clone(),
                             prefix: prefix.unwrap_or_default(),
@@ -433,7 +504,11 @@ pub async fn get_object(
                             .body(body.into())
                             .unwrap()
                     }
-                    Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, "LIST_FAILED", &e.to_string()),
+                    Err(e) => error_response_raw(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "LIST_FAILED",
+                        &e.to_string(),
+                    ),
                 }
             } else {
                 if let Err(err) = validate_key(&key) {
@@ -451,8 +526,14 @@ pub async fn get_object(
                             .body(data.into())
                             .unwrap()
                     }
-                    Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
-                    Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, "GET_FAILED", &e.to_string()),
+                    Ok(None) => {
+                        error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
+                    }
+                    Err(e) => error_response_raw(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "GET_FAILED",
+                        &e.to_string(),
+                    ),
                 }
             }
         }
@@ -500,10 +581,11 @@ pub async fn put_object(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<ApiResponse<ObjectMeta>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let selected = get_seed_bank_name(&headers, &query)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+    let selected =
+        get_seed_bank_name(&headers, &query).unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    let route = resolve_seed_bank_route(&state, &selected).await
+    let route = resolve_seed_bank_route(&state, &selected)
+        .await
         .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
 
     let (bucket, key) = parse_storage_path(&path);
@@ -522,8 +604,16 @@ pub async fn put_object(
                 .unwrap_or("application/octet-stream");
 
             let store = ObjectStore::new(&mount_path);
-            let result = store.put_object(&bucket, &key, content_type, &body).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "PUT_FAILED", &e.to_string()))?;
+            let result = store
+                .put_object(&bucket, &key, content_type, &body)
+                .await
+                .map_err(|e| {
+                    err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "PUT_FAILED",
+                        &e.to_string(),
+                    )
+                })?;
 
             Ok(Json(ApiResponse::new(ObjectMeta {
                 key,
@@ -545,12 +635,18 @@ pub async fn put_object(
                 query_params,
                 &headers,
                 Some(body),
-            ).await;
+            )
+            .await;
 
             if response.status() != StatusCode::OK && response.status() != StatusCode::CREATED {
-                return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", "Failed to store object"));
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "UPSTREAM_ERROR",
+                    "Failed to store object",
+                ));
             }
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
             let data: ApiResponse<ObjectMeta> = serde_json::from_slice(&bytes)
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
@@ -569,10 +665,11 @@ pub async fn delete_object(
     Query(query): Query<StorageListQuery>,
     headers: HeaderMap,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
-    let selected = get_seed_bank_name(&headers, &query)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+    let selected =
+        get_seed_bank_name(&headers, &query).unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    let route = resolve_seed_bank_route(&state, &selected).await
+    let route = resolve_seed_bank_route(&state, &selected)
+        .await
         .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
 
     let (bucket, key) = parse_storage_path(&path);
@@ -586,8 +683,13 @@ pub async fn delete_object(
     match route {
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
-            store.delete_object(&bucket, &key).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &e.to_string()))?;
+            store.delete_object(&bucket, &key).await.map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DELETE_FAILED",
+                    &e.to_string(),
+                )
+            })?;
             Ok(StatusCode::NO_CONTENT)
         }
         SeedBankRoute::Remote { endpoint } => {
@@ -602,10 +704,15 @@ pub async fn delete_object(
                 query_params,
                 &headers,
                 None,
-            ).await;
+            )
+            .await;
 
             if response.status() != StatusCode::NO_CONTENT && response.status() != StatusCode::OK {
-                return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", "Failed to delete object"));
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "UPSTREAM_ERROR",
+                    "Failed to delete object",
+                ));
             }
             Ok(StatusCode::NO_CONTENT)
         }
@@ -622,8 +729,8 @@ pub async fn head_object(
     Query(query): Query<StorageListQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let selected = get_seed_bank_name(&headers, &query)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+    let selected =
+        get_seed_bank_name(&headers, &query).unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -642,18 +749,22 @@ pub async fn head_object(
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
             match store.head_object(&bucket, &key).await {
-                Ok(Some(meta)) => {
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, &meta.content_type)
-                        .header(header::CONTENT_LENGTH, meta.size)
-                        .header(header::ETAG, &meta.etag)
-                        .header(header::LAST_MODIFIED, &meta.last_modified)
-                        .body("".into())
-                        .unwrap()
+                Ok(Some(meta)) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, &meta.content_type)
+                    .header(header::CONTENT_LENGTH, meta.size)
+                    .header(header::ETAG, &meta.etag)
+                    .header(header::LAST_MODIFIED, &meta.last_modified)
+                    .body("".into())
+                    .unwrap(),
+                Ok(None) => {
+                    error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
                 }
-                Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
-                Err(e) => error_response_raw(StatusCode::INTERNAL_SERVER_ERROR, "HEAD_FAILED", &e.to_string()),
+                Err(e) => error_response_raw(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "HEAD_FAILED",
+                    &e.to_string(),
+                ),
             }
         }
         SeedBankRoute::Remote { endpoint } => {

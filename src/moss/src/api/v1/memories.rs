@@ -16,17 +16,17 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
-use garden_common::audit::{AuditAccessEntry, log_access};
+use garden_common::audit::{log_access, AuditAccessEntry};
 use garden_common::constants::headers::{
     HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME, HEADER_SEED_BANK,
 };
 use garden_common::constants::paths;
-use garden_common::storage::{DEFAULT_SEED_BANK_NAME, MemoriesOfferingManifest};
+use garden_common::storage::{MemoriesOfferingManifest, DEFAULT_SEED_BANK_NAME};
 use serde::{Deserialize, Serialize};
 
-use crate::{error_response, AppState};
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
 use crate::infra::storage::SeedBankRegistry;
+use crate::{error_response, AppState};
 
 // ============================================================================
 // Constants
@@ -179,8 +179,12 @@ async fn resolve_seed_bank_route(
     state: &AppState,
     name: &str,
 ) -> Result<SeedBankRoute, (StatusCode, String)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to scan seed banks: {}", e)))?;
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to scan seed banks: {}", e),
+        )
+    })?;
 
     if let Some(bank) = registry.get(name) {
         if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
@@ -200,12 +204,17 @@ async fn resolve_seed_bank_route(
         }
         for sb in &beacon.seed_banks {
             if sb.name == name {
-                return Ok(SeedBankRoute::Remote { endpoint: beacon.endpoint.clone() });
+                return Ok(SeedBankRoute::Remote {
+                    endpoint: beacon.endpoint.clone(),
+                });
             }
         }
     }
 
-    Err((StatusCode::SERVICE_UNAVAILABLE, format!("Seed bank '{}' not available", name)))
+    Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("Seed bank '{}' not available", name),
+    ))
 }
 
 async fn proxy_memories_request(
@@ -218,14 +227,21 @@ async fn proxy_memories_request(
     requesting_stone_name: &str,
 ) -> Response {
     let client = reqwest::Client::new();
-    let url = format!("{}/{}", endpoint.trim_end_matches('/'), path.trim_start_matches('/'));
+    let url = format!(
+        "{}/{}",
+        endpoint.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
     let mut request = client.request(method, url);
 
     if !query.is_empty() {
         request = request.query(&query);
     }
 
-    if let Some(user_agent) = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()) {
+    if let Some(user_agent) = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+    {
         request = request.header(reqwest::header::USER_AGENT, user_agent);
     }
     if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
@@ -233,7 +249,10 @@ async fn proxy_memories_request(
     }
 
     if headers.get(HEADER_REQUESTING_STONE_ID).is_some() {
-        if let Some(value) = headers.get(HEADER_REQUESTING_STONE_ID).and_then(|v| v.to_str().ok()) {
+        if let Some(value) = headers
+            .get(HEADER_REQUESTING_STONE_ID)
+            .and_then(|v| v.to_str().ok())
+        {
             request = request.header(HEADER_REQUESTING_STONE_ID, value);
         }
     } else {
@@ -241,7 +260,10 @@ async fn proxy_memories_request(
     }
 
     if headers.get(HEADER_REQUESTING_STONE_NAME).is_some() {
-        if let Some(value) = headers.get(HEADER_REQUESTING_STONE_NAME).and_then(|v| v.to_str().ok()) {
+        if let Some(value) = headers
+            .get(HEADER_REQUESTING_STONE_NAME)
+            .and_then(|v| v.to_str().ok())
+        {
             request = request.header(HEADER_REQUESTING_STONE_NAME, value);
         }
     } else {
@@ -255,15 +277,22 @@ async fn proxy_memories_request(
         }
     };
 
-    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let resp_headers = response.headers().clone();
     let body = response.bytes().await.unwrap_or_default();
 
     let mut builder = Response::builder().status(status);
-    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::CONTENT_TYPE, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::CONTENT_LENGTH, value);
     }
 
@@ -282,11 +311,16 @@ pub async fn list_memories(
     let selected = get_seed_bank_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    let route = resolve_seed_bank_route(&state, &selected).await
+    let route = resolve_seed_bank_route(&state, &selected)
+        .await
         .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
 
     match route {
-        SeedBankRoute::Local { mount_path, seed_bank_id, seed_bank_name } => {
+        SeedBankRoute::Local {
+            mount_path,
+            seed_bank_id,
+            seed_bank_name,
+        } => {
             let index = match state
                 .nurturing_store
                 .list_remote_snapshots(&mount_path, &seed_bank_id)
@@ -314,7 +348,11 @@ pub async fn list_memories(
                         None,
                         None,
                     );
-                    return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "LIST_FAILED", &e.to_string()));
+                    return Err(err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "LIST_FAILED",
+                        &e.to_string(),
+                    ));
                 }
             };
 
@@ -337,10 +375,15 @@ pub async fn list_memories(
             .await;
 
             if response.status() != StatusCode::OK {
-                return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", "Failed to list memories"));
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "UPSTREAM_ERROR",
+                    "Failed to list memories",
+                ));
             }
 
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
             let data: ApiResponse<RemoteNurturingIndex> = serde_json::from_slice(&bytes)
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
@@ -360,17 +403,26 @@ pub async fn list_offering_snapshots(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<OfferingSnapshotsResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_OFFERING", "Invalid offering id"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING",
+            "Invalid offering id",
+        ));
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    let route = resolve_seed_bank_route(&state, &selected).await
+    let route = resolve_seed_bank_route(&state, &selected)
+        .await
         .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
 
     match route {
-        SeedBankRoute::Local { mount_path, seed_bank_id, seed_bank_name } => {
+        SeedBankRoute::Local {
+            mount_path,
+            seed_bank_id,
+            seed_bank_name,
+        } => {
             let index = match state
                 .nurturing_store
                 .list_remote_snapshots(&mount_path, &seed_bank_id)
@@ -387,7 +439,11 @@ pub async fn list_offering_snapshots(
                         Some(&offering_id),
                         None,
                     );
-                    return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "LIST_FAILED", &e.to_string()));
+                    return Err(err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "LIST_FAILED",
+                        &e.to_string(),
+                    ));
                 }
             };
 
@@ -429,10 +485,15 @@ pub async fn list_offering_snapshots(
             .await;
 
             if response.status() != StatusCode::OK {
-                return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", "Failed to list snapshots"));
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "UPSTREAM_ERROR",
+                    "Failed to list snapshots",
+                ));
             }
 
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
             let data: ApiResponse<OfferingSnapshotsResponse> = serde_json::from_slice(&bytes)
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
@@ -452,17 +513,26 @@ pub async fn get_offering_manifest(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<MemoriesOfferingManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_OFFERING", "Invalid offering id"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING",
+            "Invalid offering id",
+        ));
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
 
-    let route = resolve_seed_bank_route(&state, &selected).await
+    let route = resolve_seed_bank_route(&state, &selected)
+        .await
         .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
 
     match route {
-        SeedBankRoute::Local { mount_path, seed_bank_name, .. } => {
+        SeedBankRoute::Local {
+            mount_path,
+            seed_bank_name,
+            ..
+        } => {
             let path = paths::seed_bank_memory_offering_manifest_path(&mount_path, &offering_id);
             let json = match tokio::fs::read_to_string(&path).await {
                 Ok(json) => json,
@@ -476,7 +546,11 @@ pub async fn get_offering_manifest(
                         Some(&offering_id),
                         None,
                     );
-                    return Err(err(StatusCode::NOT_FOUND, "NOT_FOUND", "Offering manifest not found"));
+                    return Err(err(
+                        StatusCode::NOT_FOUND,
+                        "NOT_FOUND",
+                        "Offering manifest not found",
+                    ));
                 }
             };
 
@@ -492,7 +566,11 @@ pub async fn get_offering_manifest(
                         Some(&offering_id),
                         None,
                     );
-                    return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "PARSE_FAILED", &e.to_string()));
+                    return Err(err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "PARSE_FAILED",
+                        &e.to_string(),
+                    ));
                 }
             };
 
@@ -525,10 +603,15 @@ pub async fn get_offering_manifest(
             .await;
 
             if response.status() != StatusCode::OK {
-                return Err(err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", "Failed to read offering manifest"));
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "UPSTREAM_ERROR",
+                    "Failed to read offering manifest",
+                ));
             }
 
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
             let data: ApiResponse<MemoriesOfferingManifest> = serde_json::from_slice(&bytes)
                 .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
@@ -548,10 +631,18 @@ pub async fn download_snapshot(
     headers: HeaderMap,
 ) -> Response {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_OFFERING", "Invalid offering id");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING",
+            "Invalid offering id",
+        );
     }
     if harvest_id.is_empty() || has_path_traversal(&harvest_id) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_HARVEST", "Invalid harvest id");
+        return error_response_raw(
+            StatusCode::BAD_REQUEST,
+            "INVALID_HARVEST",
+            "Invalid harvest id",
+        );
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
@@ -563,7 +654,11 @@ pub async fn download_snapshot(
     };
 
     match route {
-        SeedBankRoute::Local { mount_path, seed_bank_name, .. } => {
+        SeedBankRoute::Local {
+            mount_path,
+            seed_bank_name,
+            ..
+        } => {
             let path = paths::seed_bank_memory_harvest_path(&mount_path, &offering_id, &harvest_id);
             let data = match tokio::fs::read(&path).await {
                 Ok(bytes) => bytes,
@@ -577,7 +672,11 @@ pub async fn download_snapshot(
                         Some(&offering_id),
                         Some(&harvest_id),
                     );
-                    return error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Snapshot not found");
+                    return error_response_raw(
+                        StatusCode::NOT_FOUND,
+                        "NOT_FOUND",
+                        "Snapshot not found",
+                    );
                 }
             };
 

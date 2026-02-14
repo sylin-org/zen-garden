@@ -31,13 +31,11 @@ use axum::{
 
 use crate::api::responses::ApiResponse;
 use crate::domain::nurturing::{
-    NurturingSlot, OfferingSlots, NurturingResult, NurturingIndex,
-    RemoteNurturingIndex, ReplicationResult, build_memories_manifest,
+    build_memories_manifest, NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots,
+    RemoteNurturingIndex, ReplicationResult,
 };
 use crate::infra::storage::SeedBankRegistry;
-use crate::tasks::{
-    NurturingWorkflowResult, trigger_nurturing, trigger_all_nurturing,
-};
+use crate::tasks::{trigger_all_nurturing, trigger_nurturing, NurturingWorkflowResult};
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::offerings::parse_offering_fqn;
@@ -66,13 +64,14 @@ pub struct RestoreRequest {
 pub async fn list_nurturing(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<NurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let index = state.nurturing_store.load_index().await
-        .map_err(|e| crate::infra::error_response(
+    let index = state.nurturing_store.load_index().await.map_err(|e| {
+        crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "NURTURING_ERROR",
             format!("Failed to load nurturing index: {}", e),
             None,
-        ))?;
+        )
+    })?;
 
     Ok(Json(ApiResponse {
         data: index,
@@ -88,32 +87,44 @@ pub async fn get_offering_slots(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> Result<Json<ApiResponse<Option<OfferingSlots>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering by name to get the offering_id
     let offering_id = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
     let slots = if let Some(id) = offering_id {
-        state.nurturing_store.get_offering_slots(&id).await
-            .map_err(|e| crate::infra::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "NURTURING_ERROR",
-                format!("Failed to get nurturing slots: {}", e),
-                None,
-            ))?
+        state
+            .nurturing_store
+            .get_offering_slots(&id)
+            .await
+            .map_err(|e| {
+                crate::infra::error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "NURTURING_ERROR",
+                    format!("Failed to get nurturing slots: {}", e),
+                    None,
+                )
+            })?
     } else {
         // Try looking up directly by offering_id
-        state.nurturing_store.get_offering_slots(&offering).await
-            .map_err(|e| crate::infra::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "NURTURING_ERROR",
-                format!("Failed to get nurturing slots: {}", e),
-                None,
-            ))?
+        state
+            .nurturing_store
+            .get_offering_slots(&offering)
+            .await
+            .map_err(|e| {
+                crate::infra::error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "NURTURING_ERROR",
+                    format!("Failed to get nurturing slots: {}", e),
+                    None,
+                )
+            })?
     };
 
     Ok(Json(ApiResponse {
@@ -131,26 +142,33 @@ pub async fn create_snapshot(
     Path(offering): Path<String>,
     Json(request): Json<CreateSnapshotRequest>,
 ) -> Result<Json<ApiResponse<NurturingResult>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let (offering_id, offering_name) = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == offering_lookup)
             .map(|o| (o.offering_id.clone(), o.name.clone()))
-            .ok_or_else(|| crate::infra::error_response(
-                StatusCode::NOT_FOUND,
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering_lookup),
-                None,
-            ))?
+            .ok_or_else(|| {
+                crate::infra::error_response(
+                    StatusCode::NOT_FOUND,
+                    "OFFERING_NOT_FOUND",
+                    format!("Offering '{}' not found in registry", offering_lookup),
+                    None,
+                )
+            })?
     };
 
     if offering_id.is_empty() {
         return Err(crate::infra::error_response(
             StatusCode::BAD_REQUEST,
             "NO_OFFERING_ID",
-            format!("Offering '{}' has no offering_id - please restart moss to migrate", offering_lookup),
+            format!(
+                "Offering '{}' has no offering_id - please restart moss to migrate",
+                offering_lookup
+            ),
             None,
         ));
     }
@@ -165,19 +183,24 @@ pub async fn create_snapshot(
         "Creating nurturing snapshot"
     );
 
-    let result = state.nurturing_store.create_snapshot(
-        &state.docker,
-        &offering_id,
-        &offering_name,
-        &state.stone_id,
-        commit_image,
-    ).await
-    .map_err(|e| crate::infra::error_response(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "SNAPSHOT_FAILED",
-        format!("Failed to create nurturing snapshot: {}", e),
-        None,
-    ))?;
+    let result = state
+        .nurturing_store
+        .create_snapshot(
+            &state.docker,
+            &offering_id,
+            &offering_name,
+            &state.stone_id,
+            commit_image,
+        )
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SNAPSHOT_FAILED",
+                format!("Failed to create nurturing snapshot: {}", e),
+                None,
+            )
+        })?;
 
     Ok(Json(ApiResponse {
         data: result,
@@ -193,20 +216,25 @@ pub async fn restore_snapshot(
     State(state): State<AppState>,
     Path(offering): Path<String>,
     Json(request): Json<RestoreRequest>,
-) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)>
+{
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let offering_id = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == offering_lookup)
             .map(|o| o.offering_id.clone())
-            .ok_or_else(|| crate::infra::error_response(
-                StatusCode::NOT_FOUND,
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering_lookup),
-                None,
-            ))?
+            .ok_or_else(|| {
+                crate::infra::error_response(
+                    StatusCode::NOT_FOUND,
+                    "OFFERING_NOT_FOUND",
+                    format!("Offering '{}' not found in registry", offering_lookup),
+                    None,
+                )
+            })?
     };
 
     // Parse slot if specified
@@ -232,25 +260,34 @@ pub async fn restore_snapshot(
     );
 
     // Stop the service first
-    if let Err(e) = state.docker.stop_service(&offering_lookup, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .stop_service(&offering_lookup, Some(&state.console))
+        .await
+    {
         tracing::warn!(error = ?e, "Failed to stop service before restore (continuing anyway)");
     }
 
     // Restore the snapshot
-    let manifest = state.nurturing_store.restore_snapshot(
-        &state.docker,
-        &offering_id,
-        slot,
-    ).await
-    .map_err(|e| crate::infra::error_response(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "RESTORE_FAILED",
-        format!("Failed to restore snapshot: {}", e),
-        None,
-    ))?;
+    let manifest = state
+        .nurturing_store
+        .restore_snapshot(&state.docker, &offering_id, slot)
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RESTORE_FAILED",
+                format!("Failed to restore snapshot: {}", e),
+                None,
+            )
+        })?;
 
     // Start the service
-    if let Err(e) = state.docker.start_service(&offering_lookup, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .start_service(&offering_lookup, Some(&state.console))
+        .await
+    {
         return Err(crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "START_FAILED",
@@ -273,31 +310,38 @@ pub async fn delete_nurturing(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let offering_id = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
     let offering_id = offering_id.unwrap_or(offering.clone());
 
-    state.nurturing_store.delete_offering(&offering_id).await
-        .map_err(|e| crate::infra::error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DELETE_FAILED",
-            format!("Failed to delete nurturing data: {}", e),
-            None,
-        ))?;
+    state
+        .nurturing_store
+        .delete_offering(&offering_id)
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DELETE_FAILED",
+                format!("Failed to delete nurturing data: {}", e),
+                None,
+            )
+        })?;
 
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "deleted",
             "offering_id": offering_id,
-        }))
+        })),
     ))
 }
 
@@ -331,30 +375,35 @@ pub async fn replicate_to_seed_bank(
     Path(offering): Path<String>,
     Json(request): Json<ReplicateRequest>,
 ) -> Result<Json<ApiResponse<ReplicationResult>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let offering_entry = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .cloned()
-            .ok_or_else(|| crate::infra::error_response(
-                StatusCode::NOT_FOUND,
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering_lookup),
-                None,
-            ))?
+            .ok_or_else(|| {
+                crate::infra::error_response(
+                    StatusCode::NOT_FOUND,
+                    "OFFERING_NOT_FOUND",
+                    format!("Offering '{}' not found in registry", offering_lookup),
+                    None,
+                )
+            })?
     };
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.seed_bank).await
-        .map_err(|e| crate::infra::error_response(
+    let seed_bank = find_seed_bank(&request.seed_bank).await.map_err(|e| {
+        crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
             format!("Seed bank '{}' not found: {}", request.seed_bank, e),
             None,
-        ))?;
+        )
+    })?;
 
     tracing::info!(
         offering_id,
@@ -373,20 +422,25 @@ pub async fn replicate_to_seed_bank(
         &state.stone_name,
     );
 
-    let result = state.nurturing_store.replicate_to_seed_bank(
-        &offering_id,
-        &seed_bank.mount_path,
-        &seed_bank.id,
-        &seed_bank.name,
-        &state.stone_id,
-        Some(hydration_manifest),
-    ).await
-    .map_err(|e| crate::infra::error_response(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "REPLICATION_FAILED",
-        format!("Failed to replicate to seed bank: {}", e),
-        None,
-    ))?;
+    let result = state
+        .nurturing_store
+        .replicate_to_seed_bank(
+            &offering_id,
+            &seed_bank.mount_path,
+            &seed_bank.id,
+            &seed_bank.name,
+            &state.stone_id,
+            Some(hydration_manifest),
+        )
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "REPLICATION_FAILED",
+                format!("Failed to replicate to seed bank: {}", e),
+                None,
+            )
+        })?;
 
     Ok(Json(ApiResponse {
         data: result,
@@ -403,21 +457,27 @@ pub async fn list_remote_snapshots(
     Path(seed_bank_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&seed_bank_name).await
-        .map_err(|e| crate::infra::error_response(
+    let seed_bank = find_seed_bank(&seed_bank_name).await.map_err(|e| {
+        crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
             format!("Seed bank '{}' not found: {}", seed_bank_name, e),
             None,
-        ))?;
+        )
+    })?;
 
-    let index = state.nurturing_store.list_remote_snapshots(&seed_bank.mount_path, &seed_bank.id).await
-        .map_err(|e| crate::infra::error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "REMOTE_LIST_FAILED",
-            format!("Failed to list remote snapshots: {}", e),
-            None,
-        ))?;
+    let index = state
+        .nurturing_store
+        .list_remote_snapshots(&seed_bank.mount_path, &seed_bank.id)
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "REMOTE_LIST_FAILED",
+                format!("Failed to list remote snapshots: {}", e),
+                None,
+            )
+        })?;
 
     Ok(Json(ApiResponse {
         data: index,
@@ -433,30 +493,36 @@ pub async fn restore_from_seed_bank(
     State(state): State<AppState>,
     Path(offering): Path<String>,
     Json(request): Json<RestoreRemoteRequest>,
-) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+) -> Result<Json<ApiResponse<crate::domain::HarvestManifest>>, (StatusCode, Json<ApiErrorResponse>)>
+{
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
     let (offering_id, offering_name) = {
         let offerings = state.offerings.read().await;
-        offerings.iter()
+        offerings
+            .iter()
             .find(|o| o.name == offering_lookup || o.offering_id == offering)
             .map(|o| (o.offering_id.clone(), o.name.clone()))
-            .ok_or_else(|| crate::infra::error_response(
-                StatusCode::NOT_FOUND,
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found in registry", offering_lookup),
-                None,
-            ))?
+            .ok_or_else(|| {
+                crate::infra::error_response(
+                    StatusCode::NOT_FOUND,
+                    "OFFERING_NOT_FOUND",
+                    format!("Offering '{}' not found in registry", offering_lookup),
+                    None,
+                )
+            })?
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.seed_bank).await
-        .map_err(|e| crate::infra::error_response(
+    let seed_bank = find_seed_bank(&request.seed_bank).await.map_err(|e| {
+        crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
             format!("Seed bank '{}' not found: {}", request.seed_bank, e),
             None,
-        ))?;
+        )
+    })?;
 
     tracing::info!(
         offering_id,
@@ -467,27 +533,40 @@ pub async fn restore_from_seed_bank(
     );
 
     // Stop the service first
-    if let Err(e) = state.docker.stop_service(&offering_name, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .stop_service(&offering_name, Some(&state.console))
+        .await
+    {
         tracing::warn!(error = ?e, "Failed to stop service before restore (continuing anyway)");
     }
 
     // Restore from seed bank
-    let manifest = state.nurturing_store.restore_from_seed_bank(
-        &state.docker,
-        &seed_bank.mount_path,
-        &seed_bank.id,
-        &offering_id,
-        request.harvest_id.as_deref(),
-    ).await
-    .map_err(|e| crate::infra::error_response(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "REMOTE_RESTORE_FAILED",
-        format!("Failed to restore from seed bank: {}", e),
-        None,
-    ))?;
+    let manifest = state
+        .nurturing_store
+        .restore_from_seed_bank(
+            &state.docker,
+            &seed_bank.mount_path,
+            &seed_bank.id,
+            &offering_id,
+            request.harvest_id.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "REMOTE_RESTORE_FAILED",
+                format!("Failed to restore from seed bank: {}", e),
+                None,
+            )
+        })?;
 
     // Start the service
-    if let Err(e) = state.docker.start_service(&offering_name, Some(&state.console)).await {
+    if let Err(e) = state
+        .docker
+        .start_service(&offering_name, Some(&state.console))
+        .await
+    {
         return Err(crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "START_FAILED",
@@ -523,19 +602,23 @@ pub async fn trigger_offering_nurturing(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> Result<Json<ApiResponse<NurturingWorkflowResult>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_lookup = normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
+    let offering_lookup =
+        normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     tracing::info!(
         offering = %offering_lookup,
         "Nurturing trigger received"
     );
 
-    let result = trigger_nurturing(&state, &offering_lookup).await
-        .map_err(|e| crate::infra::error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "NURTURING_WORKFLOW_FAILED",
-            format!("Nurturing workflow failed: {}", e),
-            None,
-        ))?;
+    let result = trigger_nurturing(&state, &offering_lookup)
+        .await
+        .map_err(|e| {
+            crate::infra::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "NURTURING_WORKFLOW_FAILED",
+                format!("Nurturing workflow failed: {}", e),
+                None,
+            )
+        })?;
 
     Ok(Json(ApiResponse {
         data: result,
@@ -570,7 +653,8 @@ async fn find_seed_bank(name_or_id: &str) -> anyhow::Result<garden_common::stora
     let registry = SeedBankRegistry::scan().await?;
 
     // Try by name first, then by ID
-    registry.get_by_name(name_or_id)
+    registry
+        .get_by_name(name_or_id)
         .or_else(|| registry.get_by_id(name_or_id))
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("Seed bank not found: {}", name_or_id))

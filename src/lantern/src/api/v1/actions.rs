@@ -52,7 +52,10 @@ pub async fn post_service_rest(
             )
         })?;
 
-    Ok((StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK), Json(body)))
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(body),
+    ))
 }
 
 /// POST /api/v1/garden/stones/:stone_id/services/:svc/wake
@@ -75,7 +78,10 @@ pub async fn post_service_wake(
             )
         })?;
 
-    Ok((StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK), Json(body)))
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(body),
+    ))
 }
 
 /// POST /api/v1/garden/stones/:stone_id/offerings — deploy an offering
@@ -99,7 +105,10 @@ pub async fn post_deploy_offering(
             )
         })?;
 
-    Ok((StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK), Json(resp)))
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(resp),
+    ))
 }
 
 /// DELETE /api/v1/garden/stones/:stone_id/offerings/:name — remove an offering
@@ -110,19 +119,18 @@ pub async fn delete_offering(
     let endpoint = resolve_stone_endpoint(&state, &stone_id).await?;
     let url = format!("{}/api/v1/stone/offerings/{}", endpoint, name);
 
-    let (status, resp) = state
-        .http_client
-        .proxy_delete(&url)
-        .await
-        .map_err(|e| {
-            error_response(
-                StatusCode::BAD_GATEWAY,
-                "PROXY_ERROR",
-                format!("Failed to proxy to Moss: {}", e),
-            )
-        })?;
+    let (status, resp) = state.http_client.proxy_delete(&url).await.map_err(|e| {
+        error_response(
+            StatusCode::BAD_GATEWAY,
+            "PROXY_ERROR",
+            format!("Failed to proxy to Moss: {}", e),
+        )
+    })?;
 
-    Ok((StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK), Json(resp)))
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(resp),
+    ))
 }
 
 /// POST /api/v1/garden/stones/:stone_id/companions/:cid/command
@@ -149,5 +157,8 @@ pub async fn post_companion_command(
             )
         })?;
 
-    Ok((StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK), Json(resp)))
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(resp),
+    ))
 }

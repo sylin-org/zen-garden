@@ -12,8 +12,5 @@ pub fn error_response(
     code: &str,
     message: impl Into<String>,
 ) -> (StatusCode, Json<ApiErrorResponse>) {
-    (
-        status,
-        Json(ApiErrorResponse::new(code, message)),
-    )
+    (status, Json(ApiErrorResponse::new(code, message)))
 }

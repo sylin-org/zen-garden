@@ -55,8 +55,7 @@ impl Default for ProbeConfig {
 /// Returns ProbeResult indicating whether the IP is available.
 pub async fn probe_ip_conflict(
     ip: Ipv4Addr,
-    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
-    interface: &str,
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] interface: &str,
     config: &ProbeConfig,
 ) -> ProbeResult {
     // 1. Check if IP is bound locally first (quick check)
@@ -113,7 +112,9 @@ fn is_ip_bound_locally(ip: Ipv4Addr) -> bool {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let ip_str = ip.to_string();
             // Look for the IP in the output (inet X.X.X.X/prefix)
-            if stdout.contains(&format!("inet {}/", ip_str)) || stdout.contains(&format!("inet {} ", ip_str)) {
+            if stdout.contains(&format!("inet {}/", ip_str))
+                || stdout.contains(&format!("inet {} ", ip_str))
+            {
                 return true;
             }
         }
@@ -121,9 +122,7 @@ fn is_ip_bound_locally(ip: Ipv4Addr) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = std::process::Command::new("ipconfig")
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("ipconfig").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.contains(&ip.to_string()) {
                 return true;
@@ -149,11 +148,14 @@ async fn arp_probe(
 
     let output = tokio::process::Command::new("arping")
         .args([
-            "-D",                           // Duplicate detection mode
-            "-I", interface,                // Interface
-            "-c", &config.arp_probe_count.to_string(),  // Count
-            "-w", &timeout_secs.to_string(), // Timeout
-            &ip.to_string(),                // Target IP
+            "-D", // Duplicate detection mode
+            "-I",
+            interface, // Interface
+            "-c",
+            &config.arp_probe_count.to_string(), // Count
+            "-w",
+            &timeout_secs.to_string(), // Timeout
+            &ip.to_string(),           // Target IP
         ])
         .output()
         .await
@@ -192,8 +194,10 @@ async fn ping_probe(ip: Ipv4Addr, timeout: Duration) -> bool {
     #[cfg(target_os = "linux")]
     let result = tokio::process::Command::new("ping")
         .args([
-            "-c", "1",                      // Count
-            "-W", &timeout_secs.to_string(), // Timeout
+            "-c",
+            "1", // Count
+            "-W",
+            &timeout_secs.to_string(), // Timeout
             &ip.to_string(),
         ])
         .output()
@@ -202,8 +206,10 @@ async fn ping_probe(ip: Ipv4Addr, timeout: Duration) -> bool {
     #[cfg(target_os = "windows")]
     let result = tokio::process::Command::new("ping")
         .args([
-            "-n", "1",                      // Count
-            "-w", &(timeout_secs * 1000).to_string(), // Timeout in ms
+            "-n",
+            "1", // Count
+            "-w",
+            &(timeout_secs * 1000).to_string(), // Timeout in ms
             &ip.to_string(),
         ])
         .output()
@@ -212,8 +218,10 @@ async fn ping_probe(ip: Ipv4Addr, timeout: Duration) -> bool {
     #[cfg(target_os = "macos")]
     let result = tokio::process::Command::new("ping")
         .args([
-            "-c", "1",                      // Count
-            "-t", &timeout_secs.to_string(), // Timeout
+            "-c",
+            "1", // Count
+            "-t",
+            &timeout_secs.to_string(), // Timeout
             &ip.to_string(),
         ])
         .output()
@@ -250,7 +258,7 @@ mod tests {
         // This should return false for an external IP not bound locally
         // (unless the test machine happens to have this IP)
         let ip: Ipv4Addr = "203.0.113.1".parse().unwrap(); // TEST-NET-3
-        // Don't assert on this - it depends on local machine config
+                                                           // Don't assert on this - it depends on local machine config
         let _ = is_ip_bound_locally(ip);
     }
 }

@@ -82,11 +82,7 @@ pub fn register_stone(
     topology.last_updated = now;
 
     if is_new {
-        RegistrationEvent::stone_registered(
-            stone_id.map(|s| s.to_string()),
-            stone_name,
-            endpoint,
-        )
+        RegistrationEvent::stone_registered(stone_id.map(|s| s.to_string()), stone_name, endpoint)
     } else {
         RegistrationEvent::stone_heartbeat(stone_name)
     }
@@ -96,7 +92,10 @@ pub fn register_stone(
 ///
 /// Scans topology for a matching stone_name and sets it offline.
 /// Returns an event if the stone was online, None if already offline or unknown.
-pub fn mark_stone_offline(topology: &mut GardenTopology, stone_name: &str) -> Option<RegistrationEvent> {
+pub fn mark_stone_offline(
+    topology: &mut GardenTopology,
+    stone_name: &str,
+) -> Option<RegistrationEvent> {
     for entry in topology.stones.values_mut() {
         if entry.stone_name == stone_name && entry.status == StoneStatus::Online {
             entry.status = StoneStatus::Offline;

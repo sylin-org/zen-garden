@@ -1,17 +1,17 @@
-﻿//! TTY and first-boot console infrastructure
+//! TTY and first-boot console infrastructure
 
+use anyhow::{Context, Result};
 use std::fs::OpenOptions;
 use std::io::Write;
-use anyhow::{Context, Result};
 
 /// Ensure /etc is writable with retries for early-boot timing issues
 /// Returns Ok(true) if writeable, Ok(false) if permanently read-only
 pub async fn ensure_etc_writable() -> Result<bool> {
     const MAX_RETRIES: u32 = 10;
     const RETRY_DELAY_MS: u64 = 500;
-    
+
     let test_path = "/etc/.moss-write-test";
-    
+
     for attempt in 1..=MAX_RETRIES {
         match std::fs::write(test_path, "test") {
             Ok(_) => {
@@ -22,27 +22,32 @@ pub async fn ensure_etc_writable() -> Result<bool> {
                 }
                 return Ok(true);
             }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied || 
-                       e.raw_os_error() == Some(30) => { // EROFS = 30
-                
+            Err(e)
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    || e.raw_os_error() == Some(30) =>
+            {
+                // EROFS = 30
+
                 if attempt == 1 {
-                    tracing::warn!("/etc is not yet writable, will retry (may be early boot timing)");
+                    tracing::warn!(
+                        "/etc is not yet writable, will retry (may be early boot timing)"
+                    );
                 }
-                
+
                 // On first attempt, try remounting
                 if attempt == 1 {
                     let output = tokio::process::Command::new("mount")
                         .args(["-o", "remount,rw", "/"])
                         .output()
                         .await;
-                    
+
                     if let Ok(result) = output {
                         if result.status.success() {
                             tracing::info!("Attempted remount of root filesystem as read-write");
                         }
                     }
                 }
-                
+
                 // Wait before retry unless it's the last attempt
                 if attempt < MAX_RETRIES {
                     tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
@@ -55,11 +60,14 @@ pub async fn ensure_etc_writable() -> Result<bool> {
                 }
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Unexpected error testing /etc writability: {}", e));
+                return Err(anyhow::anyhow!(
+                    "Unexpected error testing /etc writability: {}",
+                    e
+                ));
             }
         }
     }
-    
+
     Ok(false)
 }
 
@@ -67,15 +75,10 @@ pub async fn ensure_etc_writable() -> Result<bool> {
 /// Falls back to stdout if TTY not available
 pub fn tty_write(text: &str) -> Result<()> {
     // Try to open /dev/tty1 for writing
-    match OpenOptions::new()
-        .write(true)
-        .open("/dev/tty1")
-    {
+    match OpenOptions::new().write(true).open("/dev/tty1") {
         Ok(mut tty) => {
-            writeln!(tty, "{}", text)
-                .context("Failed to write to /dev/tty1")?;
-            tty.flush()
-                .context("Failed to flush TTY")?;
+            writeln!(tty, "{}", text).context("Failed to write to /dev/tty1")?;
+            tty.flush().context("Failed to flush TTY")?;
         }
         Err(_) => {
             // Fallback to stdout (for testing or non-Linux systems)
@@ -155,16 +158,21 @@ pub fn print_ribbon(lines: &[&str]) -> Result<()> {
 pub fn display_header(title: &str) -> Result<()> {
     let width = 40;
     let padding = (width - title.len() - 2) / 2;
-    let extra = if (width - title.len() - 2) % 2 == 1 { 1 } else { 0 };
-    
+    let extra = if (width - title.len() - 2) % 2 == 1 {
+        1
+    } else {
+        0
+    };
+
     let top = format!("╔{}╗", "═".repeat(width - 2));
-    let middle = format!("║{}{}{}║", 
+    let middle = format!(
+        "║{}{}{}║",
         " ".repeat(padding),
         title,
         " ".repeat(padding + extra)
     );
     let bottom = format!("╚{}╝", "═".repeat(width - 2));
-    
+
     tty_write("")?;
     tty_write(&top)?;
     tty_write(&middle)?;
@@ -235,32 +243,88 @@ pub async fn generate_unique_name() -> Result<String> {
 pub async fn generate_unique_name_linux() -> Result<String> {
     const ADJECTIVES: &[&str] = &[
         // Precious materials (16)
-        "amber", "azure", "bronze", "coral", "crimson", "crystal", "emerald", "golden",
-        "indigo", "jade", "marble", "obsidian", "pearl", "quartz", "ruby", "silver",
+        "amber",
+        "azure",
+        "bronze",
+        "coral",
+        "crimson",
+        "crystal",
+        "emerald",
+        "golden",
+        "indigo",
+        "jade",
+        "marble",
+        "obsidian",
+        "pearl",
+        "quartz",
+        "ruby",
+        "silver",
         // Gemstone & mineral (16)
-        "topaz", "turquoise", "violet", "onyx", "opal", "garnet", "sapphire", "copper",
-        "ivory", "ebony", "platinum", "cobalt", "ochre", "slate", "granite", "basalt",
+        "topaz",
+        "turquoise",
+        "violet",
+        "onyx",
+        "opal",
+        "garnet",
+        "sapphire",
+        "copper",
+        "ivory",
+        "ebony",
+        "platinum",
+        "cobalt",
+        "ochre",
+        "slate",
+        "granite",
+        "basalt",
         // Natural qualities (16)
-        "lunar", "solar", "stellar", "misty", "mossy", "frosty", "dusky", "verdant",
-        "tranquil", "serene", "gentle", "silent", "ancient", "hidden", "sacred", "eternal",
+        "lunar",
+        "solar",
+        "stellar",
+        "misty",
+        "mossy",
+        "frosty",
+        "dusky",
+        "verdant",
+        "tranquil",
+        "serene",
+        "gentle",
+        "silent",
+        "ancient",
+        "hidden",
+        "sacred",
+        "eternal",
         // Atmospheric (16)
-        "wispy", "shimmering", "glowing", "sunlit", "moonlit", "shadowed", "dappled", "veiled",
-        "halcyon", "placid", "limpid", "pristine", "radiant", "luminous", "muted", "hushed"
+        "wispy",
+        "shimmering",
+        "glowing",
+        "sunlit",
+        "moonlit",
+        "shadowed",
+        "dappled",
+        "veiled",
+        "halcyon",
+        "placid",
+        "limpid",
+        "pristine",
+        "radiant",
+        "luminous",
+        "muted",
+        "hushed",
     ];
 
     const NOUNS: &[&str] = &[
         // Landforms (16)
-        "meadow", "summit", "canyon", "valley", "ridge", "plateau", "basin", "cliff",
-        "peak", "dune", "bluff", "mesa", "butte", "hollow", "knoll", "crag",
+        "meadow", "summit", "canyon", "valley", "ridge", "plateau", "basin", "cliff", "peak",
+        "dune", "bluff", "mesa", "butte", "hollow", "knoll", "crag",
         // Water features (16)
-        "river", "harbor", "glacier", "delta", "stream", "shore", "brook", "lagoon",
-        "spring", "cascade", "rapids", "estuary", "inlet", "cove", "fjord", "atoll",
+        "river", "harbor", "glacier", "delta", "stream", "shore", "brook", "lagoon", "spring",
+        "cascade", "rapids", "estuary", "inlet", "cove", "fjord", "atoll",
         // Vegetation zones (16)
-        "forest", "prairie", "desert", "grove", "thicket", "copse", "glade", "heath",
-        "fen", "moor", "marsh", "swamp", "taiga", "tundra", "steppe", "savanna",
+        "forest", "prairie", "desert", "grove", "thicket", "copse", "glade", "heath", "fen", "moor",
+        "marsh", "swamp", "taiga", "tundra", "steppe", "savanna",
         // Natural spaces (16)
-        "clearing", "alcove", "grotto", "cavern", "ravine", "gorge", "chasm", "vale",
-        "dell", "glen", "pass", "garden", "terrace", "oasis", "refuge", "haven"
+        "clearing", "alcove", "grotto", "cavern", "ravine", "gorge", "chasm", "vale", "dell",
+        "glen", "pass", "garden", "terrace", "oasis", "refuge", "haven",
     ];
 
     generate_unique_name_from_dictionary(ADJECTIVES, NOUNS).await
@@ -275,32 +339,144 @@ pub async fn generate_unique_name_linux() -> Result<String> {
 pub async fn generate_unique_name_windows() -> Result<String> {
     const ADJECTIVES: &[&str] = &[
         // Clarity & Transparency (16)
-        "clear", "lucid", "pellucid", "crystalline", "vitreous", "translucent", "limpid", "pristine",
-        "pure", "unclouded", "polished", "refined", "flawless", "seamless", "diaphanous", "gossamer",
+        "clear",
+        "lucid",
+        "pellucid",
+        "crystalline",
+        "vitreous",
+        "translucent",
+        "limpid",
+        "pristine",
+        "pure",
+        "unclouded",
+        "polished",
+        "refined",
+        "flawless",
+        "seamless",
+        "diaphanous",
+        "gossamer",
         // Stillness & Calm (16)
-        "smooth", "still", "calm", "placid", "serene", "tranquil", "hushed", "muted",
-        "gentle", "soft", "quiet", "silent", "peaceful", "restful", "composed", "poised",
+        "smooth",
+        "still",
+        "calm",
+        "placid",
+        "serene",
+        "tranquil",
+        "hushed",
+        "muted",
+        "gentle",
+        "soft",
+        "quiet",
+        "silent",
+        "peaceful",
+        "restful",
+        "composed",
+        "poised",
         // Stained Glass Colors (16)
-        "azure", "vermillion", "cobalt", "amber", "violet", "emerald", "crimson", "sapphire",
-        "ochre", "sienna", "cerulean", "scarlet", "indigo", "teal", "magenta", "gilded",
+        "azure",
+        "vermillion",
+        "cobalt",
+        "amber",
+        "violet",
+        "emerald",
+        "crimson",
+        "sapphire",
+        "ochre",
+        "sienna",
+        "cerulean",
+        "scarlet",
+        "indigo",
+        "teal",
+        "magenta",
+        "gilded",
         // Architectural & Ornate (16)
-        "frosted", "stained", "arched", "latticed", "beveled", "etched", "leaded", "mullioned",
-        "prismatic", "opalescent", "iridescent", "lustrous", "radiant", "burnished", "vaulted", "tracery"
+        "frosted",
+        "stained",
+        "arched",
+        "latticed",
+        "beveled",
+        "etched",
+        "leaded",
+        "mullioned",
+        "prismatic",
+        "opalescent",
+        "iridescent",
+        "lustrous",
+        "radiant",
+        "burnished",
+        "vaulted",
+        "tracery",
     ];
 
     const NOUNS: &[&str] = &[
         // Clarity & Stillness (16)
-        "clarity", "purity", "stillness", "essence", "reflection", "surface", "depth", "mirror",
-        "pool", "spring", "fountain", "stream", "ripple", "whisper", "breath", "pause",
+        "clarity",
+        "purity",
+        "stillness",
+        "essence",
+        "reflection",
+        "surface",
+        "depth",
+        "mirror",
+        "pool",
+        "spring",
+        "fountain",
+        "stream",
+        "ripple",
+        "whisper",
+        "breath",
+        "pause",
         // Sacred Spaces (16)
-        "chapel", "sanctuary", "cloister", "nave", "alcove", "niche", "grotto", "shrine",
-        "vestry", "chancel", "transept", "apse", "atrium", "portico", "ambulatory", "clerestory",
+        "chapel",
+        "sanctuary",
+        "cloister",
+        "nave",
+        "alcove",
+        "niche",
+        "grotto",
+        "shrine",
+        "vestry",
+        "chancel",
+        "transept",
+        "apse",
+        "atrium",
+        "portico",
+        "ambulatory",
+        "clerestory",
         // Glass & Light Elements (16)
-        "shard", "fragment", "tessera", "facet", "jewel", "gem", "pane", "sill",
-        "aperture", "vista", "portal", "threshold", "prism", "lens", "spectrum", "refraction",
+        "shard",
+        "fragment",
+        "tessera",
+        "facet",
+        "jewel",
+        "gem",
+        "pane",
+        "sill",
+        "aperture",
+        "vista",
+        "portal",
+        "threshold",
+        "prism",
+        "lens",
+        "spectrum",
+        "refraction",
         // Light Phenomena (16)
-        "gleam", "glow", "aurora", "dawn", "radiance", "lucidity", "brilliance", "luminance",
-        "glimmer", "shimmer", "sparkle", "luster", "halo", "corona", "nimbus", "iridescence"
+        "gleam",
+        "glow",
+        "aurora",
+        "dawn",
+        "radiance",
+        "lucidity",
+        "brilliance",
+        "luminance",
+        "glimmer",
+        "shimmer",
+        "sparkle",
+        "luster",
+        "halo",
+        "corona",
+        "nimbus",
+        "iridescence",
     ];
 
     generate_unique_name_from_dictionary(ADJECTIVES, NOUNS).await
@@ -310,7 +486,10 @@ pub async fn generate_unique_name_windows() -> Result<String> {
 ///
 /// Shared implementation for platform-specific name generators.
 /// Tries 10 random combinations with mDNS collision checking.
-async fn generate_unique_name_from_dictionary(adjectives: &[&str], nouns: &[&str]) -> Result<String> {
+async fn generate_unique_name_from_dictionary(
+    adjectives: &[&str],
+    nouns: &[&str],
+) -> Result<String> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
     // Use StdRng which is Send-safe for background tasks
@@ -322,7 +501,10 @@ async fn generate_unique_name_from_dictionary(adjectives: &[&str], nouns: &[&str
         let noun = nouns.choose(&mut rng).unwrap();
         let candidate = format!("stone-{}-{}", adjective, noun);
 
-        display_wait(&format!("Checking availability: {} (attempt {}/10)", candidate, attempt))?;
+        display_wait(&format!(
+            "Checking availability: {} (attempt {}/10)",
+            candidate, attempt
+        ))?;
 
         // Check mDNS collision
         if !check_mdns_collision(&candidate).await {
@@ -345,7 +527,11 @@ async fn generate_unique_name_from_dictionary(adjectives: &[&str], nouns: &[&str
 async fn check_mdns_collision(name: &str) -> bool {
     // Query mDNS for _moss._tcp.local with instance name matching stone name
     // Timeout after 2 seconds
-    let mdns_name = format!("{}.{}", name, crate::constants::MDNS_SERVICE_TYPE_LOCAL.trim_end_matches('.'));
+    let mdns_name = format!(
+        "{}.{}",
+        name,
+        crate::constants::MDNS_SERVICE_TYPE_LOCAL.trim_end_matches('.')
+    );
 
     // Use avahi-browse to check for existing service
     match tokio::process::Command::new("avahi-browse")
@@ -368,12 +554,12 @@ async fn check_mdns_collision(name: &str) -> bool {
 /// Set system hostname by writing directly to /etc/hostname
 pub async fn set_hostname(name: &str) -> Result<()> {
     display_wait(&format!("Setting hostname to {}", name))?;
-    
+
     // Write directly to /etc/hostname (more reliable than hostnamectl with NoNewPrivileges)
     tokio::fs::write("/etc/hostname", format!("{}\n", name))
         .await
         .context("Failed to write /etc/hostname")?;
-    
+
     // Also set the running hostname using sethostname syscall
     // This requires the CAP_SYS_ADMIN capability but works with NoNewPrivileges
     let output = tokio::process::Command::new("hostname")
@@ -381,13 +567,13 @@ pub async fn set_hostname(name: &str) -> Result<()> {
         .output()
         .await
         .context("Failed to execute hostname command")?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         display_error(&format!("Warning: hostname command failed: {}", stderr))?;
         // Don't fail completely - the file write succeeded
     }
-    
+
     display_success(&format!("Hostname set to {}", name))?;
     Ok(())
 }
@@ -404,7 +590,7 @@ pub async fn get_hostname() -> Result<String> {
                 return Ok(name.to_lowercase());
             }
         }
-        
+
         // Fallback: Use hostname command
         match tokio::process::Command::new("hostname").output().await {
             Ok(output) if output.status.success() => {
@@ -415,10 +601,10 @@ pub async fn get_hostname() -> Result<String> {
             }
             _ => {}
         }
-        
+
         anyhow::bail!("Failed to get Windows hostname");
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         let content = tokio::fs::read_to_string("/etc/hostname")
@@ -464,9 +650,10 @@ pub async fn update_hosts_file(old_name: &str, new_name: &str) -> Result<()> {
             }
 
             // Check if any hostname field exactly matches old_name or legacy pattern
-            let needs_update = parts.iter().skip(1).any(|&hostname| {
-                hostname == old_name || hostname.starts_with("stone-new-")
-            });
+            let needs_update = parts
+                .iter()
+                .skip(1)
+                .any(|&hostname| hostname == old_name || hostname.starts_with("stone-new-"));
 
             if !needs_update {
                 return line.to_string();
@@ -474,21 +661,25 @@ pub async fn update_hosts_file(old_name: &str, new_name: &str) -> Result<()> {
 
             // Rebuild line with exact replacements (preserving original whitespace is tricky,
             // so we use single-space separation which is valid for /etc/hosts)
-            let updated_parts: Vec<String> = parts.iter().enumerate().map(|(i, &part)| {
-                if i == 0 {
-                    // IP address - keep as-is
-                    part.to_string()
-                } else if part == old_name {
-                    // Exact match - replace
-                    new_name.to_string()
-                } else if part.starts_with("stone-new-") {
-                    // Legacy stone-new-* pattern - replace entire hostname
-                    new_name.to_string()
-                } else {
-                    // Other hostnames (aliases) - keep as-is
-                    part.to_string()
-                }
-            }).collect();
+            let updated_parts: Vec<String> = parts
+                .iter()
+                .enumerate()
+                .map(|(i, &part)| {
+                    if i == 0 {
+                        // IP address - keep as-is
+                        part.to_string()
+                    } else if part == old_name {
+                        // Exact match - replace
+                        new_name.to_string()
+                    } else if part.starts_with("stone-new-") {
+                        // Legacy stone-new-* pattern - replace entire hostname
+                        new_name.to_string()
+                    } else {
+                        // Other hostnames (aliases) - keep as-is
+                        part.to_string()
+                    }
+                })
+                .collect();
 
             // Use tab separator (common in /etc/hosts)
             format!("{}\t{}", updated_parts[0], updated_parts[1..].join(" "))
@@ -508,13 +699,13 @@ pub async fn update_hosts_file(old_name: &str, new_name: &str) -> Result<()> {
 /// Restart avahi-daemon to update mDNS announcements
 pub async fn restart_avahi() -> Result<()> {
     display_wait("Restarting avahi-daemon")?;
-    
+
     let output = tokio::process::Command::new("systemctl")
         .args(["restart", "avahi-daemon"])
         .output()
         .await
         .context("Failed to restart avahi-daemon")?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Don't fail - avahi restart is optional
@@ -529,10 +720,10 @@ pub async fn restart_avahi() -> Result<()> {
 /// Test mDNS resolution by pinging the stone's hostname
 pub async fn test_mdns_resolution(stone_name: &str) -> Result<()> {
     display_wait(&format!("Testing mDNS resolution for {}.local", stone_name))?;
-    
+
     // Wait a moment for avahi to propagate the announcement
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    
+
     // Try to ping the .local hostname (single ping, 2 second timeout)
     let hostname = format!("{}.local", stone_name);
     let output = tokio::process::Command::new("ping")
@@ -540,23 +731,29 @@ pub async fn test_mdns_resolution(stone_name: &str) -> Result<()> {
         .output()
         .await
         .context("Failed to execute ping command")?;
-    
+
     if output.status.success() {
-        display_success(&format!("mDNS resolution confirmed: {}.local is reachable", stone_name))?;
+        display_success(&format!(
+            "mDNS resolution confirmed: {}.local is reachable",
+            stone_name
+        ))?;
     } else {
-        display_error(&format!("Warning: {}.local not yet reachable via mDNS", stone_name))?;
+        display_error(&format!(
+            "Warning: {}.local not yet reachable via mDNS",
+            stone_name
+        ))?;
         tty_write("  (May take a few moments for network propagation)")?;
     }
-    
+
     Ok(())
 }
 
 /// Write MOTD (Message of the Day) file
 pub fn write_motd(stone_name: &str, url: &str) -> Result<()> {
     display_wait("Creating message of the day")?;
-    
+
     let motd_content = format!(
-r#"
+        r#"
 ╔══════════════════════════════════════╗
 ║       Zen Garden Stone Ready         ║
 ╚══════════════════════════════════════╝
@@ -570,14 +767,11 @@ r#"
   Visit {} to manage services
 
 "#,
-        stone_name,
-        url,
-        url
+        stone_name, url, url
     );
-    
-    std::fs::write("/etc/motd", motd_content)
-        .context("Failed to write /etc/motd")?;
-    
+
+    std::fs::write("/etc/motd", motd_content).context("Failed to write /etc/motd")?;
+
     display_success("Message of the day created")?;
     Ok(())
 }
@@ -585,10 +779,10 @@ r#"
 /// Update Moss configuration file with new stone name
 pub async fn update_moss_config(new_name: &str) -> Result<()> {
     display_wait("Updating Moss configuration")?;
-    
+
     let config_dir = crate::constants::paths::config_dir();
     let config_path = format!("{}/{}", config_dir, crate::constants::MOSS_CONFIG);
-    
+
     // Read current config, creating a default if missing
     let config_content = match tokio::fs::read_to_string(&config_path).await {
         Ok(content) => content,
@@ -605,12 +799,21 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
                 .context("Failed to create config directory")?;
             tokio::fs::write(&config_path, &default)
                 .await
-                .context(format!("Failed to create default {}", crate::constants::MOSS_CONFIG))?;
+                .context(format!(
+                    "Failed to create default {}",
+                    crate::constants::MOSS_CONFIG
+                ))?;
             default
         }
-        Err(e) => return Err(anyhow::anyhow!("Failed to read {}: {}", crate::constants::MOSS_CONFIG, e)),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to read {}: {}",
+                crate::constants::MOSS_CONFIG,
+                e
+            ))
+        }
     };
-    
+
     let mut found = false;
     let mut updated_lines: Vec<String> = Vec::new();
     for line in config_content.lines() {
@@ -619,7 +822,11 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
         // Preferred modern key
         if trimmed.starts_with("stone_name") {
             let indent = line.len() - line.trim_start().len();
-            updated_lines.push(format!("{}stone_name = \"{}\"", " ".repeat(indent), new_name));
+            updated_lines.push(format!(
+                "{}stone_name = \"{}\"",
+                " ".repeat(indent),
+                new_name
+            ));
             found = true;
             continue;
         }
@@ -658,12 +865,12 @@ pub async fn update_moss_config(new_name: &str) -> Result<()> {
     }
 
     let updated_content = updated_lines.join("\n");
-    
+
     // Write back
     tokio::fs::write(&config_path, updated_content)
         .await
         .context("Failed to write moss.toml".to_string())?;
-    
+
     display_success("Configuration updated")?;
     Ok(())
 }
@@ -766,12 +973,17 @@ pub struct UpdateBannerInfo {
 pub fn print_update_banner(info: &UpdateBannerInfo) -> Result<()> {
     use ribbon_art::{CAT_HEAD, CAT_UPDATING};
 
-    let version_msg = info.new_version.as_ref()
+    let version_msg = info
+        .new_version
+        .as_ref()
         .map(|v| format!(" -> v{}", v))
         .unwrap_or_default();
 
     print_ribbon(&[
-        &format!("{}UPDATING  Stone: {}{}", CAT_HEAD, info.stone_name, version_msg),
+        &format!(
+            "{}UPDATING  Stone: {}{}",
+            CAT_HEAD, info.stone_name, version_msg
+        ),
         &format!("{}          This stone transforms...", CAT_UPDATING),
     ])
 }
@@ -818,10 +1030,10 @@ fn boot_symbol() -> &'static str {
     use chrono::{Local, Timelike};
     let symbols_day = ["    *    ", "  c[_]   ", "~stretch~"];
     let symbols_night = ["    c    ", " *dimly* ", "  ~yawn~ "];
-    
+
     // Use current second as simple randomizer
     let idx = (Local::now().second() as usize) % 3;
-    
+
     if is_daytime() {
         symbols_day[idx]
     } else {
@@ -838,7 +1050,7 @@ fn boot_symbol() -> &'static str {
 /// Displays a visual notification when a USB storage device is detected.
 /// Matches the visual style of existing boot/shutdown ribbons.
 pub fn print_storage_detected_ribbon(info: &crate::storage::StorageDetectedInfo) -> Result<()> {
-    use ribbon_art::{USB_TOP, USB_BODY_ACTIVE, USB_BOTTOM_CONN};
+    use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
 
     let label = info.label.as_deref().unwrap_or("USB Storage");
     let capacity = crate::utils::format_bytes(info.capacity_bytes);
@@ -846,13 +1058,16 @@ pub fn print_storage_detected_ribbon(info: &crate::storage::StorageDetectedInfo)
     print_ribbon(&[
         &format!("{}🌱          Device: {} ({})", USB_TOP, label, capacity),
         &format!("{}            A new seed bank awaits...", USB_BODY_ACTIVE),
-        &format!("{}Prepare:    garden-rake prepare seed-bank", USB_BOTTOM_CONN),
+        &format!(
+            "{}Prepare:    garden-rake prepare seed-bank",
+            USB_BOTTOM_CONN
+        ),
     ])
 }
 
 /// Print seed bank detection ribbon for multiple devices
 pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo]) -> Result<()> {
-    use ribbon_art::{USB_TOP, USB_BODY_ACTIVE, USB_BOTTOM_CONN};
+    use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
 
     if devices.is_empty() {
         return Ok(());
@@ -867,7 +1082,11 @@ pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo
     tty_write(RIBBON_DIVIDER)?;
 
     // Header with USB art
-    tty_write(&format!("{}🌱          {} devices await preparation", USB_TOP, devices.len()))?;
+    tty_write(&format!(
+        "{}🌱          {} devices await preparation",
+        USB_TOP,
+        devices.len()
+    ))?;
     tty_write(USB_BODY_ACTIVE)?;
     tty_write(USB_BOTTOM_CONN)?;
 
@@ -876,13 +1095,19 @@ pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo
         let label = dev.label.as_deref().unwrap_or("USB Storage");
         let capacity = crate::utils::format_bytes(dev.capacity_bytes);
         let mount = dev.mount_path.as_deref().unwrap_or(&dev.device);
-        tty_write(&format!("     │                    {} ({}) at {}", label, capacity, mount))?;
+        tty_write(&format!(
+            "     │                    {} ({}) at {}",
+            label, capacity, mount
+        ))?;
     }
 
     // Footer with command hint
     let first_label = devices[0].label.as_deref().unwrap_or(&devices[0].device);
     tty_write("     │")?;
-    tty_write(&format!("     │        Prepare:    garden-rake prepare seed-bank {}", first_label))?;
+    tty_write(&format!(
+        "     │        Prepare:    garden-rake prepare seed-bank {}",
+        first_label
+    ))?;
 
     tty_write(RIBBON_DIVIDER)?;
     tty_write("")?;
@@ -892,18 +1117,21 @@ pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo
 
 /// Print seed bank prepared confirmation ribbon
 pub fn print_storage_prepared_ribbon(name: &str, mount_path: &str) -> Result<()> {
-    use ribbon_art::{USB_TOP, USB_BODY_ACTIVE, USB_BOTTOM_CONN};
+    use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
 
     print_ribbon(&[
         &format!("{}✓           Seed bank ready: {}", USB_TOP, name),
         &format!("{}            Mounted at: {}", USB_BODY_ACTIVE, mount_path),
-        &format!("{}Release:    garden-rake release seed-bank", USB_BOTTOM_CONN),
+        &format!(
+            "{}Release:    garden-rake release seed-bank",
+            USB_BOTTOM_CONN
+        ),
     ])
 }
 
 /// Print seed bank released confirmation
 pub fn print_storage_released_ribbon(name: &str) -> Result<()> {
-    use ribbon_art::{USB_TOP, USB_BODY_EMPTY, USB_BOTTOM};
+    use ribbon_art::{USB_BODY_EMPTY, USB_BOTTOM, USB_TOP};
 
     print_ribbon(&[
         &format!("{}↓           Seed bank released: {}", USB_TOP, name),
@@ -930,25 +1158,30 @@ mod tests {
             return line.to_string();
         }
 
-        let needs_update = parts.iter().skip(1).any(|&hostname| {
-            hostname == old_name || hostname.starts_with("stone-new-")
-        });
+        let needs_update = parts
+            .iter()
+            .skip(1)
+            .any(|&hostname| hostname == old_name || hostname.starts_with("stone-new-"));
 
         if !needs_update {
             return line.to_string();
         }
 
-        let updated_parts: Vec<String> = parts.iter().enumerate().map(|(i, &part)| {
-            if i == 0 {
-                part.to_string()
-            } else if part == old_name {
-                new_name.to_string()
-            } else if part.starts_with("stone-new-") {
-                new_name.to_string()
-            } else {
-                part.to_string()
-            }
-        }).collect();
+        let updated_parts: Vec<String> = parts
+            .iter()
+            .enumerate()
+            .map(|(i, &part)| {
+                if i == 0 {
+                    part.to_string()
+                } else if part == old_name {
+                    new_name.to_string()
+                } else if part.starts_with("stone-new-") {
+                    new_name.to_string()
+                } else {
+                    part.to_string()
+                }
+            })
+            .collect();
 
         format!("{}\t{}", updated_parts[0], updated_parts[1..].join(" "))
     }

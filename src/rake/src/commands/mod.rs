@@ -23,9 +23,9 @@
 //! - `adoption/` - adopt, release, borrow, return, find
 //! - `management/` - tend, reconcile, refresh, pond, place, invite, lift, make
 
+pub mod api;
 pub mod help;
 pub mod hey;
-pub mod api;
 
 // Command categories (to be extracted incrementally)
 pub mod admin;
@@ -35,9 +35,9 @@ pub mod election;
 pub mod lifecycle;
 pub mod local;
 pub mod management;
-pub mod offering;
 pub mod nourish;
 pub mod nurturing;
+pub mod offering;
 pub mod presence;
 pub mod storage;
 

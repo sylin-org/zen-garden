@@ -1,4 +1,4 @@
-﻿//! Test Registry - discovers and registers tests for on-demand execution
+//! Test Registry - discovers and registers tests for on-demand execution
 
 use crate::{Bag, LiveGarden, TestReport};
 use anyhow::Result;
@@ -8,10 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 /// Test function signature - takes garden and bag, returns updated bag
-pub type TestFn = fn(
-    Arc<LiveGarden>,
-    Bag,
-) -> Pin<Box<dyn Future<Output = Result<Bag>> + Send>>;
+pub type TestFn = fn(Arc<LiveGarden>, Bag) -> Pin<Box<dyn Future<Output = Result<Bag>> + Send>>;
 
 /// Test definition
 #[derive(Clone)]

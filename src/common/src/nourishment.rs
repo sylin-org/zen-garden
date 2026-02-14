@@ -1,4 +1,4 @@
-﻿//! Nourishment types - Shared models for update management
+//! Nourishment types - Shared models for update management
 //!
 //! These types are used by both moss (API) and rake (CLI) to ensure
 //! consistent handling of software and firmware updates.
@@ -16,7 +16,6 @@ pub enum FirmwareConfidence {
     #[default]
     Suggested,
 }
-
 
 /// Unified update model - discriminated by type
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +83,7 @@ pub struct GardenNourishmentResponse {
 }
 
 /// Execute request - scope-based
-/// 
+///
 /// Rake sends intent only. Each stone interprets and applies its pending updates.
 /// Examples:
 ///   {"scope": "all"}           - Apply all available updates

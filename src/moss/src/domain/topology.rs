@@ -25,10 +25,10 @@
 //! Uses atomic write (tmp + rename) via `garden_common::persistence::atomic_write_file`.
 
 use chrono::{Duration, Utc};
-use garden_common::{TopologyEntry, StoneStatus};
+use garden_common::{StoneStatus, TopologyEntry};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Maximum number of offline stones to track
@@ -145,7 +145,9 @@ pub async fn count_stones(cache: &TopologyCache) -> usize {
 /// Count online stones in topology cache
 pub async fn count_online_stones(cache: &TopologyCache) -> usize {
     let map = cache.read().await;
-    map.values().filter(|e| e.status == StoneStatus::Online).count()
+    map.values()
+        .filter(|e| e.status == StoneStatus::Online)
+        .count()
 }
 
 /// Mark stale stones as offline and evict very old offline stones
@@ -194,12 +196,16 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
     evicted = initial_count - map.len();
 
     // Phase 3: Enforce max offline stone cap (LRU eviction)
-    let offline_count = map.values().filter(|e| e.status == StoneStatus::Offline).count();
+    let offline_count = map
+        .values()
+        .filter(|e| e.status == StoneStatus::Offline)
+        .count();
     if offline_count > MAX_OFFLINE_STONES {
         let excess = offline_count - MAX_OFFLINE_STONES;
 
         // Collect offline stones sorted by last_seen (oldest first)
-        let mut offline_stones: Vec<_> = map.iter()
+        let mut offline_stones: Vec<_> = map
+            .iter()
             .filter(|(_, e)| e.status == StoneStatus::Offline)
             .map(|(id, e)| (id.clone(), e.last_seen))
             .collect();
@@ -289,7 +295,8 @@ pub async fn mark_stone_offline_dirty(
 /// Remove a specific stone from the cache (explicit forget)
 pub async fn forget_stone(cache: &TopologyCache, stone_name: &str) -> bool {
     let mut map = cache.write().await;
-    let stone_id = map.values()
+    let stone_id = map
+        .values()
         .find(|e| e.stone_name == stone_name)
         .map(|e| e.stone_id.clone());
 
@@ -388,7 +395,12 @@ mod tests {
     }
 
     /// Helper to create a minimal TopologyEntry for testing
-    fn make_entry(stone_id: &str, stone_name: &str, endpoint: &str, version: &str) -> TopologyEntry {
+    fn make_entry(
+        stone_id: &str,
+        stone_name: &str,
+        endpoint: &str,
+        version: &str,
+    ) -> TopologyEntry {
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
@@ -406,7 +418,13 @@ mod tests {
     }
 
     /// Helper to create a TopologyEntry with MAC for testing
-    fn make_entry_with_mac(stone_id: &str, stone_name: &str, endpoint: &str, version: &str, mac: Option<&str>) -> TopologyEntry {
+    fn make_entry_with_mac(
+        stone_id: &str,
+        stone_name: &str,
+        endpoint: &str,
+        version: &str,
+        mac: Option<&str>,
+    ) -> TopologyEntry {
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
@@ -461,11 +479,23 @@ mod tests {
         let cache = make_test_cache();
 
         // First upsert with MAC
-        let entry1 = make_entry_with_mac("stone-123", "oak", "http://192.168.1.10:7123", "0.1.0", Some("AA:BB:CC:DD:EE:FF"));
+        let entry1 = make_entry_with_mac(
+            "stone-123",
+            "oak",
+            "http://192.168.1.10:7123",
+            "0.1.0",
+            Some("AA:BB:CC:DD:EE:FF"),
+        );
         upsert_from_chirp(&cache, entry1).await;
 
         // Update without MAC - should preserve existing
-        let entry2 = make_entry_with_mac("stone-123", "oak", "http://192.168.1.99:7123", "0.1.1", None);
+        let entry2 = make_entry_with_mac(
+            "stone-123",
+            "oak",
+            "http://192.168.1.99:7123",
+            "0.1.1",
+            None,
+        );
         upsert_from_chirp(&cache, entry2).await;
 
         let stone = get_stone_by_id(&cache, "stone-123").await.unwrap();
@@ -491,9 +521,21 @@ mod tests {
     async fn test_get_all_stones() {
         let cache = make_test_cache();
 
-        upsert_from_chirp(&cache, make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0")).await;
-        upsert_from_chirp(&cache, make_entry("s2", "cedar", "http://10.0.0.2:7123", "0.1.0")).await;
-        upsert_from_chirp(&cache, make_entry("s3", "maple", "http://10.0.0.3:7123", "0.1.0")).await;
+        upsert_from_chirp(
+            &cache,
+            make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0"),
+        )
+        .await;
+        upsert_from_chirp(
+            &cache,
+            make_entry("s2", "cedar", "http://10.0.0.2:7123", "0.1.0"),
+        )
+        .await;
+        upsert_from_chirp(
+            &cache,
+            make_entry("s3", "maple", "http://10.0.0.3:7123", "0.1.0"),
+        )
+        .await;
 
         let all = get_all_stones(&cache).await;
         assert_eq!(all.len(), 3);
@@ -509,8 +551,16 @@ mod tests {
     async fn test_forget_stone() {
         let cache = make_test_cache();
 
-        upsert_from_chirp(&cache, make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0")).await;
-        upsert_from_chirp(&cache, make_entry("s2", "cedar", "http://10.0.0.2:7123", "0.1.0")).await;
+        upsert_from_chirp(
+            &cache,
+            make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0"),
+        )
+        .await;
+        upsert_from_chirp(
+            &cache,
+            make_entry("s2", "cedar", "http://10.0.0.2:7123", "0.1.0"),
+        )
+        .await;
 
         assert_eq!(count_stones(&cache).await, 2);
 
@@ -557,12 +607,19 @@ mod tests {
     #[tokio::test]
     async fn test_persist_topology_writes_file() {
         let cache = make_test_cache();
-        let self_entry = Arc::new(RwLock::new(
-            make_entry("self-1", "local", "http://127.0.0.1:7185", "0.1.0")
-        ));
+        let self_entry = Arc::new(RwLock::new(make_entry(
+            "self-1",
+            "local",
+            "http://127.0.0.1:7185",
+            "0.1.0",
+        )));
 
         // Add a peer
-        upsert_from_chirp(&cache, make_entry("peer-1", "oak", "http://10.0.0.1:7185", "0.1.0")).await;
+        upsert_from_chirp(
+            &cache,
+            make_entry("peer-1", "oak", "http://10.0.0.1:7185", "0.1.0"),
+        )
+        .await;
 
         // Write to temp directory
         let temp_dir = std::env::temp_dir().join("zen-garden-test-topology");

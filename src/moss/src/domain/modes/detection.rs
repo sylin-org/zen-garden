@@ -6,15 +6,15 @@
 //! - Stability tracking (consecutive successes required before adoption)
 //! - Proactive cache refresh
 
-use anyhow::{Context, Result};
-use dashmap::DashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};
 use crate::docker::DockerManager;
 use crate::infra::detection::{
     detect_by_command, detect_by_container_inspect, detect_by_http_probe, DetectionResult,
 };
+use anyhow::{Context, Result};
+use dashmap::DashMap;
+use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Detection orchestrator with caching and stability tracking
 pub struct DetectionOrchestrator {
@@ -64,10 +64,7 @@ impl DetectionOrchestrator {
     ///
     /// Returns detection result with stability tracking.
     /// Result is cached according to rule TTL.
-    pub async fn detect(
-        &self,
-        offering: &Offering,
-    ) -> Result<AggregatedDetectionResult> {
+    pub async fn detect(&self, offering: &Offering) -> Result<AggregatedDetectionResult> {
         // Get detection rules for current OS
         let rules = offering.get_detection_rules();
 
@@ -157,7 +154,8 @@ impl DetectionOrchestrator {
 
         match rule.method {
             DetectionMethod::Command => {
-                if let garden_common::manifests::DetectionConfig::Command(ref config) = rule.config {
+                if let garden_common::manifests::DetectionConfig::Command(ref config) = rule.config
+                {
                     detect_by_command(config, timeout)
                         .await
                         .context("Command detection failed")
@@ -196,11 +194,14 @@ impl DetectionOrchestrator {
     fn check_stability(&self, offering: &str, detected: bool, rule: &DetectionRule) -> bool {
         let threshold = rule.stability_threshold.unwrap_or(2);
 
-        let mut entry = self.stability.entry(offering.to_string()).or_insert(StabilityState {
-            consecutive_successes: 0,
-            consecutive_failures: 0,
-            last_state: false,
-        });
+        let mut entry = self
+            .stability
+            .entry(offering.to_string())
+            .or_insert(StabilityState {
+                consecutive_successes: 0,
+                consecutive_failures: 0,
+                last_state: false,
+            });
 
         if detected {
             if entry.last_state {
@@ -233,7 +234,8 @@ impl DetectionOrchestrator {
 
     /// Clear cache for specific offering
     pub fn invalidate_cache(&self, offering: &str) {
-        self.cache.retain(|k, _| !k.starts_with(&format!("{}:", offering)));
+        self.cache
+            .retain(|k, _| !k.starts_with(&format!("{}:", offering)));
     }
 
     /// Clear all cached detections

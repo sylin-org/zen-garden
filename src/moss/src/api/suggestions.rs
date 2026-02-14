@@ -50,15 +50,24 @@ pub fn generate_suggestions(ctx: &SuggestionContext) -> Option<Vec<String>> {
             "garden-rake observe              View garden status".to_string(),
         ],
         "rest_service" if ctx.success => vec![
-            format!("garden-rake wake {}          Restart service", ctx.service_name.as_deref().unwrap_or("<service>")),
+            format!(
+                "garden-rake wake {}          Restart service",
+                ctx.service_name.as_deref().unwrap_or("<service>")
+            ),
             "garden-rake observe              View all services".to_string(),
         ],
         "wake_service" if ctx.success => vec![
-            format!("garden-rake watch {}         Monitor service", ctx.service_name.as_deref().unwrap_or("<service>")),
+            format!(
+                "garden-rake watch {}         Monitor service",
+                ctx.service_name.as_deref().unwrap_or("<service>")
+            ),
             "garden-rake observe              View status".to_string(),
         ],
         "nourish_service" if ctx.success => vec![
-            format!("garden-rake observe {}       Verify upgrade", ctx.service_name.as_deref().unwrap_or("<service>")),
+            format!(
+                "garden-rake observe {}       Verify upgrade",
+                ctx.service_name.as_deref().unwrap_or("<service>")
+            ),
             "garden-rake watch                Stream events".to_string(),
         ],
         "delete_service" if ctx.success => vec![
@@ -70,9 +79,18 @@ pub fn generate_suggestions(ctx: &SuggestionContext) -> Option<Vec<String>> {
             "garden-rake observe all          View all stones".to_string(),
         ],
         "get_service" => vec![
-            format!("garden-rake watch {}         Stream logs", ctx.service_name.as_deref().unwrap_or("<service>")),
-            format!("garden-rake rest {}          Stop service", ctx.service_name.as_deref().unwrap_or("<service>")),
-            format!("garden-rake nourish {}       Upgrade service", ctx.service_name.as_deref().unwrap_or("<service>")),
+            format!(
+                "garden-rake watch {}         Stream logs",
+                ctx.service_name.as_deref().unwrap_or("<service>")
+            ),
+            format!(
+                "garden-rake rest {}          Stop service",
+                ctx.service_name.as_deref().unwrap_or("<service>")
+            ),
+            format!(
+                "garden-rake nourish {}       Upgrade service",
+                ctx.service_name.as_deref().unwrap_or("<service>")
+            ),
         ],
         "observe_garden" => vec![
             "garden-rake tend stone-<name>    Focus on specific stone".to_string(),

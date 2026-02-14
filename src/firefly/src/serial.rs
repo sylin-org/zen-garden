@@ -106,7 +106,7 @@ impl FireflySerial {
         let stabilize_ms = match device_type {
             FireflyDeviceType::Esp8266Oled => 2000, // MicroPython boot takes longer
             FireflyDeviceType::Rp2040Matrix => 2000, // CircuitPython boot + animation
-            FireflyDeviceType::Unknown => 500,       // Conservative default
+            FireflyDeviceType::Unknown => 500,      // Conservative default
         };
 
         tracing::debug!(

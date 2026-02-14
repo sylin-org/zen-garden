@@ -28,10 +28,7 @@ pub enum PersistenceError {
     NotFound(String),
 
     #[error("Corrupted data in {path}: {reason}")]
-    CorruptedData {
-        path: String,
-        reason: String,
-    },
+    CorruptedData { path: String, reason: String },
 }
 
 /// Generic persistence provider for JSON-serializable data

@@ -3,8 +3,8 @@
 //! Phase 1 (v0.1.0): NoAuth - always succeeds
 //! Phase 2 (v0.2.0+): JWT validation with Pond keystone
 
-use garden_common::traits::auth::{AuthProvider, AuthContext, AuthError};
 use async_trait::async_trait;
+use garden_common::traits::auth::{AuthContext, AuthError, AuthProvider};
 
 /// No authentication - always succeeds
 ///

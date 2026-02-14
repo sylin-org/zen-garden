@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// Locate stray (adoptable) containers
 pub struct LocateStraysCommand {
@@ -42,7 +42,10 @@ impl Command for LocateStraysCommand {
                         " ".repeat(ui::constants::DEFAULT_INDENT)
                     );
                     for stray in list {
-                        let name = stray.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let name = stray
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
                         let category = stray
                             .get("category")
                             .and_then(|v| v.as_str())

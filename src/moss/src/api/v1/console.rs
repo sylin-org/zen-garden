@@ -1,12 +1,8 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
-use serde::{Deserialize, Serialize};
-use crate::{AppState, error_response};
-use garden_common::console::ConsoleMode;
+use crate::{error_response, AppState};
+use axum::{extract::State, http::StatusCode, Json};
 use garden_common::api_utils::ApiErrorResponse;
+use garden_common::console::ConsoleMode;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct ConsoleModeRequest {
@@ -54,30 +50,34 @@ pub async fn set_console_mode_v1(
     state.console.set_mode(new_mode);
 
     // Emit mode change event
-    state.console.emit(garden_common::console::ConsoleEvent::new(
-        garden_common::console::EventCategory::Ops,
-        garden_common::console::EventStatus::Active,
-        format!("Console mode: {} → {}", previous_mode, new_mode)
-    ));
+    state
+        .console
+        .emit(garden_common::console::ConsoleEvent::new(
+            garden_common::console::EventCategory::Ops,
+            garden_common::console::EventStatus::Active,
+            format!("Console mode: {} → {}", previous_mode, new_mode),
+        ));
 
     // Spawn timeout task if requested and not forever
     let timeout_opt = if request.timeout_minutes > 0 {
         let state_clone = state.clone();
         let original_mode = previous_mode;
         let timeout_minutes = request.timeout_minutes;
-        
+
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(timeout_minutes * 60)).await;
-            
+
             // Revert to original mode
             state_clone.console.set_mode(original_mode);
-            state_clone.console.emit(garden_common::console::ConsoleEvent::new(
-                garden_common::console::EventCategory::Ops,
-                garden_common::console::EventStatus::Active,
-                format!("Console mode timeout: {} → {}", new_mode, original_mode)
-            ));
+            state_clone
+                .console
+                .emit(garden_common::console::ConsoleEvent::new(
+                    garden_common::console::EventCategory::Ops,
+                    garden_common::console::EventStatus::Active,
+                    format!("Console mode timeout: {} → {}", new_mode, original_mode),
+                ));
         });
-        
+
         Some(timeout_minutes)
     } else {
         None
@@ -87,20 +87,24 @@ pub async fn set_console_mode_v1(
     let persisted = if request.persist {
         match persist_console_mode(&state, new_mode).await {
             Ok(_) => {
-                state.console.emit(garden_common::console::ConsoleEvent::new(
-                    garden_common::console::EventCategory::Config,
-                    garden_common::console::EventStatus::Saving,
-                    format!("Console mode saved: {}", new_mode)
-                ));
+                state
+                    .console
+                    .emit(garden_common::console::ConsoleEvent::new(
+                        garden_common::console::EventCategory::Config,
+                        garden_common::console::EventStatus::Saving,
+                        format!("Console mode saved: {}", new_mode),
+                    ));
                 true
-            },
+            }
             Err(e) => {
                 tracing::warn!(error = ?e, "Failed to persist console mode");
-                state.console.emit(garden_common::console::ConsoleEvent::new(
-                    garden_common::console::EventCategory::Config,
-                    garden_common::console::EventStatus::SaveError,
-                    format!("Failed to save console mode: {}", e)
-                ));
+                state
+                    .console
+                    .emit(garden_common::console::ConsoleEvent::new(
+                        garden_common::console::EventCategory::Config,
+                        garden_common::console::EventStatus::SaveError,
+                        format!("Failed to save console mode: {}", e),
+                    ));
                 false
             }
         }
@@ -124,7 +128,7 @@ pub async fn get_console_mode_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     let current_mode = state.console.get_mode();
-    
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
@@ -139,11 +143,15 @@ async fn persist_console_mode(
     mode: ConsoleMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::path::PathBuf;
-    
+
     let config_path = if cfg!(windows) {
         PathBuf::from(format!("./{}", garden_common::constants::MOSS_CONFIG))
     } else {
-        PathBuf::from(format!("{}/{}", garden_common::constants::CONFIG_DIR, garden_common::constants::MOSS_CONFIG))
+        PathBuf::from(format!(
+            "{}/{}",
+            garden_common::constants::CONFIG_DIR,
+            garden_common::constants::MOSS_CONFIG
+        ))
     };
 
     // Read existing config or create new one

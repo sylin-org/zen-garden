@@ -1,4 +1,4 @@
-﻿//! Embedded Assets
+//! Embedded Assets
 //!
 //! Provides access to embedded manifests and Companions compiled into the Moss binary.
 //! Uses overlay pattern: filesystem files take precedence over embedded files.
@@ -49,17 +49,17 @@ impl EmbeddedManifests {
     pub fn get_file(path: &str) -> Option<Vec<u8>> {
         Self::get(path).map(|f| f.data.to_vec())
     }
-    
+
     /// List all embedded manifest files
     pub fn list_files() -> Vec<String> {
         Self::iter().map(|s| s.to_string()).collect()
     }
-    
+
     /// Check if an embedded manifest exists
     pub fn exists(path: &str) -> bool {
         Self::get(path).is_some()
     }
-    
+
     /// Get file content as string
     pub fn get_string(path: &str) -> Option<String> {
         Self::get(path).and_then(|f| String::from_utf8(f.data.to_vec()).ok())
@@ -96,12 +96,12 @@ impl EmbeddedCompanions {
     pub fn get_companion(name: &str) -> Option<Vec<u8>> {
         Self::get(name).map(|f| f.data.to_vec())
     }
-    
+
     /// List all embedded Companions
     pub fn list_companions() -> Vec<String> {
         Self::iter().map(|s| s.to_string()).collect()
     }
-    
+
     /// Check if an embedded Companion exists
     pub fn exists(name: &str) -> bool {
         Self::get(name).is_some()
@@ -113,11 +113,11 @@ impl EmbeddedCompanions {
 // ============================================================================
 
 /// Read a manifest file with overlay pattern
-/// 
+///
 /// Priority: filesystem > embedded
 pub fn read_manifest_overlay(manifests_dir: &Path, relative_path: &str) -> Option<String> {
     let fs_path = manifests_dir.join(relative_path);
-    
+
     // 1. Check filesystem first
     if fs_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&fs_path) {
@@ -125,13 +125,13 @@ pub fn read_manifest_overlay(manifests_dir: &Path, relative_path: &str) -> Optio
             return Some(content);
         }
     }
-    
+
     // 2. Fall back to embedded
     if let Some(content) = EmbeddedManifests::get_string(relative_path) {
         debug!(path = %relative_path, source = "embedded", "Loaded manifest");
         return Some(content);
     }
-    
+
     None
 }
 
@@ -142,22 +142,25 @@ pub fn manifest_exists(manifests_dir: &Path, relative_path: &str) -> bool {
 }
 
 /// List all available manifest files (merged: filesystem + embedded)
-/// 
+///
 /// Returns unique paths with filesystem taking precedence.
 pub fn list_all_manifests(manifests_dir: &Path) -> Vec<ManifestSource> {
     use std::collections::HashMap;
-    
+
     let mut manifests: HashMap<String, ManifestSource> = HashMap::new();
-    
+
     // 1. Add embedded manifests first
     for path in EmbeddedManifests::iter() {
         let path_str = path.to_string();
-        manifests.insert(path_str.clone(), ManifestSource {
-            path: path_str,
-            source: AssetSource::Embedded,
-        });
+        manifests.insert(
+            path_str.clone(),
+            ManifestSource {
+                path: path_str,
+                source: AssetSource::Embedded,
+            },
+        );
     }
-    
+
     // 2. Overlay with filesystem manifests (they take precedence)
     if manifests_dir.exists() {
         for entry in walkdir::WalkDir::new(manifests_dir)
@@ -167,15 +170,18 @@ pub fn list_all_manifests(manifests_dir: &Path) -> Vec<ManifestSource> {
             if entry.file_type().is_file() {
                 if let Ok(relative) = entry.path().strip_prefix(manifests_dir) {
                     let relative_str = relative.to_string_lossy().replace('\\', "/");
-                    manifests.insert(relative_str.clone(), ManifestSource {
-                        path: relative_str,
-                        source: AssetSource::Filesystem,
-                    });
+                    manifests.insert(
+                        relative_str.clone(),
+                        ManifestSource {
+                            path: relative_str,
+                            source: AssetSource::Filesystem,
+                        },
+                    );
                 }
             }
         }
     }
-    
+
     let mut result: Vec<_> = manifests.into_values().collect();
     result.sort_by(|a, b| a.path.cmp(&b.path));
     result
@@ -203,26 +209,26 @@ pub struct ManifestSource {
 // Manifest Loading with Overlay
 // ============================================================================
 
-use garden_common::manifests::{Offering, OfferingRegistry};
 use anyhow::Result;
+use garden_common::manifests::{Offering, OfferingRegistry};
 
 /// Load software manifests with embedded + filesystem overlay
-/// 
+///
 /// This is the core manifest loading function for Moss.
-/// 
+///
 /// **Loading order:**
 /// 1. Load all manifests from embedded assets (compiled into binary)
 /// 2. Scan filesystem for manifests - overlay on top:
 ///    - If matching an embedded entry → overwrite
 ///    - If new → add new entry
-/// 
+///
 /// Use `-vvv` to see detailed loading progress.
 pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry> {
     let mut manifests = OfferingRegistry::empty();
     let mut embedded_count = 0;
     let mut fs_new_count = 0;
     let mut fs_override_count = 0;
-    
+
     // Phase 1: Load all from embedded assets
     tracing::info!("Loading manifests from embedded assets...");
 
@@ -235,21 +241,21 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
         files = ?guidance_files,
         "Embedded guidance files found"
     );
-    
+
     for path in EmbeddedManifests::iter() {
         let path_str = path.as_ref();
-        
+
         // Only process sw/*.snippet.yaml files
         if !path_str.starts_with("sw/") || !path_str.ends_with(".snippet.yaml") {
             continue;
         }
-        
+
         // Get the snippet content
         let Some(snippet_content) = EmbeddedManifests::get_string(path_str) else {
             tracing::warn!(path = %path_str, "Failed to read embedded manifest");
             continue;
         };
-        
+
         // Try to load compatibility file
         let compat_path = path_str.replace(".snippet.yaml", ".compatibility.yaml");
         let compat_content = EmbeddedManifests::get_string(&compat_path);
@@ -307,24 +313,24 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
             }
         }
     }
-    
+
     tracing::info!(
         count = embedded_count,
         "Loaded manifests from embedded assets"
     );
-    
+
     // Phase 2: Overlay filesystem manifests (upsert each entry)
     let sw_dir = fs_dir.join("sw");
     if sw_dir.exists() {
         tracing::info!(path = %sw_dir.display(), "Scanning filesystem for manifest overlays...");
-        
+
         // Walk filesystem and upsert each manifest found
         for entry in walkdir::WalkDir::new(&sw_dir)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            
+
             // Only process .snippet.yaml files
             if !path.is_file() {
                 continue;
@@ -335,24 +341,29 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
             if !filename.ends_with(".snippet.yaml") {
                 continue;
             }
-            
+
             // Extract category from parent directory
-            let Some(parent) = path.parent() else { continue };
-            let Some(category) = parent.file_name().and_then(|n| n.to_str()) else { continue };
+            let Some(parent) = path.parent() else {
+                continue;
+            };
+            let Some(category) = parent.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
             let offering_name = filename.trim_end_matches(".snippet.yaml");
-            
+
             // Read snippet content
             let Ok(snippet_content) = std::fs::read_to_string(path) else {
                 tracing::warn!(path = %path.display(), "Failed to read filesystem manifest");
                 continue;
             };
-            
+
             // Try to load compatibility file
             let compat_path = path.with_file_name(format!("{}.compatibility.yaml", offering_name));
             let compat_content = std::fs::read_to_string(&compat_path).ok();
 
             // Try to load frontmatter file
-            let frontmatter_path = path.with_file_name(format!("{}.frontmatter.json", offering_name));
+            let frontmatter_path =
+                path.with_file_name(format!("{}.frontmatter.json", offering_name));
             let frontmatter_content = std::fs::read_to_string(&frontmatter_path).ok();
 
             // Try to load guidance file
@@ -384,9 +395,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
                         if sw_entry.compatibility.is_none() && existing.compatibility.is_some() {
                             sw_entry.compatibility = existing.compatibility.clone();
                         }
-                        if sw_entry.connection.is_none()
-                            && existing.connection.is_some()
-                        {
+                        if sw_entry.connection.is_none() && existing.connection.is_some() {
                             sw_entry.connection = existing.connection.clone();
                             tracing::debug!(
                                 offering = %offering_name,
@@ -394,7 +403,9 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
                             );
                         }
                         // Preserve metadata fields if filesystem didn't provide them
-                        if sw_entry.metadata.description.is_none() && existing.metadata.description.is_some() {
+                        if sw_entry.metadata.description.is_none()
+                            && existing.metadata.description.is_some()
+                        {
                             sw_entry.metadata.description = existing.metadata.description.clone();
                         }
                         if sw_entry.metadata.tags.is_empty() && !existing.metadata.tags.is_empty() {
@@ -430,7 +441,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
                 }
             }
         }
-        
+
         if fs_new_count > 0 || fs_override_count > 0 {
             tracing::info!(
                 new = fs_new_count,
@@ -444,7 +455,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
             "No filesystem manifests directory, using embedded only"
         );
     }
-    
+
     // Summary
     tracing::info!(
         total = manifests.len(),
@@ -454,7 +465,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
         categories = manifests.categories.len(),
         "ManifestRegistry populated"
     );
-    
+
     Ok(manifests)
 }
 
@@ -471,8 +482,8 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
 /// Vec of Offering definitions
 pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
     use garden_common::manifests::{
-        AdoptedConfig, ConnectivityConfig, OfferingMetadata,
-        OsDetectionRules, ControlConfig, HealthConfig,
+        AdoptedConfig, ConnectivityConfig, ControlConfig, HealthConfig, OfferingMetadata,
+        OsDetectionRules,
     };
     use garden_common::types::AdoptedControlLevel;
     use serde::Deserialize;
@@ -574,10 +585,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         }
     }
 
-    tracing::info!(
-        count = offerings.len(),
-        "Loaded embedded adopted offerings"
-    );
+    tracing::info!(count = offerings.len(), "Loaded embedded adopted offerings");
 
     offerings
 }
@@ -607,10 +615,18 @@ mod tests {
     #[test]
     fn test_embedded_adopted_offerings() {
         let offerings = load_embedded_adopted_offerings();
-        println!("Embedded adopted offerings: {:?}", offerings.iter().map(|o| &o.name).collect::<Vec<_>>());
+        println!(
+            "Embedded adopted offerings: {:?}",
+            offerings.iter().map(|o| &o.name).collect::<Vec<_>>()
+        );
 
         for offering in &offerings {
-            println!("  {} ({:?}): {:?}", offering.name, offering.category, offering.modes());
+            println!(
+                "  {} ({:?}): {:?}",
+                offering.name,
+                offering.category,
+                offering.modes()
+            );
             // Verify detection rules are loaded
             if offering.adopted.is_some() {
                 let rules = offering.get_detection_rules();
@@ -619,7 +635,10 @@ mod tests {
         }
 
         // Verify ollama is loaded
-        assert!(offerings.iter().any(|o| o.name == "ollama"), "Ollama should be in adopted offerings");
+        assert!(
+            offerings.iter().any(|o| o.name == "ollama"),
+            "Ollama should be in adopted offerings"
+        );
     }
 
     #[test]
@@ -642,7 +661,9 @@ mod tests {
         .unwrap();
 
         let registry = load_sw_manifests_with_overlay(temp.path()).unwrap();
-        let mongodb = registry.get("mongodb").expect("embedded mongodb should exist");
+        let mongodb = registry
+            .get("mongodb")
+            .expect("embedded mongodb should exist");
         assert_eq!(
             mongodb
                 .connection

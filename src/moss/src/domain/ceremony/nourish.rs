@@ -71,7 +71,9 @@ pub async fn execute_nourish_offering(
 
     // === Phase 2: Nourish ===
     execute_phase(state, ceremony, 1, async {
-        nourish::execute(state, offering, new_image).await.map(|_| ())
+        nourish::execute(state, offering, new_image)
+            .await
+            .map(|_| ())
     })
     .await?;
 
@@ -79,14 +81,9 @@ pub async fn execute_nourish_offering(
     // NOTE: Extract auto_rollback to avoid borrow conflict in async closure (2026-01-24)
     let auto_rollback = ceremony.options.auto_rollback;
     let water_result = execute_phase(state, ceremony, 2, async {
-        water::execute(
-            state,
-            offering,
-            harvest_id.as_deref(),
-            auto_rollback,
-        )
-        .await
-        .map(|_| ())
+        water::execute(state, offering, harvest_id.as_deref(), auto_rollback)
+            .await
+            .map(|_| ())
     })
     .await;
 
@@ -127,10 +124,7 @@ pub async fn execute_nourish_offering(
     if ceremony.state == CeremonyState::Completed {
         Ok(())
     } else {
-        anyhow::bail!(
-            "{}",
-            ceremony.error.as_deref().unwrap_or("Ceremony failed")
-        )
+        anyhow::bail!("{}", ceremony.error.as_deref().unwrap_or("Ceremony failed"))
     }
 }
 
@@ -198,18 +192,14 @@ where
 
 /// Persist ceremony state to journal
 async fn persist_ceremony(state: &AppState, ceremony: &Ceremony) -> Result<()> {
-    state
-        .ceremony_journal
-        .persist(ceremony)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                ceremony_id = %ceremony.id,
-                error = %e,
-                "Failed to persist ceremony state"
-            );
-            e
-        })
+    state.ceremony_journal.persist(ceremony).await.map_err(|e| {
+        tracing::error!(
+            ceremony_id = %ceremony.id,
+            error = %e,
+            "Failed to persist ceremony state"
+        );
+        e
+    })
 }
 
 #[cfg(test)]

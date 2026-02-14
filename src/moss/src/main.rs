@@ -4,12 +4,14 @@
 //! before the Tokio runtime to prevent accidental daemon startup.
 //! All orchestration logic delegated to bootstrap module.
 
-use garden_moss::{Cli, Commands, DaemonConfig, init_tracing, run_daemon};
-use garden_moss::infra::kill_existing_moss_processes_graceful;
-#[cfg(target_os = "windows")]
-use garden_moss::infra::{finalize_service_update, cleanup_after_service_update, cleanup_updater_process};
 #[cfg(target_os = "windows")]
 use garden_moss::ensure_windows_stone_name_config;
+use garden_moss::infra::kill_existing_moss_processes_graceful;
+#[cfg(target_os = "windows")]
+use garden_moss::infra::{
+    cleanup_after_service_update, cleanup_updater_process, finalize_service_update,
+};
+use garden_moss::{init_tracing, run_daemon, Cli, Commands, DaemonConfig};
 
 fn main() -> anyhow::Result<()> {
     let cli = <Cli as clap::Parser>::parse();
@@ -22,7 +24,9 @@ fn main() -> anyhow::Result<()> {
             Commands::Install => garden_moss::infra::installer::install(),
             Commands::Uninstall => garden_moss::infra::installer::uninstall(),
             #[cfg(target_os = "windows")]
-            Commands::TakeRoot | Commands::InstallService => garden_moss::infra::installer::install(),
+            Commands::TakeRoot | Commands::InstallService => {
+                garden_moss::infra::installer::install()
+            }
         };
     }
 

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// - Docker running and functional (Some("24.0.7"))
 async fn detect_docker() -> Option<String> {
     use crate::docker::DockerManager;
-    
+
     // Try to connect to Docker
     let docker = match DockerManager::new() {
         Ok(d) => d,
@@ -24,13 +24,13 @@ async fn detect_docker() -> Option<String> {
             return None;
         }
     };
-    
+
     // Verify Docker is actually functional by pinging it
     if !docker.is_healthy().await {
         tracing::debug!("Docker connected but not healthy (ping failed)");
         return None;
     }
-    
+
     // Get Docker version
     match docker.get_docker_version().await {
         Ok(version) => {
@@ -62,8 +62,11 @@ fn detect_system_manufacturer() -> Option<String> {
     {
         use std::process::Command;
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "(Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer",
+            ])
             .output()
             .ok()?;
 
@@ -95,8 +98,11 @@ fn detect_system_product() -> Option<String> {
     {
         use std::process::Command;
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "(Get-CimInstance -ClassName Win32_ComputerSystem).Model"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance -ClassName Win32_ComputerSystem).Model",
+            ])
             .output()
             .ok()?;
 
@@ -118,18 +124,16 @@ pub async fn load_cached_capabilities() -> Option<HardwareCapabilities> {
     let path = PathBuf::from(garden_common::constants::CONFIG_DIR).join("capabilities.json");
 
     match tokio::fs::read_to_string(&path).await {
-        Ok(content) => {
-            match serde_json::from_str::<HardwareCapabilities>(&content) {
-                Ok(caps) => {
-                    tracing::debug!("Loaded capabilities from cache");
-                    Some(caps)
-                }
-                Err(e) => {
-                    tracing::warn!(error = ?e, "Failed to parse capabilities cache");
-                    None
-                }
+        Ok(content) => match serde_json::from_str::<HardwareCapabilities>(&content) {
+            Ok(caps) => {
+                tracing::debug!("Loaded capabilities from cache");
+                Some(caps)
             }
-        }
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to parse capabilities cache");
+                None
+            }
+        },
         Err(_) => {
             tracing::debug!("No capabilities cache found");
             None
@@ -174,27 +178,41 @@ pub async fn save_capabilities_cache(capabilities: &HardwareCapabilities) -> Res
 ///
 /// Call this in a background task to avoid blocking startup.
 pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities> {
-    use garden_common::{HardwareInventory, DetectionStatus, CpuCapabilities, MemoryCapabilities, DiskCapabilities, RuntimeInfo};
+    use garden_common::{
+        CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareInventory, MemoryCapabilities,
+        RuntimeInfo,
+    };
 
     tracing::info!("Starting hardware detection");
 
     // Fast detection: CPU and memory using metrics module
     let (cpu_model, cpu_features, architecture) = garden_common::metrics::system::get_cpu_info()
-        .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
+        .unwrap_or_else(|_| {
+            (
+                "Unknown".to_string(),
+                vec![],
+                std::env::consts::ARCH.to_string(),
+            )
+        });
 
     let resources = garden_common::metrics::system::collect_stone_resources().ok();
     let cpu_cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
-    let total_memory_mb = resources.as_ref()
+    let total_memory_mb = resources
+        .as_ref()
         .map(|r| r.memory.total_bytes / 1024 / 1024)
         .unwrap_or(0);
 
     let disk = resources.as_ref().map(|r| DiskCapabilities {
-        total_gb: r.storage.iter()
+        total_gb: r
+            .storage
+            .iter()
             .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
             .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
             .map(|s| s.total_gb)
             .unwrap_or(0),
-        disk_type: r.storage.iter()
+        disk_type: r
+            .storage
+            .iter()
             .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
             .or_else(|| r.storage.iter().max_by_key(|s| s.total_gb))
             .map(|s| match &s.disk_type {
@@ -217,18 +235,26 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
     // DMI/SMBIOS system identity (for hw manifest matching)
     let system_manufacturer = detect_system_manufacturer();
     let system_product = detect_system_product();
-    
+
     if let (Some(ref mfr), Some(ref prod)) = (&system_manufacturer, &system_product) {
         tracing::info!(manufacturer = %mfr, product = %prod, "Detected system identity");
     }
 
     let hardware = HardwareInventory {
         cpu: CpuCapabilities {
-            model: if cpu_model == "Unknown" { None } else { Some(cpu_model.clone()) },
+            model: if cpu_model == "Unknown" {
+                None
+            } else {
+                Some(cpu_model.clone())
+            },
             cores: cpu_cores,
             threads: None,
             architecture,
-            features: if cpu_features.is_empty() { None } else { Some(cpu_features) },
+            features: if cpu_features.is_empty() {
+                None
+            } else {
+                Some(cpu_features)
+            },
         },
         memory: MemoryCapabilities {
             total_mb: total_memory_mb,
@@ -278,7 +304,7 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
 ///
 /// Use this when cache doesn't exist. Background detection will update it.
 pub fn create_skeleton(stone_name: String) -> HardwareCapabilities {
-    use garden_common::{DetectionStatus, HardwareInventory, CpuCapabilities, MemoryCapabilities};
+    use garden_common::{CpuCapabilities, DetectionStatus, HardwareInventory, MemoryCapabilities};
 
     let hardware = HardwareInventory {
         cpu: CpuCapabilities {
@@ -288,9 +314,7 @@ pub fn create_skeleton(stone_name: String) -> HardwareCapabilities {
             architecture: std::env::consts::ARCH.to_string(),
             features: None,
         },
-        memory: MemoryCapabilities {
-            total_mb: 0,
-        },
+        memory: MemoryCapabilities { total_mb: 0 },
         gpus: vec![],
         disk: None,
         swap_mb: None,

@@ -122,9 +122,7 @@ fn normalize_legacy_type(offering_type: &str) -> Option<String> {
     }
 
     let candidate = offering_type.replace('@', ":");
-    parse_offering_fqn(&candidate)
-        .ok()
-        .map(|fqn| fqn.offering)
+    parse_offering_fqn(&candidate).ok().map(|fqn| fqn.offering)
 }
 
 #[cfg(test)]
@@ -193,15 +191,13 @@ pub async fn load_offerings_cache<T: serde::de::DeserializeOwned>() -> Result<Op
     let path = offerings_cache_path();
 
     match tokio::fs::read_to_string(&path).await {
-        Ok(content) => {
-            match serde_json::from_str(&content) {
-                Ok(cache) => Ok(Some(cache)),
-                Err(e) => {
-                    tracing::warn!(error = ?e, "Invalid offerings cache, will rebuild");
-                    Ok(None)
-                }
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(cache) => Ok(Some(cache)),
+            Err(e) => {
+                tracing::warn!(error = ?e, "Invalid offerings cache, will rebuild");
+                Ok(None)
             }
-        }
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
@@ -294,7 +290,7 @@ async fn atomic_write<T: serde::Serialize, P: AsRef<std::path::Path>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     struct TestData {
@@ -306,10 +302,14 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join("test_atomic.json");
 
-        let data = TestData { value: "test".into() };
+        let data = TestData {
+            value: "test".into(),
+        };
         atomic_write(&test_file, &data).await.expect("write failed");
 
-        let content = tokio::fs::read_to_string(&test_file).await.expect("read failed");
+        let content = tokio::fs::read_to_string(&test_file)
+            .await
+            .expect("read failed");
         let loaded: TestData = serde_json::from_str(&content).expect("parse failed");
 
         assert_eq!(loaded, data);

@@ -1,4 +1,4 @@
-﻿//! Offering Search Types
+//! Offering Search Types
 //!
 //! Shared types for offering search between Moss and Rake.
 //! Moss performs all search logic; Rake is a thin client.
@@ -139,7 +139,12 @@ impl OfferingFqn {
     /// Return the normalized fully-qualified name.
     pub fn fqn(&self) -> String {
         match &self.instance {
-            Some(instance) => format!("{}{}{}", self.offering, crate::constants::OFFERING_FQN_SEPARATOR, instance),
+            Some(instance) => format!(
+                "{}{}{}",
+                self.offering,
+                crate::constants::OFFERING_FQN_SEPARATOR,
+                instance
+            ),
             None => self.offering.clone(),
         }
     }
@@ -174,14 +179,18 @@ impl OfferingFqn {
 pub fn parse_offering_fqn(input: &str) -> Result<OfferingFqn, OfferingFqnError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err(OfferingFqnError { message: "Offering name cannot be empty".to_string() });
+        return Err(OfferingFqnError {
+            message: "Offering name cannot be empty".to_string(),
+        });
     }
 
     let mut parts = trimmed.split(crate::constants::OFFERING_FQN_SEPARATOR);
     let offering_raw = parts.next().unwrap_or_default();
     let instance_raw = parts.next();
     if parts.next().is_some() {
-        return Err(OfferingFqnError { message: "Offering name cannot contain multiple ':' separators".to_string() });
+        return Err(OfferingFqnError {
+            message: "Offering name cannot contain multiple ':' separators".to_string(),
+        });
     }
 
     let offering = normalize_fqn_segment(offering_raw, "offering")?;
@@ -203,30 +212,53 @@ pub fn parse_offering_fqn(input: &str) -> Result<OfferingFqn, OfferingFqnError> 
 fn normalize_fqn_segment(segment: &str, label: &str) -> Result<String, OfferingFqnError> {
     let normalized = segment.trim().to_lowercase();
     if normalized.is_empty() {
-        return Err(OfferingFqnError { message: format!("{} segment cannot be empty", label) });
+        return Err(OfferingFqnError {
+            message: format!("{} segment cannot be empty", label),
+        });
     }
 
     if normalized.len() > crate::api_utils::MAX_NAME_LENGTH {
-        return Err(OfferingFqnError { message: format!("{} segment exceeds maximum length", label) });
+        return Err(OfferingFqnError {
+            message: format!("{} segment exceeds maximum length", label),
+        });
     }
 
     if normalized.starts_with('-') || normalized.starts_with('_') {
-        return Err(OfferingFqnError { message: format!("{} segment cannot start with '-' or '_'", label) });
+        return Err(OfferingFqnError {
+            message: format!("{} segment cannot start with '-' or '_'", label),
+        });
     }
 
-    if !normalized.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
-        return Err(OfferingFqnError { message: format!("{} segment must start with a letter", label) });
+    if !normalized
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_alphabetic())
+        .unwrap_or(false)
+    {
+        return Err(OfferingFqnError {
+            message: format!("{} segment must start with a letter", label),
+        });
     }
 
     if normalized.contains(crate::constants::OFFERING_FQN_CONTAINER_SEPARATOR) {
         return Err(OfferingFqnError {
-            message: format!("{} segment cannot contain '{}'", label, crate::constants::OFFERING_FQN_CONTAINER_SEPARATOR),
+            message: format!(
+                "{} segment cannot contain '{}'",
+                label,
+                crate::constants::OFFERING_FQN_CONTAINER_SEPARATOR
+            ),
         });
     }
 
-    if !normalized.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !normalized
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(OfferingFqnError {
-            message: format!("{} segment contains invalid characters (allowed: a-z, 0-9, _, -)", label),
+            message: format!(
+                "{} segment contains invalid characters (allowed: a-z, 0-9, _, -)",
+                label
+            ),
         });
     }
 

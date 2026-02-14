@@ -1,4 +1,4 @@
-﻿//! Inter-stone communication tests
+//! Inter-stone communication tests
 //!
 //! Tests that verify stones can communicate with each other:
 //! - Chirp propagation (deploy offering, verify other stones see it)
@@ -78,10 +78,7 @@ async fn test_discovery_consistency(garden: Arc<LiveGarden>, mut bag: Bag) -> Re
                             stone.name, missing, extra
                         ),
                         step_start.elapsed().as_millis() as u64,
-                        StepResult::failed(format!(
-                            "Missing: {:?}, Extra: {:?}",
-                            missing, extra
-                        )),
+                        StepResult::failed(format!("Missing: {:?}, Extra: {:?}", missing, extra)),
                     );
                 }
             }
@@ -136,7 +133,7 @@ pub fn cross_query_test() -> TestDef {
 async fn test_cross_query(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     // For now, we can only test from probe to each stone
     // True cross-stone queries would require a relay endpoint on Moss
-    
+
     let mut success_count = 0;
     let mut failure_count = 0;
 
@@ -190,7 +187,12 @@ async fn test_cross_query(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
         StepResult::failed(format!("{}/{} queries failed", failure_count, total))
     };
 
-    bag.record_step("cross_query_summary", format!("{} cross-queries", total), 0, result);
+    bag.record_step(
+        "cross_query_summary",
+        format!("{} cross-queries", total),
+        0,
+        result,
+    );
 
     Ok(bag)
 }
@@ -326,7 +328,10 @@ async fn test_latency_matrix(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
 
             bag.record_step(
                 format!("latency_{}", stone.name),
-                format!("{}: avg={}ms, min={}ms, max={}ms", stone.name, avg, min, max),
+                format!(
+                    "{}: avg={}ms, min={}ms, max={}ms",
+                    stone.name, avg, min, max
+                ),
                 avg,
                 StepResult::ok_with(serde_json::json!({
                     "stone": stone.name,

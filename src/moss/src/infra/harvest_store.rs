@@ -63,7 +63,8 @@ impl HarvestStore {
                 .context("Failed to create harvest directory")?;
         }
 
-        let json = serde_json::to_string_pretty(manifest).context("Failed to serialize manifest")?;
+        let json =
+            serde_json::to_string_pretty(manifest).context("Failed to serialize manifest")?;
 
         tokio::fs::write(&path, json)
             .await

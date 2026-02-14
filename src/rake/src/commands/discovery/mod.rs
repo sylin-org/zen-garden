@@ -24,11 +24,8 @@ pub mod watch;
 pub use adopted::AdoptedCommand;
 pub use borrowed::BorrowedCommand;
 pub use capabilities::{
-    CapabilitiesCommand,
-    AddCapabilityCommand,
-    RemoveCapabilityCommand,
-    RefreshCapabilitiesCommand,
-    MirrorCapabilitiesCommand,
+    AddCapabilityCommand, CapabilitiesCommand, MirrorCapabilitiesCommand,
+    RefreshCapabilitiesCommand, RemoveCapabilityCommand,
 };
 pub use config::ConfigCommand;
 pub use find::{FindCommand, FindOutputFormat};

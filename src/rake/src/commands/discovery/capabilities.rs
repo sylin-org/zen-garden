@@ -6,7 +6,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
 use garden_common::ui::rendering::{self as ui};
@@ -51,7 +51,9 @@ impl Command for CapabilitiesCommand {
             let body = response.text().await.unwrap_or_default();
 
             // Try to parse error response
-            if let Ok(error) = serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body) {
+            if let Ok(error) =
+                serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
+            {
                 eprintln!(
                     "{} {}",
                     ui::status_indicator("error", ctx.term.supports_color),
@@ -80,7 +82,11 @@ impl Command for CapabilitiesCommand {
         println!(
             "{}",
             ui::section_header(
-                &format!("{} CAPABILITIES ({})", data.offering.to_uppercase(), mode_str),
+                &format!(
+                    "{} CAPABILITIES ({})",
+                    data.offering.to_uppercase(),
+                    mode_str
+                ),
                 &ctx.term
             )
         );
@@ -101,7 +107,7 @@ impl Command for CapabilitiesCommand {
             } else {
                 // Build table for items
                 let mut table = ui::TableBuilder::new()
-                    .add_column(40, ui::Align::Left)  // Name
+                    .add_column(40, ui::Align::Left) // Name
                     .add_column(12, ui::Align::Right); // Size
 
                 for item in &collection.items {
@@ -117,10 +123,13 @@ impl Command for CapabilitiesCommand {
         }
 
         if data.capabilities.is_empty() {
-            println!("{}", ui::empty_state(
-                "No capabilities found",
-                Some("The offering may not support capability discovery")
-            ));
+            println!(
+                "{}",
+                ui::empty_state(
+                    "No capabilities found",
+                    Some("The offering may not support capability discovery")
+                )
+            );
         }
 
         // Self-teaching suggestions
@@ -210,7 +219,13 @@ pub struct AddCapabilityCommand {
 }
 
 impl AddCapabilityCommand {
-    pub fn new(offering: String, name: String, cap_type: Option<String>, dry_run: bool, quiet_mode: bool) -> Self {
+    pub fn new(
+        offering: String,
+        name: String,
+        cap_type: Option<String>,
+        dry_run: bool,
+        quiet_mode: bool,
+    ) -> Self {
         Self {
             offering,
             name,
@@ -247,7 +262,9 @@ impl Command for AddCapabilityCommand {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
 
-            if let Ok(error) = serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body) {
+            if let Ok(error) =
+                serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
+            {
                 eprintln!(
                     "{} {}",
                     ui::status_indicator("error", ctx.term.supports_color),
@@ -259,13 +276,16 @@ impl Command for AddCapabilityCommand {
             anyhow::bail!("Request failed with status {}: {}", status, body);
         }
 
-        let api_response: ApiResponse<AddCapabilityResponse> = response
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let api_response: ApiResponse<AddCapabilityResponse> =
+            response.json().await.context("Failed to parse response")?;
 
         match api_response.data {
-            AddCapabilityResponse::AlreadyExists { offering, capability, cap_type, message } => {
+            AddCapabilityResponse::AlreadyExists {
+                offering,
+                capability,
+                cap_type,
+                message,
+            } => {
                 println!(
                     "{} {} '{}' already exists in {}",
                     ui::status_indicator("info", ctx.term.supports_color),
@@ -276,7 +296,12 @@ impl Command for AddCapabilityCommand {
                 println!("  {}", message);
             }
 
-            AddCapabilityResponse::DryRun { offering, capability, cap_type, message } => {
+            AddCapabilityResponse::DryRun {
+                offering,
+                capability,
+                cap_type,
+                message,
+            } => {
                 println!(
                     "\n{} DRY RUN - No changes made",
                     ui::status_indicator("info", ctx.term.supports_color)
@@ -284,14 +309,17 @@ impl Command for AddCapabilityCommand {
                 println!();
                 println!(
                     "  {} '{}' can be added to {}",
-                    cap_type,
-                    capability,
-                    offering
+                    cap_type, capability, offering
                 );
                 println!("  {}", message);
             }
 
-            AddCapabilityResponse::InProgress { offering, capability, job_id, message } => {
+            AddCapabilityResponse::InProgress {
+                offering,
+                capability,
+                job_id,
+                message,
+            } => {
                 println!(
                     "{} Add operation already in progress",
                     ui::status_indicator("info", ctx.term.supports_color)
@@ -304,7 +332,12 @@ impl Command for AddCapabilityCommand {
                 println!("  {}", message);
             }
 
-            AddCapabilityResponse::Started { offering, capability, job_id, message } => {
+            AddCapabilityResponse::Started {
+                offering,
+                capability,
+                job_id,
+                message,
+            } => {
                 println!(
                     "{} {}",
                     ui::status_indicator("success", ctx.term.supports_color),
@@ -316,7 +349,10 @@ impl Command for AddCapabilityCommand {
                 println!("  Job ID:     {}", &job_id[..16.min(job_id.len())]);
                 println!();
                 println!("  The download is running in the background.");
-                println!("  Use 'rake capabilities {}' to verify when complete.", offering);
+                println!(
+                    "  Use 'rake capabilities {}' to verify when complete.",
+                    offering
+                );
             }
         }
 
@@ -380,7 +416,9 @@ impl Command for RemoveCapabilityCommand {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
 
-            if let Ok(error) = serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body) {
+            if let Ok(error) =
+                serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
+            {
                 eprintln!(
                     "{} {}",
                     ui::status_indicator("error", ctx.term.supports_color),
@@ -392,10 +430,8 @@ impl Command for RemoveCapabilityCommand {
             anyhow::bail!("Request failed with status {}: {}", status, body);
         }
 
-        let api_response: ApiResponse<CapabilityMutationResponse> = response
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let api_response: ApiResponse<CapabilityMutationResponse> =
+            response.json().await.context("Failed to parse response")?;
 
         let data = api_response.data;
 
@@ -548,7 +584,12 @@ impl MirrorCapabilitiesCommand {
 }
 
 impl RefreshCapabilitiesCommand {
-    pub fn new(offering: String, cap_type: Option<String>, dry_run: bool, quiet_mode: bool) -> Self {
+    pub fn new(
+        offering: String,
+        cap_type: Option<String>,
+        dry_run: bool,
+        quiet_mode: bool,
+    ) -> Self {
         Self {
             offering,
             cap_type,
@@ -561,7 +602,11 @@ impl RefreshCapabilitiesCommand {
 #[async_trait]
 impl Command for RefreshCapabilitiesCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        let action = if self.dry_run { "Checking" } else { "Refreshing" };
+        let action = if self.dry_run {
+            "Checking"
+        } else {
+            "Refreshing"
+        };
         println!(
             "{} {} capabilities for {}...",
             ui::status_indicator("info", ctx.term.supports_color),
@@ -570,7 +615,10 @@ impl Command for RefreshCapabilitiesCommand {
         );
 
         let offering_path = urlencoding::encode(&self.offering);
-        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities/refresh", offering_path))?;
+        let url = ctx.api_v1_url(&format!(
+            "stone/offerings/{}/capabilities/refresh",
+            offering_path
+        ))?;
         let request_body = RefreshCapabilitiesRequest {
             cap_type: self.cap_type.clone(),
             dry_run: self.dry_run,
@@ -582,7 +630,9 @@ impl Command for RefreshCapabilitiesCommand {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
 
-            if let Ok(error) = serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body) {
+            if let Ok(error) =
+                serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
+            {
                 eprintln!(
                     "{} {}",
                     ui::status_indicator("error", ctx.term.supports_color),
@@ -594,13 +644,15 @@ impl Command for RefreshCapabilitiesCommand {
             anyhow::bail!("Request failed with status {}: {}", status, body);
         }
 
-        let api_response: ApiResponse<RefreshCapabilitiesResponse> = response
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let api_response: ApiResponse<RefreshCapabilitiesResponse> =
+            response.json().await.context("Failed to parse response")?;
 
         match api_response.data {
-            RefreshCapabilitiesResponse::NoUpdates { offering, cap_type, message } => {
+            RefreshCapabilitiesResponse::NoUpdates {
+                offering,
+                cap_type,
+                message,
+            } => {
                 let type_label = cap_type.as_deref().unwrap_or("capabilities");
                 println!(
                     "{} No {} to refresh for {}",
@@ -611,7 +663,11 @@ impl Command for RefreshCapabilitiesCommand {
                 println!("  {}", message);
             }
 
-            RefreshCapabilitiesResponse::DryRun { offering, capabilities, total } => {
+            RefreshCapabilitiesResponse::DryRun {
+                offering,
+                capabilities,
+                total,
+            } => {
                 println!(
                     "\n{} DRY RUN - No changes made",
                     ui::status_indicator("info", ctx.term.supports_color)
@@ -630,8 +686,8 @@ impl Command for RefreshCapabilitiesCommand {
                     println!("  No capabilities found to refresh.");
                 } else {
                     let mut table = ui::TableBuilder::new()
-                        .add_column(35, ui::Align::Left)   // Name
-                        .add_column(12, ui::Align::Left);  // Type
+                        .add_column(35, ui::Align::Left) // Name
+                        .add_column(12, ui::Align::Left); // Type
 
                     for cap in &capabilities {
                         table.add_row(vec![cap.name.clone(), cap.cap_type.clone()]);
@@ -666,7 +722,10 @@ impl Command for RefreshCapabilitiesCommand {
                 println!();
                 println!("  Job ID:   {}", &job_id[..16.min(job_id.len())]);
                 println!("  Progress: {}%", progress_percent);
-                println!("  Status:   {}/{} completed, {} failed", completed, total, failed);
+                println!(
+                    "  Status:   {}/{} completed, {} failed",
+                    completed, total, failed
+                );
                 println!();
                 println!(
                     "  Run again later to check progress, or use: rake jobs {}",
@@ -715,14 +774,18 @@ impl Command for MirrorCapabilitiesCommand {
         let from = match from_arg {
             Some(value) => value,
             None => local_stone.clone().ok_or_else(|| {
-                anyhow::anyhow!("Mirror requires a source stone. Use 'from <stone>' or tend a stone first.")
+                anyhow::anyhow!(
+                    "Mirror requires a source stone. Use 'from <stone>' or tend a stone first."
+                )
             })?,
         };
 
         let to = match to_arg {
             Some(value) => value,
             None => local_stone.ok_or_else(|| {
-                anyhow::anyhow!("Mirror requires a destination stone. Use 'to <stone>' or tend a stone first.")
+                anyhow::anyhow!(
+                    "Mirror requires a destination stone. Use 'to <stone>' or tend a stone first."
+                )
             })?,
         };
 
@@ -739,7 +802,10 @@ impl Command for MirrorCapabilitiesCommand {
         );
 
         let offering_path = urlencoding::encode(&self.offering);
-        let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities/mirror", offering_path))?;
+        let url = ctx.api_v1_url(&format!(
+            "stone/offerings/{}/capabilities/mirror",
+            offering_path
+        ))?;
         let request_body = MirrorCapabilitiesRequest {
             from: from.clone(),
             to: to.clone(),
@@ -752,7 +818,9 @@ impl Command for MirrorCapabilitiesCommand {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
 
-            if let Ok(error) = serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body) {
+            if let Ok(error) =
+                serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
+            {
                 eprintln!(
                     "{} {}",
                     ui::status_indicator("error", ctx.term.supports_color),

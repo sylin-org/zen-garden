@@ -20,17 +20,17 @@
 //!     {harvest_id}.tar.gz                <- Compressed harvest archive
 //! ```
 
+use crate::docker::DockerManager;
+use crate::domain::harvest::HarvestManifest;
 use crate::domain::nurturing::{
-    NurturingIndex, NurturingSnapshot, OfferingSlots, NurturingSlot, NurturingResult,
+    NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
     RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
 };
-use crate::domain::harvest::HarvestManifest;
-use crate::infra::{HarvestStore, create_harvest};
-use crate::docker::DockerManager;
+use crate::infra::{create_harvest, HarvestStore};
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
 use garden_common::constants::paths;
 use garden_common::storage::MemoriesOfferingManifest;
+use std::path::{Path, PathBuf};
 
 /// Store for nurturing A/B slots
 pub struct NurturingStore {
@@ -78,8 +78,8 @@ impl NurturingStore {
                 .context("Failed to create nurturing directory")?;
         }
 
-        let content = serde_json::to_string_pretty(index)
-            .context("Failed to serialize nurturing index")?;
+        let content =
+            serde_json::to_string_pretty(index).context("Failed to serialize nurturing index")?;
 
         // Atomic write
         let tmp_path = self.index_path.with_extension("tmp");
@@ -213,7 +213,11 @@ impl NurturingStore {
     /// List all offerings with nurturing snapshots
     pub async fn list_offerings(&self) -> Result<Vec<OfferingSlots>> {
         let index = self.load_index().await?;
-        Ok(index.offerings.into_iter().filter(|o| o.has_snapshots()).collect())
+        Ok(index
+            .offerings
+            .into_iter()
+            .filter(|o| o.has_snapshots())
+            .collect())
     }
 
     /// Restore an offering from a nurturing snapshot
@@ -229,15 +233,18 @@ impl NurturingStore {
     ) -> Result<HarvestManifest> {
         let index = self.load_index().await?;
 
-        let slots = index.get(offering_id)
-            .ok_or_else(|| anyhow::anyhow!("No nurturing slots found for offering {}", offering_id))?;
+        let slots = index.get(offering_id).ok_or_else(|| {
+            anyhow::anyhow!("No nurturing slots found for offering {}", offering_id)
+        })?;
 
         // Determine which snapshot to restore
         let snapshot = match slot {
-            Some(s) => slots.get(s)
-                .ok_or_else(|| anyhow::anyhow!("Slot {} is empty for offering {}", s, offering_id))?,
-            None => slots.current()
-                .ok_or_else(|| anyhow::anyhow!("No current snapshot for offering {}", offering_id))?,
+            Some(s) => slots.get(s).ok_or_else(|| {
+                anyhow::anyhow!("Slot {} is empty for offering {}", s, offering_id)
+            })?,
+            None => slots.current().ok_or_else(|| {
+                anyhow::anyhow!("No current snapshot for offering {}", offering_id)
+            })?,
         };
 
         tracing::info!(
@@ -248,7 +255,10 @@ impl NurturingStore {
         );
 
         // Load and restore the harvest
-        let manifest = self.harvest_store.load_manifest(&snapshot.harvest_id).await?;
+        let manifest = self
+            .harvest_store
+            .load_manifest(&snapshot.harvest_id)
+            .await?;
         crate::infra::restore_harvest(docker, &self.harvest_store, &snapshot.harvest_id).await?;
 
         Ok(manifest)
@@ -274,10 +284,7 @@ impl NurturingStore {
 
             self.save_index(&index).await?;
 
-            tracing::info!(
-                offering_id,
-                "Deleted nurturing data for offering"
-            );
+            tracing::info!(offering_id, "Deleted nurturing data for offering");
         }
 
         Ok(())
@@ -315,11 +322,13 @@ impl NurturingStore {
     ) -> Result<ReplicationResult> {
         // Get local slots for this offering
         let index = self.load_index().await?;
-        let slots = index.get(offering_id)
-            .ok_or_else(|| anyhow::anyhow!("No local nurturing slots for offering {}", offering_id))?;
+        let slots = index.get(offering_id).ok_or_else(|| {
+            anyhow::anyhow!("No local nurturing slots for offering {}", offering_id)
+        })?;
 
         // Get current snapshot
-        let snapshot = slots.current()
+        let snapshot = slots
+            .current()
             .ok_or_else(|| anyhow::anyhow!("No current snapshot for offering {}", offering_id))?;
 
         let harvest_id = &snapshot.harvest_id;
@@ -352,12 +361,15 @@ impl NurturingStore {
 
         // Store hydration manifest (offering definition + metadata)
         if let Some(manifest) = hydration_manifest {
-            self.store_offering_manifest(seed_bank_mount, &manifest).await
+            self.store_offering_manifest(seed_bank_mount, &manifest)
+                .await
                 .context("Failed to store offering manifest on seed bank")?;
         }
 
         // Update remote index with retention enforcement
-        let mut remote_index = self.load_remote_index(seed_bank_mount, seed_bank_id).await?;
+        let mut remote_index = self
+            .load_remote_index(seed_bank_mount, seed_bank_id)
+            .await?;
         let pruned = remote_index.add_with_retention(RemoteSnapshot {
             offering_id: offering_id.to_string(),
             offering_name: offering_name.to_string(),
@@ -369,7 +381,8 @@ impl NurturingStore {
             size_bytes,
             object_key: object_key.clone(),
         });
-        self.save_remote_index(seed_bank_mount, &remote_index).await?;
+        self.save_remote_index(seed_bank_mount, &remote_index)
+            .await?;
 
         // Delete pruned snapshots (retention policy enforcement)
         for old_snapshot in &pruned {
@@ -409,7 +422,11 @@ impl NurturingStore {
                 pruned_count
             )
         } else {
-            format!("Replicated to {} ({})", seed_bank_name, garden_common::utils::format_bytes(size_bytes))
+            format!(
+                "Replicated to {} ({})",
+                seed_bank_name,
+                garden_common::utils::format_bytes(size_bytes)
+            )
         };
 
         Ok(ReplicationResult {
@@ -425,7 +442,11 @@ impl NurturingStore {
     }
 
     /// List remote snapshots on a seed bank
-    pub async fn list_remote_snapshots(&self, seed_bank_mount: &str, seed_bank_id: &str) -> Result<RemoteNurturingIndex> {
+    pub async fn list_remote_snapshots(
+        &self,
+        seed_bank_mount: &str,
+        seed_bank_id: &str,
+    ) -> Result<RemoteNurturingIndex> {
         self.load_remote_index(seed_bank_mount, seed_bank_id).await
     }
 
@@ -446,19 +467,26 @@ impl NurturingStore {
         offering_id: &str,
         harvest_id: Option<&str>,
     ) -> Result<HarvestManifest> {
-        let remote_index = self.load_remote_index(seed_bank_mount, seed_bank_id).await?;
+        let remote_index = self
+            .load_remote_index(seed_bank_mount, seed_bank_id)
+            .await?;
 
         // Find the snapshot
         let snapshot = if let Some(id) = harvest_id {
-            remote_index.snapshots.iter()
+            remote_index
+                .snapshots
+                .iter()
                 .find(|s| s.harvest_id == id && s.offering_id == offering_id)
                 .ok_or_else(|| anyhow::anyhow!("Harvest {} not found on seed bank", id))?
         } else {
             // Get latest for this offering
-            remote_index.get_for_offering(offering_id)
+            remote_index
+                .get_for_offering(offering_id)
                 .first()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("No snapshots for offering {} on seed bank", offering_id))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("No snapshots for offering {} on seed bank", offering_id)
+                })?
         };
 
         tracing::info!(
@@ -476,10 +504,14 @@ impl NurturingStore {
 
         // Extract to local harvest store
         let harvest_path = self.harvest_store.harvest_path(&snapshot.harvest_id);
-        self.extract_harvest_archive(&harvest_path, &archive_data).await?;
+        self.extract_harvest_archive(&harvest_path, &archive_data)
+            .await?;
 
         // Load manifest and restore
-        let manifest = self.harvest_store.load_manifest(&snapshot.harvest_id).await?;
+        let manifest = self
+            .harvest_store
+            .load_manifest(&snapshot.harvest_id)
+            .await?;
         crate::infra::restore_harvest(docker, &self.harvest_store, &snapshot.harvest_id).await?;
 
         tracing::info!(
@@ -498,7 +530,9 @@ impl NurturingStore {
         seed_bank_id: &str,
         harvest_id: &str,
     ) -> Result<bool> {
-        let mut remote_index = self.load_remote_index(seed_bank_mount, seed_bank_id).await?;
+        let mut remote_index = self
+            .load_remote_index(seed_bank_mount, seed_bank_id)
+            .await?;
 
         if let Some(snapshot) = remote_index.remove(harvest_id) {
             // Delete the object
@@ -506,7 +540,8 @@ impl NurturingStore {
             let _ = tokio::fs::remove_file(&archive_path).await;
 
             // Save updated index
-            self.save_remote_index(seed_bank_mount, &remote_index).await?;
+            self.save_remote_index(seed_bank_mount, &remote_index)
+                .await?;
 
             tracing::info!(harvest_id, seed_bank_id, "Deleted remote snapshot");
             Ok(true)
@@ -520,7 +555,11 @@ impl NurturingStore {
     // ========================================================================
 
     /// Load the remote nurturing index from a seed bank
-    async fn load_remote_index(&self, seed_bank_mount: &str, seed_bank_id: &str) -> Result<RemoteNurturingIndex> {
+    async fn load_remote_index(
+        &self,
+        seed_bank_mount: &str,
+        seed_bank_id: &str,
+    ) -> Result<RemoteNurturingIndex> {
         let index_path = memories_index_path(seed_bank_mount);
         if tokio::fs::metadata(&index_path).await.is_err() {
             return Ok(RemoteNurturingIndex::new(seed_bank_id));
@@ -533,8 +572,13 @@ impl NurturingStore {
     }
 
     /// Save the remote nurturing index to a seed bank
-    async fn save_remote_index(&self, seed_bank_mount: &str, index: &RemoteNurturingIndex) -> Result<()> {
-        let json = serde_json::to_string_pretty(index).context("Failed to serialize remote index")?;
+    async fn save_remote_index(
+        &self,
+        seed_bank_mount: &str,
+        index: &RemoteNurturingIndex,
+    ) -> Result<()> {
+        let json =
+            serde_json::to_string_pretty(index).context("Failed to serialize remote index")?;
         let index_path = memories_index_path(seed_bank_mount);
         write_string_atomic(&index_path, &json)
             .await
@@ -550,7 +594,8 @@ impl NurturingStore {
     ) -> Result<()> {
         let json = serde_json::to_string_pretty(manifest)
             .context("Failed to serialize offering manifest")?;
-        let path = paths::seed_bank_memory_offering_manifest_path(seed_bank_mount, &manifest.offering_id);
+        let path =
+            paths::seed_bank_memory_offering_manifest_path(seed_bank_mount, &manifest.offering_id);
         write_string_atomic(&path, &json)
             .await
             .context("Failed to write offering manifest")?;

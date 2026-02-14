@@ -1,17 +1,12 @@
-﻿//! Stone Presence Protocol types (PRESENCE-0001)
+//! Stone Presence Protocol types (PRESENCE-0001)
 //!
 //! Protocol contracts for SSE communication between Moss and Companions.
 //! Contains ONLY data structures, no implementation logic.
 
-pub mod types;
 pub mod event_types;
+pub mod types;
 
 pub use types::{
-    PresenceSnapshot,
-    StoneState,
-    OfferingState,
-    EventFilter,
-    ClientNotification,
-    StoneLoadUpdatedPayload,
-    StoneHealthChangedPayload,
+    ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneHealthChangedPayload,
+    StoneLoadUpdatedPayload, StoneState,
 };

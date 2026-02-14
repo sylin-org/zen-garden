@@ -10,9 +10,9 @@
 //! - Delegates to announcement module (SoC)
 //! - Respects network readiness (no chirps until network is ready)
 
+use crate::AppState;
 use std::sync::atomic::Ordering;
 use tokio::time::{interval, Duration};
-use crate::AppState;
 
 /// Start periodic announcement task
 ///

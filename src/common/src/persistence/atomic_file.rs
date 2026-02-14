@@ -14,10 +14,7 @@ use tokio::io::AsyncWriteExt;
 /// 3. Rename to {path} (atomic on POSIX, best-effort on Windows)
 ///
 /// If any step fails, the original file (if it exists) remains unchanged.
-pub async fn atomic_write_file(
-    path: impl AsRef<Path>,
-    data: &[u8],
-) -> Result<(), std::io::Error> {
+pub async fn atomic_write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<(), std::io::Error> {
     let path = path.as_ref();
     let tmp_path = path.with_extension("tmp");
 

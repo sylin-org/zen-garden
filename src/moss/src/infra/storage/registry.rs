@@ -1,4 +1,4 @@
-﻿//! Seed bank registry - live discovery of mounted seed banks
+//! Seed bank registry - live discovery of mounted seed banks
 //!
 //! No persistence file - the USB device manifests ARE the source of truth.
 //! This module scans mounted devices to build the registry in-memory.
@@ -24,9 +24,9 @@ use tokio::sync::RwLock;
 use tracing::info;
 use tracing::{debug, warn};
 
+use super::device::DeviceAnalyzer;
 #[cfg(target_os = "linux")]
 use crate::domain::StorageEvent;
-use super::device::DeviceAnalyzer;
 
 /// Tracks a persistent mount that should be maintained
 #[cfg(target_os = "linux")]
@@ -82,7 +82,7 @@ impl SeedBankRegistry {
 
         let data_dir = garden_common::constants::paths::data_dir();
         let mounts_dir = PathBuf::from(&data_dir).join("mounts");
-        
+
         let mut registry = Self::default();
 
         // Include any prepared seed banks mounted outside our mounts directory.
@@ -91,11 +91,11 @@ impl SeedBankRegistry {
         if let Err(e) = Self::append_external_mounts(&mut registry, &mounts_dir).await {
             warn!(error = %e, "Failed to include external seed bank mounts");
         }
-        
+
         if !mounts_dir.exists() {
             return Ok(registry);
         }
-        
+
         // Scan each subdirectory in mounts/
         let mut entries = match tokio::fs::read_dir(&mounts_dir).await {
             Ok(e) => e,
@@ -104,18 +104,18 @@ impl SeedBankRegistry {
                 return Ok(registry);
             }
         };
-        
+
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
             if !path.is_dir() {
                 continue;
             }
-            
+
             let manifest_path = path.join(".zen-garden").join("manifest.json");
             if !manifest_path.exists() {
                 continue;
             }
-            
+
             // Read and parse manifest
             match Self::read_manifest(&manifest_path).await {
                 Ok(manifest) => {
@@ -195,7 +195,7 @@ impl SeedBankRegistry {
                 }
             }
         }
-        
+
         Ok(registry)
     }
 
@@ -207,9 +207,9 @@ impl SeedBankRegistry {
         let mut created = Vec::new();
 
         if !memories.exists() {
-            tokio::fs::create_dir_all(&memories)
-                .await
-                .map_err(|e| format!("Failed to create {}: {}", paths::SEED_BANK_MEMORIES_DIR, e))?;
+            tokio::fs::create_dir_all(&memories).await.map_err(|e| {
+                format!("Failed to create {}: {}", paths::SEED_BANK_MEMORIES_DIR, e)
+            })?;
             created.push(paths::SEED_BANK_MEMORIES_DIR);
         }
 
@@ -277,16 +277,16 @@ impl SeedBankRegistry {
             online: true, // Verified: device is mounted and manifest is readable
         })
     }
-    
+
     /// Read manifest from disk
     async fn read_manifest(path: &PathBuf) -> Result<SeedBankManifest> {
         let content = tokio::fs::read_to_string(path)
             .await
             .context("Failed to read manifest file")?;
-        
-        let manifest: SeedBankManifest = serde_json::from_str(&content)
-            .context("Failed to parse manifest JSON")?;
-        
+
+        let manifest: SeedBankManifest =
+            serde_json::from_str(&content).context("Failed to parse manifest JSON")?;
+
         Ok(manifest)
     }
 
@@ -317,7 +317,9 @@ impl SeedBankRegistry {
                 continue;
             }
 
-            let manifest_path = PathBuf::from(mount_path).join(".zen-garden").join("manifest.json");
+            let manifest_path = PathBuf::from(mount_path)
+                .join(".zen-garden")
+                .join("manifest.json");
             let content = match tokio::fs::read_to_string(&manifest_path).await {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -373,7 +375,8 @@ impl SeedBankRegistry {
                 );
             }
 
-            if let Some(info) = Self::build_seed_bank_info(sb.manifest, &sb.mount_path, &sb.device) {
+            if let Some(info) = Self::build_seed_bank_info(sb.manifest, &sb.mount_path, &sb.device)
+            {
                 warn!(
                     name = %info.name,
                     device = %info.device,
@@ -386,7 +389,7 @@ impl SeedBankRegistry {
 
         Ok(())
     }
-    
+
     /// Get device path for a mount point (from /proc/mounts)
     async fn get_device_for_mount(mount_path: &str) -> Option<String> {
         #[cfg(target_os = "linux")]
@@ -448,7 +451,7 @@ impl SeedBankRegistry {
             }
         }
     }
-    
+
     /// Verify and recover tracked mounts that may have disappeared.
     ///
     /// This is the core of the resilient mount system. It checks each tracked mount
@@ -496,7 +499,10 @@ impl SeedBankRegistry {
             }
 
             // Device exists but not mounted - need to recover
-            let attempts = tracker_write.get(&device_key).map(|t| t.recovery_attempts).unwrap_or(0);
+            let attempts = tracker_write
+                .get(&device_key)
+                .map(|t| t.recovery_attempts)
+                .unwrap_or(0);
 
             if attempts >= 10 {
                 // Too many failures - log warning but keep trying (don't give up)
@@ -664,9 +670,9 @@ impl SeedBankRegistry {
         tracker: Option<&MountTracker>,
         event_bus: Option<&crate::infra::EventBus>,
     ) -> Result<()> {
+        use super::device::list_unmounted_removable_devices;
         use std::process::Stdio;
         use tokio::process::Command;
-        use super::device::list_unmounted_removable_devices;
 
         let data_dir = garden_common::constants::paths::data_dir();
         let mounts_dir = PathBuf::from(&data_dir).join("mounts");
@@ -679,7 +685,9 @@ impl SeedBankRegistry {
 
         // Rehome any mounted seed banks that are not using the canonical mount path.
         // This handles udisks/desktop auto-mounts and ensures seed banks live under mounts/.
-        if let Err(e) = Self::rehome_mounted_seed_banks(tracker, event_bus, &mounts_dir, &data_dir).await {
+        if let Err(e) =
+            Self::rehome_mounted_seed_banks(tracker, event_bus, &mounts_dir, &data_dir).await
+        {
             warn!(error = %e, "Failed to rehome mounted seed banks");
         }
 
@@ -753,7 +761,8 @@ impl SeedBankRegistry {
 
                             // Track this mount for persistence monitoring
                             if let Some(t) = tracker {
-                                Self::track_mount(t, &device.device, &mount_path, &manifest.name).await;
+                                Self::track_mount(t, &device.device, &mount_path, &manifest.name)
+                                    .await;
                             }
 
                             // Emit storage event for Companions (Firefly, Cricket)
@@ -1023,7 +1032,8 @@ impl SeedBankRegistry {
         use std::process::Stdio;
         use tokio::process::Command;
 
-        let temp_mount = format!("/tmp/zen-garden-probe-{}-{}",
+        let temp_mount = format!(
+            "/tmp/zen-garden-probe-{}-{}",
             std::process::id(),
             device_path.replace('/', "_")
         );
@@ -1046,7 +1056,8 @@ impl SeedBankRegistry {
             if output.status.success() {
                 // Check for manifest
                 let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
-                let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await {
+                let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await
+                {
                     match serde_json::from_str::<SeedBankManifest>(&content) {
                         Ok(m) => {
                             debug!(
@@ -1092,7 +1103,7 @@ impl SeedBankRegistry {
 
         Ok(manifest)
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     async fn auto_mount_seed_banks() -> Result<()> {
         // Auto-mount not supported on non-Linux platforms
@@ -1103,7 +1114,7 @@ impl SeedBankRegistry {
     #[cfg(target_os = "linux")]
     async fn is_mount_point(path: &PathBuf) -> bool {
         let path_str = path.to_string_lossy().to_string();
-        
+
         if let Ok(mounts) = tokio::fs::read_to_string("/proc/mounts").await {
             for line in mounts.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -1112,30 +1123,30 @@ impl SeedBankRegistry {
                 }
             }
         }
-        
+
         false
     }
-    
+
     /// Get a seed bank by name
     pub fn get(&self, name: &str) -> Option<&SeedBankInfo> {
         self.banks.get(name)
     }
-    
+
     /// List all seed banks
     pub fn list(&self) -> Vec<&SeedBankInfo> {
         self.banks.values().collect()
     }
-    
+
     /// Check if a seed bank exists
     pub fn exists(&self, name: &str) -> bool {
         self.banks.contains_key(name)
     }
-    
+
     /// Find seed bank by device path
     pub fn find_by_device(&self, device: &str) -> Option<&SeedBankInfo> {
         self.banks.values().find(|b| b.device == device)
     }
-    
+
     /// Find seed bank by mount path
     pub fn find_by_mount(&self, mount_path: &str) -> Option<&SeedBankInfo> {
         self.banks.values().find(|b| b.mount_path == mount_path)
@@ -1160,7 +1171,7 @@ impl SeedBankRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_empty_scan() {
         // Just verify it doesn't crash on empty system

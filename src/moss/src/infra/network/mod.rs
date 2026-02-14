@@ -156,7 +156,10 @@ pub async fn select_ip_from_pool(
                         available_ip = Some(ip);
                     }
                 }
-                ProbeResult::Conflict { method, responder_mac } => {
+                ProbeResult::Conflict {
+                    method,
+                    responder_mac,
+                } => {
                     let reason = if let Some(mac) = responder_mac {
                         format!("{} conflict ({})", method, mac)
                     } else {
@@ -289,10 +292,7 @@ pub async fn apply_static_from_pool(
 }
 
 /// Revert to DHCP when no offerings need static IP
-pub async fn revert_to_dhcp(
-    offering: &str,
-    state: &mut StaticIpState,
-) -> Result<(), NetworkError> {
+pub async fn revert_to_dhcp(offering: &str, state: &mut StaticIpState) -> Result<(), NetworkError> {
     use crate::domain::NetworkMode;
 
     // Remove this offering from requesters
@@ -367,7 +367,11 @@ fn detect_primary_interface() -> Option<String> {
         if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name != "lo" && !name.starts_with("veth") && !name.starts_with("docker") && !name.starts_with("br-") {
+                if name != "lo"
+                    && !name.starts_with("veth")
+                    && !name.starts_with("docker")
+                    && !name.starts_with("br-")
+                {
                     return Some(name);
                 }
             }

@@ -13,13 +13,8 @@ pub mod validation;
 
 // Re-export commonly used functions for backwards compatibility
 pub use formatting::{
-    derive_stone_color,
-    format_bytes,
-    format_bytes_precision,
-    format_bytes_short,
-    format_bytes_whole,
-    format_memory_mb,
-    format_uptime,
+    derive_stone_color, format_bytes, format_bytes_precision, format_bytes_short,
+    format_bytes_whole, format_memory_mb, format_uptime,
 };
 
 // Re-export ID generation utilities

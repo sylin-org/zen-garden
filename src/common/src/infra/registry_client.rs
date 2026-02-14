@@ -1,4 +1,4 @@
-﻿//! Docker Registry API client for querying image versions
+//! Docker Registry API client for querying image versions
 //!
 //! Generic client for Docker Hub and compatible registries (Docker Registry HTTP API V2).
 //! Supports version queries, digest resolution, and semantic version comparison.
@@ -53,13 +53,14 @@ impl ImageRef {
     /// - `ghcr.io/owner/repo:v1` → ghcr.io/owner/repo:v1
     pub fn parse(image: &str) -> Result<Self> {
         // Default registry is Docker Hub
-        let (registry, rest) = if image.contains('/') && image.split('/').next().unwrap().contains('.') {
-            // Has explicit registry (contains dot)
-            let parts: Vec<&str> = image.splitn(2, '/').collect();
-            (parts[0].to_string(), parts[1])
-        } else {
-            ("docker.io".to_string(), image)
-        };
+        let (registry, rest) =
+            if image.contains('/') && image.split('/').next().unwrap().contains('.') {
+                // Has explicit registry (contains dot)
+                let parts: Vec<&str> = image.splitn(2, '/').collect();
+                (parts[0].to_string(), parts[1])
+            } else {
+                ("docker.io".to_string(), image)
+            };
 
         // Parse repository and tag
         let (repository, tag) = if let Some(idx) = rest.rfind(':') {
@@ -262,10 +263,7 @@ pub async fn get_image_digest(image: &str, config: &RegistryConfig) -> Result<St
 }
 
 /// Get digest from Docker Hub
-async fn get_docker_hub_digest(
-    client: &reqwest::Client,
-    image_ref: &ImageRef,
-) -> Result<String> {
+async fn get_docker_hub_digest(client: &reqwest::Client, image_ref: &ImageRef) -> Result<String> {
     // Get authentication token
     let token_url = format!(
         "https://auth.docker.io/token?service=registry.docker.io&scope=repository:{}:pull",
@@ -290,7 +288,10 @@ async fn get_docker_hub_digest(
     let response = client
         .get(&manifest_url)
         .header("Authorization", format!("Bearer {}", token_response.token))
-        .header("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+        .header(
+            "Accept",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        )
         .send()
         .await
         .context("Failed to query Docker Hub manifest")?;
@@ -317,7 +318,10 @@ async fn get_registry_v2_digest(
 
     let response = client
         .get(&manifest_url)
-        .header("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+        .header(
+            "Accept",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        )
         .send()
         .await
         .context("Failed to query registry manifest")?;

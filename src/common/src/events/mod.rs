@@ -12,10 +12,4 @@ pub mod bus;
 pub mod domain_events;
 
 pub use bus::EventBus;
-pub use domain_events::{
-    DomainEvent,
-    ServiceEvent,
-    RegistryEvent,
-    JobEvent,
-    DiscoveryEvent,
-};
+pub use domain_events::{DiscoveryEvent, DomainEvent, JobEvent, RegistryEvent, ServiceEvent};

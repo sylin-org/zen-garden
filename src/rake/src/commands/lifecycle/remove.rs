@@ -7,8 +7,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 use std::io::Write;
 
 /// Remove a service (stops and removes container, preserves volumes)
@@ -103,7 +103,8 @@ impl Command for RemoveCommand {
 
                     // Display suggestions if present and not in quiet mode
                     if !self.quiet_mode {
-                        if let Some(suggestions) = body.get("suggestions").and_then(|v| v.as_array())
+                        if let Some(suggestions) =
+                            body.get("suggestions").and_then(|v| v.as_array())
                         {
                             if !suggestions.is_empty() {
                                 println!("\nSuggestions:");

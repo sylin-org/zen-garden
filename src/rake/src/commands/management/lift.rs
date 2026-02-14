@@ -8,8 +8,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// Lift target type
 pub enum LiftTarget {
@@ -39,12 +39,14 @@ impl LiftCommand {
         let target = match target_type.as_str() {
             "keystone" => LiftTarget::Keystone,
             "stone" => {
-                let name = stone_name.ok_or_else(|| {
-                    anyhow::anyhow!("Stone name required for 'lift stone'")
-                })?;
+                let name = stone_name
+                    .ok_or_else(|| anyhow::anyhow!("Stone name required for 'lift stone'"))?;
                 LiftTarget::Stone { name }
             }
-            _ => anyhow::bail!("Invalid target: '{}'. Use 'keystone' or 'stone'", target_type),
+            _ => anyhow::bail!(
+                "Invalid target: '{}'. Use 'keystone' or 'stone'",
+                target_type
+            ),
         };
         Ok(Self::new(target, quiet_mode))
     }

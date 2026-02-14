@@ -269,12 +269,7 @@ mod tests {
 
     #[test]
     fn test_endpoint_without_resolution() {
-        let ctx = CommandContext::without_endpoint(
-            reqwest::Client::new(),
-            false,
-            false,
-            0,
-        );
+        let ctx = CommandContext::without_endpoint(reqwest::Client::new(), false, false, 0);
 
         assert!(ctx.endpoint().is_err());
         assert!(ctx.api_url("health").is_err());
@@ -288,9 +283,15 @@ mod tests {
             "active": true
         });
 
-        assert_eq!(extract_json_field(&json, "name"), Some("mongodb".to_string()));
+        assert_eq!(
+            extract_json_field(&json, "name"),
+            Some("mongodb".to_string())
+        );
         assert_eq!(extract_json_field(&json, "port"), Some("27017".to_string()));
-        assert_eq!(extract_json_field(&json, "active"), Some("true".to_string()));
+        assert_eq!(
+            extract_json_field(&json, "active"),
+            Some("true".to_string())
+        );
         assert_eq!(extract_json_field(&json, "missing"), None);
     }
 

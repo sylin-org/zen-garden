@@ -52,7 +52,9 @@ mod iso8601 {
     where
         S: Serializer,
     {
-        let duration = time.duration_since(UNIX_EPOCH).map_err(serde::ser::Error::custom)?;
+        let duration = time
+            .duration_since(UNIX_EPOCH)
+            .map_err(serde::ser::Error::custom)?;
         let secs = duration.as_secs();
         let iso = chrono::DateTime::from_timestamp(secs as i64, 0)
             .ok_or_else(|| serde::ser::Error::custom("invalid timestamp"))?
@@ -65,8 +67,7 @@ mod iso8601 {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let dt = chrono::DateTime::parse_from_rfc3339(&s)
-            .map_err(serde::de::Error::custom)?;
+        let dt = chrono::DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
         let secs = dt.timestamp() as u64;
         Ok(UNIX_EPOCH + std::time::Duration::from_secs(secs))
     }
@@ -113,8 +114,7 @@ fn zen_garden_dir() -> Result<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         let tmp_dir = PathBuf::from("/tmp/zen-garden");
-        fs::create_dir_all(&tmp_dir)
-            .context("Failed to create /tmp/zen-garden directory")?;
+        fs::create_dir_all(&tmp_dir).context("Failed to create /tmp/zen-garden directory")?;
         tracing::warn!("Using /tmp/zen-garden for tending state (no home/XDG available)");
         return Ok(tmp_dir);
     }
@@ -133,8 +133,8 @@ pub fn read_tending() -> Result<TendingState> {
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read tending file: {}", path.display()))?;
     let content = garden_common::utils::strings::strip_bom(&content);
-    let state: TendingState = serde_json::from_str(content)
-        .context("Failed to parse tending file")?;
+    let state: TendingState =
+        serde_json::from_str(content).context("Failed to parse tending file")?;
     Ok(state)
 }
 
@@ -144,13 +144,13 @@ pub fn write_tending(stone_name: String, endpoint: String) -> Result<()> {
         endpoint,
         last_seen: SystemTime::now(),
     };
-    
+
     let path = tending_file_path()?;
-    let content = serde_json::to_string_pretty(&state)
-        .context("Failed to serialize tending state")?;
+    let content =
+        serde_json::to_string_pretty(&state).context("Failed to serialize tending state")?;
     fs::write(&path, content)
         .with_context(|| format!("Failed to write tending file: {}", path.display()))?;
-    
+
     tracing::debug!(stone = %state.stone_name, endpoint = %state.endpoint, "Wrote tending state");
     Ok(())
 }
@@ -232,7 +232,7 @@ where
 
     // Check if we have a tended stone
     let tended_state = read_tending().ok();
-    
+
     if let Some(ref state) = tended_state {
         let tended = StoneCandidate::from_tending(state);
         tracing::debug!(stone = %tended.stone_name, "Trying tended stone with parallel discovery fallback");
@@ -240,9 +240,7 @@ where
         // Start tended request immediately
         let operation_clone = operation.clone();
         let tended_clone = tended.clone();
-        let tended_future = async move {
-            operation_clone(&tended_clone).await
-        };
+        let tended_future = async move { operation_clone(&tended_clone).await };
 
         // Start discovery after delay
         let discovery_future = async {
@@ -258,7 +256,7 @@ where
         // First, try to get tended result before discovery even starts
         let tended_result = tokio::select! {
             biased; // Prefer tended
-            
+
             result = &mut tended_future => {
                 Some(result)
             }
@@ -277,7 +275,11 @@ where
         // If tended had a non-retryable error, fail immediately
         if let Some(Err(e)) = &tended_result {
             if !e.is_retryable() {
-                return Err(anyhow::anyhow!("Stone '{}' error: {}", tended.stone_name, e));
+                return Err(anyhow::anyhow!(
+                    "Stone '{}' error: {}",
+                    tended.stone_name,
+                    e
+                ));
             }
             // Retryable error - tended is offline
             tracing::debug!(stone = %tended.stone_name, error = %e, "Tended stone unreachable");
@@ -316,9 +318,11 @@ where
                     }
                 }
             }
-            
+
             // Get discovery results (already completed)
-            discovery::discover_moss_auto(discovery_timeout).await.unwrap_or_default()
+            discovery::discover_moss_auto(discovery_timeout)
+                .await
+                .unwrap_or_default()
         } else {
             // Tended failed, run discovery now
             match discovery::discover_moss_auto(discovery_timeout).await {
@@ -392,7 +396,9 @@ where
                     endpoint = %candidate.endpoint,
                     "Auto-tending to new stone after fallback"
                 );
-                if let Err(e) = write_tending(candidate.stone_name.clone(), candidate.endpoint.clone()) {
+                if let Err(e) =
+                    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone())
+                {
                     tracing::warn!(error = ?e, "Failed to write tending state");
                 }
                 return Ok((result, candidate));
@@ -402,7 +408,11 @@ where
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Stone '{}' error: {}", candidate.stone_name, e));
+                return Err(anyhow::anyhow!(
+                    "Stone '{}' error: {}",
+                    candidate.stone_name,
+                    e
+                ));
             }
         }
     }
@@ -423,7 +433,9 @@ where
 /// * `Ok(Some(candidate))` - Found an alternative stone
 /// * `Ok(None)` - No alternatives found (current is the only stone, or no stones at all)
 /// * `Err` - Discovery mechanism failed
-pub async fn discover_alternative_stone(timeout: std::time::Duration) -> Result<Option<StoneCandidate>> {
+pub async fn discover_alternative_stone(
+    timeout: std::time::Duration,
+) -> Result<Option<StoneCandidate>> {
     use crate::discovery;
 
     let current_endpoint = read_tending().ok().map(|t| t.endpoint);

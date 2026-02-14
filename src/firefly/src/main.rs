@@ -1,4 +1,4 @@
-﻿// Garden Firefly - Visual Status Indicator Companion
+// Garden Firefly - Visual Status Indicator Companion
 // Supports: Waveshare RP2040-Matrix (5x5 RGB LED) and ESP8266-OLED (128x64 SSD1306)
 
 use anyhow::Result;
@@ -7,9 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use garden_companion_sdk::{
-    check_dump_commands, CompanionRuntime, CompanionState, CommandArg, CommandDef, CommandManifest,
-    SseClient,
-    sse::SseClientConfig,
+    check_dump_commands, sse::SseClientConfig, CommandArg, CommandDef, CommandManifest,
+    CompanionRuntime, CompanionState, SseClient,
 };
 
 mod animation;
@@ -21,7 +20,10 @@ mod serial;
 use animation::{start_animation, AnimationContext};
 use events::FireflyEventHandler;
 use handler::FireflyHandler;
-use serial::{detect_device_type, find_firefly_device, DetectedDevice, FireflyConnection, FireflyDeviceType, FireflySerial};
+use serial::{
+    detect_device_type, find_firefly_device, DetectedDevice, FireflyConnection, FireflyDeviceType,
+    FireflySerial,
+};
 use tokio::sync::RwLock;
 
 /// Build Firefly's command manifest
@@ -48,7 +50,10 @@ fn build_manifest() -> CommandManifest {
         CommandDef::new("pixel", "Set single pixel color")
             .arg(CommandArg::required_int("x", "X coordinate (0-4)", 0, 4))
             .arg(CommandArg::required_int("y", "Y coordinate (0-4)", 0, 4))
-            .arg(CommandArg::required_string("color", "Color as hex (ff0000) or r,g,b"))
+            .arg(CommandArg::required_string(
+                "color",
+                "Color as hex (ff0000) or r,g,b",
+            ))
             .example("Red center pixel", "hey tell firefly pixel 2 2 ff0000")
             .example("Blue corner", "hey tell firefly pixel 0 0 0000ff")
             .see_also("fill")
@@ -56,7 +61,10 @@ fn build_manifest() -> CommandManifest {
     )
     .command(
         CommandDef::new("fill", "Fill all pixels with color")
-            .arg(CommandArg::required_string("color", "Color as hex (ff0000) or r,g,b"))
+            .arg(CommandArg::required_string(
+                "color",
+                "Color as hex (ff0000) or r,g,b",
+            ))
             .example("Fill with green", "hey tell firefly fill 00ff00")
             .example("Fill with white", "hey tell firefly fill ffffff")
             .see_also("pixel")
@@ -70,7 +78,12 @@ fn build_manifest() -> CommandManifest {
     )
     .command(
         CommandDef::new("brightness", "Set LED brightness")
-            .arg(CommandArg::required_int("percent", "Brightness 0-100%", 0, 100))
+            .arg(CommandArg::required_int(
+                "percent",
+                "Brightness 0-100%",
+                0,
+                100,
+            ))
             .example("Set to 50%", "hey tell firefly brightness 50")
             .example("Full brightness", "hey tell firefly brightness 100")
             .see_also("fill"),
@@ -265,10 +278,8 @@ async fn main() -> Result<()> {
     });
 
     // Start the animation engine (runs the baseline firefly animation)
-    let _animation_handle = start_animation(
-        Arc::clone(&connection),
-        Arc::clone(&animation_context),
-    );
+    let _animation_handle =
+        start_animation(Arc::clone(&connection), Arc::clone(&animation_context));
     tracing::info!("Animation engine started");
 
     // Start SSE client to receive presence events from Moss
@@ -323,7 +334,8 @@ async fn shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
         let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
         tokio::select! {
             _ = sigterm.recv() => {}
@@ -332,7 +344,9 @@ async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     {
-        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     }
 }
 
@@ -351,9 +365,7 @@ fn list_ports() -> Result<()> {
         let port_type = match &port.port_type {
             serialport::SerialPortType::UsbPort(info) => {
                 let vid_pid = format!("{:04x}:{:04x}", info.vid, info.pid);
-                let product = info
-                    .product.as_deref()
-                    .unwrap_or("Unknown");
+                let product = info.product.as_deref().unwrap_or("Unknown");
                 let manufacturer = info.manufacturer.as_deref().unwrap_or("");
 
                 // Detect device type from VID
@@ -364,13 +376,7 @@ fn list_ports() -> Result<()> {
                     FireflyDeviceType::Unknown => "",
                 };
 
-                format!(
-                    "USB {} {} {}{}",
-                    vid_pid,
-                    product,
-                    manufacturer,
-                    device_tag
-                )
+                format!("USB {} {} {}{}", vid_pid, product, manufacturer, device_tag)
             }
             serialport::SerialPortType::PciPort => "PCI".to_string(),
             serialport::SerialPortType::BluetoothPort => "Bluetooth".to_string(),

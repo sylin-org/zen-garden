@@ -1,4 +1,4 @@
-﻿//! JSON utilities
+//! JSON utilities
 //!
 //! Helpers for JSON serialization/deserialization with consistent error handling.
 
@@ -7,26 +7,22 @@ use serde::{de::DeserializeOwned, Serialize};
 
 /// Parse JSON string with context
 pub fn parse<T: DeserializeOwned>(json: &str) -> Result<T> {
-    serde_json::from_str(json)
-        .context("Failed to parse JSON")
+    serde_json::from_str(json).context("Failed to parse JSON")
 }
 
 /// Parse JSON string with custom error context
 pub fn parse_with_context<T: DeserializeOwned>(json: &str, context: &str) -> Result<T> {
-    serde_json::from_str(json)
-        .with_context(|| format!("Failed to parse JSON: {}", context))
+    serde_json::from_str(json).with_context(|| format!("Failed to parse JSON: {}", context))
 }
 
 /// Serialize to JSON string
 pub fn stringify<T: Serialize>(data: &T) -> Result<String> {
-    serde_json::to_string(data)
-        .context("Failed to serialize to JSON")
+    serde_json::to_string(data).context("Failed to serialize to JSON")
 }
 
 /// Serialize to pretty-printed JSON string
 pub fn stringify_pretty<T: Serialize>(data: &T) -> Result<String> {
-    serde_json::to_string_pretty(data)
-        .context("Failed to serialize to JSON")
+    serde_json::to_string_pretty(data).context("Failed to serialize to JSON")
 }
 
 /// Parse JSON value (untyped)
@@ -54,7 +50,7 @@ mod tests {
 
         let json = stringify(&data).expect("Should serialize");
         let parsed: TestData = parse(&json).expect("Should parse");
-        
+
         assert_eq!(parsed, data);
     }
 
@@ -81,7 +77,7 @@ mod tests {
     fn test_parse_value() {
         let json = r#"{"key": "value", "num": 123}"#;
         let value = parse_value(json).expect("Should parse");
-        
+
         assert!(value.is_object());
         assert_eq!(value["key"], "value");
         assert_eq!(value["num"], 123);

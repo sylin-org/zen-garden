@@ -8,8 +8,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 use garden_common::GardenApiResponse;
 use std::collections::HashMap;
 
@@ -131,7 +131,11 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
 
     // Check status and exit early if not successful
     if !response.status().is_success() {
-        eprintln!("X Template '{}' not found (HTTP {})", name, response.status());
+        eprintln!(
+            "X Template '{}' not found (HTTP {})",
+            name,
+            response.status()
+        );
         std::process::exit(1);
     }
 

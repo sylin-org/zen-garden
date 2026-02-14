@@ -6,10 +6,10 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering::{self as ui, TerminalInfo};
-use garden_common::SubCapability;
 use anyhow::Context;
 use async_trait::async_trait;
+use garden_common::ui::rendering::{self as ui, TerminalInfo};
+use garden_common::SubCapability;
 use serde::Deserialize;
 
 /// Service discovery response (matches moss ServiceDiscoveryResponse)
@@ -63,7 +63,10 @@ impl Command for ListCommand {
         if services.is_empty() {
             println!(
                 "{}",
-                ui::empty_state("No services installed", Some("Use: garden-rake offer <service>"))
+                ui::empty_state(
+                    "No services installed",
+                    Some("Use: garden-rake offer <service>")
+                )
             );
         } else {
             println!("{}", ui::section_header("SERVICES", &ctx.term));
@@ -177,9 +180,21 @@ fn format_capability_summary(caps: &[SubCapability]) -> String {
 /// Truncate capability type for compact display
 fn truncate_cap_type(cap_type: &str, plural: bool) -> String {
     let base = match cap_type.to_lowercase().as_str() {
-        "model" => if plural { "models" } else { "model" },
+        "model" => {
+            if plural {
+                "models"
+            } else {
+                "model"
+            }
+        }
         "extension" => "ext.",
-        "module" => if plural { "mods." } else { "mod." },
+        "module" => {
+            if plural {
+                "mods."
+            } else {
+                "mod."
+            }
+        }
         "plugin" => "plug.",
         "collection" => "coll.",
         _ => cap_type,

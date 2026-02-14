@@ -1,4 +1,4 @@
-﻿//! Resolution tests - service discovery and resolution
+//! Resolution tests - service discovery and resolution
 //!
 //! Tests the /api/v1/garden/services endpoint (used by `rake find`)
 
@@ -40,8 +40,8 @@ async fn test_service_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     // Test queries that should find running services
     let queries = vec![
         "mongodb",
-        "redis", 
-        "c:database",  // category query
+        "redis",
+        "c:database", // category query
     ];
 
     let mut found_any = false;
@@ -98,7 +98,12 @@ async fn test_service_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     bag.record_step(
         "discovery_summary",
-        if found_any { "Found running services" } else { "No running services (OK if none deployed)" }.to_string(),
+        if found_any {
+            "Found running services"
+        } else {
+            "No running services (OK if none deployed)"
+        }
+        .to_string(),
         0,
         if found_any {
             StepResult::ok()
@@ -144,7 +149,10 @@ async fn test_category_search(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<B
 
     for category in categories {
         let start = Instant::now();
-        let url = format!("/api/v1/garden/services?q={}", urlencoding::encode(category));
+        let url = format!(
+            "/api/v1/garden/services?q={}",
+            urlencoding::encode(category)
+        );
         let result = tended.get_json(&url).await;
         let duration = start.elapsed();
 
@@ -264,7 +272,11 @@ async fn test_consistency(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
 
     bag.record_step(
         "services_summary",
-        format!("{} total services across {} stones", total_services, garden.stones.len()),
+        format!(
+            "{} total services across {} stones",
+            total_services,
+            garden.stones.len()
+        ),
         0,
         StepResult::ok_with(serde_json::json!({
             "total_services": total_services,

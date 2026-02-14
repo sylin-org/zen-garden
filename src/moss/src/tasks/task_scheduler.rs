@@ -60,10 +60,7 @@ fn next_run_time(cron_expr: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 /// Execute a task inside a container
-async fn execute_task(
-    state: &AppState,
-    task: &ScheduledTask,
-) -> TaskResult {
+async fn execute_task(state: &AppState, task: &ScheduledTask) -> TaskResult {
     let start = std::time::Instant::now();
 
     tracing::info!(
@@ -144,10 +141,7 @@ pub async fn run_scheduler_iteration(state: &AppState) -> Result<usize> {
         return Ok(0);
     }
 
-    tracing::debug!(
-        task_count = due_tasks.len(),
-        "Found due scheduled tasks"
-    );
+    tracing::debug!(task_count = due_tasks.len(), "Found due scheduled tasks");
 
     let mut executed = 0;
 
@@ -174,8 +168,7 @@ pub async fn run_scheduler_iteration(state: &AppState) -> Result<usize> {
         let result = execute_task(state, &task).await;
 
         // Calculate next run time
-        let next_run = next_run_time(&task.definition.schedule)
-            .map(|dt| dt.to_rfc3339());
+        let next_run = next_run_time(&task.definition.schedule).map(|dt| dt.to_rfc3339());
 
         // Update task with result
         if let Err(e) = task_store
@@ -330,10 +323,7 @@ pub async fn backfill_missing_tasks(state: &AppState) -> usize {
     }
 
     if registered > 0 {
-        tracing::info!(
-            total = registered,
-            "Completed scheduled task backfill"
-        );
+        tracing::info!(total = registered, "Completed scheduled task backfill");
     }
 
     registered

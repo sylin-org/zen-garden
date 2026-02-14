@@ -8,9 +8,9 @@ use garden_common::storage::{SeedBankManifest, StorageDetectedInfo};
 use std::path::Path;
 use tracing::{debug, error, info, warn};
 
+use super::analyze_device;
 use crate::domain::StorageEvent;
 use crate::infra::EventBus;
-use super::analyze_device;
 
 /// Monitors USB storage devices using udev
 pub struct StorageMonitor {
@@ -32,10 +32,7 @@ fn resolve_seed_bank_name(info: &StorageDetectedInfo) -> String {
         }
     }
 
-    info.label
-        .as_deref()
-        .unwrap_or(&info.device)
-        .to_string()
+    info.label.as_deref().unwrap_or(&info.device).to_string()
 }
 
 impl StorageMonitor {
@@ -71,11 +68,11 @@ impl StorageMonitor {
 /// Run the udev monitor loop (blocking, runs in dedicated thread)
 fn run_udev_monitor(event_bus: EventBus) -> Result<()> {
     // Create udev context
-    let mut enumerator = udev::Enumerator::new()
-        .context("Failed to create udev enumerator")?;
+    let mut enumerator = udev::Enumerator::new().context("Failed to create udev enumerator")?;
 
     // Filter for block devices only
-    enumerator.match_subsystem("block")
+    enumerator
+        .match_subsystem("block")
         .context("Failed to set udev subsystem filter")?;
 
     // Create monitor socket
@@ -132,7 +129,8 @@ fn run_udev_monitor(event_bus: EventBus) -> Result<()> {
                             // Emit events for both:
                             // 1. Devices eligible for preparation (empty, unformatted, etc.)
                             // 2. Already-prepared seed banks (state = Prepared)
-                            let is_prepared = info.state == garden_common::storage::DeviceState::Prepared;
+                            let is_prepared =
+                                info.state == garden_common::storage::DeviceState::Prepared;
 
                             if info.eligible || is_prepared {
                                 info!(
@@ -145,7 +143,9 @@ fn run_udev_monitor(event_bus: EventBus) -> Result<()> {
                                 );
 
                                 // Print TTY ribbon
-                                if let Err(e) = garden_common::console::print_storage_detected_ribbon(&info) {
+                                if let Err(e) =
+                                    garden_common::console::print_storage_detected_ribbon(&info)
+                                {
                                     warn!("Failed to print TTY ribbon: {}", e);
                                 }
 
@@ -204,11 +204,9 @@ fn handle_device_removal(device: &str) -> anyhow::Result<()> {
 /// Scan for existing USB storage devices
 async fn scan_existing_devices() -> Result<Vec<StorageDetectedInfo>> {
     // Use our robust USB detection that doesn't rely on the unreliable RM flag
-    tokio::task::spawn_blocking(|| {
-        super::list_usb_partitions()
-    })
-    .await
-    .context("Failed to spawn blocking task")?
+    tokio::task::spawn_blocking(|| super::list_usb_partitions())
+        .await
+        .context("Failed to spawn blocking task")?
 }
 
 use std::os::unix::io::AsRawFd;

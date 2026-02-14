@@ -56,7 +56,10 @@ async fn test_index(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
 
                 bag.record_step(
                     format!("nurturing_{}", stone.name),
-                    format!("{}: {} offerings, {} snapshots", stone.name, offerings, snapshots),
+                    format!(
+                        "{}: {} offerings, {} snapshots",
+                        stone.name, offerings, snapshots
+                    ),
                     duration.as_millis() as u64,
                     StepResult::ok_with(serde_json::json!({
                         "offerings": offerings,
@@ -116,7 +119,11 @@ async fn test_offering_slots(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
     // Query each stone for its services
     for stone in &garden.stones {
         if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 for svc in services {
                     let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
@@ -199,7 +206,11 @@ async fn test_create_snapshot(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<B
 
     for stone in &garden.stones {
         if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 for svc in services {
                     let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
@@ -321,7 +332,11 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                     arr.iter()
                         .filter_map(|s| {
                             let name = s.get("name").and_then(|n| n.as_str())?;
-                            let count = s.get("offerings").and_then(|o| o.as_array()).map(|a| a.len()).unwrap_or(0);
+                            let count = s
+                                .get("offerings")
+                                .and_then(|o| o.as_array())
+                                .map(|a| a.len())
+                                .unwrap_or(0);
                             Some((name.to_string(), count))
                         })
                         .collect()
@@ -338,7 +353,8 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
 
     // Only refresh capabilities on stones that have services
     for stone in &garden.stones {
-        let service_count = topology_stones.iter()
+        let service_count = topology_stones
+            .iter()
             .find(|(name, _)| name == &stone.name)
             .map(|(_, count)| *count)
             .unwrap_or(0);
@@ -348,7 +364,9 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                 format!("subcap_refresh_{}", stone.name),
                 format!("{}: no services (skipped)", stone.name),
                 0,
-                StepResult::ok_with(serde_json::json!({ "skipped": true, "reason": "no services" })),
+                StepResult::ok_with(
+                    serde_json::json!({ "skipped": true, "reason": "no services" }),
+                ),
             );
             continue;
         }
@@ -356,7 +374,10 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
         // Trigger refresh of sub-capabilities
         let start = Instant::now();
         let refresh_result = stone
-            .post_json("/api/v1/stone/services/refresh-capabilities", &serde_json::json!({}))
+            .post_json(
+                "/api/v1/stone/services/refresh-capabilities",
+                &serde_json::json!({}),
+            )
             .await;
         let duration = start.elapsed();
 
@@ -370,7 +391,10 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
 
                 bag.record_step(
                     format!("subcap_refresh_{}", stone.name),
-                    format!("{}: refreshed capabilities for {} services", stone.name, updated),
+                    format!(
+                        "{}: refreshed capabilities for {} services",
+                        stone.name, updated
+                    ),
                     duration.as_millis() as u64,
                     StepResult::ok_with(serde_json::json!({ "updated": updated })),
                 );
@@ -389,15 +413,29 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
         // Now check what sub-capabilities exist (correct structure: data.services)
         let services_result = stone.get_json("/api/v1/stone/services").await;
         if let Ok(resp) = services_result {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 for svc in services {
-                    let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                    let name = svc
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("unknown");
 
                     if let Some(caps) = svc.get("sub_capabilities").and_then(|c| c.as_array()) {
                         if !caps.is_empty() {
                             for cap in caps {
-                                let cap_type = cap.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-                                let items = cap.get("items").and_then(|i| i.as_array()).map(|a| a.len()).unwrap_or(0);
+                                let cap_type = cap
+                                    .get("type")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("unknown");
+                                let items = cap
+                                    .get("items")
+                                    .and_then(|i| i.as_array())
+                                    .map(|a| a.len())
+                                    .unwrap_or(0);
 
                                 services_with_caps.push(serde_json::json!({
                                     "stone": stone.name,
@@ -468,7 +506,11 @@ async fn test_find_with_subcap(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     let mut test_queries: Vec<String> = Vec::new();
 
     if let Ok(resp) = &services_result {
-        if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+        if let Some(services) = resp
+            .get("data")
+            .and_then(|d| d.get("services"))
+            .and_then(|s| s.as_array())
+        {
             for svc in services {
                 let offering = svc.get("offering").and_then(|o| o.as_str()).unwrap_or("");
 
@@ -573,9 +615,16 @@ async fn test_offering_id_stability(garden: Arc<LiveGarden>, mut bag: Bag) -> Re
         match result {
             Ok(resp) => {
                 // Correct structure: data.services (not data directly)
-                if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                if let Some(services) = resp
+                    .get("data")
+                    .and_then(|d| d.get("services"))
+                    .and_then(|s| s.as_array())
+                {
                     for svc in services {
-                        let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                        let name = svc
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unknown");
                         let offering_id = svc.get("offering_id").and_then(|i| i.as_str());
 
                         if let Some(id) = offering_id {
@@ -702,7 +751,10 @@ async fn test_remote_list(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
 
                 bag.record_step(
                     format!("remote_{}_{}", stone_name, bank_id),
-                    format!("{}/{}: {} remote snapshots", stone_name, bank_name, snapshot_count),
+                    format!(
+                        "{}/{}: {} remote snapshots",
+                        stone_name, bank_name, snapshot_count
+                    ),
                     duration.as_millis() as u64,
                     StepResult::ok_with(serde_json::json!({
                         "bank_name": bank_name,
@@ -733,7 +785,8 @@ pub fn orchestration_test() -> TestDef {
     TestDef {
         id: "nurturing.orchestration",
         name: "Nurturing Orchestration",
-        description: "Full nurturing flow: service → local A/B → seed bank replication with retention",
+        description:
+            "Full nurturing flow: service → local A/B → seed bank replication with retention",
         category: "nurturing",
         tags: &["nurturing", "orchestration", "seed-bank", "mutating"],
         run: |garden, bag| Box::pin(test_orchestration(garden, bag)),
@@ -757,14 +810,25 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
 
     for stone in &garden.stones {
         if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 for svc in services {
                     let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                    let offering_id = svc.get("offering_id").and_then(|i| i.as_str()).unwrap_or("");
+                    let offering_id = svc
+                        .get("offering_id")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("");
 
                     if status == "Running" && !name.is_empty() && !offering_id.is_empty() {
-                        target = Some((stone.name.clone(), name.to_string(), offering_id.to_string()));
+                        target = Some((
+                            stone.name.clone(),
+                            name.to_string(),
+                            offering_id.to_string(),
+                        ));
                         break;
                     }
                 }
@@ -792,7 +856,12 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
 
     bag.record_step(
         "orchestration_find_service",
-        format!("Found service: {} (ID: {}) on {}", offering_name, &offering_id[..8], stone_name),
+        format!(
+            "Found service: {} (ID: {}) on {}",
+            offering_name,
+            &offering_id[..8],
+            stone_name
+        ),
         0,
         StepResult::ok_with(serde_json::json!({
             "stone": stone_name,
@@ -860,18 +929,16 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
 
     match slots_result {
         Ok(resp) => {
-            let slot_a = resp
-                .get("data")
-                .and_then(|d| d.get("slot_a"))
-                .is_some();
-            let slot_b = resp
-                .get("data")
-                .and_then(|d| d.get("slot_b"))
-                .is_some();
+            let slot_a = resp.get("data").and_then(|d| d.get("slot_a")).is_some();
+            let slot_b = resp.get("data").and_then(|d| d.get("slot_b")).is_some();
 
             bag.record_step(
                 "orchestration_verify_slots",
-                format!("Slots: A={}, B={}", if slot_a { "filled" } else { "empty" }, if slot_b { "filled" } else { "empty" }),
+                format!(
+                    "Slots: A={}, B={}",
+                    if slot_a { "filled" } else { "empty" },
+                    if slot_b { "filled" } else { "empty" }
+                ),
                 duration.as_millis() as u64,
                 StepResult::ok_with(serde_json::json!({
                     "slot_a": slot_a,
@@ -903,7 +970,11 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     match banks_result {
         Ok(resp) => {
             // Check garden_banks for seed banks across all stones
-            if let Some(banks) = resp.get("data").and_then(|d| d.get("garden_banks")).and_then(|g| g.as_array()) {
+            if let Some(banks) = resp
+                .get("data")
+                .and_then(|d| d.get("garden_banks"))
+                .and_then(|g| g.as_array())
+            {
                 for bank in banks {
                     let id = bank.get("id").and_then(|i| i.as_str()).unwrap_or("");
                     let name = bank.get("name").and_then(|n| n.as_str()).unwrap_or(id);
@@ -983,7 +1054,10 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                 if success {
                     bag.record_step(
                         "orchestration_replicate",
-                        format!("Replicated to {} (pruned {} old snapshots)", bank_name, pruned),
+                        format!(
+                            "Replicated to {} (pruned {} old snapshots)",
+                            bank_name, pruned
+                        ),
                         duration.as_millis() as u64,
                         StepResult::ok_with(serde_json::json!({
                             "seed_bank": bank_name,
@@ -1048,7 +1122,11 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                         format!(
                             "{} remote snapshots for offering (retention: {})",
                             count,
-                            if within_retention { "OK ≤5" } else { "EXCEEDED >5" }
+                            if within_retention {
+                                "OK ≤5"
+                            } else {
+                                "EXCEEDED >5"
+                            }
                         ),
                         duration.as_millis() as u64,
                         if within_retention {
@@ -1147,7 +1225,11 @@ async fn test_trigger_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
 
     for stone in &garden.stones {
         if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 for svc in services {
                     let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
@@ -1209,9 +1291,7 @@ async fn test_trigger_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                 .and_then(|s| s.as_str())
                 .unwrap_or("");
 
-            let local_snapshot = resp
-                .get("data")
-                .and_then(|d| d.get("local_snapshot"));
+            let local_snapshot = resp.get("data").and_then(|d| d.get("local_snapshot"));
 
             let replications = resp
                 .get("data")
@@ -1295,16 +1375,21 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
 
     for stone in &garden.stones {
         if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 let running_count = services
                     .iter()
                     .filter(|s| s.get("status").and_then(|st| st.as_str()) == Some("Running"))
                     .count();
 
                 if running_count > 0
-                    && (best_stone.is_none() || running_count > best_stone.as_ref().unwrap().1) {
-                        best_stone = Some((stone.name.clone(), running_count));
-                    }
+                    && (best_stone.is_none() || running_count > best_stone.as_ref().unwrap().1)
+                {
+                    best_stone = Some((stone.name.clone(), running_count));
+                }
             }
         }
     }
@@ -1326,7 +1411,10 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
 
     bag.record_step(
         "trigger_all_find_stone",
-        format!("Selected {} with {} running services", stone_name, service_count),
+        format!(
+            "Selected {} with {} running services",
+            stone_name, service_count
+        ),
         0,
         StepResult::ok_with(serde_json::json!({
             "stone": stone_name,
@@ -1336,14 +1424,14 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
 
     // Call the trigger-all endpoint
     let start = Instant::now();
-    let result = stone.post_json("/api/v1/nurturing/trigger-all", &serde_json::json!({})).await;
+    let result = stone
+        .post_json("/api/v1/nurturing/trigger-all", &serde_json::json!({}))
+        .await;
     let duration = start.elapsed();
 
     match result {
         Ok(resp) => {
-            let results = resp
-                .get("data")
-                .and_then(|d| d.as_array());
+            let results = resp.get("data").and_then(|d| d.as_array());
 
             if let Some(workflow_results) = results {
                 let total = workflow_results.len();
@@ -1354,7 +1442,11 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
 
                 let offerings: Vec<String> = workflow_results
                     .iter()
-                    .filter_map(|r| r.get("offering_name").and_then(|n| n.as_str()).map(String::from))
+                    .filter_map(|r| {
+                        r.get("offering_name")
+                            .and_then(|n| n.as_str())
+                            .map(String::from)
+                    })
                     .collect();
 
                 bag.record_step(
@@ -1370,8 +1462,14 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
 
                 // Record individual offering results
                 for result in workflow_results {
-                    let name = result.get("offering_name").and_then(|n| n.as_str()).unwrap_or("unknown");
-                    let success = result.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+                    let name = result
+                        .get("offering_name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("unknown");
+                    let success = result
+                        .get("success")
+                        .and_then(|s| s.as_bool())
+                        .unwrap_or(false);
                     let summary = result.get("summary").and_then(|s| s.as_str()).unwrap_or("");
 
                     bag.record_step(
@@ -1441,17 +1539,30 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     for stone in &garden.stones {
         // First check for existing snapshots
         if let Ok(resp) = stone.get_json("/api/v1/stone/nurturing").await {
-            if let Some(offerings) = resp.get("data").and_then(|d| d.get("offerings")).and_then(|o| o.as_object()) {
+            if let Some(offerings) = resp
+                .get("data")
+                .and_then(|d| d.get("offerings"))
+                .and_then(|o| o.as_object())
+            {
                 for (_offering_id, slots) in offerings {
-                    let name = slots.get("slot_a")
+                    let name = slots
+                        .get("slot_a")
                         .or_else(|| slots.get("slot_b"))
                         .and_then(|s| s.get("offering_name"))
                         .and_then(|n| n.as_str());
 
-                    let slot = if slots.get("slot_a").is_some() { "A" } else { "B" };
+                    let slot = if slots.get("slot_a").is_some() {
+                        "A"
+                    } else {
+                        "B"
+                    };
 
                     if let Some(offering_name) = name {
-                        target = Some((stone.name.clone(), offering_name.to_string(), slot.to_string()));
+                        target = Some((
+                            stone.name.clone(),
+                            offering_name.to_string(),
+                            slot.to_string(),
+                        ));
                         break;
                     }
                 }
@@ -1466,7 +1577,11 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     if target.is_none() {
         for stone in &garden.stones {
             if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-                if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                if let Some(services) = resp
+                    .get("data")
+                    .and_then(|d| d.get("services"))
+                    .and_then(|s| s.as_array())
+                {
                     for svc in services {
                         let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                         let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
@@ -1477,8 +1592,16 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                             let body = serde_json::json!({ "commit_image": false });
 
                             if let Ok(create_resp) = stone.post_json(&path, &body).await {
-                                if let Some(slot) = create_resp.get("data").and_then(|d| d.get("slot")).and_then(|s| s.as_str()) {
-                                    target = Some((stone.name.clone(), name.to_string(), slot.to_string()));
+                                if let Some(slot) = create_resp
+                                    .get("data")
+                                    .and_then(|d| d.get("slot"))
+                                    .and_then(|s| s.as_str())
+                                {
+                                    target = Some((
+                                        stone.name.clone(),
+                                        name.to_string(),
+                                        slot.to_string(),
+                                    ));
                                     bag.record_step(
                                         "restore_local_setup",
                                         format!("Created snapshot in slot {} for {}", slot, name),
@@ -1531,7 +1654,10 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
 
             bag.record_step(
                 "restore_local",
-                format!("Restored {} from slot {} (harvest: {})", offering_name, slot, harvest_id),
+                format!(
+                    "Restored {} from slot {} (harvest: {})",
+                    offering_name, slot, harvest_id
+                ),
                 duration.as_millis() as u64,
                 StepResult::ok_with(serde_json::json!({
                     "offering": offering_name,
@@ -1585,7 +1711,10 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
             if let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    let online = bank.get("online").and_then(|o| o.as_bool()).unwrap_or(false);
+                    let online = bank
+                        .get("online")
+                        .and_then(|o| o.as_bool())
+                        .unwrap_or(false);
 
                     if !online || bank_name.is_empty() {
                         continue;
@@ -1594,18 +1723,40 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
                     // Get remote snapshots
                     let remote_path = format!("/api/v1/stone/nurturing/remote/{}", bank_name);
                     if let Ok(remote_resp) = stone.get_json(&remote_path).await {
-                        if let Some(snapshots) = remote_resp.get("data").and_then(|d| d.get("snapshots")).and_then(|s| s.as_array()) {
+                        if let Some(snapshots) = remote_resp
+                            .get("data")
+                            .and_then(|d| d.get("snapshots"))
+                            .and_then(|s| s.as_array())
+                        {
                             if let Some(snap) = snapshots.first() {
-                                let offering_id = snap.get("offering_id").and_then(|o| o.as_str()).unwrap_or("");
-                                let harvest_id = snap.get("harvest_id").and_then(|h| h.as_str()).unwrap_or("");
+                                let offering_id = snap
+                                    .get("offering_id")
+                                    .and_then(|o| o.as_str())
+                                    .unwrap_or("");
+                                let harvest_id = snap
+                                    .get("harvest_id")
+                                    .and_then(|h| h.as_str())
+                                    .unwrap_or("");
 
                                 // Find the offering name from services
-                                if let Ok(services_resp) = stone.get_json("/api/v1/stone/services").await {
-                                    if let Some(services) = services_resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+                                if let Ok(services_resp) =
+                                    stone.get_json("/api/v1/stone/services").await
+                                {
+                                    if let Some(services) = services_resp
+                                        .get("data")
+                                        .and_then(|d| d.get("services"))
+                                        .and_then(|s| s.as_array())
+                                    {
                                         for svc in services {
-                                            let svc_offering_id = svc.get("offering_id").and_then(|o| o.as_str()).unwrap_or("");
+                                            let svc_offering_id = svc
+                                                .get("offering_id")
+                                                .and_then(|o| o.as_str())
+                                                .unwrap_or("");
                                             if svc_offering_id == offering_id {
-                                                let offering_name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                                let offering_name = svc
+                                                    .get("name")
+                                                    .and_then(|n| n.as_str())
+                                                    .unwrap_or("");
                                                 if !offering_name.is_empty() {
                                                     target = Some((
                                                         stone.name.clone(),
@@ -1680,7 +1831,10 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
 
             bag.record_step(
                 "restore_remote",
-                format!("Restored {} from seed bank {} (harvest: {})", offering_name, seed_bank, restored_id),
+                format!(
+                    "Restored {} from seed bank {} (harvest: {})",
+                    offering_name, seed_bank, restored_id
+                ),
                 duration.as_millis() as u64,
                 StepResult::ok_with(serde_json::json!({
                     "offering": offering_name,
@@ -1732,7 +1886,10 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
             if let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    let online = bank.get("online").and_then(|o| o.as_bool()).unwrap_or(false);
+                    let online = bank
+                        .get("online")
+                        .and_then(|o| o.as_bool())
+                        .unwrap_or(false);
 
                     if !online || bank_name.is_empty() {
                         continue;
@@ -1741,12 +1898,19 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
                     // Get remote snapshots
                     let remote_path = format!("/api/v1/stone/nurturing/remote/{}", bank_name);
                     if let Ok(remote_resp) = stone.get_json(&remote_path).await {
-                        if let Some(snapshots) = remote_resp.get("data").and_then(|d| d.get("snapshots")).and_then(|s| s.as_array()) {
+                        if let Some(snapshots) = remote_resp
+                            .get("data")
+                            .and_then(|d| d.get("snapshots"))
+                            .and_then(|s| s.as_array())
+                        {
                             // Group by offering_id
-                            let mut by_offering: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                            let mut by_offering: std::collections::HashMap<String, usize> =
+                                std::collections::HashMap::new();
 
                             for snap in snapshots {
-                                if let Some(offering_id) = snap.get("offering_id").and_then(|o| o.as_str()) {
+                                if let Some(offering_id) =
+                                    snap.get("offering_id").and_then(|o| o.as_str())
+                                {
                                     *by_offering.entry(offering_id.to_string()).or_insert(0) += 1;
                                 }
                             }
@@ -1766,7 +1930,12 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
                             bag.record_step(
                                 format!("retention_check_{}_{}", stone.name, bank_name),
-                                format!("{}/{}: {} offerings checked", stone.name, bank_name, by_offering.len()),
+                                format!(
+                                    "{}/{}: {} offerings checked",
+                                    stone.name,
+                                    bank_name,
+                                    by_offering.len()
+                                ),
                                 0,
                                 StepResult::ok_with(serde_json::json!({
                                     "offerings": by_offering.len(),
@@ -1783,7 +1952,10 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     if violations.is_empty() {
         bag.record_step(
             "retention_summary",
-            format!("Retention policy OK ({} offering/bank pairs checked)", checked_count),
+            format!(
+                "Retention policy OK ({} offering/bank pairs checked)",
+                checked_count
+            ),
             0,
             StepResult::ok_with(serde_json::json!({
                 "checked": checked_count,
@@ -1871,7 +2043,10 @@ async fn test_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
 
     // First strategy simulation
     let first_target = if !online_banks.is_empty() {
-        online_banks.first().and_then(|b| b.get("name")).and_then(|n| n.as_str())
+        online_banks
+            .first()
+            .and_then(|b| b.get("name"))
+            .and_then(|n| n.as_str())
     } else {
         None
     };
@@ -1880,7 +2055,10 @@ async fn test_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     let most_capacity_target = online_banks
         .iter()
         .max_by_key(|b| {
-            let capacity = b.get("capacity_bytes").and_then(|c| c.as_u64()).unwrap_or(0);
+            let capacity = b
+                .get("capacity_bytes")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
             let used = b.get("used_bytes").and_then(|u| u.as_u64()).unwrap_or(0);
             capacity.saturating_sub(used)
         })
@@ -1929,7 +2107,10 @@ async fn test_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     bag.record_step(
         "failover_capability",
         if has_failover {
-            format!("Failover available: {} backup seed banks", online_banks.len() - 1)
+            format!(
+                "Failover available: {} backup seed banks",
+                online_banks.len() - 1
+            )
         } else {
             "No failover: only one or zero online seed banks".to_string()
         },
@@ -1995,7 +2176,12 @@ async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
                     bag.record_step(
                         format!("routing_discover_{}", stone.name),
-                        format!("{}: {} seed banks ({} online)", stone.name, banks.len(), online_count),
+                        format!(
+                            "{}: {} seed banks ({} online)",
+                            stone.name,
+                            banks.len(),
+                            online_count
+                        ),
                         duration.as_millis() as u64,
                         StepResult::ok_with(serde_json::json!({
                             "total": banks.len(),
@@ -2045,18 +2231,27 @@ async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     // Simulate routing strategies
     // First strategy: pick first available
     let first_target = online_banks.first().unwrap();
-    let first_name = first_target.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+    let first_name = first_target
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("unknown");
 
     // MostCapacity strategy: pick bank with most free space
     let most_capacity_target = online_banks
         .iter()
         .max_by_key(|b| {
-            let capacity = b.get("capacity_bytes").and_then(|c| c.as_u64()).unwrap_or(0);
+            let capacity = b
+                .get("capacity_bytes")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
             let used = b.get("used_bytes").and_then(|u| u.as_u64()).unwrap_or(0);
             capacity.saturating_sub(used)
         })
         .unwrap();
-    let most_capacity_name = most_capacity_target.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+    let most_capacity_name = most_capacity_target
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("unknown");
 
     bag.record_step(
         "routing_analysis",
@@ -2080,7 +2275,11 @@ async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     // Summary with capacity info
     let total_capacity: u64 = online_banks
         .iter()
-        .map(|b| b.get("capacity_bytes").and_then(|c| c.as_u64()).unwrap_or(0))
+        .map(|b| {
+            b.get("capacity_bytes")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0)
+        })
         .sum();
     let total_used: u64 = online_banks
         .iter()
@@ -2093,7 +2292,11 @@ async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
             "Total capacity: {:.2} GB, Used: {:.2} GB ({:.1}%)",
             total_capacity as f64 / 1_073_741_824.0,
             total_used as f64 / 1_073_741_824.0,
-            if total_capacity > 0 { (total_used as f64 / total_capacity as f64) * 100.0 } else { 0.0 }
+            if total_capacity > 0 {
+                (total_used as f64 / total_capacity as f64) * 100.0
+            } else {
+                0.0
+            }
         ),
         0,
         StepResult::ok_with(serde_json::json!({
@@ -2116,7 +2319,7 @@ async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 // - SSH access to stones (default: stone/stone)
 // - Linux stones (Alpine-based commands used)
 
-use crate::ssh::{SshExecutor, validation};
+use crate::ssh::{validation, SshExecutor};
 
 // ============================================================================
 // nurturing.physical_restore_local - Physical validation of local restore
@@ -2174,14 +2377,25 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
         }
 
         if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+            if let Some(services) = resp
+                .get("data")
+                .and_then(|d| d.get("services"))
+                .and_then(|s| s.as_array())
+            {
                 for svc in services {
                     let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                    let offering_id = svc.get("offering_id").and_then(|i| i.as_str()).unwrap_or("");
+                    let offering_id = svc
+                        .get("offering_id")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("");
 
                     if status == "Running" && !name.is_empty() && !offering_id.is_empty() {
-                        target = Some((stone.name.clone(), name.to_string(), offering_id.to_string()));
+                        target = Some((
+                            stone.name.clone(),
+                            name.to_string(),
+                            offering_id.to_string(),
+                        ));
                         break;
                     }
                 }
@@ -2209,7 +2423,12 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
 
     bag.record_step(
         "physical_find_service",
-        format!("Found: {} (ID: {}) on {}", offering_name, &offering_id[..8], stone_name),
+        format!(
+            "Found: {} (ID: {}) on {}",
+            offering_name,
+            &offering_id[..8],
+            stone_name
+        ),
         0,
         StepResult::ok_with(serde_json::json!({
             "stone": stone_name,
@@ -2228,8 +2447,16 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
 
     let (_harvest_id, slot) = match snapshot_result {
         Ok(resp) => {
-            let slot = resp.get("data").and_then(|d| d.get("slot")).and_then(|s| s.as_str()).unwrap_or("A");
-            let harvest_id = resp.get("data").and_then(|d| d.get("harvest_id")).and_then(|h| h.as_str()).unwrap_or("unknown");
+            let slot = resp
+                .get("data")
+                .and_then(|d| d.get("slot"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("A");
+            let harvest_id = resp
+                .get("data")
+                .and_then(|d| d.get("harvest_id"))
+                .and_then(|h| h.as_str())
+                .unwrap_or("unknown");
 
             bag.record_step(
                 "physical_create_snapshot",
@@ -2273,7 +2500,12 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
                 } else {
                     StepResult::failed(format!(
                         "Some checks failed: {:?}",
-                        result.checks.iter().filter(|(_, p)| !p).map(|(d, _)| d).collect::<Vec<_>>()
+                        result
+                            .checks
+                            .iter()
+                            .filter(|(_, p)| !p)
+                            .map(|(d, _)| d)
+                            .collect::<Vec<_>>()
                     ))
                 },
             );
@@ -2298,7 +2530,11 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
 
     match restore_result {
         Ok(resp) => {
-            let restored_id = resp.get("data").and_then(|d| d.get("id")).and_then(|h| h.as_str()).unwrap_or("unknown");
+            let restored_id = resp
+                .get("data")
+                .and_then(|d| d.get("id"))
+                .and_then(|h| h.as_str())
+                .unwrap_or("unknown");
             let volumes: Vec<String> = resp
                 .get("data")
                 .and_then(|d| d.get("volumes"))
@@ -2432,7 +2668,11 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
             Err(_) => continue,
         };
 
-        let services = match services_resp.get("data").and_then(|d| d.get("services")).and_then(|s| s.as_array()) {
+        let services = match services_resp
+            .get("data")
+            .and_then(|d| d.get("services"))
+            .and_then(|s| s.as_array())
+        {
             Some(s) => s,
             None => continue,
         };
@@ -2449,19 +2689,30 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
         };
 
         // Find an online seed bank
-        let seed_bank = banks.iter().find(|b| {
-            b.get("online").and_then(|o| o.as_bool()).unwrap_or(false)
-        });
+        let seed_bank = banks
+            .iter()
+            .find(|b| b.get("online").and_then(|o| o.as_bool()).unwrap_or(false));
 
         if let Some(bank) = seed_bank {
-            let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-            let bank_mount = bank.get("mount_path").and_then(|m| m.as_str()).unwrap_or("/mnt/seed").to_string();
+            let bank_name = bank
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+            let bank_mount = bank
+                .get("mount_path")
+                .and_then(|m| m.as_str())
+                .unwrap_or("/mnt/seed")
+                .to_string();
 
             // Find a running service
             for svc in services {
                 let name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 let status = svc.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                let offering_id = svc.get("offering_id").and_then(|i| i.as_str()).unwrap_or("");
+                let offering_id = svc
+                    .get("offering_id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("");
 
                 if status == "Running" && !name.is_empty() && !offering_id.is_empty() {
                     target = Some((
@@ -2498,7 +2749,10 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
 
     bag.record_step(
         "physical_remote_find",
-        format!("{} on {} with seed bank {}", offering_name, stone_name, bank_name),
+        format!(
+            "{} on {} with seed bank {}",
+            offering_name, stone_name, bank_name
+        ),
         0,
         StepResult::ok_with(serde_json::json!({
             "stone": stone_name,
@@ -2515,7 +2769,11 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
 
     let harvest_id = match trigger_result {
         Ok(resp) => {
-            let success = resp.get("data").and_then(|d| d.get("success")).and_then(|s| s.as_bool()).unwrap_or(false);
+            let success = resp
+                .get("data")
+                .and_then(|d| d.get("success"))
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false);
             let harvest_id = resp
                 .get("data")
                 .and_then(|d| d.get("local_snapshot"))
@@ -2525,7 +2783,10 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
 
             bag.record_step(
                 "physical_remote_trigger",
-                format!("Nurturing workflow: success={}, harvest={}", success, harvest_id),
+                format!(
+                    "Nurturing workflow: success={}, harvest={}",
+                    success, harvest_id
+                ),
                 duration.as_millis() as u64,
                 if success {
                     StepResult::ok_with(serde_json::json!({ "harvest_id": harvest_id }))
@@ -2553,7 +2814,13 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
 
     // Step 2: SSH to verify tarball exists on seed bank
     let start = Instant::now();
-    let seed_result = validation::validate_seed_bank_snapshot(&ssh, stone, &bank_mount, &offering_id, &harvest_id);
+    let seed_result = validation::validate_seed_bank_snapshot(
+        &ssh,
+        stone,
+        &bank_mount,
+        &offering_id,
+        &harvest_id,
+    );
     let duration = start.elapsed();
 
     match seed_result {
@@ -2571,7 +2838,12 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
                 } else {
                     StepResult::failed(format!(
                         "Seed bank validation failed: {:?}",
-                        result.checks.iter().filter(|(_, p)| !p).map(|(d, _)| d).collect::<Vec<_>>()
+                        result
+                            .checks
+                            .iter()
+                            .filter(|(_, p)| !p)
+                            .map(|(d, _)| d)
+                            .collect::<Vec<_>>()
                     ))
                 },
             );
@@ -2599,7 +2871,11 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
 
     match restore_result {
         Ok(resp) => {
-            let restored_id = resp.get("data").and_then(|d| d.get("id")).and_then(|h| h.as_str()).unwrap_or("unknown");
+            let restored_id = resp
+                .get("data")
+                .and_then(|d| d.get("id"))
+                .and_then(|h| h.as_str())
+                .unwrap_or("unknown");
 
             bag.record_step(
                 "physical_remote_restore_api",
@@ -2621,7 +2897,10 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
 
     bag.record_step(
         "physical_remote_summary",
-        format!("Physical seed bank validation complete for {}", offering_name),
+        format!(
+            "Physical seed bank validation complete for {}",
+            offering_name
+        ),
         0,
         StepResult::ok(),
     );
@@ -2699,9 +2978,18 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
         };
 
         for bank in banks {
-            let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
-            let bank_mount = bank.get("mount_path").and_then(|m| m.as_str()).unwrap_or("/mnt/seed");
-            let online = bank.get("online").and_then(|o| o.as_bool()).unwrap_or(false);
+            let bank_name = bank
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            let bank_mount = bank
+                .get("mount_path")
+                .and_then(|m| m.as_str())
+                .unwrap_or("/mnt/seed");
+            let online = bank
+                .get("online")
+                .and_then(|o| o.as_bool())
+                .unwrap_or(false);
 
             if !online {
                 continue;
@@ -2709,7 +2997,8 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
 
             // List offering directories on seed bank
             // Use the correct seed bank path: {mount}/garden/memories
-            let nurturing_path = garden_common::constants::paths::seed_bank_memories_dir(bank_mount);
+            let nurturing_path =
+                garden_common::constants::paths::seed_bank_memories_dir(bank_mount);
             let start = Instant::now();
             let offerings = ssh.list_files(stone, &nurturing_path).unwrap_or_default();
             let duration = start.elapsed();
@@ -2735,19 +3024,32 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
                 if snapshot_count > max_retention {
                     violations.push(format!(
                         "{}/{}/{}: {} snapshots (max {})",
-                        stone.name, bank_name, &offering_id[..8.min(offering_id.len())], snapshot_count, max_retention
+                        stone.name,
+                        bank_name,
+                        &offering_id[..8.min(offering_id.len())],
+                        snapshot_count,
+                        max_retention
                     ));
                 }
 
                 bag.record_step(
-                    format!("physical_retention_{}_{}_{}", stone.name, bank_name, &offering_id[..8.min(offering_id.len())]),
+                    format!(
+                        "physical_retention_{}_{}_{}",
+                        stone.name,
+                        bank_name,
+                        &offering_id[..8.min(offering_id.len())]
+                    ),
                     format!(
                         "{}/{}/{}...: {} snapshots ({})",
                         stone.name,
                         bank_name,
                         &offering_id[..8.min(offering_id.len())],
                         snapshot_count,
-                        if snapshot_count <= max_retention { "OK" } else { "VIOLATION" }
+                        if snapshot_count <= max_retention {
+                            "OK"
+                        } else {
+                            "VIOLATION"
+                        }
                     ),
                     0,
                     if snapshot_count <= max_retention {
@@ -2768,7 +3070,10 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
     if violations.is_empty() {
         bag.record_step(
             "physical_retention_summary",
-            format!("Retention OK: {} offering/bank pairs checked, all within limit", total_checked),
+            format!(
+                "Retention OK: {} offering/bank pairs checked, all within limit",
+                total_checked
+            ),
             0,
             StepResult::ok_with(serde_json::json!({
                 "checked": total_checked,
@@ -2844,9 +3149,18 @@ async fn test_physical_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         };
 
         for bank in banks {
-            let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
-            let bank_mount = bank.get("mount_path").and_then(|m| m.as_str()).unwrap_or("/mnt/seed");
-            let api_online = bank.get("online").and_then(|o| o.as_bool()).unwrap_or(false);
+            let bank_name = bank
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            let bank_mount = bank
+                .get("mount_path")
+                .and_then(|m| m.as_str())
+                .unwrap_or("/mnt/seed");
+            let api_online = bank
+                .get("online")
+                .and_then(|o| o.as_bool())
+                .unwrap_or(false);
 
             // SSH to verify actual mount state
             let start = Instant::now();
@@ -2869,7 +3183,11 @@ async fn test_physical_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
                     stone.name,
                     bank_name,
                     if api_online { "online" } else { "offline" },
-                    if actual_mounted { "mounted" } else { "unmounted" },
+                    if actual_mounted {
+                        "mounted"
+                    } else {
+                        "unmounted"
+                    },
                     if actual_writable { "yes" } else { "no" },
                     if state_match { "yes" } else { "NO" }
                 ),
@@ -2897,7 +3215,11 @@ async fn test_physical_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     // Analyze failover readiness
     let physical_online: Vec<_> = all_banks
         .iter()
-        .filter(|b| b.get("physical_mounted").and_then(|m| m.as_bool()).unwrap_or(false))
+        .filter(|b| {
+            b.get("physical_mounted")
+                .and_then(|m| m.as_bool())
+                .unwrap_or(false)
+        })
         .collect();
 
     let has_failover = physical_online.len() > 1;
@@ -2907,7 +3229,11 @@ async fn test_physical_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         format!(
             "Failover status: {} physically mounted seed banks (failover={})",
             physical_online.len(),
-            if has_failover { "READY" } else { "NOT AVAILABLE" }
+            if has_failover {
+                "READY"
+            } else {
+                "NOT AVAILABLE"
+            }
         ),
         0,
         StepResult::ok_with(serde_json::json!({

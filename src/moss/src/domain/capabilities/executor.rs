@@ -2,19 +2,19 @@
 //!
 //! Executes manifest-defined commands to discover, add, and remove capabilities.
 
-use anyhow::{Context, Result, bail};
-use garden_common::{
-    CapabilityCollection, CapabilityItem, CapabilityDisplay, ServiceInfo, OfferingMode,
-};
+use crate::docker::zen_offering_container_name;
+use anyhow::{bail, Context, Result};
 use garden_common::manifests::{
-    CapabilityManifest, CapabilityTypeConfig, ListOperationConfig, ModeCommands, OutputFormat,
-    FieldMappings,
+    CapabilityManifest, CapabilityTypeConfig, FieldMappings, ListOperationConfig, ModeCommands,
+    OutputFormat,
+};
+use garden_common::{
+    CapabilityCollection, CapabilityDisplay, CapabilityItem, OfferingMode, ServiceInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::process::Command;
-use crate::docker::zen_offering_container_name;
 
 /// Context for capability execution
 ///
@@ -108,7 +108,10 @@ impl CapabilityExecutor {
 
         // Execute list command for each capability type
         for cap_config in &manifest.capabilities {
-            match self.list_capability_type(service, cap_config, &context).await {
+            match self
+                .list_capability_type(service, cap_config, &context)
+                .await
+            {
                 Ok(collection) => {
                     tracing::debug!(
                         offering = %manifest.offering,
@@ -164,7 +167,10 @@ impl CapabilityExecutor {
             .with_context(|| format!("Add operation not configured for type: {}", cap_type))?;
 
         if !add_config.available {
-            let reason = add_config.reason.as_deref().unwrap_or("Operation not available");
+            let reason = add_config
+                .reason
+                .as_deref()
+                .unwrap_or("Operation not available");
             return Ok(CapabilityMutationResult {
                 success: false,
                 error: Some(reason.to_string()),
@@ -194,7 +200,10 @@ impl CapabilityExecutor {
         );
 
         // Execute the command
-        match self.execute_command(&templated, add_config.timeout_secs, &context).await {
+        match self
+            .execute_command(&templated, add_config.timeout_secs, &context)
+            .await
+        {
             Ok(_output) => {
                 tracing::info!(
                     service = %service.name,
@@ -256,7 +265,10 @@ impl CapabilityExecutor {
             .with_context(|| format!("Remove operation not configured for type: {}", cap_type))?;
 
         if !remove_config.available {
-            let reason = remove_config.reason.as_deref().unwrap_or("Operation not available");
+            let reason = remove_config
+                .reason
+                .as_deref()
+                .unwrap_or("Operation not available");
             return Ok(CapabilityMutationResult {
                 success: false,
                 error: Some(reason.to_string()),
@@ -286,7 +298,10 @@ impl CapabilityExecutor {
         );
 
         // Execute the command
-        match self.execute_command(&templated, remove_config.timeout_secs, &context).await {
+        match self
+            .execute_command(&templated, remove_config.timeout_secs, &context)
+            .await
+        {
             Ok(_output) => {
                 tracing::info!(
                     service = %service.name,
@@ -377,9 +392,16 @@ impl CapabilityExecutor {
         let local_version = if let Some(local_cmd) = &check_config.local_command {
             match self.get_command(local_cmd, &context) {
                 Ok(cmd) => {
-                    let templated = self.template_command_with_item(&cmd, &context, capability_name)?;
-                    match self.execute_command(&templated, check_config.timeout_secs, &context).await {
-                        Ok(output) => self.extract_version(&output, check_config.compare.as_ref().map(|c| c.local_path.as_str())),
+                    let templated =
+                        self.template_command_with_item(&cmd, &context, capability_name)?;
+                    match self
+                        .execute_command(&templated, check_config.timeout_secs, &context)
+                        .await
+                    {
+                        Ok(output) => self.extract_version(
+                            &output,
+                            check_config.compare.as_ref().map(|c| c.local_path.as_str()),
+                        ),
                         Err(e) => {
                             tracing::debug!(error = ?e, "Failed to get local version");
                             None
@@ -396,9 +418,19 @@ impl CapabilityExecutor {
         let remote_version = if let Some(remote_cmd) = &check_config.remote_command {
             match self.get_command(remote_cmd, &context) {
                 Ok(cmd) => {
-                    let templated = self.template_command_with_item(&cmd, &context, capability_name)?;
-                    match self.execute_command(&templated, check_config.timeout_secs, &context).await {
-                        Ok(output) => self.extract_version(&output, check_config.compare.as_ref().map(|c| c.remote_path.as_str())),
+                    let templated =
+                        self.template_command_with_item(&cmd, &context, capability_name)?;
+                    match self
+                        .execute_command(&templated, check_config.timeout_secs, &context)
+                        .await
+                    {
+                        Ok(output) => self.extract_version(
+                            &output,
+                            check_config
+                                .compare
+                                .as_ref()
+                                .map(|c| c.remote_path.as_str()),
+                        ),
                         Err(e) => {
                             tracing::debug!(error = ?e, "Failed to get remote version");
                             None
@@ -460,7 +492,10 @@ impl CapabilityExecutor {
         // Try upgrade config first, fall back to add config
         let (commands, timeout) = if let Some(upgrade_config) = &cap_config.upgrade {
             if !upgrade_config.available {
-                let reason = upgrade_config.reason.as_deref().unwrap_or("Upgrade not available");
+                let reason = upgrade_config
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Upgrade not available");
                 return Ok(CapabilityMutationResult {
                     success: false,
                     error: Some(reason.to_string()),
@@ -493,7 +528,10 @@ impl CapabilityExecutor {
         } else if let Some(add_config) = &cap_config.add {
             // No upgrade config, fall back to add (implicit upgrade)
             if !add_config.available {
-                let reason = add_config.reason.as_deref().unwrap_or("Operation not available");
+                let reason = add_config
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Operation not available");
                 return Ok(CapabilityMutationResult {
                     success: false,
                     error: Some(reason.to_string()),
@@ -581,9 +619,10 @@ impl CapabilityExecutor {
         // Find the matching type and check if capability exists
         for collection in collections {
             if collection.cap_type == cap_type {
-                return Ok(collection.items.iter().any(|item| {
-                    item.name.to_lowercase() == capability_name.to_lowercase()
-                }));
+                return Ok(collection
+                    .items
+                    .iter()
+                    .any(|item| item.name.to_lowercase() == capability_name.to_lowercase()));
             }
         }
 
@@ -674,7 +713,9 @@ impl CapabilityExecutor {
         );
 
         // Execute the command
-        let output = self.execute_command(&templated, list_config.timeout_secs, context).await?;
+        let output = self
+            .execute_command(&templated, list_config.timeout_secs, context)
+            .await?;
 
         // Parse and transform the output
         let items = self.transform_output(&output, list_config).await?;
@@ -724,7 +765,10 @@ impl CapabilityExecutor {
         // Verify no unresolved placeholders remain
         if result.contains("{{") {
             let start = result.find("{{").unwrap();
-            let end = result[start..].find("}}").map(|i| start + i + 2).unwrap_or(result.len());
+            let end = result[start..]
+                .find("}}")
+                .map(|i| start + i + 2)
+                .unwrap_or(result.len());
             let placeholder = &result[start..end];
             bail!("Unresolved placeholder in command: {}", placeholder);
         }
@@ -792,13 +836,14 @@ impl CapabilityExecutor {
         output: &str,
         config: &ListOperationConfig,
     ) -> Result<Vec<CapabilityItem>> {
-        let json: serde_json::Value = serde_json::from_str(output)
-            .context("Failed to parse command output as JSON")?;
+        let json: serde_json::Value =
+            serde_json::from_str(output).context("Failed to parse command output as JSON")?;
 
         // Extract items array using items_path
         let items_array = self.extract_path(&json, &config.transform.items_path)?;
 
-        let array = items_array.as_array()
+        let array = items_array
+            .as_array()
             .context("items_path did not resolve to an array")?;
 
         // Transform each item
@@ -848,9 +893,9 @@ impl CapabilityExecutor {
                 continue;
             }
 
-            current = current.get(segment).with_context(|| {
-                format!("Field '{}' not found in path", segment)
-            })?;
+            current = current
+                .get(segment)
+                .with_context(|| format!("Field '{}' not found in path", segment))?;
         }
 
         Ok(current.clone())
@@ -862,9 +907,9 @@ impl CapabilityExecutor {
         item: &serde_json::Value,
         fields: &FieldMappings,
     ) -> Result<CapabilityItem> {
-
         // Extract required name field
-        let name = self.extract_path(item, &fields.name)?
+        let name = self
+            .extract_path(item, &fields.name)?
             .as_str()
             .context("name field is not a string")?
             .to_string();
@@ -947,10 +992,7 @@ mod tests {
             executor.extract_path(&value, ".name").unwrap(),
             json!("llama2")
         );
-        assert_eq!(
-            executor.extract_path(&value, ".size").unwrap(),
-            json!(123)
-        );
+        assert_eq!(executor.extract_path(&value, ".size").unwrap(), json!(123));
     }
 
     #[test]

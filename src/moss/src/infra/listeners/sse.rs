@@ -3,14 +3,13 @@
 //! Listens for domain events and broadcasts them to connected
 //! SSE clients (Firefly, Cricket, etc.) via tokio broadcast channel.
 
-use crate::domain::events::{DomainEvent, JobEvent, OfferingEvent, StorageEvent, StoneEvent};
+use crate::domain::events::{DomainEvent, JobEvent, OfferingEvent, StoneEvent, StorageEvent};
 use crate::infra::event_bus::EventListener;
 use chrono::Utc;
 use garden_common::{
-    SSE_LEVEL_INFO,
-    EVENT_DEPLOYED, EVENT_STARTED, EVENT_STOPPED, EVENT_REMOVED,
-    EVENT_DESTROYED, EVENT_UPDATED, EVENT_RENAMED, EVENT_HEALTH_CHANGED,
     presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload},
+    EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
+    EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED, SSE_LEVEL_INFO,
 };
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -67,23 +66,23 @@ impl SseEvent {
 
     fn from_storage(event: &StorageEvent) -> Self {
         let data = match event {
-            StorageEvent::SeedBankDetected { name, device, mount_path, capacity_gb, .. } => {
-                Some(serde_json::json!({
-                    "name": name,
-                    "device": device,
-                    "mount_path": mount_path,
-                    "capacity_gb": capacity_gb,
-                }))
-            }
-            StorageEvent::SeedBankRemoved { name, device, .. } => {
-                Some(serde_json::json!({
-                    "name": name,
-                    "device": device,
-                }))
-            }
-            StorageEvent::SyncStarted { name, .. } => {
-                Some(serde_json::json!({ "name": name }))
-            }
+            StorageEvent::SeedBankDetected {
+                name,
+                device,
+                mount_path,
+                capacity_gb,
+                ..
+            } => Some(serde_json::json!({
+                "name": name,
+                "device": device,
+                "mount_path": mount_path,
+                "capacity_gb": capacity_gb,
+            })),
+            StorageEvent::SeedBankRemoved { name, device, .. } => Some(serde_json::json!({
+                "name": name,
+                "device": device,
+            })),
+            StorageEvent::SyncStarted { name, .. } => Some(serde_json::json!({ "name": name })),
             StorageEvent::SyncCompleted { name, success, .. } => {
                 Some(serde_json::json!({ "name": name, "success": success }))
             }
@@ -103,14 +102,19 @@ impl SseEvent {
 
     fn from_stone(event: &StoneEvent) -> Self {
         let data = match event {
-            StoneEvent::Tended { by, from, message, .. } => {
-                Some(serde_json::json!({
-                    "by": by,
-                    "from": from,
-                    "message": message,
-                }))
-            }
-            StoneEvent::HealthChanged { health, cpu_percent, memory_percent, .. } => {
+            StoneEvent::Tended {
+                by, from, message, ..
+            } => Some(serde_json::json!({
+                "by": by,
+                "from": from,
+                "message": message,
+            })),
+            StoneEvent::HealthChanged {
+                health,
+                cpu_percent,
+                memory_percent,
+                ..
+            } => {
                 let payload = StoneHealthChangedPayload {
                     health: health.clone(),
                     cpu_percent: *cpu_percent,
@@ -118,19 +122,21 @@ impl SseEvent {
                 };
                 serde_json::to_value(payload).ok()
             }
-            StoneEvent::LoadUpdated { cpu_percent, memory_percent, .. } => {
+            StoneEvent::LoadUpdated {
+                cpu_percent,
+                memory_percent,
+                ..
+            } => {
                 let payload = StoneLoadUpdatedPayload {
                     cpu_percent: *cpu_percent,
                     memory_percent: *memory_percent,
                 };
                 serde_json::to_value(payload).ok()
             }
-            StoneEvent::NetworkReady { ip, interface, .. } => {
-                Some(serde_json::json!({
-                    "ip": ip,
-                    "interface": interface,
-                }))
-            }
+            StoneEvent::NetworkReady { ip, interface, .. } => Some(serde_json::json!({
+                "ip": ip,
+                "interface": interface,
+            })),
         };
 
         Self {
@@ -147,18 +153,14 @@ impl SseEvent {
 
     fn from_job(event: &JobEvent) -> Self {
         let data = match event {
-            JobEvent::Started { operation, .. } => {
-                Some(serde_json::json!({
-                    "operation": operation,
-                }))
-            }
+            JobEvent::Started { operation, .. } => Some(serde_json::json!({
+                "operation": operation,
+            })),
             JobEvent::Progress { .. } => None,
             JobEvent::Completed { .. } => None,
-            JobEvent::Failed { error, .. } => {
-                Some(serde_json::json!({
-                    "error": error,
-                }))
-            }
+            JobEvent::Failed { error, .. } => Some(serde_json::json!({
+                "error": error,
+            })),
         };
 
         Self {
@@ -256,7 +258,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_event_conversion_offering() {
-        let event = DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
+        let event = DomainEvent::Offering(OfferingEvent::deployed(
+            "id-1", "mongodb", "stone-01", "mongo:7",
+        ));
         let sse_event = SseEvent::from(&event);
 
         assert_eq!(sse_event.event_type, event_types::SERVICE_STARTED); // Translated!
@@ -267,7 +271,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_event_conversion_storage() {
-        let event = DomainEvent::Storage(StorageEvent::seed_bank_detected("backup", "/dev/sdb1", "/mnt/backup", 500));
+        let event = DomainEvent::Storage(StorageEvent::seed_bank_detected(
+            "backup",
+            "/dev/sdb1",
+            "/mnt/backup",
+            500,
+        ));
         let sse_event = SseEvent::from(&event);
 
         assert_eq!(sse_event.event_type, event_types::STORAGE_DETECTED);
@@ -277,7 +286,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_event_conversion_stone() {
-        let event = DomainEvent::Stone(StoneEvent::tended("rake", "leo-laptop", Some("Hello".to_string())));
+        let event = DomainEvent::Stone(StoneEvent::tended(
+            "rake",
+            "leo-laptop",
+            Some("Hello".to_string()),
+        ));
         let sse_event = SseEvent::from(&event);
 
         assert_eq!(sse_event.event_type, event_types::STONE_TENDED);

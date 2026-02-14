@@ -2,7 +2,7 @@
 
 use super::types::{Job, JobId};
 use crate::persistence::JsonStorage;
-use crate::traits::persistence::{PersistenceProvider, PersistenceError};
+use crate::traits::persistence::{PersistenceError, PersistenceProvider};
 use std::collections::HashMap;
 use std::path::PathBuf;
 

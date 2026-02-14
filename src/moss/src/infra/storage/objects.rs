@@ -1,4 +1,4 @@
-﻿//! Object storage operations for seed banks
+//! Object storage operations for seed banks
 //!
 //! Provides S3-compatible object storage operations on seed bank filesystems.
 //! Objects are stored under: {mount_path}/garden/storage/{bucket}/{key}
@@ -7,10 +7,10 @@
 //! Business logic (path validation, quota enforcement) should be in domain layer.
 
 use anyhow::{Context, Result};
+use garden_common::constants::paths;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
-use garden_common::constants::paths;
 
 /// Metadata about a stored object
 #[derive(Debug, Clone)]
@@ -44,9 +44,7 @@ impl ObjectStore {
     /// Create a new object store for a seed bank mount
     pub fn new(mount_path: impl AsRef<Path>) -> Self {
         let root_path = mount_path.as_ref().join(paths::SEED_BANK_STORAGE_DIR);
-        Self {
-            root_path,
-        }
+        Self { root_path }
     }
 
     /// Get the full filesystem path for an object
@@ -69,7 +67,7 @@ impl ObjectStore {
         data: &[u8],
     ) -> Result<PutResult> {
         let path = self.object_path(bucket, key);
-        
+
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -83,19 +81,19 @@ impl ObjectStore {
 
         // Write object atomically: temp file → fsync → rename
         let tmp_path = path.with_extension("tmp");
-        
+
         let mut file = tokio::fs::File::create(&tmp_path)
             .await
             .context("Failed to create temp file")?;
-        
+
         file.write_all(data)
             .await
             .context("Failed to write object data")?;
-        
+
         file.sync_all()
             .await
             .context("Failed to sync object file")?;
-        
+
         drop(file);
 
         tokio::fs::rename(&tmp_path, &path)
@@ -121,9 +119,13 @@ impl ObjectStore {
     }
 
     /// GET object - retrieve data
-    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
+    pub async fn get_object(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
         let path = self.object_path(bucket, key);
-        
+
         if !path.exists() {
             return Ok(None);
         }
@@ -140,7 +142,7 @@ impl ObjectStore {
     /// HEAD object - get metadata only
     pub async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<ObjectMetadata>> {
         let path = self.object_path(bucket, key);
-        
+
         if !path.exists() {
             return Ok(None);
         }
@@ -151,7 +153,7 @@ impl ObjectStore {
     /// DELETE object
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<bool> {
         let path = self.object_path(bucket, key);
-        
+
         if !path.exists() {
             return Ok(false);
         }
@@ -179,7 +181,7 @@ impl ObjectStore {
         max_keys: usize,
     ) -> Result<ListResult> {
         let bucket_path = self.bucket_path(bucket);
-        
+
         if !bucket_path.exists() {
             return Ok(ListResult {
                 contents: vec![],
@@ -196,7 +198,15 @@ impl ObjectStore {
         let mut common_prefixes = std::collections::HashSet::new();
 
         // Recursively list all files
-        self.walk_directory(&bucket_path, &bucket_path, prefix, &delimiter, &mut contents, &mut common_prefixes).await?;
+        self.walk_directory(
+            &bucket_path,
+            &bucket_path,
+            prefix,
+            &delimiter,
+            &mut contents,
+            &mut common_prefixes,
+        )
+        .await?;
 
         // Sort by key
         contents.sort_by(|a, b| a.key.cmp(&b.key));
@@ -230,16 +240,16 @@ impl ObjectStore {
     /// LIST buckets - list all buckets at storage root
     pub async fn list_buckets(&self) -> Result<Vec<String>> {
         let root_dir = self.root_path.clone();
-        
+
         if !root_dir.exists() {
             return Ok(Vec::new());
         }
-        
+
         let mut buckets = Vec::new();
         let mut entries = tokio::fs::read_dir(&root_dir)
             .await
             .context("Failed to read storage root directory")?;
-        
+
         while let Ok(Some(entry)) = entries.next_entry().await {
             if entry.path().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
@@ -247,7 +257,7 @@ impl ObjectStore {
                 }
             }
         }
-        
+
         buckets.sort();
         Ok(buckets)
     }
@@ -271,14 +281,15 @@ impl ObjectStore {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
-                
+
                 // Skip metadata sidecar files
                 if name.ends_with(".meta.json") {
                     continue;
                 }
 
                 // Get relative key from bucket root
-                let relative = path.strip_prefix(base_path)
+                let relative = path
+                    .strip_prefix(base_path)
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default();
 
@@ -292,8 +303,15 @@ impl ObjectStore {
                         }
                     } else {
                         // No delimiter - recurse
-                        self.walk_directory(base_path, &path, prefix, delimiter, contents, common_prefixes)
-                            .await?;
+                        self.walk_directory(
+                            base_path,
+                            &path,
+                            prefix,
+                            delimiter,
+                            contents,
+                            common_prefixes,
+                        )
+                        .await?;
                     }
                 } else {
                     // It's a file
@@ -315,7 +333,9 @@ impl ObjectStore {
                     // Get metadata
                     match self.get_metadata_for_path(&path, &relative).await {
                         Ok(meta) => contents.push(meta),
-                        Err(e) => warn!(path = %path.display(), error = %e, "Failed to get object metadata"),
+                        Err(e) => {
+                            warn!(path = %path.display(), error = %e, "Failed to get object metadata")
+                        }
                     }
                 }
             }
@@ -334,12 +354,10 @@ impl ObjectStore {
         let meta_path = self.meta_path(path);
         let (content_type, etag) = if meta_path.exists() {
             match tokio::fs::read_to_string(&meta_path).await {
-                Ok(json) => {
-                    match serde_json::from_str::<ObjectMetadataSidecar>(&json) {
-                        Ok(m) => (m.content_type, m.etag),
-                        Err(_) => self.compute_metadata(path).await?,
-                    }
-                }
+                Ok(json) => match serde_json::from_str::<ObjectMetadataSidecar>(&json) {
+                    Ok(m) => (m.content_type, m.etag),
+                    Err(_) => self.compute_metadata(path).await?,
+                },
                 Err(_) => self.compute_metadata(path).await?,
             }
         } else {
@@ -365,7 +383,7 @@ impl ObjectStore {
         let data = tokio::fs::read(path).await?;
         let hash = md5::compute(&data);
         let etag = format!("\"{}\"", hex::encode(hash.0));
-        
+
         // Guess content type from extension
         let content_type = mime_guess::from_path(path)
             .first_or_octet_stream()
@@ -376,7 +394,10 @@ impl ObjectStore {
 
     /// Get sidecar metadata file path
     fn meta_path(&self, object_path: &Path) -> PathBuf {
-        let file_name = object_path.file_name().unwrap_or_default().to_string_lossy();
+        let file_name = object_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
         object_path.with_file_name(format!("{}.meta.json", file_name))
     }
 }

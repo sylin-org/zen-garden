@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// List adopted services
 pub struct AdoptedCommand {
@@ -42,7 +42,10 @@ impl Command for AdoptedCommand {
                         " ".repeat(ui::constants::DEFAULT_INDENT)
                     );
                     for svc in list {
-                        let name = svc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let name = svc
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
                         let offering = svc.get("offering").and_then(|v| v.as_str()).unwrap_or("");
                         if !offering.is_empty() && offering != name {
                             println!(
@@ -52,11 +55,7 @@ impl Command for AdoptedCommand {
                                 offering
                             );
                         } else {
-                            println!(
-                                "{}  {}",
-                                " ".repeat(ui::constants::DEFAULT_INDENT),
-                                name
-                            );
+                            println!("{}  {}", " ".repeat(ui::constants::DEFAULT_INDENT), name);
                         }
                     }
                 }

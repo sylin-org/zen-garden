@@ -8,14 +8,13 @@
 
 pub mod errors;
 pub mod responses;
-pub mod sse;
 pub mod sanitize;
+pub mod sse;
 
-pub use errors::{ApiErrorResponse, error_response, internal_error, not_found, bad_request};
+pub use errors::{bad_request, error_response, internal_error, not_found, ApiErrorResponse};
 pub use responses::ApiResponse;
-pub use sse::{SseEvent, sse_stream};
 pub use sanitize::{
-    sanitize_query, sanitize_name, sanitize_name_allow_colon, sanitize_tag, sanitize_path_segment,
-    is_suspicious, validate_name, SanitizeResult,
-    MAX_QUERY_LENGTH, MAX_NAME_LENGTH, MAX_TAG_LENGTH,
+    is_suspicious, sanitize_name, sanitize_name_allow_colon, sanitize_path_segment, sanitize_query,
+    sanitize_tag, validate_name, SanitizeResult, MAX_NAME_LENGTH, MAX_QUERY_LENGTH, MAX_TAG_LENGTH,
 };
+pub use sse::{sse_stream, SseEvent};

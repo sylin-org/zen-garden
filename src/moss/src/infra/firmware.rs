@@ -44,10 +44,7 @@ async fn detect_firmware_updates_linux() -> Result<Vec<FirmwareUpdate>> {
     use tokio::process::Command;
 
     // Check if fwupdmgr is available
-    let fwupd_check = Command::new("which")
-        .arg("fwupdmgr")
-        .output()
-        .await;
+    let fwupd_check = Command::new("which").arg("fwupdmgr").output().await;
 
     if fwupd_check.is_err() || !fwupd_check.unwrap().status.success() {
         tracing::debug!("fwupdmgr not found - skipping firmware detection");
@@ -71,13 +68,13 @@ async fn detect_firmware_updates_linux() -> Result<Vec<FirmwareUpdate>> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        
+
         // No updates available is not an error
         if stderr.contains("No updates available") || stderr.contains("no updatable devices") {
             tracing::debug!("No firmware updates available");
             return Ok(Vec::new());
         }
-        
+
         anyhow::bail!("fwupdmgr get-updates failed: {}", stderr);
     }
 
@@ -90,8 +87,8 @@ async fn detect_firmware_updates_linux() -> Result<Vec<FirmwareUpdate>> {
 fn parse_fwupd_json(json_str: &str) -> Result<Vec<FirmwareUpdate>> {
     use serde_json::Value;
 
-    let data: Value = serde_json::from_str(json_str)
-        .context("Failed to parse fwupdmgr JSON output")?;
+    let data: Value =
+        serde_json::from_str(json_str).context("Failed to parse fwupdmgr JSON output")?;
 
     let mut updates = Vec::new();
 
@@ -182,7 +179,7 @@ mod tests {
 
         let updates = parse_fwupd_json(json).unwrap();
         assert_eq!(updates.len(), 1);
-        
+
         let update = &updates[0];
         assert_eq!(update.device_id, "com.dell.bios");
         assert_eq!(update.device_name, "System BIOS");

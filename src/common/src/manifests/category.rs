@@ -3,11 +3,11 @@
 //! Loads category.json files from manifest directories to provide
 //! data-driven category semantics (aliases, protocols, templates).
 
+use crate::manifests::connection::ConnectionProfile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
-use crate::manifests::connection::ConnectionProfile;
 
 /// Category configuration loaded from category.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +60,8 @@ impl CategoryRegistry {
 
         // Register parent relationships
         if !config.parent_of.is_empty() {
-            self.parent_map.insert(name.clone(), config.parent_of.clone());
+            self.parent_map
+                .insert(name.clone(), config.parent_of.clone());
         }
 
         self.categories.insert(name, config);
@@ -78,7 +79,9 @@ impl CategoryRegistry {
 
     /// Resolve a token to its canonical category name
     pub fn resolve_token(&self, token: &str) -> Option<&str> {
-        self.alias_map.get(&token.to_lowercase()).map(|s| s.as_str())
+        self.alias_map
+            .get(&token.to_lowercase())
+            .map(|s| s.as_str())
     }
 
     /// Check if a token matches a category (including parent relationships)
@@ -112,7 +115,9 @@ impl CategoryRegistry {
 
     /// Get connection profile for a category
     pub fn connection(&self, category: &str) -> Option<&ConnectionProfile> {
-        self.categories.get(category).and_then(|c| c.connection.as_ref())
+        self.categories
+            .get(category)
+            .and_then(|c| c.connection.as_ref())
     }
 }
 
@@ -122,7 +127,9 @@ static CATEGORY_REGISTRY: OnceLock<CategoryRegistry> = OnceLock::new();
 /// Load category configurations from a manifests directory
 ///
 /// Scans subdirectories for category.json files and builds the registry.
-pub fn load_categories<P: AsRef<Path>>(manifests_dir: P) -> Result<CategoryRegistry, std::io::Error> {
+pub fn load_categories<P: AsRef<Path>>(
+    manifests_dir: P,
+) -> Result<CategoryRegistry, std::io::Error> {
     let mut registry = CategoryRegistry::new();
     let dir = manifests_dir.as_ref();
 
@@ -154,11 +161,7 @@ pub fn load_categories<P: AsRef<Path>>(manifests_dir: P) -> Result<CategoryRegis
                         }
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to read {}: {}",
-                            config_path.display(),
-                            e
-                        );
+                        eprintln!("Warning: Failed to read {}: {}", config_path.display(), e);
                     }
                 }
             }
@@ -201,8 +204,8 @@ pub fn get_category_registry() -> &'static CategoryRegistry {
 ///
 /// Should be called once at startup if using a non-default manifest location.
 pub fn init_category_registry<P: AsRef<Path>>(manifests_dir: P) -> Result<(), String> {
-    let registry = load_categories(manifests_dir)
-        .map_err(|e| format!("Failed to load categories: {}", e))?;
+    let registry =
+        load_categories(manifests_dir).map_err(|e| format!("Failed to load categories: {}", e))?;
 
     CATEGORY_REGISTRY
         .set(registry)

@@ -28,8 +28,8 @@ pub async fn lantern_registration_loop(
     endpoint: String,
     lantern_endpoint: String,
 ) -> anyhow::Result<()> {
-    use reqwest::Client;
     use garden_common::RegisterRequest;
+    use reqwest::Client;
 
     tracing::info!(
         stone_id = %stone_id,
@@ -51,12 +51,7 @@ pub async fn lantern_registration_loop(
             services: vec![],
         };
 
-        match client
-            .post(&register_url)
-            .json(&request)
-            .send()
-            .await
-        {
+        match client.post(&register_url).json(&request).send().await {
             Ok(response) if response.status().is_success() => {
                 tracing::debug!("Registered with Lantern successfully");
             }

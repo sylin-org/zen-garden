@@ -36,8 +36,8 @@
 //! | Content | 12     | Field values, list items       |
 //! | Detail  | 16     | Nested details, verbose output |
 
-use crate::ui::rendering::{constants, TerminalInfo};
 use crate::cli_colors::CliFormatter;
+use crate::ui::rendering::{constants, TerminalInfo};
 
 /// Semantic indentation levels for consistent nesting
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,17 +309,27 @@ impl<'a> FieldBuilder<'a> {
         // Apply styling based on tags
         let (label_styled, value_styled) = if self.has_tag("verbose") {
             (
-                format!("[verbose] {:<width$}", label, width = self.label_width.saturating_sub(10)),
+                format!(
+                    "[verbose] {:<width$}",
+                    label,
+                    width = self.label_width.saturating_sub(10)
+                ),
                 value.to_string(),
             )
         } else if self.has_tag("dim") {
             (
-                self.layout.fmt.description(&format!("{:<width$}", label, width = self.label_width)),
+                self.layout.fmt.description(&format!(
+                    "{:<width$}",
+                    label,
+                    width = self.label_width
+                )),
                 self.layout.fmt.description(value),
             )
         } else if self.has_tag("highlight") {
             (
-                self.layout.fmt.label(&format!("{:<width$}", label, width = self.label_width)),
+                self.layout
+                    .fmt
+                    .label(&format!("{:<width$}", label, width = self.label_width)),
                 self.layout.fmt.value(value),
             )
         } else {
@@ -585,13 +595,19 @@ mod tests {
 
         // Should contain both label and value
         assert!(output.contains("IP"), "Output should contain label 'IP'");
-        assert!(output.contains("10.0.0.1"), "Output should contain value '10.0.0.1'");
-        
+        assert!(
+            output.contains("10.0.0.1"),
+            "Output should contain value '10.0.0.1'"
+        );
+
         // Value should appear after label with spacing
         let ip_pos = output.find("IP").unwrap();
         let value_pos = output.find("10.0.0.1").unwrap();
         assert!(value_pos > ip_pos, "Value should appear after label");
-        assert!(value_pos - ip_pos > 10, "Label and value should have significant spacing");
+        assert!(
+            value_pos - ip_pos > 10,
+            "Label and value should have significant spacing"
+        );
     }
 
     #[test]
@@ -617,7 +633,11 @@ mod tests {
         assert!(output.contains("[verbose]"));
 
         // Field with verbose tag
-        let output = layout.field("URL").value("http://localhost").tag("verbose").render();
+        let output = layout
+            .field("URL")
+            .value("http://localhost")
+            .tag("verbose")
+            .render();
         assert!(output.contains("[verbose]"));
     }
 }

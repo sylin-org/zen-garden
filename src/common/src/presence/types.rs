@@ -1,7 +1,7 @@
-﻿//! Presence protocol data types (SSE payload contracts)
+//! Presence protocol data types (SSE payload contracts)
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Event filter for SSE subscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,9 @@ pub struct EventFilter {
 impl EventFilter {
     /// Create filter that allows all events
     pub fn allow_all() -> Self {
-        Self { categories: Vec::new() }
+        Self {
+            categories: Vec::new(),
+        }
     }
 
     /// Check if event category is allowed
@@ -34,7 +36,7 @@ pub struct PresenceSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoneState {
     pub name: String,
-    pub health: String,      // "thriving", "withering", "wilting"
+    pub health: String, // "thriving", "withering", "wilting"
     pub cpu_percent: f64,
     pub memory_percent: f64,
     pub disk_percent: f64,
@@ -46,17 +48,17 @@ pub struct StoneState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OfferingState {
     pub name: String,
-    pub status: String,      // "running", "stopped", "dormant", etc.
-    pub health: String,      // "healthy", "unhealthy"
+    pub status: String, // "running", "stopped", "dormant", etc.
+    pub health: String, // "healthy", "unhealthy"
 }
 
 /// Client-initiated notification (Rake → Moss → Companions)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientNotification {
-    pub event_type: String,  // "tended", "observed", etc.
-    pub client: String,      // "rake", "lantern", etc.
-    pub from_host: Option<String>,  // Hostname or IP
-    pub message: Option<String>,    // Optional display message
+    pub event_type: String,        // "tended", "observed", etc.
+    pub client: String,            // "rake", "lantern", etc.
+    pub from_host: Option<String>, // Hostname or IP
+    pub message: Option<String>,   // Optional display message
 }
 
 /// Payload for stone.load.updated events

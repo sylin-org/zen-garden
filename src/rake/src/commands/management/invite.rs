@@ -7,8 +7,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// Invite command for pond zen syntax operations
 pub struct InviteCommand {
@@ -56,7 +56,9 @@ impl Command for InviteCommand {
                                     ttl
                                 );
                             }
-                            if let Some(inviter) = data.get("inviter_stone").and_then(|i| i.as_str()) {
+                            if let Some(inviter) =
+                                data.get("inviter_stone").and_then(|i| i.as_str())
+                            {
                                 println!(
                                     "{}From: {}",
                                     " ".repeat(ui::constants::DEFAULT_INDENT + 3),

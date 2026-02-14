@@ -132,8 +132,7 @@ pub fn heartbeat_stream(
     use tokio_stream::wrappers::IntervalStream;
     use tokio_stream::StreamExt;
 
-    IntervalStream::new(tokio::time::interval(interval))
-        .map(|_| Ok(SseEvent::new(":heartbeat\n")))
+    IntervalStream::new(tokio::time::interval(interval)).map(|_| Ok(SseEvent::new(":heartbeat\n")))
 }
 
 #[cfg(test)]

@@ -8,15 +8,25 @@ use std::sync::OnceLock;
 
 // Re-export the unified offering types from common
 pub use garden_common::manifests::{
-    // Hardware manifests
-    HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR,
-    // Unified offering model
-    Offering, OfferingRegistry, OfferingMetadata,
-    ManagedConfig, AdoptedConfig, BorrowedConfig,
-    ServiceTemplate, TemplateInfo, runtime_manifests_dir,
-    ManifestRegistry, RUNTIME_MANIFESTS_DIR,
+    runtime_manifests_dir,
+    AdoptedConfig,
+    BorrowedConfig,
     // Capability manifests
     CapabilityManifest,
+    // Hardware manifests
+    HwEntry,
+    HwFrontmatter,
+    HwManifests,
+    ManagedConfig,
+    ManifestRegistry,
+    // Unified offering model
+    Offering,
+    OfferingMetadata,
+    OfferingRegistry,
+    ServiceTemplate,
+    TemplateInfo,
+    RUNTIME_HW_MANIFESTS_DIR,
+    RUNTIME_MANIFESTS_DIR,
 };
 
 use crate::infra::EmbeddedManifests;
@@ -60,10 +70,7 @@ pub fn load_capability_manifests() -> &'static HashMap<String, CapabilityManifes
             }
         }
 
-        tracing::info!(
-            count = registry.len(),
-            "Loaded capability manifests"
-        );
+        tracing::info!(count = registry.len(), "Loaded capability manifests");
 
         registry
     })

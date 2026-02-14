@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 use garden_common::{DetectionStatus, GardenApiResponse, HardwareCapabilities};
 
 /// Display stone system status
@@ -35,7 +35,10 @@ impl Command for StatusCommand {
 
         let endpoint = ctx.endpoint()?;
 
-        let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+        let caps_url = format!(
+            "{}/api/v1/stone/capabilities",
+            endpoint.trim_end_matches('/')
+        );
         let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
         let response: GardenApiResponse<HardwareCapabilities> =
             ctx.client.get(&caps_url).send().await?.json().await?;
@@ -53,10 +56,7 @@ impl Command for StatusCommand {
                 DetectionStatus::Partial => "    ⚙️  GPU detection in progress (CPU data ready)...",
                 DetectionStatus::Complete => "", // Won't reach here
             };
-            println!(
-                "{}\n",
-                ui::colored_text(status_msg, "yellow", &ctx.term)
-            );
+            println!("{}\n", ui::colored_text(status_msg, "yellow", &ctx.term));
         }
 
         // === ACCESS SECTION ===
@@ -65,11 +65,12 @@ impl Command for StatusCommand {
             ui::section_header_v2("ACCESS", false, ctx.term.supports_color)
         );
         // Parse endpoint to extract IP and port
-        let endpoint_clean = endpoint
-            .trim_start_matches("http://")
-            .trim_end_matches('/');
+        let endpoint_clean = endpoint.trim_start_matches("http://").trim_end_matches('/');
         let (ip_addr, port) = if let Some(colon_pos) = endpoint_clean.rfind(':') {
-            (&endpoint_clean[..colon_pos], &endpoint_clean[colon_pos + 1..])
+            (
+                &endpoint_clean[..colon_pos],
+                &endpoint_clean[colon_pos + 1..],
+            )
         } else {
             (endpoint_clean, "7185")
         };
@@ -78,7 +79,11 @@ impl Command for StatusCommand {
         let mdns_name = format!("{}.local", caps.stone_name.to_lowercase());
 
         let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
-        println!("{}{}", indent, ui::place_value("HTTP", &format!("http://{}:{}", ip_addr, port)));
+        println!(
+            "{}{}",
+            indent,
+            ui::place_value("HTTP", &format!("http://{}:{}", ip_addr, port))
+        );
         println!("{}{}", indent, ui::place_value("mDNS", &mdns_name));
         println!("{}{}", indent, ui::place_value("IP", ip_addr));
 
@@ -88,8 +93,16 @@ impl Command for StatusCommand {
             "{}",
             ui::section_header_v2("SYSTEM", false, ctx.term.supports_color)
         );
-        println!("{}{}", indent, ui::place_value("ARCH", &caps.hardware.cpu.architecture));
-        println!("{}{}", indent, ui::place_value("CPU", &format!("{} cores", caps.hardware.cpu.cores)));
+        println!(
+            "{}{}",
+            indent,
+            ui::place_value("ARCH", &caps.hardware.cpu.architecture)
+        );
+        println!(
+            "{}{}",
+            indent,
+            ui::place_value("CPU", &format!("{} cores", caps.hardware.cpu.cores))
+        );
 
         // CPU flags - filter to important ones for AI/performance
         if let Some(features) = &caps.hardware.cpu.features {
@@ -106,11 +119,22 @@ impl Command for StatusCommand {
                 })
                 .collect();
             if !relevant.is_empty() {
-                println!("{}{}", indent, ui::place_value("FLAGS", &relevant.join(", ")));
+                println!(
+                    "{}{}",
+                    indent,
+                    ui::place_value("FLAGS", &relevant.join(", "))
+                );
             }
         }
 
-        println!("{}{}", indent, ui::place_value("MEMORY", &format!("{} GB", caps.hardware.memory.total_mb / 1024)));
+        println!(
+            "{}{}",
+            indent,
+            ui::place_value(
+                "MEMORY",
+                &format!("{} GB", caps.hardware.memory.total_mb / 1024)
+            )
+        );
 
         // OS and Kernel (from RuntimeInfo)
         if let Some(ref runtime) = caps.runtime {
@@ -127,7 +151,7 @@ impl Command for StatusCommand {
                 }
             };
             println!("{}{}", indent, ui::place_value("OS", &os_display));
-            
+
             if let Some(ref kernel_ver) = runtime.kernel {
                 println!("{}{}", indent, ui::place_value("KERNEL", kernel_ver));
             }

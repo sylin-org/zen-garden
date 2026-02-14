@@ -10,10 +10,7 @@ use super::topology::GardenTopology;
 /// Resolve a service type to an online stone endpoint.
 ///
 /// Returns the first online stone that has a running service of the given type.
-pub fn resolve_service(
-    topology: &GardenTopology,
-    service_type: &str,
-) -> Option<ResolveResponse> {
+pub fn resolve_service(topology: &GardenTopology, service_type: &str) -> Option<ResolveResponse> {
     for entry in topology.stones.values() {
         if entry.status != StoneStatus::Online {
             continue;

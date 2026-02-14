@@ -1,12 +1,11 @@
 /// Tests for discovery module
-/// 
-/// Note: UDP-based discovery functions (discover_lantern, discover_moss) 
+///
+/// Note: UDP-based discovery functions (discover_lantern, discover_moss)
 /// require network access and are better suited for integration tests.
 /// These unit tests focus on testable logic.
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn test_discovery_module_exists() {

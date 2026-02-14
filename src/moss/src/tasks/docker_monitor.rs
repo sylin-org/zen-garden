@@ -10,11 +10,11 @@
 //! - Broadcasts DockerEvent when state changes
 //! - Updates subsystems.docker.ready flag
 
-use std::sync::Arc;
+use crate::docker::DockerManager;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use crate::docker::DockerManager;
 
 /// Default retry interval when disconnected (Docker daemon unavailable)
 pub const DEFAULT_DISCONNECT_RETRY_SECS: u64 = 5;
@@ -81,10 +81,7 @@ pub struct DockerMonitor {
 
 impl DockerMonitor {
     /// Start background Docker monitoring with default config
-    pub async fn start(
-        docker: Arc<DockerManager>,
-        docker_ready: Arc<AtomicBool>,
-    ) -> Self {
+    pub async fn start(docker: Arc<DockerManager>, docker_ready: Arc<AtomicBool>) -> Self {
         Self::start_with_config(docker, DockerMonitorConfig::default(), docker_ready).await
     }
 
@@ -166,10 +163,7 @@ async fn docker_monitor_task(
 
             let event = if was_disconnected && !now_disconnected {
                 // Reconnected
-                tracing::info!(
-                    docker_ready = true,
-                    "Docker daemon reconnected"
-                );
+                tracing::info!(docker_ready = true, "Docker daemon reconnected");
                 DockerEvent::Reconnected
             } else if !was_disconnected && now_disconnected {
                 // Disconnected

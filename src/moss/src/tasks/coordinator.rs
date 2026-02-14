@@ -45,12 +45,12 @@ pub fn start_topology_maintenance(
 
         loop {
             interval.tick().await;
-            let (marked, evicted) =
-                crate::domain::topology::maintain_and_persist(
-                    &topology_cache,
-                    &topology_dirty,
-                    &self_entry,
-                ).await;
+            let (marked, evicted) = crate::domain::topology::maintain_and_persist(
+                &topology_cache,
+                &topology_dirty,
+                &self_entry,
+            )
+            .await;
             if marked > 0 || evicted > 0 {
                 tracing::debug!(
                     marked_offline = marked,
@@ -258,7 +258,8 @@ pub async fn start_discovery_listener(
                         "Stone goodbye received, marking offline"
                     );
                     // Mark stone as offline immediately (marks dirty for persistence)
-                    mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty).await;
+                    mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty)
+                        .await;
 
                     // STORAGE-0003: Remove from storage cache
                     crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id)

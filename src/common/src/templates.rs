@@ -69,10 +69,7 @@ impl TemplateContext {
 
     /// Check if a variable equals a specific value
     pub fn equals(&self, key: &str, value: &str) -> bool {
-        self.variables
-            .get(key)
-            .map(|v| v == value)
-            .unwrap_or(false)
+        self.variables.get(key).map(|v| v == value).unwrap_or(false)
     }
 }
 

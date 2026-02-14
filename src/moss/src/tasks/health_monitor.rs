@@ -1,4 +1,4 @@
-﻿//! Health monitoring background task
+//! Health monitoring background task
 //!
 //! Continuous monitoring loop that:
 //! - Polls Docker container health every 30 seconds
@@ -8,9 +8,11 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
-use crate::AppState;
 use crate::domain::adopt_offering_container;
-use garden_common::{NotificationTag, OfferingStatus, ServiceHealthStatus, NOTIF_SOURCE_OFFERINGS_DEGRADED};
+use crate::AppState;
+use garden_common::{
+    NotificationTag, OfferingStatus, ServiceHealthStatus, NOTIF_SOURCE_OFFERINGS_DEGRADED,
+};
 use std::sync::atomic::Ordering;
 
 /// Background health monitoring loop
@@ -64,7 +66,14 @@ pub async fn health_monitor_task(state: AppState) {
             offerings
                 .iter()
                 .filter(|o| o.is_managed())
-                .map(|o| (o.offering_id.clone(), o.name.clone(), o.status, o.health.clone()))
+                .map(|o| {
+                    (
+                        o.offering_id.clone(),
+                        o.name.clone(),
+                        o.status,
+                        o.health.clone(),
+                    )
+                })
                 .collect()
         };
 
@@ -94,7 +103,8 @@ pub async fn health_monitor_task(state: AppState) {
             // Update offerings if status or health changed
             if new_status != old_status || new_health != old_health {
                 let mut offerings = state.offerings.write().await;
-                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id)
+                {
                     tracing::info!(
                         offering = %name,
                         old_status = ?old_status,
@@ -112,7 +122,8 @@ pub async fn health_monitor_task(state: AppState) {
             // Update container resource metrics
             if let Ok(resources) = state.docker.get_container_stats(&name).await {
                 let mut offerings = state.offerings.write().await;
-                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id)
+                {
                     if let Some(ref mut managed) = offering.managed_data_mut() {
                         managed.resources = Some(resources);
                     }
@@ -124,7 +135,9 @@ pub async fn health_monitor_task(state: AppState) {
                 if let Ok(docker_ports) = state.docker.get_container_ports(&name).await {
                     if let Some((actual_host_port, _)) = docker_ports.first() {
                         let mut offerings = state.offerings.write().await;
-                        if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                        if let Some(offering) =
+                            offerings.iter_mut().find(|o| o.offering_id == offering_id)
+                        {
                             if offering.location.port != *actual_host_port {
                                 tracing::info!(
                                     offering = %name,
@@ -224,7 +237,15 @@ pub async fn health_monitor_task(state: AppState) {
 
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
-                        match adopt_offering_container(&state.docker, &state.manifest_registry, container_name, &state.stone_name, cached_caps_ref).await {
+                        match adopt_offering_container(
+                            &state.docker,
+                            &state.manifest_registry,
+                            container_name,
+                            &state.stone_name,
+                            cached_caps_ref,
+                        )
+                        .await
+                        {
                             Ok(Some(offering)) => {
                                 state.upsert_offering(offering, true).await;
                                 state_changed = true;

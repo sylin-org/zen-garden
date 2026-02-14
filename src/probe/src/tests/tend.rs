@@ -1,4 +1,4 @@
-﻿//! Tend tests - tending selection, fallback, and persistence
+//! Tend tests - tending selection, fallback, and persistence
 //!
 //! Tests for the "tend" concept: which stone Rake talks to by default.
 //!
@@ -41,9 +41,12 @@ async fn test_reachable(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
             // Health check
             match tended.get_json("/health").await {
                 Ok(resp) => {
-                    let status = resp.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+                    let status = resp
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("unknown");
                     bag.put("tended_status", status);
-                    
+
                     if status == "healthy" {
                         StepResult::ok_with(serde_json::json!({
                             "stone": tended.name,
@@ -61,7 +64,12 @@ async fn test_reachable(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
     };
 
     let duration = start.elapsed();
-    bag.record_step("tend_reachable", "Tended stone reachability", duration.as_millis() as u64, result);
+    bag.record_step(
+        "tend_reachable",
+        "Tended stone reachability",
+        duration.as_millis() as u64,
+        result,
+    );
 
     Ok(bag)
 }
@@ -94,21 +102,21 @@ async fn test_capabilities(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag>
                         .and_then(|d| d.get("stone_name"))
                         .and_then(|n| n.as_str())
                         .unwrap_or("unknown");
-                    
+
                     let cpu_count = data
                         .and_then(|d| d.get("cpu_count"))
                         .and_then(|c| c.as_u64())
                         .unwrap_or(0);
-                    
+
                     let total_memory = data
                         .and_then(|d| d.get("total_memory"))
                         .and_then(|m| m.as_u64())
                         .unwrap_or(0);
-                    
+
                     bag.put("tended_stone_name", stone_name);
                     bag.put("tended_cpu_count", cpu_count);
                     bag.put("tended_memory", total_memory);
-                    
+
                     // Verify name matches
                     if stone_name == tended.name {
                         StepResult::ok_with(serde_json::json!({
@@ -131,7 +139,12 @@ async fn test_capabilities(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag>
     };
 
     let duration = start.elapsed();
-    bag.record_step("tend_capabilities", "Tended stone capabilities", duration.as_millis() as u64, result);
+    bag.record_step(
+        "tend_capabilities",
+        "Tended stone capabilities",
+        duration.as_millis() as u64,
+        result,
+    );
 
     Ok(bag)
 }
@@ -159,7 +172,11 @@ async fn test_alternatives(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag>
         .stones
         .iter()
         .filter(|s| {
-            garden.tended.as_ref().map(|t| t.name != s.name).unwrap_or(true)
+            garden
+                .tended
+                .as_ref()
+                .map(|t| t.name != s.name)
+                .unwrap_or(true)
         })
         .map(|s| s.name.as_str())
         .collect();
@@ -213,7 +230,11 @@ async fn test_switch_simulation(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     // Find an alternative stone
     let alternative = garden.stones.iter().find(|s| {
-        garden.tended.as_ref().map(|t| t.name != s.name).unwrap_or(true)
+        garden
+            .tended
+            .as_ref()
+            .map(|t| t.name != s.name)
+            .unwrap_or(true)
     });
 
     let result = match alternative {
@@ -221,8 +242,11 @@ async fn test_switch_simulation(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
             // Verify the alternative is reachable
             match alt.get_json("/health").await {
                 Ok(resp) => {
-                    let status = resp.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
-                    
+                    let status = resp
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("unknown");
+
                     if status == "healthy" {
                         bag.put("simulated_switch_to", &alt.name);
                         StepResult::ok_with(serde_json::json!({
@@ -274,10 +298,13 @@ async fn test_all_healthy(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
 
     for stone in &garden.stones {
         let step_start = Instant::now();
-        
+
         match stone.get_json("/health").await {
             Ok(resp) => {
-                let status = resp.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+                let status = resp
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("unknown");
                 if status == "healthy" {
                     healthy.push(stone.name.clone());
                     bag.record_step(
@@ -320,7 +347,9 @@ async fn test_all_healthy(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
     } else {
         StepResult::failed(format!(
             "{}/{} stones unhealthy: {:?}",
-            unhealthy.len(), total, unhealthy
+            unhealthy.len(),
+            total,
+            unhealthy
         ))
     };
 
@@ -358,14 +387,19 @@ async fn test_round_robin(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
         for stone in &garden.stones {
             let start = Instant::now();
             let step_id = format!("rr_{}_{}", i + 1, stone.name);
-            
+
             match stone.get_json("/health").await {
                 Ok(_) => {
                     let duration = start.elapsed().as_millis() as u64;
                     response_times.push((stone.name.clone(), duration));
                     bag.record_step(
                         &step_id,
-                        format!("Iteration {}: {} responded in {}ms", i + 1, stone.name, duration),
+                        format!(
+                            "Iteration {}: {} responded in {}ms",
+                            i + 1,
+                            stone.name,
+                            duration
+                        ),
                         duration,
                         StepResult::ok(),
                     );
@@ -384,7 +418,8 @@ async fn test_round_robin(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
     }
 
     // Calculate average response times per stone
-    let mut stone_averages: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
+    let mut stone_averages: std::collections::HashMap<String, Vec<u64>> =
+        std::collections::HashMap::new();
     for (stone, time) in &response_times {
         stone_averages.entry(stone.clone()).or_default().push(*time);
     }
@@ -408,7 +443,11 @@ async fn test_round_robin(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
 
     bag.record_step(
         "round_robin_summary",
-        format!("{} queries across {} stones", response_times.len(), garden.stones.len()),
+        format!(
+            "{} queries across {} stones",
+            response_times.len(),
+            garden.stones.len()
+        ),
         0,
         result,
     );

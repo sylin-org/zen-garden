@@ -1,27 +1,31 @@
 use anyhow::{Context, Result};
 use bollard::container::{
-    Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions,
-    LogsOptions, RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
+    Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
+    RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::image::{CreateImageOptions, PruneImagesOptions};
 use bollard::models::{ContainerCreateResponse, HealthStatusEnum, HostConfig, PortBinding};
 use bollard::Docker;
 use futures_util::stream::{Stream, StreamExt, TryStreamExt};
-use std::collections::HashMap;
-use std::net::TcpListener;
-use std::pin::Pin;
-use std::sync::Arc;
+use garden_common::console::{self, ConsolePrinter};
+use garden_common::constants::{OFFERING_CONTAINER_PREFIX, OFFERING_FQN_CONTAINER_SEPARATOR};
 use garden_common::manifests::get_ports_catalog;
 use garden_common::offerings::parse_offering_fqn;
 use garden_common::types::{PortConflictHandler, PortRemediation};
 use garden_common::{ServiceHealthStatus, ServiceStatus};
-use garden_common::console::{self, ConsolePrinter};
-use garden_common::constants::{OFFERING_CONTAINER_PREFIX, OFFERING_FQN_CONTAINER_SEPARATOR};
+use std::collections::HashMap;
+use std::net::TcpListener;
+use std::pin::Pin;
+use std::sync::Arc;
 
 pub fn zen_offering_container_name(offering_name: &str) -> Result<String> {
     let fqn = parse_offering_fqn(offering_name)
         .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering_name, e))?;
-    Ok(format!("{}{}", OFFERING_CONTAINER_PREFIX, fqn.encoded_for_container()))
+    Ok(format!(
+        "{}{}",
+        OFFERING_CONTAINER_PREFIX,
+        fqn.encoded_for_container()
+    ))
 }
 
 pub fn decode_zen_offering_container_name(container_name: &str) -> Option<String> {
@@ -58,16 +62,24 @@ fn get_conflict_handler(port: u16) -> Option<&'static PortConflictHandler> {
     let port_entry = catalog.ports.get(&port)?;
 
     #[cfg(target_os = "linux")]
-    { port_entry.linux.as_ref() }
+    {
+        port_entry.linux.as_ref()
+    }
 
     #[cfg(target_os = "macos")]
-    { port_entry.macos.as_ref() }
+    {
+        port_entry.macos.as_ref()
+    }
 
     #[cfg(target_os = "windows")]
-    { port_entry.windows.as_ref() }
+    {
+        port_entry.windows.as_ref()
+    }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    { None }
+    {
+        None
+    }
 }
 
 /// Get the default (cross-platform) remediation for a port from the catalog
@@ -163,7 +175,9 @@ async fn remediate_port_with_handler(port: u16, handler: &PortConflictHandler) -
             anyhow::bail!(
                 "Port {} is in use by a service other than {}. \
                  Check what's using it with: sudo lsof -i :{}",
-                port, handler.common_culprit, port
+                port,
+                handler.common_culprit,
+                port
             );
         }
     }
@@ -178,7 +192,10 @@ async fn remediate_port_with_handler(port: u16, handler: &PortConflictHandler) -
             );
             execute_auto_remediation(port, commands, files).await
         }
-        PortRemediation::Remap { range_start, range_end } => {
+        PortRemediation::Remap {
+            range_start,
+            range_end,
+        } => {
             // Platform handler specified remap - this is unusual but supported
             anyhow::bail!(
                 "Port {} has platform-specific remap rule (range {}-{}), but remap should be handled at resolution level",
@@ -208,7 +225,10 @@ async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
     // No platform handler - check for default remediation (typically Remap)
     if let Some(default_remediation) = get_default_remediation(requested_port) {
         match default_remediation {
-            PortRemediation::Remap { range_start, range_end } => {
+            PortRemediation::Remap {
+                range_start,
+                range_end,
+            } => {
                 tracing::info!(
                     port = requested_port,
                     range_start = range_start,
@@ -228,13 +248,18 @@ async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
                     None => {
                         anyhow::bail!(
                             "Port {} is in use and no available port found in remap range {}-{}",
-                            requested_port, range_start, range_end
+                            requested_port,
+                            range_start,
+                            range_end
                         );
                     }
                 }
             }
             PortRemediation::Auto { commands, files } => {
-                tracing::info!(port = requested_port, "Auto-remediating port conflict (default handler)");
+                tracing::info!(
+                    port = requested_port,
+                    "Auto-remediating port conflict (default handler)"
+                );
                 execute_auto_remediation(requested_port, commands, files).await?;
                 return Ok(requested_port);
             }
@@ -252,7 +277,9 @@ async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
         "Port {} is already in use. Check what's using it with:\n\
          Linux/macOS: sudo lsof -i :{}\n\
          Windows: netstat -ano | findstr :{}",
-        requested_port, requested_port, requested_port
+        requested_port,
+        requested_port,
+        requested_port
     );
 }
 
@@ -292,17 +319,18 @@ impl DockerManager {
         #[cfg(target_os = "windows")]
         let docker = {
             tracing::debug!("Connecting to Docker via Windows named pipe");
-            Docker::connect_with_named_pipe_defaults()
-                .context("Failed to connect to Docker daemon via named pipe (is Docker Desktop running?)")?
+            Docker::connect_with_named_pipe_defaults().context(
+                "Failed to connect to Docker daemon via named pipe (is Docker Desktop running?)",
+            )?
         };
-        
+
         #[cfg(not(target_os = "windows"))]
         let docker = {
             tracing::debug!("Connecting to Docker via Unix socket");
             Docker::connect_with_socket_defaults()
                 .context("Failed to connect to Docker daemon via Unix socket")?
         };
-        
+
         Ok(Self { docker })
     }
 
@@ -313,22 +341,29 @@ impl DockerManager {
 
     /// Get Docker version
     pub async fn get_docker_version(&self) -> Result<String> {
-        let version = self.docker.version().await
+        let version = self
+            .docker
+            .version()
+            .await
             .context("Failed to get Docker version")?;
-        
+
         // Extract version string (e.g., "24.0.7")
         Ok(version.version.unwrap_or_else(|| "unknown".to_string()))
     }
 
     /// Stop a service container
-    pub async fn stop_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
+    pub async fn stop_service(
+        &self,
+        name: &str,
+        console: Option<&Arc<ConsolePrinter>>,
+    ) -> Result<()> {
         let container_name = zen_offering_container_name(name)?;
-        
+
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Stopping,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, "Stopping service via Docker API");
@@ -342,7 +377,7 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Stopped,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, "Service stopped successfully");
@@ -350,14 +385,18 @@ impl DockerManager {
     }
 
     /// Start a service container
-    pub async fn start_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
+    pub async fn start_service(
+        &self,
+        name: &str,
+        console: Option<&Arc<ConsolePrinter>>,
+    ) -> Result<()> {
         let container_name = zen_offering_container_name(name)?;
-        
+
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Starting,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, "Starting service via Docker API");
@@ -371,7 +410,7 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Running,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, "Service started successfully");
@@ -391,7 +430,7 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Requesting,
-                format!("{} → {}", name, image)
+                format!("{} → {}", name, image),
             ));
         }
         tracing::info!(service = %name, image = %image, "Installing service via Docker API");
@@ -485,10 +524,10 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Creating,
-                name.to_string()
+                name.to_string(),
             ));
         }
-        
+
         self.docker
             .start_container(&container_name, None::<StartContainerOptions<String>>)
             .await
@@ -498,19 +537,23 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Running,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, container_name = %container_name, "Service started successfully");
         Ok(resolved_ports)
     }
 
-    pub async fn remove_service(&self, name: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
+    pub async fn remove_service(
+        &self,
+        name: &str,
+        console: Option<&Arc<ConsolePrinter>>,
+    ) -> Result<()> {
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Removing,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, "Removing service via Docker API");
@@ -526,12 +569,12 @@ impl DockerManager {
             .stop_container(&container_name, None::<StopContainerOptions>)
             .await
             .context("Failed to stop container")?;
-        
+
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Stopped,
-                name.to_string()
+                name.to_string(),
             ));
         }
 
@@ -563,12 +606,12 @@ impl DockerManager {
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<()> {
         let container_name = zen_offering_container_name(name)?;
-        
+
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Upgrading,
-                format!("{} → {}", name, new_image)
+                format!("{} → {}", name, new_image),
             ));
         }
         tracing::info!(service = %name, new_image = %new_image, "Upgrading service");
@@ -587,7 +630,7 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Upgraded,
-                name.to_string()
+                name.to_string(),
             ));
         }
         tracing::info!(service = %name, container_name = %container_name, "Service upgraded successfully");
@@ -655,12 +698,16 @@ impl DockerManager {
     /// Pull a Docker image from registry
     ///
     /// Used during install and nourishment to fetch images.
-    pub async fn pull_image(&self, image: &str, console: Option<&Arc<ConsolePrinter>>) -> Result<()> {
+    pub async fn pull_image(
+        &self,
+        image: &str,
+        console: Option<&Arc<ConsolePrinter>>,
+    ) -> Result<()> {
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Pulling,
-                image.to_string()
+                image.to_string(),
             ));
         }
         tracing::info!(image = %image, "Pulling Docker image");
@@ -682,7 +729,7 @@ impl DockerManager {
                                 console.emit(console::ConsoleEvent::new(
                                     console::EventCategory::Services,
                                     console::EventStatus::PullProgress,
-                                    format!("{} → {}", image, progress)
+                                    format!("{} → {}", image, progress),
                                 ));
                             }
                         }
@@ -699,7 +746,7 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::PullComplete,
-                image.to_string()
+                image.to_string(),
             ));
         }
         tracing::info!(image = %image, "Image pulled successfully");
@@ -709,7 +756,7 @@ impl DockerManager {
     /// Get the status of a service by checking its Docker container
     pub async fn get_service_status(&self, name: &str) -> Result<ServiceStatus> {
         let container_name = zen_offering_container_name(name)?;
-        
+
         let inspect = self
             .docker
             .inspect_container(&container_name, None::<InspectContainerOptions>)
@@ -717,7 +764,7 @@ impl DockerManager {
             .context(format!("Failed to inspect container '{}'", container_name))?;
 
         let state = inspect.state.context("Container has no state")?;
-        
+
         let status = if state.running.unwrap_or(false) {
             ServiceStatus::Running
         } else if state.paused.unwrap_or(false) {
@@ -734,7 +781,7 @@ impl DockerManager {
     /// Get the health status of a service by checking its Docker container health
     pub async fn get_service_health(&self, name: &str) -> Result<ServiceHealthStatus> {
         let container_name = zen_offering_container_name(name)?;
-        
+
         let inspect = self
             .docker
             .inspect_container(&container_name, None::<InspectContainerOptions>)
@@ -742,7 +789,7 @@ impl DockerManager {
             .context(format!("Failed to inspect container '{}'", container_name))?;
 
         let state = inspect.state.context("Container has no state")?;
-        
+
         // Check if container is running first
         if !state.running.unwrap_or(false) {
             return Ok(ServiceHealthStatus::Offline);
@@ -755,7 +802,9 @@ impl DockerManager {
                     HealthStatusEnum::HEALTHY => ServiceHealthStatus::Healthy,
                     HealthStatusEnum::UNHEALTHY => ServiceHealthStatus::Degraded,
                     HealthStatusEnum::STARTING => ServiceHealthStatus::Degraded,
-                    HealthStatusEnum::NONE | HealthStatusEnum::EMPTY => ServiceHealthStatus::Healthy,
+                    HealthStatusEnum::NONE | HealthStatusEnum::EMPTY => {
+                        ServiceHealthStatus::Healthy
+                    }
                 });
             }
         }
@@ -767,7 +816,10 @@ impl DockerManager {
     /// List all zen-offering-prefixed containers (decoded to offering FQNs)
     /// Note: Does not include zen-companion-* sidecars
     pub async fn list_zen_containers(&self) -> Result<Vec<String>> {
-        let filters = HashMap::from([("name".to_string(), vec![OFFERING_CONTAINER_PREFIX.to_string()])]);
+        let filters = HashMap::from([(
+            "name".to_string(),
+            vec![OFFERING_CONTAINER_PREFIX.to_string()],
+        )]);
         let options = ListContainersOptions {
             all: true,
             filters,
@@ -796,7 +848,9 @@ impl DockerManager {
     }
 
     /// List all containers with detailed information (for detection)
-    pub async fn list_all_containers(&self) -> Result<Vec<crate::infra::detection::container_inspect::ContainerInfo>> {
+    pub async fn list_all_containers(
+        &self,
+    ) -> Result<Vec<crate::infra::detection::container_inspect::ContainerInfo>> {
         let options = ListContainersOptions::<String> {
             all: true,
             ..Default::default()
@@ -811,7 +865,8 @@ impl DockerManager {
         let infos = containers
             .into_iter()
             .filter_map(|c| {
-                let name = c.names
+                let name = c
+                    .names
                     .as_ref()
                     .and_then(|names| names.first())
                     .unwrap_or(&String::new())
@@ -836,15 +891,21 @@ impl DockerManager {
     }
 
     /// Get resource metrics for a specific container
-    pub async fn get_container_stats(&self, name: &str) -> Result<garden_common::ContainerResources> {
+    pub async fn get_container_stats(
+        &self,
+        name: &str,
+    ) -> Result<garden_common::ContainerResources> {
         let container_name = zen_offering_container_name(name)?;
-        
+
         let stats = self
             .docker
-            .stats(&container_name, Some(StatsOptions {
-                stream: false,
-                one_shot: true,
-            }))
+            .stats(
+                &container_name,
+                Some(StatsOptions {
+                    stream: false,
+                    one_shot: true,
+                }),
+            )
             .try_next()
             .await
             .context("Failed to get container stats")?
@@ -881,20 +942,24 @@ impl DockerManager {
         };
 
         // Block I/O
-        let (block_read_bytes, block_write_bytes) = if let Some(io_stats) = stats.blkio_stats.io_service_bytes_recursive {
-            io_stats.iter().fold((0u64, 0u64), |(read, write), entry| {
-                match entry.op.as_str() {
-                    "read" | "Read" => (read + entry.value, write),
-                    "write" | "Write" => (read, write + entry.value),
-                    _ => (read, write),
-                }
-            })
-        } else {
-            (0, 0)
-        };
+        let (block_read_bytes, block_write_bytes) =
+            if let Some(io_stats) = stats.blkio_stats.io_service_bytes_recursive {
+                io_stats.iter().fold((0u64, 0u64), |(read, write), entry| {
+                    match entry.op.as_str() {
+                        "read" | "Read" => (read + entry.value, write),
+                        "write" | "Write" => (read, write + entry.value),
+                        _ => (read, write),
+                    }
+                })
+            } else {
+                (0, 0)
+            };
 
         // Container uptime (calculate from started_at timestamp)
-        let uptime_seconds = self.get_container_uptime(&container_name).await.unwrap_or(0);
+        let uptime_seconds = self
+            .get_container_uptime(&container_name)
+            .await
+            .unwrap_or(0);
 
         Ok(garden_common::ContainerResources {
             cpu_percent: cpu_percent as f32,
@@ -962,7 +1027,7 @@ impl DockerManager {
             }
         };
         let docker = self.docker.clone();
-        
+
         Box::pin(async_stream::stream! {
             let options = LogsOptions::<String> {
                 follow: true,
@@ -973,7 +1038,7 @@ impl DockerManager {
             };
 
             let mut stream = docker.logs(&container_name, Some(options));
-            
+
             while let Some(result) = stream.next().await {
                 match result {
                     Ok(output) => {
@@ -1025,8 +1090,8 @@ impl DockerManager {
         tag: &str,
         pause: bool,
     ) -> Result<String> {
-        use bollard::image::CommitContainerOptions;
         use bollard::container::Config;
+        use bollard::image::CommitContainerOptions;
 
         tracing::info!(
             container = %container_name,
@@ -1100,9 +1165,9 @@ impl DockerManager {
     /// topology mount was auto-injected.
     pub async fn has_topology_mount(&self, name: &str) -> Result<bool> {
         let volumes = self.get_container_volumes(name).await?;
-        Ok(volumes.iter().any(|(_, dest)| {
-            dest == garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR
-        }))
+        Ok(volumes
+            .iter()
+            .any(|(_, dest)| dest == garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR))
     }
 
     /// Extract a container's runtime config for recreation (TOPO-0002)
@@ -1129,11 +1194,7 @@ impl DockerManager {
             .unwrap_or_else(|| "<unknown>".to_string());
 
         // Env
-        let env: Vec<String> = config
-            .env
-            .as_ref()
-            .cloned()
-            .unwrap_or_default();
+        let env: Vec<String> = config.env.as_ref().cloned().unwrap_or_default();
 
         // Ports: parse from host_config.port_bindings
         let mut ports = Vec::new();

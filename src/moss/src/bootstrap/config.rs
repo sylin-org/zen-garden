@@ -42,7 +42,8 @@ impl DaemonConfig {
         let file_config = MossConfig::load();
 
         // Merge log level
-        let log_level = cli.log_level
+        let log_level = cli
+            .log_level
             .clone()
             .or_else(|| file_config.as_ref().and_then(|c| c.log_level.clone()))
             .unwrap_or_else(|| "info".to_string());
@@ -51,22 +52,26 @@ impl DaemonConfig {
         let stone_name = resolve_stone_name(cli, &file_config).await?;
 
         // Merge port
-        let port = cli.port
+        let port = cli
+            .port
             .or_else(|| file_config.as_ref().and_then(|c| c.port))
             .unwrap_or(garden_common::constants::MOSS_HTTP);
 
         // Merge fast sync timeout
-        let fast_sync_timeout = cli.fast_sync_timeout
+        let fast_sync_timeout = cli
+            .fast_sync_timeout
             .or_else(|| file_config.as_ref().and_then(|c| c.fast_sync_timeout));
 
         // Determine console mode
-        let console_mode = file_config.as_ref()
+        let console_mode = file_config
+            .as_ref()
             .and_then(|c| c.console_mode.as_ref())
             .and_then(|mode_str| mode_str.parse::<console::ConsoleMode>().ok())
             .unwrap_or_else(console::detect_platform_console_mode);
 
         // Event deduplication TTL
-        let event_dedup_ttl_secs = file_config.as_ref()
+        let event_dedup_ttl_secs = file_config
+            .as_ref()
             .map(|c| c.event_dedup_ttl_secs())
             .unwrap_or(10);
 
@@ -84,7 +89,8 @@ impl DaemonConfig {
 
     /// Get retry delay for Docker connection
     pub fn docker_retry_delay_secs(&self) -> u64 {
-        self.file_config.as_ref()
+        self.file_config
+            .as_ref()
             .map(|c| c.docker_retry_delay_secs())
             .unwrap_or(3)
     }
@@ -216,8 +222,8 @@ pub fn init_tracing(
 /// 4. Otherwise → generate name, save to cache AND config
 #[cfg(target_os = "windows")]
 pub async fn ensure_windows_stone_name_config() {
-    use std::path::PathBuf;
     use crate::infra::{load_cached_stone_name, save_stone_name_cache};
+    use std::path::PathBuf;
 
     // Check if we have a cached stone name (authoritative source)
     if let Some(cached_name) = load_cached_stone_name() {

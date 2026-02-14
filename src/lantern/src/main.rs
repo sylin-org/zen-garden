@@ -40,9 +40,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let lantern_name = cli
-        .lantern_name
-        .unwrap_or_else(|| "lantern-01".to_string());
+    let lantern_name = cli.lantern_name.unwrap_or_else(|| "lantern-01".to_string());
     let http_port = cli
         .http_port
         .unwrap_or(garden_common::constants::LANTERN_HTTP);
@@ -53,8 +51,29 @@ async fn main() -> Result<()> {
         "Lantern daemon starting"
     );
 
+    // Initialize Koi embedded (mDNS-only for Lantern — browse, no registration)
+    let koi_handle = {
+        let koi = koi_embedded::Builder::new()
+            .service_mode(koi_embedded::ServiceMode::EmbeddedOnly)
+            .mdns(true)
+            .dns_enabled(false)
+            .health(false)
+            .certmesh(false)
+            .proxy(false)
+            .build()
+            .expect("Failed to build Koi embedded for Lantern");
+
+        let handle = koi
+            .start()
+            .await
+            .expect("Failed to start Koi embedded for Lantern");
+
+        tracing::info!("Koi embedded started (mDNS browse for discovery)");
+        std::sync::Arc::new(handle)
+    };
+
     // Initialize application state
-    let state = AppState::new(lantern_name, http_port);
+    let state = AppState::new(lantern_name, http_port, koi_handle);
 
     // Spawn background tasks
     let _ttl_handle = cleanup::spawn_ttl_cleanup(&state);
@@ -68,6 +87,17 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!(?addr, "Lantern HTTP server ready");
+
+    // On Windows interactive mode, open the dashboard in the default browser
+    #[cfg(target_os = "windows")]
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        let url = format!("http://localhost:{}", http_port);
+        if let Err(e) = open::that(&url) {
+            tracing::warn!("Failed to open browser: {}", e);
+        } else {
+            tracing::info!(url = %url, "Opened dashboard in browser");
+        }
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

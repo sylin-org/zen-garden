@@ -3,8 +3,8 @@
 //! Types for service detection, control, and health checking.
 //! Used by the adopted mode to detect and manage native services.
 
-use serde::{Deserialize, Serialize};
 use crate::types::{AdoptedControlLevel, HealthMethod};
+use serde::{Deserialize, Serialize};
 
 /// OS-specific detection rules
 #[derive(Debug, Clone, Serialize, Deserialize)]

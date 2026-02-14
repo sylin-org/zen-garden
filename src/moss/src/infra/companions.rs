@@ -56,12 +56,10 @@ impl CompanionStateLedger {
         let state_path = data_path.join(STATE_FILE);
         if state_path.exists() {
             match tokio::fs::read_to_string(&state_path).await {
-                Ok(content) => {
-                    match serde_json::from_str(&content) {
-                        Ok(state) => return state,
-                        Err(e) => warn!(error = %e, "Failed to parse Companion state, using defaults"),
-                    }
-                }
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(state) => return state,
+                    Err(e) => warn!(error = %e, "Failed to parse Companion state, using defaults"),
+                },
                 Err(e) => warn!(error = %e, "Failed to read Companion state, using defaults"),
             }
         }
@@ -69,7 +67,7 @@ impl CompanionStateLedger {
             enabled: HashMap::new(),
         }
     }
-    
+
     /// Save to disk
     async fn save(&self, data_path: &Path) -> Result<()> {
         let state_path = data_path.join(STATE_FILE);
@@ -77,12 +75,12 @@ impl CompanionStateLedger {
         tokio::fs::write(&state_path, content).await?;
         Ok(())
     }
-    
+
     /// Check if Companion is enabled (defaults to true if not in map)
     fn is_enabled(&self, companion_id: &str) -> bool {
         self.enabled.get(companion_id).copied().unwrap_or(true)
     }
-    
+
     /// Set Companion enabled state
     fn set_enabled(&mut self, companion_id: &str, enabled: bool) {
         self.enabled.insert(companion_id.to_string(), enabled);
@@ -103,12 +101,10 @@ impl RuntimeLedger {
         let runtime_path = data_path.join(RUNTIME_FILE);
         if runtime_path.exists() {
             match tokio::fs::read_to_string(&runtime_path).await {
-                Ok(content) => {
-                    match serde_json::from_str(&content) {
-                        Ok(ledger) => return ledger,
-                        Err(e) => debug!(error = %e, "Failed to parse runtime ledger, starting fresh"),
-                    }
-                }
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(ledger) => return ledger,
+                    Err(e) => debug!(error = %e, "Failed to parse runtime ledger, starting fresh"),
+                },
                 Err(e) => debug!(error = %e, "Failed to read runtime ledger, starting fresh"),
             }
         }
@@ -160,12 +156,10 @@ impl PortLedger {
         let ledger_path = data_path.join(PORT_LEDGER_FILE);
         if ledger_path.exists() {
             match tokio::fs::read_to_string(&ledger_path).await {
-                Ok(content) => {
-                    match serde_json::from_str(&content) {
-                        Ok(ledger) => return ledger,
-                        Err(e) => warn!(error = %e, "Failed to parse port ledger, starting fresh"),
-                    }
-                }
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(ledger) => return ledger,
+                    Err(e) => warn!(error = %e, "Failed to parse port ledger, starting fresh"),
+                },
                 Err(e) => warn!(error = %e, "Failed to read port ledger, starting fresh"),
             }
         }
@@ -174,7 +168,7 @@ impl PortLedger {
             next_port: COMPANION_PORT_BASE,
         }
     }
-    
+
     /// Save to disk
     async fn save(&self, data_path: &Path) -> Result<()> {
         let ledger_path = data_path.join(PORT_LEDGER_FILE);
@@ -182,30 +176,31 @@ impl PortLedger {
         tokio::fs::write(&ledger_path, content).await?;
         Ok(())
     }
-    
+
     /// Get or assign a port for an Companion
     fn get_or_assign(&mut self, companion_id: &str) -> Result<u16> {
         // Return existing assignment
         if let Some(&port) = self.assignments.get(companion_id) {
             return Ok(port);
         }
-        
+
         // Assign new port
         if self.next_port > COMPANION_PORT_MAX {
             return Err(anyhow::anyhow!(
                 "Port pool exhausted ({}-{}). Cannot register more companions.",
-                COMPANION_PORT_BASE, COMPANION_PORT_MAX
+                COMPANION_PORT_BASE,
+                COMPANION_PORT_MAX
             ));
         }
-        
+
         let port = self.next_port;
         self.next_port += 1;
         self.assignments.insert(companion_id.to_string(), port);
-        
+
         info!(companion = %companion_id, port = port, "Assigned port to Companion");
         Ok(port)
     }
-    
+
     /// Get port for an Companion (if assigned)
     #[allow(dead_code)]
     fn get(&self, companion_id: &str) -> Option<u16> {
@@ -218,19 +213,19 @@ impl PortLedger {
 pub struct RegisteredCompanion {
     /// Companion identifier (folder name)
     pub id: String,
-    
+
     /// Path to the Companion executable
     pub executable: PathBuf,
-    
+
     /// Command manifest (parsed from --dump-commands output)
     pub manifest: CommandManifest,
-    
+
     /// Running process handle (if started)
     process: Option<Child>,
-    
+
     /// Process ID (cached for quick checks)
     pid: Option<u32>,
-    
+
     /// Assigned command server port (when running)
     assigned_port: Option<u16>,
 }
@@ -258,7 +253,7 @@ impl RegisteredCompanion {
             false
         }
     }
-    
+
     /// Get the process ID if running
     pub fn pid(&self) -> Option<u32> {
         if self.is_running() {
@@ -267,7 +262,7 @@ impl RegisteredCompanion {
             None
         }
     }
-    
+
     /// Get the assigned command port (always available once registered)
     pub fn port(&self) -> Option<u16> {
         self.assigned_port
@@ -330,11 +325,11 @@ impl CompanionRegistry {
             runtime_ledger: Arc::new(RwLock::new(runtime_ledger)),
         }
     }
-    
+
     /// Scan Companions directory and register all found Companions
     pub async fn scan(&self) -> Result<usize> {
         let companions_path = &self.companions_path;
-        
+
         // Ensure directory exists
         if !companions_path.exists() {
             tokio::fs::create_dir_all(companions_path)
@@ -342,40 +337,42 @@ impl CompanionRegistry {
                 .context("Failed to create Companions directory")?;
             return Ok(0);
         }
-        
+
         let mut found = Vec::new();
         let mut entries = tokio::fs::read_dir(companions_path).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if !path.is_dir() {
                 continue;
             }
-            
+
             let companion_id = match path.file_name().and_then(|n| n.to_str()) {
                 Some(name) => name.to_string(),
                 None => continue,
             };
-            
+
             // Look for executable
             if let Some(executable) = find_companion_executable(&path).await {
                 found.push((companion_id, executable));
             }
         }
-        
+
         // Register each Companion
         let count = found.len();
         for (companion_id, executable) in found {
             match self.register_companion(&companion_id, &executable).await {
                 Ok(()) => info!(companion = %companion_id, "Registered Companion"),
-                Err(e) => warn!(companion = %companion_id, error = %e, "Failed to register Companion"),
+                Err(e) => {
+                    warn!(companion = %companion_id, error = %e, "Failed to register Companion")
+                }
             }
         }
-        
+
         info!(count = count, "Companion scan complete");
         Ok(count)
     }
-    
+
     /// Scan Companions directory, register, and auto-start enabled Companions
     ///
     /// This is the main entry point for Companion initialization at boot.
@@ -435,7 +432,7 @@ impl CompanionRegistry {
         );
         Ok((registered, started + adopted))
     }
-    
+
     /// Register a single Companion by running --dump-commands
     /// Gets or assigns a port from the ledger and passes it to the Companion
     async fn register_companion(&self, companion_id: &str, executable: &Path) -> Result<()> {
@@ -449,11 +446,12 @@ impl CompanionRegistry {
             }
             port
         };
-        
+
         // Call --dump-commands with --port argument
-        let manifest = invoke_dump_commands(executable, port).await
+        let manifest = invoke_dump_commands(executable, port)
+            .await
             .with_context(|| format!("Failed to get manifest from Companion {}", companion_id))?;
-        
+
         let companion = RegisteredCompanion {
             id: companion_id.to_string(),
             executable: executable.to_path_buf(),
@@ -462,32 +460,32 @@ impl CompanionRegistry {
             pid: None,
             assigned_port: Some(port),
         };
-        
+
         let mut companions = self.companions.write().await;
         companions.insert(companion_id.to_string(), companion);
-        
+
         info!(companion = %companion_id, port = port, "Registered Companion");
         Ok(())
     }
-    
+
     /// Get all registered Companions
     pub async fn list(&self) -> Vec<RegisteredCompanion> {
         let companions = self.companions.read().await;
         companions.values().cloned().collect()
     }
-    
+
     /// Get a specific Companion by ID
     pub async fn get(&self, id: &str) -> Option<RegisteredCompanion> {
         let companions = self.companions.read().await;
         companions.get(id).cloned()
     }
-    
+
     /// Get Companion manifest by ID
     pub async fn get_manifest(&self, id: &str) -> Option<CommandManifest> {
         let companions = self.companions.read().await;
         companions.get(id).map(|a| a.manifest.clone())
     }
-    
+
     /// Refresh a specific Companion's manifest
     pub async fn refresh(&self, id: &str) -> Result<()> {
         let executable = {
@@ -497,10 +495,10 @@ impl CompanionRegistry {
                 None => return Err(anyhow::anyhow!("Companion not found: {}", id)),
             }
         };
-        
+
         self.register_companion(id, &executable).await
     }
-    
+
     /// Refresh all Companions (rescan directory)
     pub async fn refresh_all(&self) -> Result<usize> {
         // Clear existing
@@ -508,38 +506,39 @@ impl CompanionRegistry {
             let mut companions_guard = self.companions.write().await;
             companions_guard.clear();
         }
-        
+
         // Rescan
         self.scan().await
     }
-    
+
     /// Get Companion count
     pub async fn count(&self) -> usize {
         let companions = self.companions.read().await;
         companions.len()
     }
-    
+
     /// Check if an Companion is running
     pub async fn is_running(&self, id: &str) -> bool {
         let companions = self.companions.read().await;
         companions.get(id).map(|a| a.is_running()).unwrap_or(false)
     }
-    
+
     /// Get assigned port for a running Companion
     pub async fn get_port(&self, id: &str) -> Option<u16> {
         let companions = self.companions.read().await;
         companions.get(id).and_then(|a| a.port())
     }
-    
+
     /// Start an Companion process
-    /// 
+    ///
     /// Spawns the Companion executable as a background process.
     /// Uses the pre-assigned port from the ledger.
     pub async fn start(&self, id: &str, moss_endpoint: &str) -> Result<u32> {
         let mut companions = self.companions.write().await;
 
         // Get companion and check state
-        let c = companions.get(id)
+        let c = companions
+            .get(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
         if c.is_running() {
@@ -550,23 +549,24 @@ impl CompanionRegistry {
         }
 
         // Port was assigned during registration
-        let port = c.assigned_port
+        let port = c
+            .assigned_port
             .ok_or_else(|| anyhow::anyhow!("Companion '{}' has no assigned port", id))?;
 
         let executable = c.executable.clone();
 
         // Now get mutable reference
         let companion = companions.get_mut(id).unwrap(); // Safe: we checked above
-        
+
         // Spawn the Companion process with --stone and --port arguments
         info!(
-            companion = %id, 
-            executable = %executable.display(), 
+            companion = %id,
+            executable = %executable.display(),
             endpoint = %moss_endpoint,
             port = port,
             "Starting Companion"
         );
-        
+
         // Create Companion-specific state directory
         let companion_state_dir = self.data_path.join("companions").join(id);
 
@@ -598,19 +598,19 @@ impl CompanionRegistry {
         info!(companion = %id, pid = pid, port = port, "Companion started");
         Ok(pid)
     }
-    
+
     /// Stop an Companion process (does NOT disable it - will restart on next boot)
     pub async fn stop(&self, id: &str) -> Result<()> {
         self.stop_internal(id).await
     }
-    
+
     /// Stop an Companion and disable it (will NOT restart on next boot)
-    /// 
+    ///
     /// Use this when user explicitly wants to turn off an Companion.
     pub async fn stop_and_disable(&self, id: &str) -> Result<()> {
         // First stop the process
         self.stop_internal(id).await?;
-        
+
         // Then persist disabled state
         {
             let mut state_ledger = self.state_ledger.write().await;
@@ -619,11 +619,11 @@ impl CompanionRegistry {
                 warn!(companion = %id, error = %e, "Failed to persist Companion disabled state");
             }
         }
-        
+
         info!(companion = %id, "Companion stopped and disabled (will not auto-start)");
         Ok(())
     }
-    
+
     /// Enable an Companion (will auto-start on next boot or can be started manually)
     pub async fn enable(&self, id: &str) -> Result<()> {
         // Verify Companion exists
@@ -633,7 +633,7 @@ impl CompanionRegistry {
                 return Err(anyhow::anyhow!("Companion not found: {}", id));
             }
         }
-        
+
         // Persist enabled state
         {
             let mut state_ledger = self.state_ledger.write().await;
@@ -642,11 +642,11 @@ impl CompanionRegistry {
                 warn!(companion = %id, error = %e, "Failed to persist Companion enabled state");
             }
         }
-        
+
         info!(companion = %id, "Companion enabled (will auto-start on next boot)");
         Ok(())
     }
-    
+
     /// Check if an Companion is enabled (will auto-start on boot)
     pub async fn is_enabled(&self, id: &str) -> bool {
         let state_ledger = self.state_ledger.read().await;
@@ -791,7 +791,8 @@ impl CompanionRegistry {
     /// Internal stop implementation
     async fn stop_internal(&self, id: &str) -> Result<()> {
         let mut companions_guard = self.companions.write().await;
-        let c = companions_guard.get_mut(id)
+        let c = companions_guard
+            .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
         if let Some(pid) = c.pid {
@@ -829,9 +830,9 @@ impl CompanionRegistry {
 
         Ok(())
     }
-    
+
     /// Stop all running Companions
-    /// 
+    ///
     /// Used during package deployment to ensure clean upgrade.
     /// Attempts graceful HTTP shutdown first, then force kills.
     pub async fn stop_all(&self) -> Vec<(String, Result<()>)> {
@@ -839,13 +840,13 @@ impl CompanionRegistry {
             let companions = self.companions.read().await;
             companions.keys().cloned().collect()
         };
-        
+
         let mut results = Vec::new();
-        
+
         for id in companion_ids {
             if self.is_running(&id).await {
                 info!(companion = %id, "Stopping Companion for upgrade");
-                
+
                 // Try graceful HTTP shutdown first
                 if let Some(port) = self.get_port(&id).await {
                     let shutdown_url = format!("http://127.0.0.1:{}/shutdown", port);
@@ -865,13 +866,13 @@ impl CompanionRegistry {
                         }
                     }
                 }
-                
+
                 // Force stop if still running
                 let result = self.stop(&id).await;
                 results.push((id, result));
             }
         }
-        
+
         results
     }
 }
@@ -891,7 +892,7 @@ fn is_process_alive(pid: u32) -> bool {
             })
             .unwrap_or(false)
     }
-    
+
     #[cfg(unix)]
     {
         // On Unix, check /proc/{pid} or use kill -0
@@ -908,7 +909,7 @@ fn kill_process_by_pid(pid: u32) {
             .args(["/F", "/PID", &pid.to_string()])
             .output();
     }
-    
+
     #[cfg(unix)]
     {
         use std::process::Command as StdCommand;
@@ -919,7 +920,7 @@ fn kill_process_by_pid(pid: u32) {
 }
 
 /// Find the Companion executable in a directory
-/// 
+///
 /// Scans for any executable file in the Companion folder.
 /// On Windows: looks for .exe files
 /// On Linux: looks for files with execute permission
@@ -944,7 +945,7 @@ async fn find_companion_executable(companion_dir: &Path) -> Option<PathBuf> {
                     #[cfg(not(unix))]
                     false
                 };
-                
+
                 if is_executable {
                     debug!(path = %path.display(), "Found executable file");
                     return Some(path);
@@ -952,26 +953,26 @@ async fn find_companion_executable(companion_dir: &Path) -> Option<PathBuf> {
             }
         }
     }
-    
+
     None
 }
 
 /// Invoke an Companion with --dump-commands and --port, parse the output
 async fn invoke_dump_commands(executable: &Path, port: u16) -> Result<CommandManifest> {
     debug!(executable = %executable.display(), port = port, "Invoking --dump-commands");
-    
+
     let output = tokio::time::timeout(
         DUMP_COMMANDS_TIMEOUT,
         Command::new(executable)
             .arg("--dump-commands")
             .arg("--port")
             .arg(port.to_string())
-            .output()
+            .output(),
     )
     .await
     .context("Companion timed out")?
     .context("Failed to execute Companion")?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow::anyhow!(
@@ -980,31 +981,31 @@ async fn invoke_dump_commands(executable: &Path, port: u16) -> Result<CommandMan
             stderr.trim()
         ));
     }
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let manifest: CommandManifest = serde_json::from_str(&stdout)
-        .context("Failed to parse Companion manifest JSON")?;
-    
+    let manifest: CommandManifest =
+        serde_json::from_str(&stdout).context("Failed to parse Companion manifest JSON")?;
+
     debug!(
         companion_id = %manifest.id,
         commands = manifest.commands.len(),
         port = port,
         "Parsed Companion manifest"
     );
-    
+
     Ok(manifest)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_registry_new() {
         let registry = CompanionRegistry::new().await;
         assert_eq!(registry.count().await, 0);
     }
-    
+
     #[tokio::test]
     async fn test_registry_scan_empty_dir() {
         let temp_dir = std::env::temp_dir().join("zen-garden-test-Companions");

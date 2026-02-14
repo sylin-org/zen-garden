@@ -26,15 +26,9 @@ pub const DEFAULT_TIMER_DEBOUNCE_MS: u64 = 1000;
 #[derive(Debug, Clone)]
 pub enum TimerAction {
     /// Create a new timer for the offering
-    Create {
-        offering_id: String,
-        name: String,
-    },
+    Create { offering_id: String, name: String },
     /// Remove the timer for the offering
-    Remove {
-        offering_id: String,
-        name: String,
-    },
+    Remove { offering_id: String, name: String },
     /// Rename the timer
     Rename {
         offering_id: String,
@@ -189,11 +183,13 @@ impl TimerListener {
             TimerAction::Create { name, .. } => {
                 self.platform_timer.create(name, &self.timer_config).await
             }
-            TimerAction::Remove { name, .. } => {
-                self.platform_timer.remove(name).await
-            }
-            TimerAction::Rename { old_name, new_name, .. } => {
-                self.platform_timer.rename(old_name, new_name, &self.timer_config).await
+            TimerAction::Remove { name, .. } => self.platform_timer.remove(name).await,
+            TimerAction::Rename {
+                old_name, new_name, ..
+            } => {
+                self.platform_timer
+                    .rename(old_name, new_name, &self.timer_config)
+                    .await
             }
         };
 
@@ -248,31 +244,39 @@ impl EventListener for TimerListener {
         }
 
         let action = match offering_event {
-            OfferingEvent::Deployed { offering_id, name, .. } => {
-                TimerAction::Create {
-                    offering_id: offering_id.clone(),
-                    name: name.clone(),
-                }
+            OfferingEvent::Deployed {
+                offering_id, name, ..
+            } => TimerAction::Create {
+                offering_id: offering_id.clone(),
+                name: name.clone(),
+            },
+            OfferingEvent::Removed {
+                offering_id, name, ..
             }
-            OfferingEvent::Removed { offering_id, name, .. } |
-            OfferingEvent::Destroyed { offering_id, name, .. } => {
-                TimerAction::Remove {
-                    offering_id: offering_id.clone(),
-                    name: name.clone(),
-                }
-            }
-            OfferingEvent::Renamed { offering_id, old_name, new_name, .. } => {
-                TimerAction::Rename {
-                    offering_id: offering_id.clone(),
-                    old_name: old_name.clone(),
-                    new_name: new_name.clone(),
-                }
-            }
+            | OfferingEvent::Destroyed {
+                offering_id, name, ..
+            } => TimerAction::Remove {
+                offering_id: offering_id.clone(),
+                name: name.clone(),
+            },
+            OfferingEvent::Renamed {
+                offering_id,
+                old_name,
+                new_name,
+                ..
+            } => TimerAction::Rename {
+                offering_id: offering_id.clone(),
+                old_name: old_name.clone(),
+                new_name: new_name.clone(),
+            },
             _ => return,
         };
 
         // Check debounce per (action_type, offering_id)
-        if !self.debouncer.should_pass_str(action.action_type(), action.offering_id()) {
+        if !self
+            .debouncer
+            .should_pass_str(action.action_type(), action.offering_id())
+        {
             tracing::trace!(
                 action_type = action.action_type(),
                 offering_id = action.offering_id(),
@@ -338,18 +342,32 @@ impl TimerExecutor {
     }
 
     /// Create a nurturing timer for an offering
-    pub async fn create(&self, offering_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
-        self.platform_timer.create(offering_name, &self.timer_config).await
+    pub async fn create(
+        &self,
+        offering_name: &str,
+    ) -> anyhow::Result<garden_common::infra::TimerResult> {
+        self.platform_timer
+            .create(offering_name, &self.timer_config)
+            .await
     }
 
     /// Remove a nurturing timer
-    pub async fn remove(&self, offering_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
+    pub async fn remove(
+        &self,
+        offering_name: &str,
+    ) -> anyhow::Result<garden_common::infra::TimerResult> {
         self.platform_timer.remove(offering_name).await
     }
 
     /// Rename a nurturing timer
-    pub async fn rename(&self, old_name: &str, new_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
-        self.platform_timer.rename(old_name, new_name, &self.timer_config).await
+    pub async fn rename(
+        &self,
+        old_name: &str,
+        new_name: &str,
+    ) -> anyhow::Result<garden_common::infra::TimerResult> {
+        self.platform_timer
+            .rename(old_name, new_name, &self.timer_config)
+            .await
     }
 
     /// Check if a timer exists
@@ -363,7 +381,10 @@ impl TimerExecutor {
     }
 
     /// Trigger a timer immediately (for testing)
-    pub async fn trigger(&self, offering_name: &str) -> anyhow::Result<garden_common::infra::TimerResult> {
+    pub async fn trigger(
+        &self,
+        offering_name: &str,
+    ) -> anyhow::Result<garden_common::infra::TimerResult> {
         self.platform_timer.trigger(offering_name).await
     }
 }
@@ -383,7 +404,9 @@ mod tests {
     async fn test_timer_create_on_deploy() {
         let listener = TimerListener::test_only();
 
-        let event = DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
+        let event = DomainEvent::Offering(OfferingEvent::deployed(
+            "id-1", "mongodb", "stone-01", "mongo:7",
+        ));
         listener.on_event(&event).await;
 
         let actions = listener.pending_actions().await;
@@ -421,14 +444,20 @@ mod tests {
     async fn test_timer_rename() {
         let listener = TimerListener::test_only();
 
-        let event = DomainEvent::Offering(OfferingEvent::renamed("id-1", "mongodb", "my-mongo", "stone-01"));
+        let event = DomainEvent::Offering(OfferingEvent::renamed(
+            "id-1", "mongodb", "my-mongo", "stone-01",
+        ));
         listener.on_event(&event).await;
 
         let actions = listener.pending_actions().await;
         assert_eq!(actions.len(), 1);
 
         match &actions[0] {
-            TimerAction::Rename { offering_id, old_name, new_name } => {
+            TimerAction::Rename {
+                offering_id,
+                old_name,
+                new_name,
+            } => {
                 assert_eq!(offering_id, "id-1");
                 assert_eq!(old_name, "mongodb");
                 assert_eq!(new_name, "my-mongo");
@@ -441,8 +470,16 @@ mod tests {
     async fn test_no_timer_on_start_stop() {
         let listener = TimerListener::test_only();
 
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::started("id-1", "mongodb", "stone-01"))).await;
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::stopped("id-1", "mongodb", "stone-01"))).await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::started(
+                "id-1", "mongodb", "stone-01",
+            )))
+            .await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::stopped(
+                "id-1", "mongodb", "stone-01",
+            )))
+            .await;
 
         let actions = listener.pending_actions().await;
         assert!(actions.is_empty());
@@ -454,8 +491,16 @@ mod tests {
         let listener = TimerListener::with_debounce(Duration::from_millis(100), false);
 
         // Rapid create actions should debounce
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8"))).await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::deployed(
+                "id-1", "mongodb", "stone-01", "mongo:7",
+            )))
+            .await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::deployed(
+                "id-1", "mongodb", "stone-01", "mongo:8",
+            )))
+            .await;
 
         // Only first action should execute
         let actions = listener.pending_actions().await;
@@ -468,8 +513,16 @@ mod tests {
         let listener = TimerListener::with_debounce(Duration::from_millis(100), false);
 
         // Deploy then remove = different action types, both pass
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::destroyed("id-1", "mongodb", "stone-01"))).await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::deployed(
+                "id-1", "mongodb", "stone-01", "mongo:7",
+            )))
+            .await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::destroyed(
+                "id-1", "mongodb", "stone-01",
+            )))
+            .await;
 
         // Both actions should execute (different action types)
         let actions = listener.pending_actions().await;
@@ -482,7 +535,11 @@ mod tests {
         let listener = TimerListener::with_debounce(Duration::from_millis(50), false);
 
         // First deploy
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::deployed(
+                "id-1", "mongodb", "stone-01", "mongo:7",
+            )))
+            .await;
         let actions = listener.pending_actions().await;
         assert_eq!(actions.len(), 1);
 
@@ -490,7 +547,11 @@ mod tests {
         sleep(Duration::from_millis(100));
 
         // Now another deploy should execute
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:8"))).await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::deployed(
+                "id-1", "mongodb", "stone-01", "mongo:8",
+            )))
+            .await;
         let actions = listener.pending_actions().await;
         assert_eq!(actions.len(), 2);
     }
@@ -541,8 +602,16 @@ mod tests {
 
         let listener = TimerListener::with_test_callback(callback);
 
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"))).await;
-        listener.on_event(&DomainEvent::Offering(OfferingEvent::destroyed("id-1", "mongodb", "stone-01"))).await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::deployed(
+                "id-1", "mongodb", "stone-01", "mongo:7",
+            )))
+            .await;
+        listener
+            .on_event(&DomainEvent::Offering(OfferingEvent::destroyed(
+                "id-1", "mongodb", "stone-01",
+            )))
+            .await;
 
         assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }

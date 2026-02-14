@@ -8,8 +8,8 @@
 
 use anyhow::Result;
 use garden_common::election::{
-    calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest,
-    ElectionResult, ElectionType, ElectionWinner,
+    calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest, ElectionResult,
+    ElectionType, ElectionWinner,
 };
 use garden_common::infra::communications::announcement_types;
 use serde_json::Value;
@@ -112,7 +112,10 @@ impl ElectionService {
         loop {
             match udp_rx.recv().await {
                 Some((announcement_type, payload, from_addr)) => {
-                    if let Err(e) = self.handle_udp_event(announcement_type, payload, from_addr).await {
+                    if let Err(e) = self
+                        .handle_udp_event(announcement_type, payload, from_addr)
+                        .await
+                    {
                         tracing::debug!(error = ?e, "Failed to handle UDP event");
                     }
                 }
@@ -122,12 +125,17 @@ impl ElectionService {
                 }
             }
         }
-        
+
         Ok(())
     }
 
     /// Handle incoming UDP event from p2p transport
-    async fn handle_udp_event(&self, announcement_type: String, payload: serde_json::Value, from_addr: std::net::SocketAddr) -> Result<()> {
+    async fn handle_udp_event(
+        &self,
+        announcement_type: String,
+        payload: serde_json::Value,
+        from_addr: std::net::SocketAddr,
+    ) -> Result<()> {
         match announcement_type.as_str() {
             announcement_types::ELECTION_REQUEST => {
                 let request: ElectionRequest = serde_json::from_value(payload)?;
@@ -144,7 +152,11 @@ impl ElectionService {
     }
 
     /// Handle ELECTION_REQUEST (as candidate)
-    async fn handle_election_request(&self, req: ElectionRequest, requester: std::net::SocketAddr) -> Result<()> {
+    async fn handle_election_request(
+        &self,
+        req: ElectionRequest,
+        requester: std::net::SocketAddr,
+    ) -> Result<()> {
         tracing::debug!(
             election_id = %req.election_id,
             election_type = ?req.election_type,
@@ -223,10 +235,9 @@ impl ElectionService {
                     stone_name,
                 };
 
-                if let Err(e) = p2p::send_announcement(
-                    announcement_types::ELECTION_CANDIDATE,
-                    &candidate,
-                ).await {
+                if let Err(e) =
+                    p2p::send_announcement(announcement_types::ELECTION_CANDIDATE, &candidate).await
+                {
                     tracing::warn!(error = ?e, "Failed to send candidacy");
                 }
             } else {
@@ -277,7 +288,7 @@ impl ElectionService {
     }
 
     /// Start an election (as requester)
-    /// 
+    ///
     /// **REFACTORED (COMM-0001 Phase 4)**: Uses p2p transport for broadcast and subscribes to events.
     pub async fn start_election(
         &self,
@@ -314,7 +325,8 @@ impl ElectionService {
         );
 
         // Subscribe to p2p events to receive ELECTION_CANDIDATE responses
-        let mut udp_rx = p2p::subscribe_to_announcement(announcement_types::ELECTION_CANDIDATE).await?;
+        let mut udp_rx =
+            p2p::subscribe_to_announcement(announcement_types::ELECTION_CANDIDATE).await?;
         let wait_duration = Duration::from_secs(timeout_secs);
 
         let winner = match timeout(wait_duration, async {
@@ -328,7 +340,7 @@ impl ElectionService {
                                 continue;
                             }
                         };
-                        
+
                         if candidate.election_id == election_id {
                             return Some(ElectionWinner {
                                 stone_id: candidate.stone_id,
@@ -343,7 +355,9 @@ impl ElectionService {
                 }
             }
             None
-        }).await {
+        })
+        .await
+        {
             Ok(Some(winner)) => Some(winner),
             Ok(None) | Err(_) => None,
         };

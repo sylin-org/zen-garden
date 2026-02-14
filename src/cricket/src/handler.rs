@@ -1,8 +1,8 @@
-﻿//! Command handler for Cricket
+//! Command handler for Cricket
 //!
 //! Implements the SDK's CommandHandler trait for Cricket-specific commands.
 
-use garden_companion_sdk::{async_trait, CompanionState, CommandHandler, CommandResponse};
+use garden_companion_sdk::{async_trait, CommandHandler, CommandResponse, CompanionState};
 use std::sync::Arc;
 
 use crate::manifest::TuneManager;
@@ -19,8 +19,16 @@ pub struct CricketHandler {
 
 impl CricketHandler {
     /// Create a new Cricket command handler
-    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<CompanionState>) -> Self {
-        Self { mixer, tune_manager, state }
+    pub fn new(
+        mixer: Arc<Mixer>,
+        tune_manager: Arc<TuneManager>,
+        state: Arc<CompanionState>,
+    ) -> Self {
+        Self {
+            mixer,
+            tune_manager,
+            state,
+        }
     }
 }
 
@@ -28,15 +36,14 @@ impl CricketHandler {
 impl CommandHandler for CricketHandler {
     async fn handle(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
-            return CommandResponse::error("No command provided")
-                .with_suggestions([
-                    "play <event>",
-                    "stop [channel]",
-                    "volume <0-100>",
-                    "select <tune>",
-                    "list",
-                    "status",
-                ]);
+            return CommandResponse::error("No command provided").with_suggestions([
+                "play <event>",
+                "stop [channel]",
+                "volume <0-100>",
+                "select <tune>",
+                "list",
+                "status",
+            ]);
         }
 
         let cmd = args[0].to_lowercase();
@@ -57,17 +64,16 @@ impl CommandHandler for CricketHandler {
             "tune" => self.handle_select(cmd_args).await, // alias for select
             "status" => self.handle_status().await,
             "test" => self.handle_play(cmd_args).await, // alias for play
-            _ => CommandResponse::error(format!("Unknown command: {}", cmd))
-                .with_suggestions([
-                    "select <tune>",
-                    "list",
-                    "show <tune>",
-                    "play <event>",
-                    "stop",
-                    "volume <0-100>",
-                    "on",
-                    "off",
-                ]),
+            _ => CommandResponse::error(format!("Unknown command: {}", cmd)).with_suggestions([
+                "select <tune>",
+                "list",
+                "show <tune>",
+                "play <event>",
+                "stop",
+                "volume <0-100>",
+                "on",
+                "off",
+            ]),
         }
     }
 
@@ -124,7 +130,10 @@ impl CricketHandler {
 
         // Resolve channel and resource
         let Some(channel) = Channel::from_str(&mapping.channel) else {
-            return CommandResponse::internal_error(format!("Invalid channel: {}", mapping.channel));
+            return CommandResponse::internal_error(format!(
+                "Invalid channel: {}",
+                mapping.channel
+            ));
         };
 
         let active_name = self.tune_manager.active_name().unwrap_or_default();
@@ -144,9 +153,7 @@ impl CricketHandler {
             .play_bytes(channel, audio_data, mapping.looping)
             .await
         {
-            Ok(()) => {
-                CommandResponse::success(format!("Playing {} on {}", event, mapping.channel))
-            }
+            Ok(()) => CommandResponse::success(format!("Playing {} on {}", event, mapping.channel)),
             Err(e) => CommandResponse::internal_error(format!("Playback failed: {}", e)),
         }
     }
@@ -169,12 +176,7 @@ impl CricketHandler {
         let channel_name = &args[0];
         let Some(channel) = Channel::from_str(channel_name) else {
             return CommandResponse::error(format!("Invalid channel: {}", channel_name))
-                .with_suggestions([
-                    "foreground",
-                    "midground",
-                    "ambient",
-                    "background",
-                ]);
+                .with_suggestions(["foreground", "midground", "ambient", "background"]);
         };
 
         self.mixer.stop(channel).await;

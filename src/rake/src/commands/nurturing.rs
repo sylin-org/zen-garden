@@ -307,21 +307,14 @@ impl Command for RestoreRemoteCommand {
         if !remote_response.status().is_success() {
             let status = remote_response.status();
             let text = remote_response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Failed to get remote snapshots ({}): {}",
-                status,
-                text
-            );
+            anyhow::bail!("Failed to get remote snapshots ({}): {}", status, text);
         }
 
         let remote_index: ApiResponse<RemoteNurturingIndex> = remote_response.json().await?;
 
         // Find matching snapshots for this offering
         // We need to look up offering_id from the offering name first
-        let services_url = format!(
-            "{}/api/v1/stone/services",
-            endpoint.trim_end_matches('/')
-        );
+        let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
         let services_response = ctx.client.get(&services_url).send().await?;
 
         let offering_id = if services_response.status().is_success() {
@@ -334,7 +327,9 @@ impl Command for RestoreRemoteCommand {
                     arr.iter().find_map(|svc| {
                         let name = svc.get("name").and_then(|n| n.as_str())?;
                         if name == self.offering {
-                            svc.get("offering_id").and_then(|id| id.as_str()).map(String::from)
+                            svc.get("offering_id")
+                                .and_then(|id| id.as_str())
+                                .map(String::from)
                         } else {
                             None
                         }
@@ -378,9 +373,10 @@ impl Command for RestoreRemoteCommand {
                 })?
         } else {
             // Use latest (first in list, assuming sorted by date desc)
-            matching_snapshots.first().copied().ok_or_else(|| {
-                anyhow::anyhow!("No snapshots available")
-            })?
+            matching_snapshots
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("No snapshots available"))?
         };
 
         // Show restore info
@@ -489,10 +485,7 @@ impl Command for NurturingStatusCommand {
         }
 
         // Overview of all offerings
-        let url = format!(
-            "{}/api/v1/stone/nurturing",
-            endpoint.trim_end_matches('/')
-        );
+        let url = format!("{}/api/v1/stone/nurturing", endpoint.trim_end_matches('/'));
         let response = ctx.client.get(&url).send().await?;
 
         if !response.status().is_success() {
@@ -528,7 +521,9 @@ impl Command for NurturingStatusCommand {
 
         let online_banks: Vec<&serde_json::Value> = banks
             .iter()
-            .filter(|b: &&serde_json::Value| b.get("online").and_then(|o| o.as_bool()).unwrap_or(false))
+            .filter(|b: &&serde_json::Value| {
+                b.get("online").and_then(|o| o.as_bool()).unwrap_or(false)
+            })
             .collect();
 
         println!(
@@ -558,11 +553,7 @@ impl Command for NurturingStatusCommand {
 
             let status_icon = ui::status_indicator("success", ctx.term.supports_color);
 
-            println!(
-                "  {} {}",
-                status_icon,
-                name
-            );
+            println!("  {} {}", status_icon, name);
             println!(
                 "      Slot A: {}",
                 slot_a_info.as_deref().unwrap_or("(empty)")
@@ -648,14 +639,14 @@ impl NurturingStatusCommand {
                     endpoint.trim_end_matches('/')
                 );
                 if let Ok(banks_resp) = ctx.client.get(&banks_url).send().await {
-                    if let Ok(banks) = banks_resp.json::<ApiResponse<Vec<serde_json::Value>>>().await
+                    if let Ok(banks) = banks_resp
+                        .json::<ApiResponse<Vec<serde_json::Value>>>()
+                        .await
                     {
                         let online_banks: Vec<_> = banks
                             .data
                             .iter()
-                            .filter(|b| {
-                                b.get("online").and_then(|o| o.as_bool()).unwrap_or(false)
-                            })
+                            .filter(|b| b.get("online").and_then(|o| o.as_bool()).unwrap_or(false))
                             .collect();
 
                         if !online_banks.is_empty() {
@@ -675,8 +666,9 @@ impl NurturingStatusCommand {
                                 );
 
                                 if let Ok(remote_resp) = ctx.client.get(&remote_url).send().await {
-                                    if let Ok(remote) =
-                                        remote_resp.json::<ApiResponse<RemoteNurturingIndex>>().await
+                                    if let Ok(remote) = remote_resp
+                                        .json::<ApiResponse<RemoteNurturingIndex>>()
+                                        .await
                                     {
                                         let matching: Vec<_> = remote
                                             .data
@@ -685,7 +677,11 @@ impl NurturingStatusCommand {
                                             .filter(|s| s.offering_id == slots_data.offering_id)
                                             .collect();
 
-                                        println!("    {} ({} snapshots):", bank_name, matching.len());
+                                        println!(
+                                            "    {} ({} snapshots):",
+                                            bank_name,
+                                            matching.len()
+                                        );
                                         for snap in matching.iter().take(5) {
                                             let size_str = snap
                                                 .size_bytes
@@ -815,30 +811,26 @@ impl Command for NurturingListCommand {
         // Remote backups
         if !self.local_only {
             // Get offering_id first
-            let services_url = format!(
-                "{}/api/v1/stone/services",
-                endpoint.trim_end_matches('/')
-            );
+            let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
 
             let offering_id: Option<String> = match ctx.client.get(&services_url).send().await {
                 Ok(resp) => match resp.json::<serde_json::Value>().await {
-                    Ok(v) => {
-                        v.get("data")
-                            .and_then(|d| d.get("services"))
-                            .and_then(|s| s.as_array())
-                            .and_then(|arr| {
-                                arr.iter().find_map(|svc| {
-                                    let name = svc.get("name").and_then(|n| n.as_str())?;
-                                    if name == self.offering {
-                                        svc.get("offering_id")
-                                            .and_then(|id| id.as_str())
-                                            .map(String::from)
-                                    } else {
-                                        None
-                                    }
-                                })
+                    Ok(v) => v
+                        .get("data")
+                        .and_then(|d| d.get("services"))
+                        .and_then(|s| s.as_array())
+                        .and_then(|arr| {
+                            arr.iter().find_map(|svc| {
+                                let name = svc.get("name").and_then(|n| n.as_str())?;
+                                if name == self.offering {
+                                    svc.get("offering_id")
+                                        .and_then(|id| id.as_str())
+                                        .map(String::from)
+                                } else {
+                                    None
+                                }
                             })
-                    }
+                        }),
                     Err(_) => None,
                 },
                 Err(_) => None,
@@ -851,10 +843,19 @@ impl Command for NurturingListCommand {
             );
 
             if let Ok(banks_resp) = ctx.client.get(&banks_url).send().await {
-                if let Ok(banks) = banks_resp.json::<ApiResponse<Vec<serde_json::Value>>>().await {
+                if let Ok(banks) = banks_resp
+                    .json::<ApiResponse<Vec<serde_json::Value>>>()
+                    .await
+                {
                     for bank in &banks.data {
-                        let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
-                        let online = bank.get("online").and_then(|o| o.as_bool()).unwrap_or(false);
+                        let bank_name = bank
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unknown");
+                        let online = bank
+                            .get("online")
+                            .and_then(|o| o.as_bool())
+                            .unwrap_or(false);
 
                         if !online {
                             continue;
@@ -867,8 +868,9 @@ impl Command for NurturingListCommand {
                         );
 
                         if let Ok(remote_resp) = ctx.client.get(&remote_url).send().await {
-                            if let Ok(remote) =
-                                remote_resp.json::<ApiResponse<RemoteNurturingIndex>>().await
+                            if let Ok(remote) = remote_resp
+                                .json::<ApiResponse<RemoteNurturingIndex>>()
+                                .await
                             {
                                 let matching: Vec<_> = remote
                                     .data

@@ -1,4 +1,4 @@
-﻿//! Garden Companion SDK
+//! Garden Companion SDK
 //!
 //! A framework for building Zen Garden Companions that connect to Moss.
 //!
@@ -60,14 +60,14 @@ pub mod state;
 /// Prelude for convenient imports
 pub mod prelude {
     pub use crate::cli::CompanionConfig;
-    pub use crate::dependencies::{ensure_dependencies, SystemDependency, DependencyCheckResult};
+    pub use crate::dependencies::{ensure_dependencies, DependencyCheckResult, SystemDependency};
     pub use crate::handler::CommandHandler;
     pub use crate::runtime::CompanionRuntime;
     pub use crate::sse::{EventHandler, SseClient, SseEvent};
     pub use crate::state::CompanionState;
-    pub use garden_common::command_manifest::CommandResponse;
     pub use anyhow::Result;
     pub use async_trait::async_trait;
+    pub use garden_common::command_manifest::CommandResponse;
 }
 
 // Re-export commonly used items at crate root

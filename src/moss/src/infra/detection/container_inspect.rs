@@ -6,11 +6,11 @@
 //! - Image pattern matching (regex)
 //! - Running state verification
 
-use anyhow::{Context, Result};
-use regex::Regex;
 use crate::docker::DockerManager;
-use garden_common::manifests::ContainerInspectDetection;
+use anyhow::{Context, Result};
 use garden_common::detection::DetectionResult;
+use garden_common::manifests::ContainerInspectDetection;
+use regex::Regex;
 
 /// Detect service by inspecting Docker containers
 ///
@@ -32,8 +32,8 @@ pub async fn detect_by_container_inspect(
     );
 
     // Compile regex patterns
-    let container_re = Regex::new(&config.container_pattern)
-        .context("Invalid container pattern regex")?;
+    let container_re =
+        Regex::new(&config.container_pattern).context("Invalid container pattern regex")?;
 
     let image_re = if let Some(image_pat) = &config.image_pattern {
         Some(Regex::new(image_pat).context("Invalid image pattern regex")?)
@@ -42,7 +42,9 @@ pub async fn detect_by_container_inspect(
     };
 
     // List all containers (including stopped)
-    let containers = docker.list_all_containers().await
+    let containers = docker
+        .list_all_containers()
+        .await
         .context("Failed to list containers")?;
 
     // Find matching container
@@ -78,7 +80,10 @@ pub async fn detect_by_container_inspect(
             return Ok(DetectionResult {
                 detected: false,
                 version: None,
-                details: format!("Container '{}' exists but is {}", container_name, container.state),
+                details: format!(
+                    "Container '{}' exists but is {}",
+                    container_name, container.state
+                ),
             });
         }
 
@@ -107,7 +112,10 @@ pub async fn detect_by_container_inspect(
     Ok(DetectionResult {
         detected: false,
         version: None,
-        details: format!("No container matching pattern: {}", config.container_pattern),
+        details: format!(
+            "No container matching pattern: {}",
+            config.container_pattern
+        ),
     })
 }
 
@@ -155,15 +163,9 @@ mod tests {
         );
         assert_eq!(
             extract_version_from_image("redis:alpine"),
-            None  // "alpine" is a distribution tag, not a version
+            None // "alpine" is a distribution tag, not a version
         );
-        assert_eq!(
-            extract_version_from_image("nginx:latest"),
-            None
-        );
-        assert_eq!(
-            extract_version_from_image("nginx"),
-            None
-        );
+        assert_eq!(extract_version_from_image("nginx:latest"), None);
+        assert_eq!(extract_version_from_image("nginx"), None);
     }
 }

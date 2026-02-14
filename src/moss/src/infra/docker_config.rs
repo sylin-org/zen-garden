@@ -25,9 +25,12 @@ fn daemon_json_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         // Windows: %PROGRAMDATA%\docker\config\daemon.json
-        let program_data = std::env::var("PROGRAMDATA")
-            .unwrap_or_else(|_| "C:\\ProgramData".to_string());
-        PathBuf::from(program_data).join("docker").join("config").join("daemon.json")
+        let program_data =
+            std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".to_string());
+        PathBuf::from(program_data)
+            .join("docker")
+            .join("config")
+            .join("daemon.json")
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -128,8 +131,8 @@ pub async fn write_insecure_registries(registries: &[String]) -> Result<bool> {
 
     // Write atomically via temp file
     let temp_path = path.with_extension("json.tmp");
-    let content = serde_json::to_string_pretty(&config)
-        .context("Failed to serialize daemon config")?;
+    let content =
+        serde_json::to_string_pretty(&config).context("Failed to serialize daemon config")?;
 
     if let Err(e) = tokio::fs::write(&temp_path, &content).await {
         tracing::error!(
@@ -143,7 +146,13 @@ pub async fn write_insecure_registries(registries: &[String]) -> Result<bool> {
 
     tokio::fs::rename(&temp_path, &path)
         .await
-        .with_context(|| format!("Failed to rename {} to {}", temp_path.display(), path.display()))?;
+        .with_context(|| {
+            format!(
+                "Failed to rename {} to {}",
+                temp_path.display(),
+                path.display()
+            )
+        })?;
 
     tracing::debug!(
         path = %path.display(),
@@ -258,9 +267,7 @@ pub async fn read_garden_registries() -> Vec<String> {
     let path = garden_registries_path();
 
     match tokio::fs::read_to_string(&path).await {
-        Ok(content) => {
-            serde_json::from_str(&content).unwrap_or_default()
-        }
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => Vec::new(),
     }
 }

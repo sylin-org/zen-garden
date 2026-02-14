@@ -1,4 +1,4 @@
-﻿//! Command handler trait for Companions
+//! Command handler trait for Companions
 //!
 //! Implement [`CommandHandler`] to process commands from Moss.
 
@@ -66,8 +66,7 @@ mod tests {
 
     #[test]
     fn test_command_response_error_with_suggestion() {
-        let result = CommandResponse::error("Bad command")
-            .with_suggestion("try this");
+        let result = CommandResponse::error("Bad command").with_suggestion("try this");
         assert_eq!(result.status, ResponseStatus::Error);
         assert_eq!(result.suggestions.len(), 1);
     }

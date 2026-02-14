@@ -1,8 +1,8 @@
+use crate::client::{CachedStoneInfo, CachedStoneOps};
 use anyhow::Result;
-use std::time::Duration;
+use garden_common::client::stone_cache::{CachedStone as CommonCachedStone, StoneCache};
 use garden_common::{GardenApiResponse, HardwareCapabilities};
-use garden_common::client::stone_cache::{StoneCache, CachedStone as CommonCachedStone};
-use crate::client::{CachedStoneOps, CachedStoneInfo};
+use std::time::Duration;
 
 // Re-export GLOBAL_CACHE from common for backward compatibility
 pub use garden_common::client::stone_cache::GLOBAL_CACHE;
@@ -20,7 +20,9 @@ pub struct CachedStone {
 impl CachedStone {
     /// Get the cache key for this stone
     pub fn cache_key(&self) -> String {
-        self.capabilities.stone_id.clone()
+        self.capabilities
+            .stone_id
+            .clone()
             .unwrap_or_else(|| self.capabilities.stone_name.clone())
     }
 
@@ -56,7 +58,10 @@ pub async fn fetch_and_cache_stone(
     endpoint: &str,
     cache: &StoneCache,
 ) -> Result<CachedStone> {
-    let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+    let caps_url = format!(
+        "{}/api/v1/stone/capabilities",
+        endpoint.trim_end_matches('/')
+    );
     let response: GardenApiResponse<HardwareCapabilities> = client
         .get(&caps_url)
         .timeout(Duration::from_secs(5))

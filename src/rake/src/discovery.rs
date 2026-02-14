@@ -1,8 +1,8 @@
 use anyhow::Result;
-use std::time::Duration;
-use std::sync::{Arc, Mutex};
-use garden_common::{DiscoveryRequest, DiscoveryResponse};
 use garden_common::infra::communications::p2p;
+use garden_common::{DiscoveryRequest, DiscoveryResponse};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Cached Lantern discovery result
 static LANTERN_CACHE: once_cell::sync::Lazy<Arc<Mutex<Option<Option<String>>>>> =
@@ -29,8 +29,10 @@ pub fn get_cached_lantern() -> Option<String> {
 async fn discover_lantern_async() -> Option<String> {
     // Subscribe to discovery responses (Lantern uses same discovery protocol)
     let mut response_rx = p2p::subscribe_to_announcement(
-        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
-    ).await.ok()?;
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE,
+    )
+    .await
+    .ok()?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
@@ -42,8 +44,10 @@ async fn discover_lantern_async() -> Option<String> {
     // Send discovery request via p2p transport
     p2p::send_announcement(
         garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
-        &request
-    ).await.ok()?;
+        &request,
+    )
+    .await
+    .ok()?;
 
     tracing::debug!(request_id = %request_id, "Sent Lantern discovery broadcast (via p2p)");
 
@@ -70,16 +74,15 @@ fn discover_lantern_sync() -> Option<String> {
     // Use tokio runtime handle if available, otherwise create blocking task
     tokio::runtime::Handle::try_current()
         .ok()
-        .and_then(|handle| {
-            handle.block_on(discover_lantern_async())
-        })
+        .and_then(|handle| handle.block_on(discover_lantern_async()))
 }
 
 pub async fn discover_moss() -> Result<String> {
     // Subscribe to discovery responses before sending request
     let mut response_rx = p2p::subscribe_to_announcement(
-        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
-    ).await?;
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE,
+    )
+    .await?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
@@ -91,8 +94,9 @@ pub async fn discover_moss() -> Result<String> {
     // Send discovery request via p2p transport
     p2p::send_announcement(
         garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
-        &request
-    ).await?;
+        &request,
+    )
+    .await?;
 
     tracing::debug!(request_id = %request_id, "Sent UDP discovery broadcast (via p2p)");
 
@@ -115,16 +119,16 @@ pub async fn discover_moss() -> Result<String> {
 
 /// Discover all Moss instances on the network
 /// Discover all Moss instances on the network with progressive disclosure
-/// 
+///
 /// Streams discovered stones via callback as they respond, rather than batching.
 /// This exposes network physics and provides immediate feedback to users.
-/// 
+///
 /// # Arguments
 /// * `timeout` - Maximum duration to wait for responses
 /// * `on_discovered` - Callback invoked for each unique stone discovered
 ///   - Receives: (DiscoveryResponse, discovery_instant)
 ///   - Called immediately when stone responds
-/// 
+///
 /// # Returns
 /// Async version using p2p transport for streaming discovery
 pub async fn discover_all_moss_stream_async<F>(
@@ -139,8 +143,9 @@ where
 
     // Subscribe to discovery responses before sending request
     let mut response_rx = p2p::subscribe_to_announcement(
-        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE
-    ).await?;
+        garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE,
+    )
+    .await?;
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let request = DiscoveryRequest {
@@ -152,8 +157,9 @@ where
     // Send discovery request via p2p transport
     p2p::send_announcement(
         garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
-        &request
-    ).await?;
+        &request,
+    )
+    .await?;
 
     tracing::debug!(request_id = %request_id, "Sent UDP discovery broadcast (streaming mode, via p2p)");
 
@@ -168,14 +174,14 @@ where
                 if !discovered_endpoints.contains(&response.stone_endpoint) {
                     discovered_endpoints.insert(response.stone_endpoint.clone());
                     let discovery_instant = Instant::now();
-                    
+
                     tracing::info!(
-                        ?addr, 
+                        ?addr,
                         stone = %response.stone_name,
                         elapsed_ms = discovery_instant.duration_since(start).as_millis(),
                         "Discovered Moss (streaming)"
                     );
-                    
+
                     // ✅ IMMEDIATE CALLBACK - Progressive disclosure
                     on_discovered(response, discovery_instant);
                 }
@@ -188,7 +194,10 @@ where
     match tokio::time::timeout(timeout, response_future).await {
         Ok(count) => Ok(count),
         Err(_) => {
-            tracing::debug!(count = discovered_endpoints.len(), "Discovery timeout reached");
+            tracing::debug!(
+                count = discovered_endpoints.len(),
+                "Discovery timeout reached"
+            );
             Ok(discovered_endpoints.len())
         }
     }
@@ -196,12 +205,9 @@ where
 
 /// Synchronous wrapper for async streaming discovery
 /// Total count of unique stones discovered
-/// 
+///
 /// DEPRECATED: Use discover_all_moss_stream_async directly from async contexts
-pub fn discover_all_moss_stream<F>(
-    timeout: Duration,
-    on_discovered: F,
-) -> Result<usize>
+pub fn discover_all_moss_stream<F>(timeout: Duration, on_discovered: F) -> Result<usize>
 where
     F: FnMut(DiscoveryResponse, std::time::Instant) + Send,
 {
@@ -230,13 +236,17 @@ pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
     use mdns_sd::{ServiceDaemon, ServiceEvent};
     use std::time::Instant;
 
-    let mdns = ServiceDaemon::new()
-        .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
+    let mdns =
+        ServiceDaemon::new().map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
 
-    let receiver = mdns.browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)
+    let receiver = mdns
+        .browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)
         .map_err(|e| anyhow::anyhow!("Failed to browse mDNS services: {}", e))?;
 
-    tracing::debug!(service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL, "Starting mDNS service browse");
+    tracing::debug!(
+        service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL,
+        "Starting mDNS service browse"
+    );
 
     let mut stones = Vec::new();
     let start = Instant::now();
@@ -245,13 +255,15 @@ pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
         match receiver.recv_timeout(Duration::from_millis(100)) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
                 // Extract stone_id from TXT record properties (if present)
-                let stone_id: Option<String> = info.get_properties()
+                let stone_id: Option<String> = info
+                    .get_properties()
                     .iter()
                     .find(|p| p.key() == "stone_id")
                     .map(|p| p.val_str().to_string());
 
                 // Extract stone name from TXT record, or fall back to instance name
-                let stone_name: String = info.get_properties()
+                let stone_name: String = info
+                    .get_properties()
                     .iter()
                     .find(|p| p.key() == "stone_name")
                     .map(|p| p.val_str().to_string())
@@ -315,16 +327,20 @@ where
     F: FnMut(DiscoveryResponse, std::time::Instant),
 {
     use mdns_sd::{ServiceDaemon, ServiceEvent};
-    use std::time::Instant;
     use std::collections::HashSet;
+    use std::time::Instant;
 
-    let mdns = ServiceDaemon::new()
-        .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
+    let mdns =
+        ServiceDaemon::new().map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
 
-    let receiver = mdns.browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)
+    let receiver = mdns
+        .browse(garden_common::constants::MDNS_SERVICE_TYPE_LOCAL)
         .map_err(|e| anyhow::anyhow!("Failed to browse mDNS services: {}", e))?;
 
-    tracing::debug!(service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL, "Starting mDNS service browse (streaming)");
+    tracing::debug!(
+        service_type = garden_common::constants::MDNS_SERVICE_TYPE_LOCAL,
+        "Starting mDNS service browse (streaming)"
+    );
 
     let mut discovered_endpoints = HashSet::new();
     let start = Instant::now();
@@ -333,13 +349,15 @@ where
         match receiver.recv_timeout(Duration::from_millis(100)) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
                 // Extract stone_id from TXT record properties (if present)
-                let stone_id: Option<String> = info.get_properties()
+                let stone_id: Option<String> = info
+                    .get_properties()
                     .iter()
                     .find(|p| p.key() == "stone_id")
                     .map(|p| p.val_str().to_string());
 
                 // Extract stone name from TXT record, or fall back to instance name
-                let stone_name: String = info.get_properties()
+                let stone_name: String = info
+                    .get_properties()
                     .iter()
                     .find(|p| p.key() == "stone_name")
                     .map(|p| p.val_str().to_string())
@@ -453,7 +471,8 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
                 seen.insert(response.stone_endpoint.clone());
                 results.push(response);
             }
-        }).await;
+        })
+        .await;
 
         // Wait for mDNS to complete
         let _ = mdns_handle.join();
@@ -469,7 +488,8 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
                 seen.insert(response.stone_endpoint.clone());
                 results.push(response);
             }
-        }).await;
+        })
+        .await;
     }
 
     let final_results = match Arc::try_unwrap(results) {

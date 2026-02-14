@@ -73,7 +73,10 @@ pub fn internal_error(message: impl Into<String>) -> ApiErrorResponse {
 
 /// Create a not found error response
 pub fn not_found(resource: impl Into<String>) -> ApiErrorResponse {
-    ApiErrorResponse::new("NOT_FOUND", format!("Resource not found: {}", resource.into()))
+    ApiErrorResponse::new(
+        "NOT_FOUND",
+        format!("Resource not found: {}", resource.into()),
+    )
 }
 
 /// Create a bad request error response
@@ -99,10 +102,7 @@ pub fn offering_not_found(offering_name: impl Into<String>) -> ApiErrorResponse 
 
 /// Create a job not found error response
 pub fn job_not_found(job_id: impl Into<String>) -> ApiErrorResponse {
-    ApiErrorResponse::new(
-        "JOB_NOT_FOUND",
-        format!("Job not found: {}", job_id.into()),
-    )
+    ApiErrorResponse::new("JOB_NOT_FOUND", format!("Job not found: {}", job_id.into()))
 }
 
 /// Create a Docker error response

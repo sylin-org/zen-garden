@@ -3,8 +3,8 @@
 //! Defines OS-specific checks and ensure commands to make adopted services
 //! reachable on the local network (e.g., bind to LAN interface, open firewall).
 
-use serde::{Deserialize, Serialize};
 use super::detection::DetectionRule;
+use serde::{Deserialize, Serialize};
 
 /// Connectivity configuration for adopted offerings
 #[derive(Debug, Clone, Serialize, Deserialize)]

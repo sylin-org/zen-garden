@@ -7,11 +7,11 @@
 //!
 //! Composed with compatibility module for rule evaluation.
 
-use anyhow::Result;
+use crate::domain::compatibility::{compile_compatibility, CompiledCompatibility};
 use crate::infra::ManifestRegistry;
-use crate::domain::compatibility::{CompiledCompatibility, compile_compatibility};
-use garden_common::TaskDefinition;
+use anyhow::Result;
 use garden_common::manifests::NetworkRequirements;
+use garden_common::TaskDefinition;
 
 /// Compiled offering ready for API consumption
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -57,9 +57,7 @@ impl CompiledOffering {
         }
 
         // Then other ports sorted by name
-        let mut other_ports: Vec<_> = self.ports.iter()
-            .filter(|(k, _)| *k != "default")
-            .collect();
+        let mut other_ports: Vec<_> = self.ports.iter().filter(|(k, _)| *k != "default").collect();
         other_ports.sort_by_key(|(k, _)| *k);
 
         for (_, port) in other_ports {
@@ -171,10 +169,7 @@ pub fn manifests_hash(registry: &ManifestRegistry) -> Result<String> {
 /// - `load_offerings_cache()` for disk persistence (infra layer)
 /// - `rebuild_offerings_index()` for index generation (domain layer)
 /// - `save_offerings_cache()` for disk persistence (infra layer)
-pub async fn ensure_offerings_index(
-    state: &crate::AppState,
-    force_rebuild: bool,
-) -> Result<()> {
+pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool) -> Result<()> {
     if !force_rebuild {
         let existing = state.offerings_index.read().await;
         if existing.is_some() {

@@ -1,13 +1,13 @@
-﻿//! Update transaction logging for rollback safety
+//! Update transaction logging for rollback safety
 //!
 //! Provides transaction log for Windows self-update process:
 //! - Records each step of update
 //! - Enables automatic rollback on failure
 //! - Allows recovery from interrupted updates
 
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use anyhow::{Context, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTransaction {
@@ -71,7 +71,7 @@ impl UpdateTransaction {
     ) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         let update_id = garden_common::utils::ids::generate_guidv7();
-        
+
         Self {
             version: 1,
             update_id,
@@ -92,7 +92,7 @@ impl UpdateTransaction {
             timestamp_end: None,
         }
     }
-    
+
     /// Advance to next stage
     pub fn advance_stage(&mut self, stage: UpdateStage) {
         let now = chrono::Utc::now().to_rfc3339();
@@ -103,7 +103,7 @@ impl UpdateTransaction {
             timestamp: now,
         });
     }
-    
+
     /// Mark as complete
     pub fn mark_complete(&mut self) {
         let now = chrono::Utc::now().to_rfc3339();
@@ -112,7 +112,7 @@ impl UpdateTransaction {
         self.timestamp_current = now.clone();
         self.timestamp_end = Some(now);
     }
-    
+
     /// Mark as failed
     pub fn mark_failed(&mut self, error: String) {
         let now = chrono::Utc::now().to_rfc3339();
@@ -121,48 +121,43 @@ impl UpdateTransaction {
         self.timestamp_current = now.clone();
         self.timestamp_end = Some(now);
     }
-    
+
     /// Add backup file record
     pub fn add_backup(&mut self, filename: String) {
         self.backups_created.push(filename);
     }
-    
+
     /// Get log file path
     fn log_path() -> PathBuf {
         let data_dir = garden_common::constants::paths::data_dir();
         PathBuf::from(data_dir).join("update.json")
     }
-    
+
     /// Save transaction to disk
     pub fn save(&self) -> Result<()> {
         let path = Self::log_path();
-        let json = serde_json::to_string_pretty(self)
-            .context("Failed to serialize transaction")?;
-        std::fs::write(&path, json)
-            .context("Failed to write transaction log")?;
+        let json = serde_json::to_string_pretty(self).context("Failed to serialize transaction")?;
+        std::fs::write(&path, json).context("Failed to write transaction log")?;
         Ok(())
     }
-    
+
     /// Load transaction from disk
     pub fn load() -> Result<Option<Self>> {
         let path = Self::log_path();
         if !path.exists() {
             return Ok(None);
         }
-        
-        let json = std::fs::read_to_string(&path)
-            .context("Failed to read transaction log")?;
-        let tx = serde_json::from_str(&json)
-            .context("Failed to parse transaction log")?;
+
+        let json = std::fs::read_to_string(&path).context("Failed to read transaction log")?;
+        let tx = serde_json::from_str(&json).context("Failed to parse transaction log")?;
         Ok(Some(tx))
     }
-    
+
     /// Remove transaction log
     pub fn remove() -> Result<()> {
         let path = Self::log_path();
         if path.exists() {
-            std::fs::remove_file(&path)
-                .context("Failed to remove transaction log")?;
+            std::fs::remove_file(&path).context("Failed to remove transaction log")?;
         }
         Ok(())
     }

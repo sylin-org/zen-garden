@@ -41,10 +41,8 @@ async fn test_registry(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
                         arr.iter()
                             .filter_map(|a| {
                                 let name = a.get("id").and_then(|n| n.as_str())?;
-                                let running = a
-                                    .get("running")
-                                    .and_then(|s| s.as_bool())
-                                    .unwrap_or(false);
+                                let running =
+                                    a.get("running").and_then(|s| s.as_bool()).unwrap_or(false);
                                 let status = if running { "running" } else { "stopped" };
                                 Some((name.to_string(), status.to_string()))
                             })
@@ -149,8 +147,10 @@ async fn test_cricket(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
 
                     bag.record_step(
                         format!("cricket_{}", stone.name),
-                        format!("{}: Cricket {} (port {:?}) - played sound: {}",
-                            stone.name, status, port, "?"),
+                        format!(
+                            "{}: Cricket {} (port {:?}) - played sound: {}",
+                            stone.name, status, port, "?"
+                        ),
                         duration.as_millis() as u64,
                         if play_ok {
                             StepResult::ok_with(serde_json::json!({
@@ -264,7 +264,11 @@ async fn test_command_forwarding(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
 
                     bag.record_step(
                         format!("command_{}", stone.name),
-                        format!("{}: command forwarding {}", stone.name, if success { "works" } else { "failed" }),
+                        format!(
+                            "{}: command forwarding {}",
+                            stone.name,
+                            if success { "works" } else { "failed" }
+                        ),
                         duration.as_millis() as u64,
                         if success {
                             StepResult::ok_with(serde_json::json!({

@@ -13,8 +13,8 @@
 //! Phase 2 will add netlink event subscription for instant detection on Linux,
 //! with polling as fallback for non-Linux or when netlink unavailable.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 
@@ -28,10 +28,7 @@ pub const DEFAULT_CONNECTED_POLL_SECS: u64 = 30;
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
     /// IP address changed
-    IpChanged {
-        old: String,
-        new: String,
-    },
+    IpChanged { old: String, new: String },
     /// IP validation failed (couldn't detect valid LAN IP)
     Disconnected {
         /// Current IP (likely 127.0.0.1)
@@ -95,7 +92,10 @@ impl NetworkMonitor {
     }
 
     /// Start background network monitoring with custom config
-    pub async fn start_with_config(config: NetworkMonitorConfig, network_ready: Arc<AtomicBool>) -> Self {
+    pub async fn start_with_config(
+        config: NetworkMonitorConfig,
+        network_ready: Arc<AtomicBool>,
+    ) -> Self {
         let initial_ip = get_current_ip();
         let current_ip = Arc::new(RwLock::new(initial_ip.clone()));
         let (tx, _) = broadcast::channel(100);
@@ -188,7 +188,7 @@ pub fn is_valid_lan_ip(ip: &str) -> bool {
                 | [10, _, _, _]
                 | [100, 64..=127, _, _]  // Carrier-grade NAT (Tailscale)
                 | [172, 16, _, _]
-                | [172, 18..=31, _, _]   // 172.16-31 except 172.17
+                | [172, 18..=31, _, _] // 172.16-31 except 172.17
         )
     } else {
         false
@@ -241,7 +241,9 @@ async fn network_monitor_task(
                     network_ready = true,
                     "Network reconnected with valid LAN IP"
                 );
-                NetworkEvent::Reconnected { new: new_ip.clone() }
+                NetworkEvent::Reconnected {
+                    new: new_ip.clone(),
+                }
             } else if !was_disconnected && now_disconnected {
                 // Disconnected
                 tracing::warn!(

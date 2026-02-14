@@ -22,8 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Output format for find command
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FindOutputFormat {
     /// Human-readable output (default)
     #[default]
@@ -35,7 +34,6 @@ pub enum FindOutputFormat {
     /// URI only (IP-based fallback)
     UriIp,
 }
-
 
 impl std::str::FromStr for FindOutputFormat {
     type Err = std::convert::Infallible;

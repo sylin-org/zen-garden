@@ -5,14 +5,14 @@
 //! - Stone header display (if requested)
 //! - Error handling and formatting
 
+use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use garden_common::{GardenApiResponse, HardwareCapabilities};
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
+use garden_rake::commands::management::tend;
 use garden_rake::commands::Command;
 use garden_rake::context::CommandContext;
 use garden_rake::discovery;
 use garden_rake::tending;
-use garden_rake::commands::management::tend;
-use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use std::time::Duration;
 
 /// Dispatch a command with standard middleware
@@ -69,12 +69,7 @@ pub async fn dispatch_local(
     fresh_mode: bool,
     verbose: u8,
 ) -> anyhow::Result<()> {
-    let ctx = CommandContext::without_endpoint(
-        client.clone(),
-        quiet_mode,
-        fresh_mode,
-        verbose,
-    );
+    let ctx = CommandContext::without_endpoint(client.clone(), quiet_mode, fresh_mode, verbose);
 
     cmd.execute(&ctx).await
 }
@@ -150,7 +145,10 @@ pub async fn resolve_endpoint(
             tracing::info!(endpoint = %endpoint, "Auto-discovered stone");
 
             // Fetch capabilities to get stone name for cache and display
-            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+            let caps_url = format!(
+                "{}/api/v1/stone/capabilities",
+                endpoint.trim_end_matches('/')
+            );
             if let Ok(resp) = client
                 .get(&caps_url)
                 .timeout(Duration::from_secs(5))
@@ -218,7 +216,10 @@ async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
     let term = TerminalInfo::detect();
 
     // Fetch stone capabilities to get name and health
-    let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+    let caps_url = format!(
+        "{}/api/v1/stone/capabilities",
+        endpoint.trim_end_matches('/')
+    );
     if let Ok(resp) = client
         .get(&caps_url)
         .timeout(Duration::from_secs(3))
@@ -241,7 +242,9 @@ async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
                     if let Some(status) = health_json.get("status").and_then(|v| v.as_str()) {
                         match status {
                             garden_common::HEALTH_HEALTHY => garden_common::VITALITY_THRIVING,
-                            garden_common::HEALTH_DEGRADED => garden_common::VITALITY_NEEDS_ATTENTION,
+                            garden_common::HEALTH_DEGRADED => {
+                                garden_common::VITALITY_NEEDS_ATTENTION
+                            }
                             garden_common::HEALTH_UNHEALTHY => garden_common::VITALITY_WITHERING,
                             _ => garden_common::VITALITY_DORMANT,
                         }
@@ -266,7 +269,10 @@ async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
 
 /// Fetch stone name from capabilities
 async fn fetch_stone_name(client: &reqwest::Client, endpoint: &str) -> Option<String> {
-    let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+    let caps_url = format!(
+        "{}/api/v1/stone/capabilities",
+        endpoint.trim_end_matches('/')
+    );
     if let Ok(resp) = client
         .get(&caps_url)
         .timeout(Duration::from_secs(3))

@@ -9,12 +9,12 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::discovery;
-use garden_common::ui::layout::{IndentLevel, Layout};
 use crate::suggestions;
 use crate::tending;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
 use colored::Colorize;
+use garden_common::ui::layout::{IndentLevel, Layout};
+use garden_common::ui::rendering as ui;
 use garden_common::{CliFormatter, GardenApiResponse, TopologyEntry};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -40,7 +40,11 @@ pub struct ObserveCommand {
 }
 
 impl ObserveCommand {
-    pub fn new(stone_filter: Option<String>, offering_filter: Option<String>, quiet_mode: bool) -> Self {
+    pub fn new(
+        stone_filter: Option<String>,
+        offering_filter: Option<String>,
+        quiet_mode: bool,
+    ) -> Self {
         Self {
             stone_filter,
             offering_filter,
@@ -79,11 +83,9 @@ async fn observe_garden(
     STONE_COUNT.store(0, Ordering::SeqCst);
 
     // Keep offering_filter as-is for Lantern call, create offerings_filter for legacy code
-    let offerings_filter: Option<Vec<String>> = offering_filter.as_ref().map(|s| {
-        s.split(',')
-            .map(|o| o.trim().to_lowercase())
-            .collect()
-    });
+    let offerings_filter: Option<Vec<String>> = offering_filter
+        .as_ref()
+        .map(|s| s.split(',').map(|o| o.trim().to_lowercase()).collect());
 
     // Get currently tended stone name for marking (compare by name, not endpoint)
     let tended_state = tending::read_tending().ok();
@@ -98,25 +100,33 @@ async fn observe_garden(
     // Verbose mode diagnostics
     if ctx.verbose > 0 {
         layout.blank();
-        layout.line(&format!("Verbose mode enabled (level {})", ctx.verbose))
+        layout
+            .line(&format!("Verbose mode enabled (level {})", ctx.verbose))
             .level(IndentLevel::Card)
             .tag("verbose")
             .print();
         if let Some(ref tended) = tended_state {
-            layout.field("Tending")
+            layout
+                .field("Tending")
                 .value(format!("{} at {}", tended.stone_name, tended.endpoint))
                 .level(IndentLevel::Card)
                 .tag("verbose")
                 .print();
         } else {
-            layout.field("Tending")
+            layout
+                .field("Tending")
                 .value("none")
                 .level(IndentLevel::Card)
                 .tag("verbose")
                 .print();
         }
-        layout.field("Fresh mode")
-            .value(if ctx.fresh_mode { "enabled" } else { "disabled" })
+        layout
+            .field("Fresh mode")
+            .value(if ctx.fresh_mode {
+                "enabled"
+            } else {
+                "disabled"
+            })
             .level(IndentLevel::Card)
             .tag("verbose")
             .print();
@@ -127,7 +137,8 @@ async fn observe_garden(
     // Fresh mode: For detailed stone info with resource metrics
     // Requires UDP discovery + HTTP fetches per stone (not yet implemented)
     if ctx.fresh_mode {
-        layout.status("Fresh mode not yet supported, using topology cache")
+        layout
+            .status("Fresh mode not yet supported, using topology cache")
             .level(IndentLevel::Card)
             .warn()
             .print();
@@ -138,7 +149,10 @@ async fn observe_garden(
         Duration::from_secs(3),
         Some(|stone_name: &str| {
             Layout::new()
-                .status(&format!("Stone \"{}\" is sleeping (offline). Picking a new stone...", stone_name))
+                .status(&format!(
+                    "Stone \"{}\" is sleeping (offline). Picking a new stone...",
+                    stone_name
+                ))
                 .level(IndentLevel::Card)
                 .warn()
                 .print();
@@ -150,27 +164,35 @@ async fn observe_garden(
             let endpoint = candidate.endpoint.clone();
             async move {
                 use crate::tending::StoneError;
-                
+
                 let layout = Layout::new();
-                layout.line(&format!("querying topology from {}...", stone_name))
+                layout
+                    .line(&format!("querying topology from {}...", stone_name))
                     .level(IndentLevel::Card)
                     .print();
                 layout.blank();
 
-                let topology_url = format!("{}/api/v1/garden/topology", endpoint.trim_end_matches('/'));
+                let topology_url =
+                    format!("{}/api/v1/garden/topology", endpoint.trim_end_matches('/'));
 
                 if verbose > 0 {
-                    layout.field("GET")
+                    layout
+                        .field("GET")
                         .value(&topology_url)
                         .level(IndentLevel::Card)
                         .tag("verbose")
                         .print();
                 }
 
-                let response = client.get(&topology_url).timeout(Duration::from_secs(5)).send().await
+                let response = client
+                    .get(&topology_url)
+                    .timeout(Duration::from_secs(5))
+                    .send()
+                    .await
                     .map_err(|e| {
                         if verbose > 0 {
-                            layout.field("Connection error")
+                            layout
+                                .field("Connection error")
                                 .value(e.to_string())
                                 .level(IndentLevel::Card)
                                 .tag("verbose")
@@ -182,20 +204,27 @@ async fn observe_garden(
                 let status = response.status();
                 if !status.is_success() {
                     if verbose > 0 {
-                        layout.field("Response status")
+                        layout
+                            .field("Response status")
                             .value(status.to_string())
                             .level(IndentLevel::Card)
                             .tag("verbose")
                             .print();
                     }
-                    return Err(StoneError::ResponseError(status.as_u16(), format!("Stone returned {}", status)));
+                    return Err(StoneError::ResponseError(
+                        status.as_u16(),
+                        format!("Stone returned {}", status),
+                    ));
                 }
 
-                let api_response = response.json::<GardenApiResponse<Vec<TopologyEntry>>>().await
+                let api_response = response
+                    .json::<GardenApiResponse<Vec<TopologyEntry>>>()
+                    .await
                     .map_err(|e| {
                         tracing::warn!(error = ?e, "Failed to parse topology JSON");
                         if verbose > 0 {
-                            layout.field("JSON parse error")
+                            layout
+                                .field("JSON parse error")
                                 .value(e.to_string())
                                 .level(IndentLevel::Card)
                                 .tag("verbose")
@@ -205,14 +234,18 @@ async fn observe_garden(
                     })?;
 
                 if verbose > 0 {
-                    layout.field("Response")
+                    layout
+                        .field("Response")
                         .value(format!("{} stones in topology", api_response.data.len()))
                         .level(IndentLevel::Card)
                         .tag("verbose")
                         .print();
                     for stone in &api_response.data {
-                        layout.line(&format!("- {} (id: {}, endpoint: {}, health: {})",
-                            stone.stone_name, stone.stone_id, stone.endpoint, stone.health))
+                        layout
+                            .line(&format!(
+                                "- {} (id: {}, endpoint: {}, health: {})",
+                                stone.stone_name, stone.stone_id, stone.endpoint, stone.health
+                            ))
                             .level(IndentLevel::Section)
                             .tag("verbose")
                             .print();
@@ -222,11 +255,18 @@ async fn observe_garden(
                 Ok(api_response.data)
             }
         },
-    ).await;
+    )
+    .await;
 
     // If execute_on_stone succeeded, display and return
     if let Ok((stones, responding_stone)) = topology_result {
-        display_topology_compact(&stones, &stone_filter, &offerings_filter, Some(&responding_stone.stone_name), ctx.verbose);
+        display_topology_compact(
+            &stones,
+            &stone_filter,
+            &offerings_filter,
+            Some(&responding_stone.stone_name),
+            ctx.verbose,
+        );
         return Ok(());
     }
 
@@ -238,10 +278,20 @@ async fn observe_garden(
         tracing::info!(endpoint = %lantern, "Using cached Lantern endpoint for topology queries");
 
         let topology_url = format!("{}/api/v1/stones", lantern);
-        match ctx.client.get(&topology_url).timeout(Duration::from_secs(5)).send().await {
+        match ctx
+            .client
+            .get(&topology_url)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(topology) = resp.json::<garden_common::LanternTopology>().await {
-                    display_lantern_compact(&topology, offering_filter.as_deref(), tended_stone_name.as_deref());
+                    display_lantern_compact(
+                        &topology,
+                        offering_filter.as_deref(),
+                        tended_stone_name.as_deref(),
+                    );
                     return Ok(());
                 }
             }
@@ -255,11 +305,13 @@ async fn observe_garden(
     }
 
     // No stones responded
-    layout.line("No stones available")
+    layout
+        .line("No stones available")
         .level(IndentLevel::Card)
         .print();
     layout.blank();
-    layout.line("Try: garden-rake tend <stone>  (to specify a stone to tend)")
+    layout
+        .line("Try: garden-rake tend <stone>  (to specify a stone to tend)")
         .level(IndentLevel::Card)
         .tag("hint")
         .print();
@@ -267,8 +319,6 @@ async fn observe_garden(
     display_footer_empty();
     Ok(())
 }
-
-
 
 // ── Compact table display ────────────────────────────────────────────
 
@@ -292,25 +342,46 @@ fn print_summary_header(count: usize, health_counts: &HealthCounts, term: &ui::T
         let mut parts: Vec<String> = Vec::new();
         if health_counts.thriving > 0 {
             let s = format!("{} thriving", health_counts.thriving);
-            parts.push(if term.supports_color { s.green().to_string() } else { s });
+            parts.push(if term.supports_color {
+                s.green().to_string()
+            } else {
+                s
+            });
         }
         if health_counts.degraded > 0 {
             let s = format!("{} degraded", health_counts.degraded);
-            parts.push(if term.supports_color { s.yellow().to_string() } else { s });
+            parts.push(if term.supports_color {
+                s.yellow().to_string()
+            } else {
+                s
+            });
         }
         if health_counts.withering > 0 {
             let s = format!("{} withering", health_counts.withering);
-            parts.push(if term.supports_color { s.red().to_string() } else { s });
+            parts.push(if term.supports_color {
+                s.red().to_string()
+            } else {
+                s
+            });
         }
         if health_counts.dormant > 0 {
             let s = format!("{} dormant", health_counts.dormant);
-            parts.push(if term.supports_color { s.truecolor(128, 128, 128).to_string() } else { s });
+            parts.push(if term.supports_color {
+                s.truecolor(128, 128, 128).to_string()
+            } else {
+                s
+            });
         }
         format!("{} {} ({})", count, label, parts.join(", "))
     };
 
     println!();
-    println!("{}{} \u{2014} {}", indent, fmt.title("GARDEN OBSERVE"), summary);
+    println!(
+        "{}{} \u{2014} {}",
+        indent,
+        fmt.title("GARDEN OBSERVE"),
+        summary
+    );
 }
 
 /// Health classification counters
@@ -323,7 +394,12 @@ struct HealthCounts {
 
 impl HealthCounts {
     fn new() -> Self {
-        Self { thriving: 0, degraded: 0, withering: 0, dormant: 0 }
+        Self {
+            thriving: 0,
+            degraded: 0,
+            withering: 0,
+            dormant: 0,
+        }
     }
 
     fn add(&mut self, health: &str) {
@@ -350,7 +426,12 @@ fn print_table_header(_term: &ui::TerminalInfo, table_width: usize) {
 
     let header = format!(
         " {:<name_w$} {:>os_w$}  {:>cores_w$}  {:>mem_w$}  {:<ai_w$}  {}",
-        "NAME", "OS", "CORES", "MEM", "AI", "OFFERINGS",
+        "NAME",
+        "OS",
+        "CORES",
+        "MEM",
+        "AI",
+        "OFFERINGS",
         name_w = COL_NAME,
         os_w = COL_OS,
         cores_w = COL_CORES,
@@ -379,7 +460,11 @@ fn print_stone_row(
     // Status prefix: symbol only when NOT thriving
     let status_sym = ui::compact_status_symbol(health, term.supports_unicode);
     let tended_mark = if is_tended {
-        if term.supports_color { "" } else { "*" }
+        if term.supports_color {
+            ""
+        } else {
+            "*"
+        }
     } else {
         ""
     };
@@ -446,7 +531,11 @@ fn print_table_footer(
     println!("{} {}", indent, fmt.hint(&legend));
 
     println!();
-    println!("{} {}", indent, fmt.hint("garden-rake <stone>? for details"));
+    println!(
+        "{} {}",
+        indent,
+        fmt.hint("garden-rake <stone>? for details")
+    );
 }
 
 /// Display footer when no stones are available
@@ -472,10 +561,12 @@ fn display_topology_compact(
     if stones.is_empty() {
         print_summary_header(0, &HealthCounts::new(), &term);
         layout.blank();
-        layout.line("No stones in topology cache")
+        layout
+            .line("No stones in topology cache")
             .level(IndentLevel::Card)
             .print();
-        layout.line("Try: garden-rake observe --fresh  (to scan network)")
+        layout
+            .line("Try: garden-rake observe --fresh  (to scan network)")
             .level(IndentLevel::Card)
             .tag("hint")
             .print();
@@ -484,7 +575,8 @@ fn display_topology_compact(
 
     // Filter stones if name specified
     let filtered_stones: Vec<&TopologyEntry> = if let Some(ref filter_name) = stone_filter {
-        stones.iter()
+        stones
+            .iter()
             .filter(|s| s.stone_name.eq_ignore_ascii_case(filter_name))
             .collect()
     } else {
@@ -493,7 +585,11 @@ fn display_topology_compact(
 
     if filtered_stones.is_empty() && stone_filter.is_some() {
         print_summary_header(0, &HealthCounts::new(), &term);
-        layout.status(&format!("Stone '{}' not found in topology", stone_filter.as_ref().unwrap()))
+        layout
+            .status(&format!(
+                "Stone '{}' not found in topology",
+                stone_filter.as_ref().unwrap()
+            ))
             .level(IndentLevel::Card)
             .error()
             .print();
@@ -501,10 +597,15 @@ fn display_topology_compact(
     }
 
     // Collect displayable stones (those with capabilities data)
-    let displayable: Vec<&TopologyEntry> = filtered_stones.iter()
+    let displayable: Vec<&TopologyEntry> = filtered_stones
+        .iter()
         .filter(|s| {
             if s.capabilities.is_none() && verbose > 0 {
-                layout.status(&format!("Stone {} has no capabilities data (may be offline)", s.stone_name))
+                layout
+                    .status(&format!(
+                        "Stone {} has no capabilities data (may be offline)",
+                        s.stone_name
+                    ))
                     .level(IndentLevel::Card)
                     .tag("verbose")
                     .print();
@@ -525,7 +626,9 @@ fn display_topology_compact(
         let is_tended = tended_stone_name
             .map(|t| t.eq_ignore_ascii_case(&stone.stone_name))
             .unwrap_or(false);
-        if is_tended { has_tended = true; }
+        if is_tended {
+            has_tended = true;
+        }
 
         if let Some(ref caps) = stone.capabilities {
             if let Some(ref rt) = caps.runtime {
@@ -552,7 +655,9 @@ fn display_topology_compact(
             .map(|t| t.eq_ignore_ascii_case(&stone.stone_name))
             .unwrap_or(false);
 
-        let os_str = caps.runtime.as_ref()
+        let os_str = caps
+            .runtime
+            .as_ref()
             .map(|r| ui::os_family_from_runtime(&r.os))
             .unwrap_or("unknown");
 
@@ -562,7 +667,9 @@ fn display_topology_compact(
 
         // Filter offerings if needed
         let filtered_services: Vec<_> = if let Some(ref filters) = offerings_filter {
-            stone.services.iter()
+            stone
+                .services
+                .iter()
                 .filter(|s| filters.contains(&s.offering.to_lowercase()))
                 .collect()
         } else {
@@ -573,9 +680,8 @@ fn display_topology_compact(
             "\u{2014}".to_string()
         } else {
             // Use TopologyServiceEntry vec for compact_offerings
-            let svc_refs: Vec<garden_common::TopologyServiceEntry> = filtered_services.iter()
-                .map(|s| (*s).clone())
-                .collect();
+            let svc_refs: Vec<garden_common::TopologyServiceEntry> =
+                filtered_services.iter().map(|s| (*s).clone()).collect();
             ui::compact_offerings(&svc_refs, MAX_OFFERINGS_SHOWN)
         };
 
@@ -624,7 +730,9 @@ fn display_lantern_compact(
         let is_tended = tended_stone_name
             .map(|t| t.eq_ignore_ascii_case(&stone.name))
             .unwrap_or(false);
-        if is_tended { has_tended = true; }
+        if is_tended {
+            has_tended = true;
+        }
     }
 
     STONE_COUNT.store(topology.stones.len(), Ordering::SeqCst);
@@ -640,9 +748,15 @@ fn display_lantern_compact(
 
         // Lantern doesn't have capabilities — show what we can
         let filtered_services: Vec<_> = if let Some(filter) = offering_filter {
-            stone.services.iter()
-                .filter(|s| s.name.to_lowercase().contains(&filter.to_lowercase())
-                    || s.service_type.to_lowercase().contains(&filter.to_lowercase()))
+            stone
+                .services
+                .iter()
+                .filter(|s| {
+                    s.name.to_lowercase().contains(&filter.to_lowercase())
+                        || s.service_type
+                            .to_lowercase()
+                            .contains(&filter.to_lowercase())
+                })
                 .collect()
         } else {
             stone.services.iter().collect()

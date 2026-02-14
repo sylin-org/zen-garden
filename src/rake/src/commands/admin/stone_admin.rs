@@ -9,8 +9,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 use std::time::Duration;
 
 // ============================================================================
@@ -26,7 +26,10 @@ pub struct RouseCommand {
 
 impl RouseCommand {
     pub fn new(stone_name: String, quiet_mode: bool) -> Self {
-        Self { stone_name, quiet_mode }
+        Self {
+            stone_name,
+            quiet_mode,
+        }
     }
 }
 
@@ -55,7 +58,10 @@ impl Command for RouseCommand {
         match status {
             s if s.is_success() => {
                 if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("Wake-on-LAN packet sent");
+                    let message = body
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Wake-on-LAN packet sent");
                     let mac = body.get("mac").and_then(|v| v.as_str());
                     let stone_status = body.get("status").and_then(|v| v.as_str());
 
@@ -92,7 +98,10 @@ impl Command for RouseCommand {
             }
             reqwest::StatusCode::NOT_FOUND => {
                 if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let error = body.get("error").and_then(|v| v.as_str()).unwrap_or("Stone not found");
+                    let error = body
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Stone not found");
                     let hint = body.get("hint").and_then(|v| v.as_str());
 
                     eprintln!(
@@ -120,7 +129,10 @@ impl Command for RouseCommand {
             }
             reqwest::StatusCode::BAD_REQUEST => {
                 if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let error = body.get("error").and_then(|v| v.as_str()).unwrap_or("No MAC address");
+                    let error = body
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("No MAC address");
                     let hint = body.get("hint").and_then(|v| v.as_str());
 
                     eprintln!(
@@ -204,7 +216,10 @@ impl Command for SlumberCommand {
         match status {
             s if s.is_success() => {
                 if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("Shutdown initiated");
+                    let message = body
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Shutdown initiated");
 
                     println!(
                         "{}{} {}",
@@ -278,7 +293,10 @@ impl Command for StirCommand {
         match status {
             s if s.is_success() => {
                 if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("Reboot initiated");
+                    let message = body
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Reboot initiated");
 
                     println!(
                         "{}{} {}",

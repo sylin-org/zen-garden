@@ -6,15 +6,13 @@
 //! - Memory usage
 //! - Initialization progress
 
+use crate::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use garden_common::{ComponentHealth, DaemonHealthStatus, HealthCheck};
-use crate::AppState;
 use std::collections::HashMap;
 
 /// GET /api/health - System health status
-pub async fn get_health(
-    State(state): State<AppState>,
-) -> (StatusCode, Json<DaemonHealthStatus>) {
+pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<DaemonHealthStatus>) {
     // Run health checks (using domain logic where possible)
     let docker_check = check_docker_health(&state).await;
     let disk_check = crate::domain::health::check_disk_health();
@@ -69,7 +67,7 @@ pub async fn get_health(
             .as_ref()
             .map(|r| r.os.split('/').next().unwrap_or("unknown").to_string())
             .unwrap_or_else(|| std::env::consts::OS.to_string());
-        
+
         let arch = caps.hardware.cpu.architecture.clone();
         (os_family, arch)
     } else {
@@ -153,16 +151,16 @@ async fn build_initialization_component(state: &AppState) -> ComponentHealth {
     // Check catalog build status
     let catalog_guard = state.offerings_index.read().await;
     let catalog_ready = catalog_guard.is_some();
-    details.insert("catalog_ready".to_string(), serde_json::json!(catalog_ready));
+    details.insert(
+        "catalog_ready".to_string(),
+        serde_json::json!(catalog_ready),
+    );
 
     // Determine overall initialization health
     if detection_status == "complete" && catalog_ready {
         ComponentHealth::healthy(details)
     } else {
-        details.insert(
-            "message".to_string(),
-            serde_json::json!("Initializing..."),
-        );
+        details.insert("message".to_string(), serde_json::json!("Initializing..."));
         ComponentHealth::degraded(details)
     }
 }

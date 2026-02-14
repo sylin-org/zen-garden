@@ -38,8 +38,8 @@ use tracing::{debug, warn};
 
 use crate::infra::storage::{ObjectStore, SeedBankRegistry};
 use crate::AppState;
-use garden_common::constants::paths;
 use garden_common::constants::headers::HEADER_SEED_BANK;
+use garden_common::constants::paths;
 use garden_common::storage::DEFAULT_SEED_BANK_NAME;
 
 // ============================================================================
@@ -111,20 +111,36 @@ fn has_path_traversal(value: &str) -> bool {
 
 fn validate_bucket(bucket: &str) -> Option<Response> {
     if bucket.is_empty() {
-        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket name cannot be empty"));
+        return Some(xml_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidBucket",
+            "Bucket name cannot be empty",
+        ));
     }
     if has_path_traversal(bucket) {
-        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidBucket", "Bucket contains invalid path segments"));
+        return Some(xml_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidBucket",
+            "Bucket contains invalid path segments",
+        ));
     }
     None
 }
 
 fn validate_key(key: &str) -> Option<Response> {
     if key.is_empty() {
-        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidKey", "Object key cannot be empty"));
+        return Some(xml_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidKey",
+            "Object key cannot be empty",
+        ));
     }
     if has_path_traversal(key) {
-        return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidKey", "Object key contains invalid path segments"));
+        return Some(xml_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidKey",
+            "Object key contains invalid path segments",
+        ));
     }
     None
 }
@@ -133,14 +149,20 @@ async fn resolve_seed_bank_route(
     state: &AppState,
     name: &str,
 ) -> Result<SeedBankRoute, (StatusCode, String)> {
-    let registry = SeedBankRegistry::scan().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to scan seed banks: {}", e)))?;
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to scan seed banks: {}", e),
+        )
+    })?;
 
     if let Some(bank) = registry.get(name) {
         if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
             return Err((StatusCode::CONFLICT, msg));
         }
-        return Ok(SeedBankRoute::Local { mount_path: bank.mount_path.clone() });
+        return Ok(SeedBankRoute::Local {
+            mount_path: bank.mount_path.clone(),
+        });
     }
 
     let cache = state.storage_cache.read().await;
@@ -150,12 +172,17 @@ async fn resolve_seed_bank_route(
         }
         for sb in &beacon.seed_banks {
             if sb.name == name {
-                return Ok(SeedBankRoute::Remote { endpoint: beacon.endpoint.clone() });
+                return Ok(SeedBankRoute::Remote {
+                    endpoint: beacon.endpoint.clone(),
+                });
             }
         }
     }
 
-    Err((StatusCode::SERVICE_UNAVAILABLE, format!("Seed bank '{}' not available", name)))
+    Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("Seed bank '{}' not available", name),
+    ))
 }
 
 /// Build XML error response
@@ -185,14 +212,21 @@ async fn proxy_s3_request(
     body: Option<Bytes>,
 ) -> Response {
     let client = reqwest::Client::new();
-    let url = format!("{}/{}", endpoint.trim_end_matches('/'), path.trim_start_matches('/'));
+    let url = format!(
+        "{}/{}",
+        endpoint.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
     let mut request = client.request(method, url);
 
     if !query.is_empty() {
         request = request.query(&query);
     }
 
-    if let Some(content_type) = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    if let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         request = request.header(reqwest::header::CONTENT_TYPE, content_type);
     }
 
@@ -207,21 +241,34 @@ async fn proxy_s3_request(
         }
     };
 
-    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let resp_headers = response.headers().clone();
     let body = response.bytes().await.unwrap_or_default();
 
     let mut builder = Response::builder().status(status);
-    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::CONTENT_TYPE, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::CONTENT_LENGTH, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::ETAG, value);
     }
-    if let Some(value) = resp_headers.get(reqwest::header::LAST_MODIFIED).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = resp_headers
+        .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+    {
         builder = builder.header(header::LAST_MODIFIED, value);
     }
 
@@ -276,7 +323,11 @@ pub async fn put_object(
                 }
                 Err(e) => {
                     warn!(error = %e, "PUT object failed");
-                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                    xml_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
                 }
             }
         }
@@ -315,7 +366,11 @@ pub async fn get_object(
     }
     let key = key.trim_start_matches('/');
     if key.is_empty() {
-        return xml_error(StatusCode::NOT_FOUND, "NoSuchKey", "Object key cannot be empty");
+        return xml_error(
+            StatusCode::NOT_FOUND,
+            "NoSuchKey",
+            "Object key cannot be empty",
+        );
     }
     if let Some(resp) = validate_key(key) {
         return resp;
@@ -344,10 +399,18 @@ pub async fn get_object(
                         .body(data.into())
                         .unwrap()
                 }
-                Ok(None) => xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &format!("Key '{}' not found", key)),
+                Ok(None) => xml_error(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchKey",
+                    &format!("Key '{}' not found", key),
+                ),
                 Err(e) => {
                     warn!(error = %e, "GET object failed");
-                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                    xml_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
                 }
             }
         }
@@ -386,7 +449,10 @@ pub async fn head_object(
     }
     let key = key.trim_start_matches('/');
     if key.is_empty() {
-        return Response::builder().status(StatusCode::NOT_FOUND).body("".into()).unwrap();
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("".into())
+            .unwrap();
     }
     if let Some(resp) = validate_key(key) {
         return resp;
@@ -415,8 +481,14 @@ pub async fn head_object(
                         .body("".into())
                         .unwrap()
                 }
-                Ok(None) => Response::builder().status(StatusCode::NOT_FOUND).body("".into()).unwrap(),
-                Err(_) => Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body("".into()).unwrap(),
+                Ok(None) => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body("".into())
+                    .unwrap(),
+                Err(_) => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("".into())
+                    .unwrap(),
             }
         }
         SeedBankRoute::Remote { endpoint } => {
@@ -471,11 +543,18 @@ pub async fn delete_object(
             match store.delete_object(&bucket, key).await {
                 Ok(_) => {
                     debug!(bucket = %bucket, key = %key, "DELETE object success");
-                    Response::builder().status(StatusCode::NO_CONTENT).body("".into()).unwrap()
+                    Response::builder()
+                        .status(StatusCode::NO_CONTENT)
+                        .body("".into())
+                        .unwrap()
                 }
                 Err(e) => {
                     warn!(error = %e, "DELETE object failed");
-                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                    xml_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
                 }
             }
         }
@@ -530,7 +609,11 @@ pub async fn list_buckets(
                 }
                 Err(e) => {
                     warn!(error = %e, "LIST buckets failed");
-                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                    xml_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
                 }
             }
         }
@@ -573,8 +656,7 @@ pub struct ListObjectsQuery {
     pub seed_bank: Option<String>,
 }
 
-impl ListObjectsQuery {
-}
+impl ListObjectsQuery {}
 
 /// List objects in a bucket
 pub async fn list_objects(
@@ -605,13 +687,16 @@ pub async fn list_objects(
     match route {
         SeedBankRoute::Local { mount_path } => {
             let store = ObjectStore::new(&mount_path);
-            match store.list_objects(
-                &bucket,
-                query.prefix.as_deref(),
-                query.delimiter.as_deref(),
-                query.marker.as_deref(),
-                max_keys,
-            ).await {
+            match store
+                .list_objects(
+                    &bucket,
+                    query.prefix.as_deref(),
+                    query.delimiter.as_deref(),
+                    query.marker.as_deref(),
+                    max_keys,
+                )
+                .await
+            {
                 Ok(result) => {
                     debug!(bucket = %bucket, count = result.contents.len(), truncated = result.is_truncated, "LIST objects success");
 
@@ -632,7 +717,11 @@ pub async fn list_objects(
                 }
                 Err(e) => {
                     warn!(error = %e, "LIST objects failed");
-                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                    xml_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
                 }
             }
         }
@@ -684,15 +773,24 @@ fn build_list_bucket_result(
     xml.push_str(&format!("\n  <MaxKeys>{}</MaxKeys>", max_keys));
 
     if !delimiter.is_empty() {
-        xml.push_str(&format!("\n  <Delimiter>{}</Delimiter>", escape_xml(delimiter)));
+        xml.push_str(&format!(
+            "\n  <Delimiter>{}</Delimiter>",
+            escape_xml(delimiter)
+        ));
     }
 
-    xml.push_str(&format!("\n  <IsTruncated>{}</IsTruncated>", result.is_truncated));
+    xml.push_str(&format!(
+        "\n  <IsTruncated>{}</IsTruncated>",
+        result.is_truncated
+    ));
 
     for obj in &result.contents {
         xml.push_str("\n  <Contents>");
         xml.push_str(&format!("\n    <Key>{}</Key>", escape_xml(&obj.key)));
-        xml.push_str(&format!("\n    <LastModified>{}</LastModified>", escape_xml(&obj.last_modified)));
+        xml.push_str(&format!(
+            "\n    <LastModified>{}</LastModified>",
+            escape_xml(&obj.last_modified)
+        ));
         xml.push_str(&format!("\n    <ETag>{}</ETag>", escape_xml(&obj.etag)));
         xml.push_str(&format!("\n    <Size>{}</Size>", obj.size));
         xml.push_str("\n    <StorageClass>STANDARD</StorageClass>");

@@ -1,4 +1,4 @@
-﻿//! Garden Probe CLI - Integration test runner for Zen Garden
+//! Garden Probe CLI - Integration test runner for Zen Garden
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -125,8 +125,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    Ok(()
-    )
+    Ok(())
 }
 
 fn cmd_list(category: Option<String>, tag: Option<String>) -> Result<()> {
@@ -162,11 +161,7 @@ fn cmd_list(category: Option<String>, tag: Option<String>) -> Result<()> {
 
         for test in tests {
             let tags = test.tags.join(", ");
-            println!(
-                "  {} - {}",
-                test.id.green(),
-                test.description.dimmed()
-            );
+            println!("  {} - {}", test.id.green(), test.description.dimmed());
             if !tags.is_empty() {
                 println!("    tags: {}", tags.dimmed());
             }
@@ -174,10 +169,7 @@ fn cmd_list(category: Option<String>, tag: Option<String>) -> Result<()> {
     }
 
     println!();
-    println!(
-        "Run tests with: {} run <test-id>",
-        "garden-probe".bold()
-    );
+    println!("Run tests with: {} run <test-id>", "garden-probe".bold());
     println!();
 
     Ok(())
@@ -248,7 +240,11 @@ async fn cmd_run(
     let test_ids: Vec<String> = if all {
         registry.all().iter().map(|t| t.id.to_string()).collect()
     } else if let Some(t) = &tag {
-        registry.by_tag(t).iter().map(|t| t.id.to_string()).collect()
+        registry
+            .by_tag(t)
+            .iter()
+            .map(|t| t.id.to_string())
+            .collect()
     } else if let Some(c) = &category {
         registry
             .by_category(c)
@@ -442,10 +438,7 @@ async fn cmd_discover(
     }
 
     println!();
-    println!(
-        "{}",
-        "Run tests: garden-probe run --all".dimmed()
-    );
+    println!("{}", "Run tests: garden-probe run --all".dimmed());
     println!();
 
     Ok(())

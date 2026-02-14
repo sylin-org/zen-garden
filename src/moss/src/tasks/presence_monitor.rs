@@ -5,8 +5,8 @@
 use std::time::Duration;
 use tokio::time::interval;
 
-use crate::AppState;
 use crate::domain::StoneEvent;
+use crate::AppState;
 
 /// Run load monitoring task (every 5s)
 ///
@@ -21,10 +21,7 @@ pub async fn run_load_monitor_task(state: AppState) {
         let (cpu_percent, memory_percent) = {
             let resources = state.system_resources.read().await;
             if let Some(ref res) = *resources {
-                (
-                    res.cpu.usage_percent as f64,
-                    res.memory.used_percent as f64,
-                )
+                (res.cpu.usage_percent as f64, res.memory.used_percent as f64)
             } else {
                 (0.0, 0.0)
             }
@@ -50,10 +47,7 @@ pub async fn run_health_monitor_task(state: AppState) {
         let (cpu, memory) = {
             let resources = state.system_resources.read().await;
             if let Some(ref res) = *resources {
-                (
-                    res.cpu.usage_percent as f64,
-                    res.memory.used_percent as f64,
-                )
+                (res.cpu.usage_percent as f64, res.memory.used_percent as f64)
             } else {
                 (0.0, 0.0)
             }

@@ -6,17 +6,19 @@
 //! - Query/search offerings
 //! - View offering details
 
-use std::collections::BTreeMap;
-use std::time::Duration;
-use anyhow::Result;
-use async_trait::async_trait;
-use garden_common::{CliFormatter, GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo};
-use garden_common::offerings::parse_offering_fqn;
 use crate::command_manifest::cmd;
 use crate::commands::Command;
 use crate::context::CommandContext;
 use crate::discovery;
+use anyhow::Result;
+use async_trait::async_trait;
+use garden_common::offerings::parse_offering_fqn;
 use garden_common::ui::rendering as ui;
+use garden_common::{
+    CliFormatter, GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo,
+};
+use std::collections::BTreeMap;
+use std::time::Duration;
 
 // ============================================================================
 // Types
@@ -124,7 +126,9 @@ pub struct OfferCommand {
 /// Stone preference scoring for ranking stones in garden-wide search.
 /// This remains in Rake because it's about stone selection, not offering matching.
 pub fn stone_prefer_score(prefer: &[String], caps: Option<&HardwareCapabilities>) -> i32 {
-    let Some(caps) = caps else { return 0; };
+    let Some(caps) = caps else {
+        return 0;
+    };
     let disk_type = caps
         .hardware
         .disk
@@ -160,24 +164,28 @@ pub fn stone_prefer_score(prefer: &[String], caps: Option<&HardwareCapabilities>
 // API Functions
 // ============================================================================
 
-async fn fetch_offerings(
-    client: &reqwest::Client,
-    endpoint: &str,
-) -> Result<Vec<OfferingEntry>> {
+async fn fetch_offerings(client: &reqwest::Client, endpoint: &str) -> Result<Vec<OfferingEntry>> {
     let moss = GardenHttpClient::new(client, endpoint);
     let response = moss.get_raw("/api/v1/stone/offerings").await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        anyhow::bail!("This stone's moss does not support validated offerings. Upgrade moss and retry.");
+        anyhow::bail!(
+            "This stone's moss does not support validated offerings. Upgrade moss and retry."
+        );
     }
 
-    let api_response: GardenApiResponse<Vec<OfferingEntry>> = response.error_for_status()?.json().await?;
+    let api_response: GardenApiResponse<Vec<OfferingEntry>> =
+        response.error_for_status()?.json().await?;
     Ok(api_response.data)
 }
 
-async fn fetch_capabilities(client: &reqwest::Client, endpoint: &str) -> Result<HardwareCapabilities> {
+async fn fetch_capabilities(
+    client: &reqwest::Client,
+    endpoint: &str,
+) -> Result<HardwareCapabilities> {
     let moss = GardenHttpClient::new(client, endpoint);
-    let response: GardenApiResponse<HardwareCapabilities> = moss.get("/api/v1/stone/capabilities").await?;
+    let response: GardenApiResponse<HardwareCapabilities> =
+        moss.get("/api/v1/stone/capabilities").await?;
     Ok(response.data)
 }
 
@@ -194,7 +202,8 @@ async fn fetch_offering_info_json(
         anyhow::bail!("Unknown offering: {}", offering);
     }
 
-    let api_response: GardenApiResponse<serde_json::Value> = response.error_for_status()?.json().await?;
+    let api_response: GardenApiResponse<serde_json::Value> =
+        response.error_for_status()?.json().await?;
     Ok(api_response.data)
 }
 
@@ -207,35 +216,38 @@ async fn fetch_search_results(
     limit: usize,
 ) -> Result<garden_common::offerings::OfferingSearchResponse> {
     let moss = GardenHttpClient::new(client, endpoint);
-    
+
     // Build query string
     let prefer_str = if prefer.is_empty() {
         String::new()
     } else {
         format!("&prefer={}", prefer.join(","))
     };
-    let path = format!("/api/v1/stone/offerings/search?q={}&limit={}{}", 
-        urlencoding::encode(query), limit, prefer_str);
-    
+    let path = format!(
+        "/api/v1/stone/offerings/search?q={}&limit={}{}",
+        urlencoding::encode(query),
+        limit,
+        prefer_str
+    );
+
     let response = moss.get_raw(&path).await?;
-    
+
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        anyhow::bail!("This stone's moss does not support offering search. Upgrade moss and retry.");
+        anyhow::bail!(
+            "This stone's moss does not support offering search. Upgrade moss and retry."
+        );
     }
-    
+
     if response.status() == reqwest::StatusCode::BAD_REQUEST {
         anyhow::bail!("Search query is empty or invalid");
     }
-    
-    let api_response: GardenApiResponse<garden_common::offerings::OfferingSearchResponse> = 
+
+    let api_response: GardenApiResponse<garden_common::offerings::OfferingSearchResponse> =
         response.error_for_status()?.json().await?;
     Ok(api_response.data)
 }
 
-async fn refresh_offerings_index(
-    client: &reqwest::Client,
-    endpoint: &str,
-) -> Result<()> {
+async fn refresh_offerings_index(client: &reqwest::Client, endpoint: &str) -> Result<()> {
     let moss = GardenHttpClient::new(client, endpoint);
     let response = moss.post_empty("/api/v1/stone/offerings/refresh").await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -244,7 +256,10 @@ async fn refresh_offerings_index(
         );
     }
 
-    let body = response.error_for_status()?.json::<serde_json::Value>().await?;
+    let body = response
+        .error_for_status()?
+        .json::<serde_json::Value>()
+        .await?;
 
     let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
     let generated_at = body
@@ -280,7 +295,10 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
 
     for svc in services {
         let status_str = format!("{:?}", svc.status);
-        if status_str.to_lowercase().contains(garden_common::SERVICE_RUNNING) {
+        if status_str
+            .to_lowercase()
+            .contains(garden_common::SERVICE_RUNNING)
+        {
             running_count += 1;
         } else {
             stopped_count += 1;
@@ -290,13 +308,18 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
         table.add_row(vec![
             ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
             status_display,
-            if svc.offering.is_empty() { garden_common::VALUE_UNKNOWN.to_string() } else { svc.offering.clone() },
+            if svc.offering.is_empty() {
+                garden_common::VALUE_UNKNOWN.to_string()
+            } else {
+                svc.offering.clone()
+            },
         ]);
     }
 
     println!("{}", table.render());
     println!();
-    println!("{}  {} services ({} running, {} stopped)",
+    println!(
+        "{}  {} services ({} running, {} stopped)",
         " ".repeat(ui::constants::DEFAULT_INDENT),
         services.len(),
         running_count,
@@ -304,10 +327,7 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
     );
 }
 
-async fn print_offerings_index(
-    client: &reqwest::Client,
-    endpoint: &str,
-) -> Result<()> {
+async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Result<()> {
     let term = ui::TerminalInfo::detect();
 
     // Fetch running services
@@ -334,7 +354,13 @@ async fn print_offerings_index(
     // Fetch and display available offerings
     let offerings = fetch_offerings(client, endpoint).await?;
     if offerings.is_empty() {
-        println!("{}", ui::empty_state("No offerings available", Some("Try: garden-rake offer refresh")));
+        println!(
+            "{}",
+            ui::empty_state(
+                "No offerings available",
+                Some("Try: garden-rake offer refresh")
+            )
+        );
         return Ok(());
     }
 
@@ -345,7 +371,13 @@ async fn print_offerings_index(
         .collect();
 
     if compatible_offerings.is_empty() {
-        println!("{}", ui::empty_state("No compatible offerings", Some("All offerings are incompatible with this stone")));
+        println!(
+            "{}",
+            ui::empty_state(
+                "No compatible offerings",
+                Some("All offerings are incompatible with this stone")
+            )
+        );
         return Ok(());
     }
 
@@ -367,24 +399,38 @@ async fn print_offerings_index(
     for (category, mut items) in by_category {
         items.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let grid_items: Vec<String> = items.iter().map(|o| {
-            if o.compatibility.decision == garden_common::COMPAT_FALLBACK {
-                format!("{}{}", o.name, ui::constants::LEGEND_SYMBOL)
-            } else {
-                o.name.clone()
-            }
-        }).collect();
+        let grid_items: Vec<String> = items
+            .iter()
+            .map(|o| {
+                if o.compatibility.decision == garden_common::COMPAT_FALLBACK {
+                    format!("{}{}", o.name, ui::constants::LEGEND_SYMBOL)
+                } else {
+                    o.name.clone()
+                }
+            })
+            .collect();
 
         print!("{}", grid.render_category(&category, &grid_items));
         println!();
     }
 
     if !restricted_offerings.is_empty() {
-        println!("{}  {} restricted (uses compatibility fallback)", " ".repeat(ui::constants::DEFAULT_INDENT), ui::constants::LEGEND_SYMBOL);
+        println!(
+            "{}  {} restricted (uses compatibility fallback)",
+            " ".repeat(ui::constants::DEFAULT_INDENT),
+            ui::constants::LEGEND_SYMBOL
+        );
         println!();
-        println!("{}View compatibility details:", " ".repeat(ui::constants::DEFAULT_INDENT));
+        println!(
+            "{}View compatibility details:",
+            " ".repeat(ui::constants::DEFAULT_INDENT)
+        );
         for name in &restricted_offerings {
-            println!("{}  garden-rake offer {} info", " ".repeat(ui::constants::DEFAULT_INDENT * 2), name);
+            println!(
+                "{}  garden-rake offer {} info",
+                " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                name
+            );
         }
     }
 
@@ -404,21 +450,34 @@ async fn print_offering_info(
         anyhow::bail!("Unknown offering: {}", offering);
     }
 
-    let api_response: GardenApiResponse<serde_json::Value> = response.error_for_status()?.json().await?;
+    let api_response: GardenApiResponse<serde_json::Value> =
+        response.error_for_status()?.json().await?;
     let body = api_response.data;
 
-    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or(offering);
-    let image = body.get("image").and_then(|v| v.as_str()).unwrap_or("<unknown>");
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(offering);
+    let image = body
+        .get("image")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<unknown>");
 
     println!("Offering: {}", name);
     println!("Image: {}", image);
 
     if let Some(compat) = body.get("compatibility") {
-        let decision = compat.get("decision").and_then(|v| v.as_str()).unwrap_or(garden_common::COMPAT_PASS);
+        let decision = compat
+            .get("decision")
+            .and_then(|v| v.as_str())
+            .unwrap_or(garden_common::COMPAT_PASS);
         match decision {
             garden_common::COMPAT_PASS => println!("Compatibility: pass"),
             garden_common::COMPAT_FALLBACK => {
-                let reason = compat.get("reason").and_then(|v| v.as_str()).unwrap_or("<unspecified>");
+                let reason = compat
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unspecified>");
                 let original = compat.get("original_image").and_then(|v| v.as_str());
                 let fallback = compat.get("fallback_image").and_then(|v| v.as_str());
                 println!("Compatibility: fallback");
@@ -429,7 +488,10 @@ async fn print_offering_info(
                 println!("  Reason: {}", reason);
             }
             garden_common::COMPAT_FAIL => {
-                let reason = compat.get("reason").and_then(|v| v.as_str()).unwrap_or("<unspecified>");
+                let reason = compat
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unspecified>");
                 println!("Compatibility: fail");
                 println!("  Reason: {}", reason);
                 if let Some(s) = compat.get("suggestion").and_then(|v| v.as_str()) {
@@ -445,7 +507,10 @@ async fn print_offering_info(
         if !ports.is_empty() {
             println!("Ports:");
             for p in ports {
-                if let (Some(host), Some(container)) = (p.get(0).and_then(|v| v.as_u64()), p.get(1).and_then(|v| v.as_u64())) {
+                if let (Some(host), Some(container)) = (
+                    p.get(0).and_then(|v| v.as_u64()),
+                    p.get(1).and_then(|v| v.as_u64()),
+                ) {
                     println!("  - {}:{}", host, container);
                 }
             }
@@ -480,7 +545,11 @@ async fn print_offer_query_recommendations(
 
     println!("Top recommendations:");
     for (idx, o) in results.results.iter().enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK { "(!) " } else { "" };
+        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+            "(!) "
+        } else {
+            ""
+        };
         println!("  {}. {} - {}{}", idx + 1, o.name, flag, o.description);
         println!("     Run: garden-rake offer {} --at {}", o.name, endpoint);
     }
@@ -507,19 +576,24 @@ async fn print_offer_anywhere_recommendations(
     }
 
     // Query each stone's search API and aggregate results
-    let mut candidates: Vec<(i32, String, String, garden_common::offerings::OfferingSearchResult)> = Vec::new();
-    
+    let mut candidates: Vec<(
+        i32,
+        String,
+        String,
+        garden_common::offerings::OfferingSearchResult,
+    )> = Vec::new();
+
     for (stone_name, ep) in endpoints {
         // Get stone hardware capabilities for preference scoring
         let caps = fetch_capabilities(client, &ep).await.ok();
         let stone_bonus = stone_prefer_score(prefer, caps.as_ref());
-        
+
         // Call search API on this stone
         let results = match fetch_search_results(client, &ep, query, prefer, 10).await {
             Ok(r) => r,
             Err(_) => continue,
         };
-        
+
         for o in results.results {
             let combined = o.score * 100 + stone_bonus;
             candidates.push((combined, stone_name.clone(), ep.clone(), o));
@@ -527,9 +601,7 @@ async fn print_offer_anywhere_recommendations(
     }
 
     candidates.sort_by(|(sa, an, ae, _), (sb, bn, be, _)| {
-        sb.cmp(sa)
-            .then_with(|| an.cmp(bn))
-            .then_with(|| ae.cmp(be))
+        sb.cmp(sa).then_with(|| an.cmp(bn)).then_with(|| ae.cmp(be))
     });
 
     println!("Query: {}", query);
@@ -544,8 +616,19 @@ async fn print_offer_anywhere_recommendations(
 
     println!("Top recommendations across stones:");
     for (idx, (_score, stone_name, ep, o)) in candidates.into_iter().take(3).enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK { "(!) " } else { "" };
-        println!("  {}. {} @ {} - {}{}", idx + 1, o.name, stone_name, flag, o.description);
+        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+            "(!) "
+        } else {
+            ""
+        };
+        println!(
+            "  {}. {} @ {} - {}{}",
+            idx + 1,
+            o.name,
+            stone_name,
+            flag,
+            o.description
+        );
         println!("     Run: garden-rake offer {} --at {}", o.name, ep);
     }
 
@@ -576,34 +659,47 @@ async fn print_alternatives_for_failed_install(
     }
 
     let query = seed_tokens.join(" ");
-    
+
     // Use Moss search API to find alternatives
     let results = match fetch_search_results(client, endpoint, &query, prefer, 5).await {
         Ok(r) => r,
         Err(_) => return Ok(Some(query)),
     };
-    
+
     // Filter out the original offering from results
-    let alternatives: Vec<_> = results.results.iter()
+    let alternatives: Vec<_> = results
+        .results
+        .iter()
         .filter(|o| o.name != offering)
         .take(3)
         .collect();
-    
+
     if alternatives.is_empty() {
         return Ok(Some(query));
     }
 
     println!("\nAlternatives:");
     for (idx, o) in alternatives.iter().enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK { "(!) " } else { "" };
+        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+            "(!) "
+        } else {
+            ""
+        };
         println!("  {}. {} - {}{}", idx + 1, o.name, flag, o.description);
         println!("     Run: garden-rake offer {} --at {}", o.name, endpoint);
     }
 
     if !prefer.is_empty() {
-        println!("\nTo search across stones: garden-rake offer {} --at anywhere --prefer {}", query, prefer.join(","));
+        println!(
+            "\nTo search across stones: garden-rake offer {} --at anywhere --prefer {}",
+            query,
+            prefer.join(",")
+        );
     } else {
-        println!("\nTo search across stones: garden-rake offer {} --at anywhere", query);
+        println!(
+            "\nTo search across stones: garden-rake offer {} --at anywhere",
+            query
+        );
     }
 
     Ok(Some(query))
@@ -627,18 +723,24 @@ async fn stream_job_progress(
     service_name: &str,
     quiet_mode: bool,
 ) -> Result<()> {
-    let events_url = format!("{}/api/v1/events?job_id={}", endpoint.trim_end_matches('/'), job_id);
+    let events_url = format!(
+        "{}/api/v1/events?job_id={}",
+        endpoint.trim_end_matches('/'),
+        job_id
+    );
     let term = ui::TerminalInfo::detect();
     let start_time = std::time::Instant::now();
 
     // Check if stone supports /api/v1/events (probe with HEAD request)
     let probe = client.head(&events_url).send().await;
-    let events_supported = matches!(probe, Ok(resp) if resp.status() != reqwest::StatusCode::NOT_FOUND);
+    let events_supported =
+        matches!(probe, Ok(resp) if resp.status() != reqwest::StatusCode::NOT_FOUND);
 
     if !events_supported {
         // Fallback: show elapsed time without progress details
         if !quiet_mode {
-            println!("{}{} Installing... (progress endpoint unavailable)",
+            println!(
+                "{}{} Installing... (progress endpoint unavailable)",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::progress_step(true, "")
             );
@@ -653,11 +755,15 @@ async fn stream_job_progress(
             let elapsed = start_time.elapsed();
 
             if elapsed >= timeout {
-                println!("\n{}⏱  Operation timeout ({})",
+                println!(
+                    "\n{}⏱  Operation timeout ({})",
                     " ".repeat(ui::constants::DEFAULT_INDENT),
                     ui::format_elapsed_time(timeout)
                 );
-                println!("{}Check status: garden-rake list", " ".repeat(ui::constants::DEFAULT_INDENT));
+                println!(
+                    "{}Check status: garden-rake list",
+                    " ".repeat(ui::constants::DEFAULT_INDENT)
+                );
                 break;
             }
 
@@ -665,13 +771,14 @@ async fn stream_job_progress(
             let list_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
             if let Ok(response) = client.get(&list_url).send().await {
                 if let Ok(value) = response.json::<serde_json::Value>().await {
-                    let services: Vec<ServiceInfo> = serde_json::from_value(
-                        value.get("data").cloned().unwrap_or(value)
-                    ).unwrap_or_default();
+                    let services: Vec<ServiceInfo> =
+                        serde_json::from_value(value.get("data").cloned().unwrap_or(value))
+                            .unwrap_or_default();
 
                     if services.iter().any(|s| s.name == service_name) {
                         if !quiet_mode {
-                            println!("\n{}{} Installation complete [{}]",
+                            println!(
+                                "\n{}{} Installation complete [{}]",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
                                 ui::status_indicator("ok", term.supports_color),
                                 ui::format_elapsed_time(elapsed)
@@ -684,7 +791,8 @@ async fn stream_job_progress(
 
             // Update progress display every 2 seconds
             if elapsed.as_secs() % 2 == 0 && !quiet_mode {
-                print!("\r{}Installing... [{}]",
+                print!(
+                    "\r{}Installing... [{}]",
                     " ".repeat(ui::constants::DEFAULT_INDENT),
                     ui::format_elapsed_time(elapsed)
                 );
@@ -698,7 +806,8 @@ async fn stream_job_progress(
 
     // Full progress streaming from /api/v1/events
     if !quiet_mode {
-        println!("{}{} Installation started",
+        println!(
+            "{}{} Installation started",
             " ".repeat(ui::constants::DEFAULT_INDENT),
             ui::progress_step(true, "")
         );
@@ -713,11 +822,15 @@ async fn stream_job_progress(
         let elapsed = start_time.elapsed();
 
         if elapsed >= timeout {
-            println!("\n{}⏱  Operation timeout ({})",
+            println!(
+                "\n{}⏱  Operation timeout ({})",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::format_elapsed_time(timeout)
             );
-            println!("{}Check status: garden-rake list", " ".repeat(ui::constants::DEFAULT_INDENT));
+            println!(
+                "{}Check status: garden-rake list",
+                " ".repeat(ui::constants::DEFAULT_INDENT)
+            );
             break;
         }
 
@@ -725,21 +838,26 @@ async fn stream_job_progress(
         match client.get(&events_url).send().await {
             Ok(response) if response.status().is_success() => {
                 if let Ok(event) = response.json::<serde_json::Value>().await {
-                    let status = event.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let status = event
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
                     let message = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
                     let progress = event.get("progress").and_then(|v| v.as_u64());
 
                     // Display new status updates
                     if !message.is_empty() && message != last_message && !quiet_mode {
                         if let Some(pct) = progress {
-                            println!("\r{}{}% {} [{}]",
+                            println!(
+                                "\r{}{}% {} [{}]",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
                                 pct,
                                 message,
                                 ui::format_elapsed_time(elapsed)
                             );
                         } else {
-                            println!("\r{}{} [{}]",
+                            println!(
+                                "\r{}{} [{}]",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
                                 message,
                                 ui::format_elapsed_time(elapsed)
@@ -749,17 +867,23 @@ async fn stream_job_progress(
                     }
 
                     // Check for completion
-                    if status == garden_common::STATUS_COMPLETED || status == garden_common::STATUS_SUCCESS {
+                    if status == garden_common::STATUS_COMPLETED
+                        || status == garden_common::STATUS_SUCCESS
+                    {
                         if !quiet_mode {
-                            println!("\n{}{} Installation complete [{}]",
+                            println!(
+                                "\n{}{} Installation complete [{}]",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
                                 ui::status_indicator("ok", term.supports_color),
                                 ui::format_elapsed_time(elapsed)
                             );
                         }
                         break;
-                    } else if status == garden_common::STATUS_FAILED || status == garden_common::STATUS_ERROR {
-                        println!("\n{}{} Installation failed: {}",
+                    } else if status == garden_common::STATUS_FAILED
+                        || status == garden_common::STATUS_ERROR
+                    {
+                        println!(
+                            "\n{}{} Installation failed: {}",
                             " ".repeat(ui::constants::DEFAULT_INDENT),
                             ui::status_indicator("error", term.supports_color),
                             message
@@ -771,7 +895,8 @@ async fn stream_job_progress(
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
                 // Job completed or not found
                 if !quiet_mode {
-                    println!("\n{}{} Installation complete (job finished) [{}]",
+                    println!(
+                        "\n{}{} Installation complete (job finished) [{}]",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
                         ui::status_indicator("ok", term.supports_color),
                         ui::format_elapsed_time(elapsed)
@@ -782,7 +907,8 @@ async fn stream_job_progress(
             _ => {
                 // Network error or server issue, continue polling
                 if elapsed.as_secs() % 5 == 0 && !quiet_mode {
-                    print!("\r{}Checking progress... [{}]",
+                    print!(
+                        "\r{}Checking progress... [{}]",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
                         ui::format_elapsed_time(elapsed)
                     );
@@ -813,7 +939,10 @@ async fn handle_placement_recommendation(
 
     // Show waiting message (placement evaluation takes time)
     if !quiet {
-        println!("{}⏳ Evaluating placement options for '{}'...", indent, offering);
+        println!(
+            "{}⏳ Evaluating placement options for '{}'...",
+            indent, offering
+        );
         println!();
     }
 
@@ -821,8 +950,11 @@ async fn handle_placement_recommendation(
     let placement_result = tending::execute_on_stone(
         Duration::from_secs(3),
         Some(|stone_name: &str| {
-            println!("{}Stone '{}' is sleeping (offline). Picking a new stone...",
-                " ".repeat(ui::constants::DEFAULT_INDENT), stone_name);
+            println!(
+                "{}Stone '{}' is sleeping (offline). Picking a new stone...",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                stone_name
+            );
         }),
         |candidate| {
             let client = client.clone();
@@ -831,7 +963,7 @@ async fn handle_placement_recommendation(
             let endpoint = candidate.endpoint.clone();
             async move {
                 use crate::tending::StoneError;
-                
+
                 let url = format!("{}/api/v1/garden/recommend", endpoint.trim_end_matches('/'));
                 let payload = serde_json::json!({
                     "offering": offering,
@@ -839,7 +971,12 @@ async fn handle_placement_recommendation(
                     "top_n": 3
                 });
 
-                let response = client.post(&url).json(&payload).timeout(Duration::from_secs(10)).send().await
+                let response = client
+                    .post(&url)
+                    .json(&payload)
+                    .timeout(Duration::from_secs(10))
+                    .send()
+                    .await
                     .map_err(|e| {
                         tracing::debug!(
                             stone = %stone_name,
@@ -856,43 +993,65 @@ async fn handle_placement_recommendation(
                         status = %status,
                         "Stone returned error"
                     );
-                    return Err(StoneError::ResponseError(status.as_u16(), format!("Stone returned {}", status)));
+                    return Err(StoneError::ResponseError(
+                        status.as_u16(),
+                        format!("Stone returned {}", status),
+                    ));
                 }
 
-                let json = response.json::<serde_json::Value>().await
-                    .map_err(|e| StoneError::ProcessingError(format!("Failed to read response: {}", e)))?;
+                let json = response.json::<serde_json::Value>().await.map_err(|e| {
+                    StoneError::ProcessingError(format!("Failed to read response: {}", e))
+                })?;
 
                 // Try both wrapped and unwrapped formats
-                if let Ok(data) = serde_json::from_value::<GardenApiResponse<PlacementResponse>>(json.clone()) {
+                if let Ok(data) =
+                    serde_json::from_value::<GardenApiResponse<PlacementResponse>>(json.clone())
+                {
                     Ok(data.data)
                 } else if let Ok(data) = serde_json::from_value::<PlacementResponse>(json.clone()) {
                     Ok(data)
                 } else {
-                    Err(StoneError::ProcessingError("Failed to parse placement response".to_string()))
+                    Err(StoneError::ProcessingError(
+                        "Failed to parse placement response".to_string(),
+                    ))
                 }
             }
         },
-    ).await;
+    )
+    .await;
 
     let (placement, responding_stone) = match placement_result {
         Ok((p, s)) => (p, s),
         Err(_) => {
-            println!("{}{} Could not get placement recommendations from any stone", indent, ui::status_indicator("error", term.supports_color));
-            println!("{}Verify that Moss is running on at least one stone", indent);
+            println!(
+                "{}{} Could not get placement recommendations from any stone",
+                indent,
+                ui::status_indicator("error", term.supports_color)
+            );
+            println!(
+                "{}Verify that Moss is running on at least one stone",
+                indent
+            );
             return Ok(());
         }
     };
 
     // Query topology from responding stone to get endpoints for all stones
-    let topology_url = format!("{}/api/v1/garden/topology", responding_stone.endpoint.trim_end_matches('/'));
-    let endpoint_map: std::collections::HashMap<String, String> = match client.get(&topology_url)
+    let topology_url = format!(
+        "{}/api/v1/garden/topology",
+        responding_stone.endpoint.trim_end_matches('/')
+    );
+    let endpoint_map: std::collections::HashMap<String, String> = match client
+        .get(&topology_url)
         .timeout(Duration::from_secs(5))
         .send()
         .await
     {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(api_response) = resp.json::<GardenApiResponse<Vec<TopologyEntry>>>().await {
-                api_response.data.into_iter()
+                api_response
+                    .data
+                    .into_iter()
                     .map(|entry| (entry.stone_name.to_lowercase(), entry.endpoint))
                     .collect()
             } else {
@@ -904,11 +1063,22 @@ async fn handle_placement_recommendation(
 
     // Also add the responding stone to the map
     let mut endpoint_map = endpoint_map;
-    endpoint_map.insert(responding_stone.stone_name.to_lowercase(), responding_stone.endpoint.clone());
+    endpoint_map.insert(
+        responding_stone.stone_name.to_lowercase(),
+        responding_stone.endpoint.clone(),
+    );
 
     if placement.recommendations.is_empty() {
-        println!("{}{} No compatible stones found for '{}'", indent, ui::status_indicator("error", term.supports_color), offering);
-        println!("{}This offering may not be available or compatible with your network", indent);
+        println!(
+            "{}{} No compatible stones found for '{}'",
+            indent,
+            ui::status_indicator("error", term.supports_color),
+            offering
+        );
+        println!(
+            "{}This offering may not be available or compatible with your network",
+            indent
+        );
         return Ok(());
     }
 
@@ -921,48 +1091,92 @@ async fn handle_placement_recommendation(
         if let Some(endpoint) = endpoint_map.get(&top.hostname.to_lowercase()) {
             return install_on_stone(client, endpoint, offering, quiet).await;
         } else {
-            println!("{}{} Could not find endpoint for stone '{}'", indent, ui::status_indicator("error", term.supports_color), top.hostname);
+            println!(
+                "{}{} Could not find endpoint for stone '{}'",
+                indent,
+                ui::status_indicator("error", term.supports_color),
+                top.hostname
+            );
             return Ok(());
         }
     }
-    
+
     // Interactive mode: Show recommendations
     let fmt = CliFormatter::new();
-    println!("{}{}", indent, fmt.title(&format!("PLACEMENT RECOMMENDATIONS FOR '{}'", offering.to_uppercase())));
+    println!(
+        "{}{}",
+        indent,
+        fmt.title(&format!(
+            "PLACEMENT RECOMMENDATIONS FOR '{}'",
+            offering.to_uppercase()
+        ))
+    );
     println!("{}{}", indent, fmt.divider(&"─".repeat(60)));
     println!();
-    
+
     let top_n = placement.recommendations.len().min(3);
     for (idx, rec) in placement.recommendations.iter().take(top_n).enumerate() {
         let rank = idx + 1;
 
         // Compatibility icon (using constants from garden_common)
-        use garden_common::constants::{COMPAT_PASS, COMPAT_FALLBACK};
+        use garden_common::constants::{COMPAT_FALLBACK, COMPAT_PASS};
         let compat_icon = match rec.compatibility.as_str() {
-            COMPAT_PASS => if term.supports_color { "✅" } else { "[OK]" },
-            COMPAT_FALLBACK => if term.supports_color { "⚠️" } else { "[WARN]" },
-            _ => if term.supports_color { "❌" } else { "[FAIL]" },
+            COMPAT_PASS => {
+                if term.supports_color {
+                    "✅"
+                } else {
+                    "[OK]"
+                }
+            }
+            COMPAT_FALLBACK => {
+                if term.supports_color {
+                    "⚠️"
+                } else {
+                    "[WARN]"
+                }
+            }
+            _ => {
+                if term.supports_color {
+                    "❌"
+                } else {
+                    "[FAIL]"
+                }
+            }
         };
 
         // Tended stone marker (inline with hostname per spec)
         // Mark if this recommendation is the responding stone (which is now tended)
-        let is_responding_stone = rec.hostname.eq_ignore_ascii_case(&responding_stone.stone_name);
+        let is_responding_stone = rec
+            .hostname
+            .eq_ignore_ascii_case(&responding_stone.stone_name);
         let tended_marker = if is_responding_stone {
-            if term.supports_color { "⭐ " } else { "* " }
+            if term.supports_color {
+                "⭐ "
+            } else {
+                "* "
+            }
         } else {
             "  "
         };
-        let tended_label = if is_responding_stone { " ← tended stone" } else { "" };
+        let tended_label = if is_responding_stone {
+            " ← tended stone"
+        } else {
+            ""
+        };
 
         // Format: "1. ⭐ hostname     [Score: 87/100] ← tended stone"
-        println!("{}  {}. {}{} {:<16} [Score: {}/100]{}",
-            indent, rank, compat_icon, tended_marker, rec.hostname, rec.score, tended_label);
+        println!(
+            "{}  {}. {}{} {:<16} [Score: {}/100]{}",
+            indent, rank, compat_icon, tended_marker, rec.hostname, rec.score, tended_label
+        );
 
         // Memory in absolute values (GB), not percentage
         let mem_free_gb = rec.metrics.memory_free_mb / 1024;
 
         // Storage type (clean up Debug format)
-        let storage_type = rec.metrics.storage_type
+        let storage_type = rec
+            .metrics
+            .storage_type
             .trim_matches('"')
             .replace("Unknown", "");
         let storage_display = if storage_type.is_empty() {
@@ -972,8 +1186,10 @@ async fn handle_placement_recommendation(
         };
 
         // Format: "     Memory: 24 GB free | CPU: 12% | Storage: 450 GB (NVMe)"
-        println!("{}     Memory: {} GB free | CPU: {}% | Storage: {}",
-            indent, mem_free_gb, rec.metrics.cpu_load_percent, storage_display);
+        println!(
+            "{}     Memory: {} GB free | CPU: {}% | Storage: {}",
+            indent, mem_free_gb, rec.metrics.cpu_load_percent, storage_display
+        );
 
         println!("{}     Services: {} running", indent, rec.services_count);
 
@@ -982,26 +1198,38 @@ async fn handle_placement_recommendation(
 
     // Show exclusion summary if any stones were excluded
     if let Some(ref summary) = placement.exclusion_summary {
-        let info_icon = if term.supports_color { "ℹ️" } else { "[INFO]" };
+        let info_icon = if term.supports_color {
+            "ℹ️"
+        } else {
+            "[INFO]"
+        };
         println!("{}{} {}", indent, info_icon, summary);
         println!();
     }
 
     println!("{}{}", indent, fmt.divider(&"─".repeat(60)));
-    
+
     if placement.recommendations.len() == 1 {
         // Single option: ask for confirmation
-        println!("{}Proceed with installation on '{}'? [Y/n]: ", indent, placement.recommendations[0].hostname);
+        println!(
+            "{}Proceed with installation on '{}'? [Y/n]: ",
+            indent, placement.recommendations[0].hostname
+        );
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         let input = input.trim().to_lowercase();
-        
+
         if input.is_empty() || input == "y" || input == "yes" {
             let stone = &placement.recommendations[0];
             if let Some(endpoint) = endpoint_map.get(&stone.hostname.to_lowercase()) {
                 return install_on_stone(client, endpoint, offering, quiet).await;
             } else {
-                println!("{}{} Could not find endpoint for '{}'", indent, ui::status_indicator("error", term.supports_color), stone.hostname);
+                println!(
+                    "{}{} Could not find endpoint for '{}'",
+                    indent,
+                    ui::status_indicator("error", term.supports_color),
+                    stone.hostname
+                );
             }
         } else {
             println!("{}Installation cancelled", indent);
@@ -1012,28 +1240,41 @@ async fn handle_placement_recommendation(
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         let input = input.trim().to_lowercase();
-        
+
         if input == "q" || input == "quit" || input == "exit" {
             println!("{}Installation cancelled", indent);
             return Ok(());
         }
-        
+
         if let Ok(choice) = input.parse::<usize>() {
             if choice >= 1 && choice <= top_n {
                 let stone = &placement.recommendations[choice - 1];
                 if let Some(endpoint) = endpoint_map.get(&stone.hostname.to_lowercase()) {
                     return install_on_stone(client, endpoint, offering, quiet).await;
                 } else {
-                    println!("{}{} Could not find endpoint for '{}'", indent, ui::status_indicator("error", term.supports_color), stone.hostname);
+                    println!(
+                        "{}{} Could not find endpoint for '{}'",
+                        indent,
+                        ui::status_indicator("error", term.supports_color),
+                        stone.hostname
+                    );
                 }
             } else {
-                println!("{}{} Invalid selection", indent, ui::status_indicator("error", term.supports_color));
+                println!(
+                    "{}{} Invalid selection",
+                    indent,
+                    ui::status_indicator("error", term.supports_color)
+                );
             }
         } else {
-            println!("{}{} Invalid input", indent, ui::status_indicator("error", term.supports_color));
+            println!(
+                "{}{} Invalid input",
+                indent,
+                ui::status_indicator("error", term.supports_color)
+            );
         }
     }
-    
+
     Ok(())
 }
 
@@ -1053,14 +1294,9 @@ async fn install_on_stone(
         false,
         0, // verbose
     );
-    
-    let install_cmd = OfferCommand::install(
-        offering.to_string(),
-        vec![],
-        false,
-        quiet,
-    );
-    
+
+    let install_cmd = OfferCommand::install(offering.to_string(), vec![], false, quiet);
+
     install_cmd.execute(&ctx).await
 }
 
@@ -1096,7 +1332,12 @@ impl OfferCommand {
         }
     }
 
-    pub fn install(name: String, prefer: Vec<String>, anywhere_on_fail: bool, quiet_mode: bool) -> Self {
+    pub fn install(
+        name: String,
+        prefer: Vec<String>,
+        anywhere_on_fail: bool,
+        quiet_mode: bool,
+    ) -> Self {
         Self {
             action: OfferAction::Install { name },
             prefer,
@@ -1133,11 +1374,7 @@ impl OfferCommand {
     }
 
     /// Check if the given name is a known offering (for query detection)
-    pub async fn is_known_offering(
-        client: &reqwest::Client,
-        endpoint: &str,
-        name: &str,
-    ) -> bool {
+    pub async fn is_known_offering(client: &reqwest::Client, endpoint: &str, name: &str) -> bool {
         let offering_type = match parse_offering_fqn(name) {
             Ok(fqn) => fqn.offering,
             Err(_) => return false,
@@ -1154,7 +1391,10 @@ impl OfferCommand {
 #[async_trait]
 impl Command for OfferCommand {
     fn requires_endpoint(&self) -> bool {
-        !matches!(self.action, OfferAction::QueryAnywhere { .. } | OfferAction::PlacementRecommend { .. })
+        !matches!(
+            self.action,
+            OfferAction::QueryAnywhere { .. } | OfferAction::PlacementRecommend { .. }
+        )
     }
 
     fn show_stone_header(&self) -> bool {
@@ -1175,7 +1415,10 @@ impl Command for OfferCommand {
                 print_offerings_index(&ctx.client, endpoint).await?;
             }
             OfferAction::Refresh => {
-                let endpoint = ctx.endpoint.as_ref().expect("endpoint required for refresh");
+                let endpoint = ctx
+                    .endpoint
+                    .as_ref()
+                    .expect("endpoint required for refresh");
                 refresh_offerings_index(&ctx.client, endpoint).await?;
             }
             OfferAction::Info { name } => {
@@ -1184,7 +1427,8 @@ impl Command for OfferCommand {
             }
             OfferAction::Query { query } => {
                 let endpoint = ctx.endpoint.as_ref().expect("endpoint required for query");
-                print_offer_query_recommendations(&ctx.client, endpoint, query, &self.prefer).await?;
+                print_offer_query_recommendations(&ctx.client, endpoint, query, &self.prefer)
+                    .await?;
             }
             OfferAction::QueryAnywhere { query } => {
                 print_offer_anywhere_recommendations(&ctx.client, query, &self.prefer).await?;
@@ -1193,21 +1437,29 @@ impl Command for OfferCommand {
                 handle_placement_recommendation(&ctx.client, name, *quiet).await?;
             }
             OfferAction::Install { name } => {
-                let endpoint = ctx.endpoint.as_ref().expect("endpoint required for install");
+                let endpoint = ctx
+                    .endpoint
+                    .as_ref()
+                    .expect("endpoint required for install");
                 let offering_fqn = parse_offering_fqn(name)
                     .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", name, e))?;
                 let service_name = offering_fqn.fqn();
                 let offering_type = offering_fqn.offering.clone();
                 // Check if service is already installed
-                let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                let services_url =
+                    format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
                 if let Ok(response) = ctx.client.get(&services_url).send().await {
                     if let Ok(json) = response.json::<serde_json::Value>().await {
-                        let services: Vec<ServiceInfo> = serde_json::from_value(json.get("data").cloned().unwrap_or(json)).unwrap_or_default();
+                        let services: Vec<ServiceInfo> =
+                            serde_json::from_value(json.get("data").cloned().unwrap_or(json))
+                                .unwrap_or_default();
                         if let Some(existing) = services.iter().find(|s| s.name == service_name) {
                             let status_str = format!("{:?}", existing.status).to_lowercase();
-                            let status_icon = ui::status_indicator(&status_str, term.supports_color);
+                            let status_icon =
+                                ui::status_indicator(&status_str, term.supports_color);
 
-                            println!("{}{} Service '{}' is already installed ({})",
+                            println!(
+                                "{}{} Service '{}' is already installed ({})",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
                                 status_icon,
                                 existing.name,
@@ -1215,13 +1467,33 @@ impl Command for OfferCommand {
                             );
                             println!();
                             println!("{}Options:", " ".repeat(ui::constants::DEFAULT_INDENT));
-                            println!("{}  • View details:  garden-rake show {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), existing.name);
-                            println!("{}  • Remove service: garden-rake remove {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), existing.name);
+                            println!(
+                                "{}  • View details:  garden-rake show {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                existing.name
+                            );
+                            println!(
+                                "{}  • Remove service: garden-rake remove {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                existing.name
+                            );
                             if status_str.contains(garden_common::SERVICE_STOPPED) {
-                                println!("{}  • Start service:  garden-rake start {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), existing.name);
+                                println!(
+                                    "{}  • Start service:  garden-rake start {}",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                    existing.name
+                                );
                             } else if status_str.contains(garden_common::SERVICE_RUNNING) {
-                                println!("{}  • Stop service:   garden-rake stop {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), existing.name);
-                                println!("{}  • Restart service: garden-rake restart {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), existing.name);
+                                println!(
+                                    "{}  • Stop service:   garden-rake stop {}",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                    existing.name
+                                );
+                                println!(
+                                    "{}  • Restart service: garden-rake restart {}",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                    existing.name
+                                );
                             }
                             return Ok(());
                         }
@@ -1246,21 +1518,38 @@ impl Command for OfferCommand {
                             let fmt = CliFormatter::new();
                             let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
-                            let response_service_name = body.get("service").and_then(|v| v.as_str()).unwrap_or(&service_name);
-                            let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("create");
-                            let api_status = body.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
-                            let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                            let response_service_name = body
+                                .get("service")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(&service_name);
+                            let action = body
+                                .get("action")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("create");
+                            let api_status = body
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("pending");
+                            let message =
+                                body.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
                             // Display: lowercase name with status on same line
                             // mongodb      [pending create]
                             println!();
                             let status_text = format!("[{} {}]", api_status, action);
                             let padding = 16usize.saturating_sub(response_service_name.len());
-                            println!("{}{}{}{}", indent, response_service_name, " ".repeat(padding), status_text);
+                            println!(
+                                "{}{}{}{}",
+                                indent,
+                                response_service_name,
+                                " ".repeat(padding),
+                                status_text
+                            );
                             println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
 
                             // Extract job_id from message if present
-                            let job_id = if message.contains("Job ID:") || message.contains("job:") {
+                            let job_id = if message.contains("Job ID:") || message.contains("job:")
+                            {
                                 message
                                     .split_whitespace()
                                     .skip_while(|s| !s.contains("ID") && !s.contains("job"))
@@ -1271,19 +1560,36 @@ impl Command for OfferCommand {
                             };
 
                             if let Some(job_id) = job_id {
-                                stream_job_progress(&ctx.client, endpoint, &job_id, response_service_name, self.quiet_mode).await?;
+                                stream_job_progress(
+                                    &ctx.client,
+                                    endpoint,
+                                    &job_id,
+                                    response_service_name,
+                                    self.quiet_mode,
+                                )
+                                .await?;
                             } else if message.contains("Adopted") {
-                                println!("{}{} Service already exists (adopted)", indent, ui::status_indicator("ok", term.supports_color));
+                                println!(
+                                    "{}{} Service already exists (adopted)",
+                                    indent,
+                                    ui::status_indicator("ok", term.supports_color)
+                                );
                                 println!("{}{}", indent, message);
                             } else if message.contains("maintenance") {
-                                println!("{}{} Under maintenance, retry later", indent, ui::status_indicator("pending", term.supports_color));
+                                println!(
+                                    "{}{} Under maintenance, retry later",
+                                    indent,
+                                    ui::status_indicator("pending", term.supports_color)
+                                );
                             } else if !message.is_empty() {
                                 println!("{}{}", indent, message);
                             }
 
                             // Display suggestions from v1 API (if not quiet)
                             if !self.quiet_mode {
-                                if let Some(suggestions) = body.get("suggestions").and_then(|v| v.as_array()) {
+                                if let Some(suggestions) =
+                                    body.get("suggestions").and_then(|v| v.as_array())
+                                {
                                     if !suggestions.is_empty() {
                                         println!();
                                         println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
@@ -1312,46 +1618,106 @@ impl Command for OfferCommand {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("Request failed");
 
-                            println!("{}{} {} ({})", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), msg, code);
+                            println!(
+                                "{}{} {} ({})",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("error", term.supports_color),
+                                msg,
+                                code
+                            );
 
-                            if let Some(details) = body.get("error").and_then(|e| e.get("details")) {
-                                if let Some(reason) = details.get("reason").and_then(|v| v.as_str()) {
-                                    println!("{}Reason: {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), reason);
+                            if let Some(details) = body.get("error").and_then(|e| e.get("details"))
+                            {
+                                if let Some(reason) = details.get("reason").and_then(|v| v.as_str())
+                                {
+                                    println!(
+                                        "{}Reason: {}",
+                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                        reason
+                                    );
                                 }
-                                if let Some(suggestion) = details.get("suggestion").and_then(|v| v.as_str()) {
-                                    println!("{}Suggestion: {}", " ".repeat(ui::constants::DEFAULT_INDENT * 2), suggestion);
+                                if let Some(suggestion) =
+                                    details.get("suggestion").and_then(|v| v.as_str())
+                                {
+                                    println!(
+                                        "{}Suggestion: {}",
+                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                        suggestion
+                                    );
                                 }
                             }
 
                             if code == garden_common::constants::COMPATIBILITY_FAILED {
-                                let derived_query = print_alternatives_for_failed_install(&ctx.client, endpoint, &offering_type, &self.prefer)
-                                    .await
-                                    .ok()
-                                    .flatten();
+                                let derived_query = print_alternatives_for_failed_install(
+                                    &ctx.client,
+                                    endpoint,
+                                    &offering_type,
+                                    &self.prefer,
+                                )
+                                .await
+                                .ok()
+                                .flatten();
 
                                 if self.anywhere_on_fail {
                                     if let Some(q) = derived_query {
-                                        println!("\n{}Searching across stones...", " ".repeat(ui::constants::DEFAULT_INDENT));
-                                        let _ = print_offer_anywhere_recommendations(&ctx.client, &q, &self.prefer).await;
+                                        println!(
+                                            "\n{}Searching across stones...",
+                                            " ".repeat(ui::constants::DEFAULT_INDENT)
+                                        );
+                                        let _ = print_offer_anywhere_recommendations(
+                                            &ctx.client,
+                                            &q,
+                                            &self.prefer,
+                                        )
+                                        .await;
                                     }
                                 }
                             }
                         } else {
-                            println!("{}{} Failed: {}", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), status);
+                            println!(
+                                "{}{} Failed: {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("error", term.supports_color),
+                                status
+                            );
                         }
                     }
                     reqwest::StatusCode::NOT_FOUND => {
-                        println!("{}{} Unknown offering: {}", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), name);
-                        let _ = print_offer_query_recommendations(&ctx.client, endpoint, name, &self.prefer).await;
+                        println!(
+                            "{}{} Unknown offering: {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", term.supports_color),
+                            name
+                        );
+                        let _ = print_offer_query_recommendations(
+                            &ctx.client,
+                            endpoint,
+                            name,
+                            &self.prefer,
+                        )
+                        .await;
                     }
                     s if s.is_success() => {
-                        println!("{}{} Offered {}", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("ok", term.supports_color), name);
+                        println!(
+                            "{}{} Offered {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("ok", term.supports_color),
+                            name
+                        );
                     }
                     reqwest::StatusCode::NOT_IMPLEMENTED => {
-                        println!("{}ℹ️  Offer not implemented on server", " ".repeat(ui::constants::DEFAULT_INDENT));
+                        println!(
+                            "{}ℹ️  Offer not implemented on server",
+                            " ".repeat(ui::constants::DEFAULT_INDENT)
+                        );
                     }
                     _ => {
-                        println!("{}{} Failed: {}", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), status);
+                        println!(
+                            "{}{} Failed: {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", term.supports_color),
+                            status
+                        );
                     }
                 }
             }

@@ -9,9 +9,9 @@
 //! - **Offline**: Binary + sibling package in the same directory
 //! - **USB**: NewStone USB stick (unchanged, handled by preseed)
 
-mod package;
 #[cfg(target_os = "linux")]
 mod linux;
+mod package;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -54,7 +54,8 @@ pub fn install() -> anyhow::Result<()> {
     println!();
 
     let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path.parent()
+    let exe_dir = exe_path
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine executable directory"))?;
 
     // If running from removable media, copy to permanent location first
@@ -197,7 +198,9 @@ fn resolve_work_directory(exe_path: &Path, exe_dir: &Path) -> anyhow::Result<(Pa
     if let Ok(entries) = std::fs::read_dir(exe_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("zen-garden-") && (name.ends_with(".tar.gz") || name.ends_with(".zip")) {
+            if name.starts_with("zen-garden-")
+                && (name.ends_with(".tar.gz") || name.ends_with(".zip"))
+            {
                 let dest = temp_dir.join(&name);
                 std::fs::copy(entry.path(), &dest)?;
                 println!("  Copied: {}", name);
@@ -227,8 +230,8 @@ fn platform_install_dir() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        let program_data = std::env::var("ProgramData")
-            .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+        let program_data =
+            std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
         PathBuf::from(format!(r"{}\ZenGarden", program_data))
     }
 }
@@ -241,8 +244,7 @@ fn install_temp_dir() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        let temp = std::env::var("TEMP")
-            .unwrap_or_else(|_| r"C:\Windows\Temp".to_string());
+        let temp = std::env::var("TEMP").unwrap_or_else(|_| r"C:\Windows\Temp".to_string());
         PathBuf::from(format!(r"{}\zen-garden-install", temp))
     }
 }
@@ -265,8 +267,10 @@ fn start_and_verify() -> anyhow::Result<()> {
             Ok(o) if o.status.success() => println!(" started."),
             Ok(o) => {
                 println!();
-                println!("  Warning: could not start service: {}",
-                    String::from_utf8_lossy(&o.stderr).trim());
+                println!(
+                    "  Warning: could not start service: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                );
             }
             Err(e) => {
                 println!();
@@ -287,7 +291,11 @@ fn start_and_verify() -> anyhow::Result<()> {
                 println!();
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 let stdout = String::from_utf8_lossy(&o.stdout);
-                println!("  Warning: could not start service: {} {}", stdout.trim(), stderr.trim());
+                println!(
+                    "  Warning: could not start service: {} {}",
+                    stdout.trim(),
+                    stderr.trim()
+                );
             }
             Err(e) => {
                 println!();

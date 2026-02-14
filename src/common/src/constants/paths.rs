@@ -1,4 +1,4 @@
-﻿//! Path Constants
+//! Path Constants
 //! File system paths with GARDEN_ environment variable overrides
 
 /// Get config directory (default: /etc/zen-garden)
@@ -53,8 +53,8 @@ pub fn shared_data_dir() -> String {
     std::env::var("GARDEN_SHARED_DATA_DIR").unwrap_or_else(|_| {
         #[cfg(target_os = "windows")]
         {
-            let program_data = std::env::var("ProgramData")
-                .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+            let program_data =
+                std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
             format!(r"{}\zen-garden", program_data)
         }
         #[cfg(not(target_os = "windows"))]
@@ -66,17 +66,13 @@ pub fn shared_data_dir() -> String {
 
 /// Get harvest storage directory
 pub fn harvest_dir() -> String {
-    std::env::var("GARDEN_HARVEST_DIR").unwrap_or_else(|_| {
-        format!("{}/harvests", data_dir())
-    })
+    std::env::var("GARDEN_HARVEST_DIR").unwrap_or_else(|_| format!("{}/harvests", data_dir()))
 }
 
 /// Get container volumes directory
 /// Used for Docker volume mounts (data stored per-offering)
 pub fn volumes_dir() -> String {
-    std::env::var("GARDEN_VOLUMES_DIR").unwrap_or_else(|_| {
-        format!("{}/volumes", data_dir())
-    })
+    std::env::var("GARDEN_VOLUMES_DIR").unwrap_or_else(|_| format!("{}/volumes", data_dir()))
 }
 
 /// Get shared topology directory for cross-process topology sharing
@@ -100,30 +96,22 @@ pub const TOPOLOGY_FILE: &str = "garden-topology.json";
 
 /// Get jobs persistence file path
 pub fn jobs_file() -> String {
-    std::env::var("GARDEN_JOBS_FILE").unwrap_or_else(|_| {
-        format!("{}/jobs.json", data_dir())
-    })
+    std::env::var("GARDEN_JOBS_FILE").unwrap_or_else(|_| format!("{}/jobs.json", data_dir()))
 }
 
 /// Get stored offerings directory (portable backups)
 pub fn stored_dir() -> String {
-    std::env::var("GARDEN_STORED_DIR").unwrap_or_else(|_| {
-        format!("{}/stored", data_dir())
-    })
+    std::env::var("GARDEN_STORED_DIR").unwrap_or_else(|_| format!("{}/stored", data_dir()))
 }
 
 /// Get ceremony journal directory
 pub fn ceremony_journal_dir() -> String {
-    std::env::var("GARDEN_CEREMONY_DIR").unwrap_or_else(|_| {
-        format!("{}/ceremonies", data_dir())
-    })
+    std::env::var("GARDEN_CEREMONY_DIR").unwrap_or_else(|_| format!("{}/ceremonies", data_dir()))
 }
 
 /// Get staging directory for package deployments
 pub fn staging_dir() -> String {
-    std::env::var("GARDEN_STAGING_DIR").unwrap_or_else(|_| {
-        format!("{}/staging", data_dir())
-    })
+    std::env::var("GARDEN_STAGING_DIR").unwrap_or_else(|_| format!("{}/staging", data_dir()))
 }
 
 /// Get Companions/services directory
@@ -144,9 +132,7 @@ pub fn companions_dir() -> String {
 /// Get logs directory for daemon file logging
 /// Layout: {data_dir}/logs/
 pub fn logs_dir() -> String {
-    std::env::var("ZG_LOGS_DIR").unwrap_or_else(|_| {
-        format!("{}/logs", data_dir())
-    })
+    std::env::var("ZG_LOGS_DIR").unwrap_or_else(|_| format!("{}/logs", data_dir()))
 }
 
 // ============================================================================
@@ -254,8 +240,16 @@ pub fn seed_bank_memory_offering_manifest_path(mount_path: &str, offering_id: &s
 
 /// Get harvest tarball path on a seed bank
 /// Layout: {mount_path}/garden/memories/{offering_id}/{harvest_id}.tar.gz
-pub fn seed_bank_memory_harvest_path(mount_path: &str, offering_id: &str, harvest_id: &str) -> String {
-    format!("{}/{}.tar.gz", seed_bank_memory_offering_dir(mount_path, offering_id), harvest_id)
+pub fn seed_bank_memory_harvest_path(
+    mount_path: &str,
+    offering_id: &str,
+    harvest_id: &str,
+) -> String {
+    format!(
+        "{}/{}.tar.gz",
+        seed_bank_memory_offering_dir(mount_path, offering_id),
+        harvest_id
+    )
 }
 
 /// Get storage directory on a seed bank

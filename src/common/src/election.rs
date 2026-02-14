@@ -1,4 +1,4 @@
-﻿//! Generic distributed election protocol for Zen Garden
+//! Generic distributed election protocol for Zen Garden
 //!
 //! This module implements a lightweight, stateless election protocol that allows
 //! any stone to request a "winner" from a set of candidates without centralized
@@ -210,9 +210,15 @@ fn evaluate_condition(condition: &Value, actual: Option<&Value>) -> bool {
             "$eq" => actual == Some(expected),
             "$ne" => actual != Some(expected),
             "$gt" => compare_values(actual, expected) == Some(Ordering::Greater),
-            "$gte" => matches!(compare_values(actual, expected), Some(Ordering::Greater | Ordering::Equal)),
+            "$gte" => matches!(
+                compare_values(actual, expected),
+                Some(Ordering::Greater | Ordering::Equal)
+            ),
             "$lt" => compare_values(actual, expected) == Some(Ordering::Less),
-            "$lte" => matches!(compare_values(actual, expected), Some(Ordering::Less | Ordering::Equal)),
+            "$lte" => matches!(
+                compare_values(actual, expected),
+                Some(Ordering::Less | Ordering::Equal)
+            ),
             "$in" => expected
                 .as_array()
                 .map(|arr| actual.map(|v| arr.contains(v)).unwrap_or(false))
@@ -429,6 +435,9 @@ mod tests {
         let criteria = json!({});
         let state = HashMap::new();
 
-        assert!(matches_criteria(&criteria, &state), "Empty criteria should match");
+        assert!(
+            matches_criteria(&criteria, &state),
+            "Empty criteria should match"
+        );
     }
 }

@@ -1,5 +1,5 @@
-﻿//! Console output module
-//! 
+//! Console output module
+//!
 //! Provides structured console events with multiple output modes (Silent, Minimal, Informative, Verbose).
 //! Supports remote console control via API and graceful deduplication of high-frequency events.
 //!
@@ -7,15 +7,15 @@
 
 use std::io::IsTerminal;
 
-pub mod modes;
 pub mod events;
 pub mod formatters;
+pub mod modes;
 pub mod printer;
 pub mod tty;
 
+pub use events::{AnsiColor, ConsoleEvent, EventCategory, EventStatus, FormatHint, Severity};
+pub use formatters::{OutputFormatter, SseFormatter, TtyFormatter};
 pub use modes::ConsoleMode;
-pub use events::{EventCategory, EventStatus, ConsoleEvent, FormatHint, AnsiColor, Severity};
-pub use formatters::{OutputFormatter, TtyFormatter, SseFormatter};
 pub use printer::{ConsolePrinter, EventDeduplicator};
 pub use tty::*;
 
@@ -31,7 +31,7 @@ pub fn detect_platform_console_mode() -> ConsoleMode {
             return ConsoleMode::Informative; // Windows interactive
         }
     }
-    
+
     // Linux systemd/interactive detection
     #[cfg(not(target_os = "windows"))]
     {
@@ -39,11 +39,11 @@ pub fn detect_platform_console_mode() -> ConsoleMode {
         if std::env::var("INVOCATION_ID").is_ok() && !std::io::stdin().is_terminal() {
             return ConsoleMode::Minimal; // systemd daemon
         }
-        
+
         if std::io::stdin().is_terminal() {
             return ConsoleMode::Informative; // Interactive terminal
         }
     }
-    
+
     ConsoleMode::Minimal // Safe default
 }

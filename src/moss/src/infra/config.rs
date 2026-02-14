@@ -81,8 +81,7 @@ pub struct MossConfig {
 pub type ScanSchedulePhase = (u64, i64);
 
 /// Adoption configuration for auto-detection and management
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 pub struct AdoptionConfig {
     /// Enable auto-adoption at bootstrap (default: true for regular, false for USB/container)
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -143,9 +142,7 @@ impl AdoptionConfig {
 
     /// Get default control level
     pub fn default_control_level(&self) -> &str {
-        self.default_control_level
-            .as_deref()
-            .unwrap_or("monitor")
+        self.default_control_level.as_deref().unwrap_or("monitor")
     }
 
     /// Get detection cache TTL in seconds
@@ -174,10 +171,12 @@ impl AdoptionConfig {
 
     /// Get the scan schedule (default: 10s for 10min, then 30s forever)
     pub fn scan_schedule(&self) -> Vec<ScanSchedulePhase> {
-        self.scan_schedule.clone().unwrap_or_else(|| vec![
-            (10, 600),   // 10 second intervals for first 10 minutes
-            (30, -1),    // 30 second intervals forever after
-        ])
+        self.scan_schedule.clone().unwrap_or_else(|| {
+            vec![
+                (10, 600), // 10 second intervals for first 10 minutes
+                (30, -1),  // 30 second intervals forever after
+            ]
+        })
     }
 
     /// Get the current scan interval based on elapsed time since start
@@ -201,7 +200,6 @@ impl AdoptionConfig {
         30
     }
 }
-
 
 // ============================================================================
 // Network Configuration
@@ -298,10 +296,7 @@ impl StaticIpPoolConfig {
             pool_start,
             pool_end,
             gateway,
-            dns: vec![
-                "8.8.8.8".parse().unwrap(),
-                "1.1.1.1".parse().unwrap(),
-            ],
+            dns: vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()],
             interface: Some(interface),
             prefix_length: prefix_len,
         })
@@ -359,7 +354,7 @@ impl MossConfig {
                     );
                     // Console event emitted later in main() after console printer is available
                     Some(config)
-                },
+                }
                 Err(e) => {
                     tracing::warn!(path = ?config_path, error = ?e, "Failed to parse config file");
                     // Console event: Config | PARSE_ERROR emitted in main() as NotFound
@@ -370,7 +365,7 @@ impl MossConfig {
                 tracing::debug!(path = ?config_path, "Config file not found, using defaults");
                 // Console event: Config | NOT_FOUND emitted in main()
                 None
-            },
+            }
             Err(e) => {
                 tracing::warn!(path = ?config_path, error = ?e, "Failed to read config file");
                 // Console event: Config | READ_ERROR emitted in main() as NotFound
@@ -450,8 +445,8 @@ impl MossConfig {
 
         let config_path = config_dir.join(garden_common::constants::MOSS_CONFIG);
 
-        let toml_content = toml::to_string_pretty(self)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let toml_content =
+            toml::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
 
         std::fs::write(&config_path, toml_content)?;
 

@@ -115,15 +115,21 @@ impl ConnectivityOrchestrator {
         };
 
         let Some(rules) = config.get_current_os_rules() else {
-            return Ok(ConnectivityOutcome::skipped("No connectivity rules for current OS"));
+            return Ok(ConnectivityOutcome::skipped(
+                "No connectivity rules for current OS",
+            ));
         };
 
         if rules.checks.is_empty() {
-            return Ok(ConnectivityOutcome::skipped("No connectivity checks configured"));
+            return Ok(ConnectivityOutcome::skipped(
+                "No connectivity checks configured",
+            ));
         }
 
         let context = ConnectivityContext::from_manifest(manifest, location, stone_name);
-        let check_result = self.run_checks(manifest.name.as_str(), rules, &context).await?;
+        let check_result = self
+            .run_checks(manifest.name.as_str(), rules, &context)
+            .await?;
 
         if check_result.ok {
             self.reset_attempts(manifest.name.as_str());
@@ -134,9 +140,7 @@ impl ConnectivityOrchestrator {
             return Ok(ConnectivityOutcome::failed(check_result.details));
         }
 
-        let max_attempts = config
-            .max_attempts
-            .unwrap_or(5);
+        let max_attempts = config.max_attempts.unwrap_or(5);
         let max_attempts = if max_attempts == 0 {
             u32::MAX
         } else {
@@ -169,7 +173,9 @@ impl ConnectivityOrchestrator {
 
         // Re-check after enforcement, bypassing cache
         self.invalidate_cache(manifest.name.as_str(), context.os.as_str());
-        let recheck = self.run_checks(manifest.name.as_str(), rules, &context).await?;
+        let recheck = self
+            .run_checks(manifest.name.as_str(), rules, &context)
+            .await?;
 
         if recheck.ok {
             self.reset_attempts(manifest.name.as_str());
@@ -406,15 +412,13 @@ impl ConnectivityContext {
         let port = location
             .map(|loc| loc.port)
             .unwrap_or_else(|| manifest.default_host_port());
-        let protocol = location
-            .map(|loc| loc.protocol.clone())
-            .unwrap_or_else(|| {
-                crate::domain::connection::infer_protocol_from_manifest_metadata(
-                    &manifest.name,
-                    &manifest.category,
-                    manifest.connection.as_ref(),
-                )
-            });
+        let protocol = location.map(|loc| loc.protocol.clone()).unwrap_or_else(|| {
+            crate::domain::connection::infer_protocol_from_manifest_metadata(
+                &manifest.name,
+                &manifest.category,
+                manifest.connection.as_ref(),
+            )
+        });
 
         let (lan_ip, _) = get_local_ip_and_mac();
 
@@ -493,10 +497,7 @@ async fn run_shell_command_check(
     })
 }
 
-async fn execute_shell_command(
-    command: &str,
-    timeout: Duration,
-) -> Result<std::process::Output> {
+async fn execute_shell_command(command: &str, timeout: Duration) -> Result<std::process::Output> {
     #[cfg(target_os = "windows")]
     let (shell, flag) = ("cmd", "/C");
 

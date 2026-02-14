@@ -76,9 +76,7 @@ fn clap_parses_offer_info_subcommand() {
 
     match cli.command {
         Some(Commands::Offer {
-            offering,
-            action,
-            ..
+            offering, action, ..
         }) => {
             assert_eq!(offering.as_deref(), Some("mongodb"));
             assert!(matches!(action, Some(OfferAction::Info)));

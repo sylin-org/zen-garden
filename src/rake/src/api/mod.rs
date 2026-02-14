@@ -6,6 +6,5 @@
 pub mod responses;
 
 pub use responses::{
-    extract_data, extract_array, extract_string, extract_bool,
-    extract_services, ApiResult,
+    extract_array, extract_bool, extract_data, extract_services, extract_string, ApiResult,
 };

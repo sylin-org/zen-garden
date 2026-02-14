@@ -29,7 +29,9 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
         .context(format!("No manifest found for offering {}", offering))?;
 
     // Parse the manifest to get ports, env, and volumes
-    let snippet_yaml = manifest.managed.as_ref()
+    let snippet_yaml = manifest
+        .managed
+        .as_ref()
         .map(|m| m.snippet_yaml.as_str())
         .unwrap_or("");
     let (ports, env, volumes) = parse_manifest_config(snippet_yaml)?;
@@ -55,7 +57,14 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     tracing::info!(offering, new_image, "Creating new container");
     state
         .docker
-        .install_service(offering, new_image, ports, env, volumes, Some(&state.console))
+        .install_service(
+            offering,
+            new_image,
+            ports,
+            env,
+            volumes,
+            Some(&state.console),
+        )
         .await
         .context("Failed to create new container")?;
 

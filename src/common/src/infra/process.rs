@@ -1,4 +1,4 @@
-﻿//! Process lifecycle management utilities
+//! Process lifecycle management utilities
 //!
 //! Cross-platform utilities for managing daemon processes:
 //! - Graceful shutdown via HTTP API with fallback to force kill
@@ -99,7 +99,13 @@ pub fn check_process_exists(process_name: &str) -> bool {
         let exe_name = format!("{}.exe", process_name);
 
         if let Ok(output) = Command::new("tasklist")
-            .args(["/FI", &format!("IMAGENAME eq {}", exe_name), "/FO", "CSV", "/NH"])
+            .args([
+                "/FI",
+                &format!("IMAGENAME eq {}", exe_name),
+                "/FO",
+                "CSV",
+                "/NH",
+            ])
             .output()
         {
             if output.status.success() {
@@ -160,7 +166,13 @@ pub fn kill_process(process_name: &str) -> Result<()> {
         let exe_name = format!("{}.exe", process_name);
 
         let output = Command::new("tasklist")
-            .args(["/FI", &format!("IMAGENAME eq {}", exe_name), "/FO", "CSV", "/NH"])
+            .args([
+                "/FI",
+                &format!("IMAGENAME eq {}", exe_name),
+                "/FO",
+                "CSV",
+                "/NH",
+            ])
             .output()?;
 
         if output.status.success() {

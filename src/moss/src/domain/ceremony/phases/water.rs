@@ -74,13 +74,10 @@ pub async fn execute(
             .context("Failed to start container after rollback")?;
 
         // Verify rollback succeeded
-        let rollback_healthy =
-            wait_for_health(state, offering, Duration::from_secs(60)).await;
+        let rollback_healthy = wait_for_health(state, offering, Duration::from_secs(60)).await;
 
         if rollback_healthy {
-            anyhow::bail!(
-                "Health check failed after nourishment, rolled back to previous version"
-            );
+            anyhow::bail!("Health check failed after nourishment, rolled back to previous version");
         } else {
             anyhow::bail!(
                 "Health check failed after nourishment AND after rollback - manual intervention required"

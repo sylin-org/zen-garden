@@ -6,12 +6,12 @@
 //! - Persistence: File-based storage with atomic writes
 //! - Job Execution: Background task processing
 
-pub mod discovery;
 pub mod auth;
-pub mod persistence;
+pub mod discovery;
 pub mod job_executor;
+pub mod persistence;
 
-pub use discovery::DiscoveryProvider;
 pub use auth::AuthProvider;
-pub use persistence::PersistenceProvider;
+pub use discovery::DiscoveryProvider;
 pub use job_executor::JobExecutor;
+pub use persistence::PersistenceProvider;

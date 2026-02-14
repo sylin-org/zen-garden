@@ -1,4 +1,4 @@
-﻿//! P2P Transport Layer - UDP Discovery Infrastructure
+//! P2P Transport Layer - UDP Discovery Infrastructure
 //!
 //! **SHARED INFRASTRUCTURE** - Used by moss, rake, and lantern
 //!
@@ -492,8 +492,7 @@ pub async fn subscribe_to_announcement(
 /// Returns a broadcast receiver for ALL announcement types.
 /// Use this only when a handler needs multiple types (e.g., coordinator).
 /// Most consumers should use `subscribe_to_announcement()` instead.
-pub async fn subscribe_to_all(
-) -> Result<mpsc::Receiver<(String, serde_json::Value, SocketAddr)>> {
+pub async fn subscribe_to_all() -> Result<mpsc::Receiver<(String, serde_json::Value, SocketAddr)>> {
     let mut broadcast_rx = subscribe_to_all_internal().await?;
 
     let (tx, rx) = mpsc::channel(100);
@@ -528,10 +527,7 @@ pub async fn subscribe_to_all(
 /// Uses configured default for announcement type:
 /// - STONE_CHIRP: 100ms debounce (batches rapid status changes)
 /// - Others: Immediate send (Duration::ZERO)
-pub async fn send_announcement<T: Serialize>(
-    announcement_type: &str,
-    payload: &T,
-) -> Result<()> {
+pub async fn send_announcement<T: Serialize>(announcement_type: &str, payload: &T) -> Result<()> {
     let duration = resolve_debounce_duration(announcement_type).await;
     send_announcement_internal(announcement_type, payload, duration).await
 }
@@ -600,15 +596,13 @@ pub async fn reinit_senders() {
         .get_or_init(|| async { DiscoveryConfig::from_env() })
         .await;
 
-    let senders_lock = UDP_SENDERS.get_or_init(|| {
-        RwLock::new(Arc::new(Vec::new()))
-    });
+    let senders_lock = UDP_SENDERS.get_or_init(|| RwLock::new(Arc::new(Vec::new())));
 
     let mut write_guard = senders_lock.write().await;
 
     // Re-enumerate interfaces (network is now available)
     let interfaces = enumerate_eligible_interfaces();
-    
+
     if interfaces.is_empty() {
         tracing::warn!("reinit_senders: No eligible interfaces found after reconnection");
         return;
@@ -735,9 +729,8 @@ async fn send_announcement_internal<T: Serialize>(
     } else {
         // Send through debouncer
         let tx = get_or_create_debounce_channel(announcement_type, debounce_duration).await;
-        tx.send(payload_bytes).map_err(|_| {
-            anyhow::anyhow!("Debounce channel closed for {}", announcement_type)
-        })?;
+        tx.send(payload_bytes)
+            .map_err(|_| anyhow::anyhow!("Debounce channel closed for {}", announcement_type))?;
         Ok(())
     }
 }
@@ -846,10 +839,8 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
         .await;
 
     // Initialize sender sockets (lazy, with RwLock for reinitialization)
-    let senders_lock = UDP_SENDERS.get_or_init(|| {
-        RwLock::new(Arc::new(Vec::new()))
-    });
-    
+    let senders_lock = UDP_SENDERS.get_or_init(|| RwLock::new(Arc::new(Vec::new())));
+
     // Try to get existing senders
     let senders = {
         let read_guard = senders_lock.read().await;
@@ -857,10 +848,10 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
             read_guard.clone()
         } else {
             drop(read_guard);
-            
+
             // Need to initialize - acquire write lock
             let mut write_guard = senders_lock.write().await;
-            
+
             // Double-check in case another task initialized while we waited
             if !write_guard.is_empty() {
                 write_guard.clone()
@@ -972,10 +963,8 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
     if config.enable_limited_bcast && sent_count == 0 {
         tracing::warn!("Falling back to limited broadcast (255.255.255.255)");
         if let Some(sender) = senders.first() {
-            let limited_bcast = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
-                config.port,
-            );
+            let limited_bcast =
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), config.port);
             sender.socket.send_to(&data, &limited_bcast).await.ok();
         }
     }
@@ -1111,10 +1100,7 @@ async fn create_multicast_receiver(addr: &str, config: &DiscoveryConfig) -> Resu
         match socket.bind(&socket_addr.into()) {
             Ok(()) => {
                 if attempt > 0 {
-                    tracing::info!(
-                        attempt = attempt + 1,
-                        "UDP bind succeeded after retry"
-                    );
+                    tracing::info!(attempt = attempt + 1, "UDP bind succeeded after retry");
                 }
                 // Continue with multicast setup below
                 socket.set_nonblocking(true)?;
@@ -1138,20 +1124,22 @@ async fn create_multicast_receiver(addr: &str, config: &DiscoveryConfig) -> Resu
         }
     }
 
-    Err(last_error.map(|e| anyhow::anyhow!("Bind failed after {} attempts: {}", MAX_BIND_ATTEMPTS, e))
+    Err(last_error
+        .map(|e| anyhow::anyhow!("Bind failed after {} attempts: {}", MAX_BIND_ATTEMPTS, e))
         .unwrap_or_else(|| anyhow::anyhow!("Bind failed")))
 }
 
 /// Setup multicast joins on all eligible interfaces
-async fn setup_multicast_joins(udp_socket: UdpSocket, config: &DiscoveryConfig) -> Result<UdpSocket> {
+async fn setup_multicast_joins(
+    udp_socket: UdpSocket,
+    config: &DiscoveryConfig,
+) -> Result<UdpSocket> {
     // Join multicast group on all eligible interfaces
     let interfaces = enumerate_eligible_interfaces();
     let mut join_count = 0;
 
     for iface in interfaces {
-        match udp_socket
-            .join_multicast_v4(config.mcast_group, iface.ip)
-        {
+        match udp_socket.join_multicast_v4(config.mcast_group, iface.ip) {
             Ok(_) => {
                 join_count += 1;
                 tracing::debug!(
@@ -1263,7 +1251,11 @@ mod tests {
         assert!(is_virtual_interface("veth0", None, &ip));
         assert!(is_virtual_interface("docker0", None, &ip));
         assert!(is_virtual_interface("vmnet1", None, &ip));
-        assert!(is_virtual_interface("vEthernet (Default Switch)", None, &ip));
+        assert!(is_virtual_interface(
+            "vEthernet (Default Switch)",
+            None,
+            &ip
+        ));
         assert!(!is_virtual_interface("eth0", None, &ip));
         assert!(!is_virtual_interface("Ethernet", None, &ip));
     }
@@ -1274,14 +1266,26 @@ mod tests {
         let ip = Ipv4Addr::new(192, 168, 1, 1);
 
         // Hyper-V (00:15:5D)
-        assert!(is_virtual_interface("Ethernet", Some("00:15:5D:01:02:03"), &ip));
-        assert!(is_virtual_interface("Ethernet", Some("00-15-5D-01-02-03"), &ip));
+        assert!(is_virtual_interface(
+            "Ethernet",
+            Some("00:15:5D:01:02:03"),
+            &ip
+        ));
+        assert!(is_virtual_interface(
+            "Ethernet",
+            Some("00-15-5D-01-02-03"),
+            &ip
+        ));
 
         // VMware (00:50:56)
         assert!(is_virtual_interface("eth0", Some("00:50:56:AB:CD:EF"), &ip));
 
         // VirtualBox (08:00:27)
-        assert!(is_virtual_interface("enp0s3", Some("08:00:27:12:34:56"), &ip));
+        assert!(is_virtual_interface(
+            "enp0s3",
+            Some("08:00:27:12:34:56"),
+            &ip
+        ));
 
         // Docker (02:42)
         assert!(is_virtual_interface("eth0", Some("02:42:AC:11:00:02"), &ip));
@@ -1290,18 +1294,38 @@ mod tests {
         assert!(is_virtual_interface("eth0", Some("52:54:00:12:34:56"), &ip));
 
         // Physical NIC (Intel)
-        assert!(!is_virtual_interface("eth0", Some("A4:83:E7:12:34:56"), &ip));
+        assert!(!is_virtual_interface(
+            "eth0",
+            Some("A4:83:E7:12:34:56"),
+            &ip
+        ));
 
         // Physical NIC (Realtek)
-        assert!(!is_virtual_interface("Ethernet", Some("00:E0:4C:68:00:01"), &ip));
+        assert!(!is_virtual_interface(
+            "Ethernet",
+            Some("00:E0:4C:68:00:01"),
+            &ip
+        ));
     }
 
     #[test]
     fn test_is_virtual_interface_by_ip() {
         // IP-based detection (tertiary - Docker bridge only)
-        assert!(is_virtual_interface("eth0", None, &Ipv4Addr::new(172, 17, 0, 1)));
-        assert!(!is_virtual_interface("eth0", None, &Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(!is_virtual_interface("eth0", None, &Ipv4Addr::new(10, 0, 0, 1)));
+        assert!(is_virtual_interface(
+            "eth0",
+            None,
+            &Ipv4Addr::new(172, 17, 0, 1)
+        ));
+        assert!(!is_virtual_interface(
+            "eth0",
+            None,
+            &Ipv4Addr::new(192, 168, 1, 1)
+        ));
+        assert!(!is_virtual_interface(
+            "eth0",
+            None,
+            &Ipv4Addr::new(10, 0, 0, 1)
+        ));
     }
 
     #[test]

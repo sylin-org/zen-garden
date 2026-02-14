@@ -19,7 +19,7 @@ pub mod suggestions;
 pub mod tending;
 
 // Re-exports for convenience
-pub use client::{resolve_target_endpoint, CachedStoneOps, CachedStoneInfo};
+pub use client::{resolve_target_endpoint, CachedStoneInfo, CachedStoneOps};
 pub use context::CommandContext;
-pub use garden_common::ui::layout::{Layout, IndentLevel};
+pub use garden_common::ui::layout::{IndentLevel, Layout};
 pub use garden_common::ui::rendering::{OutputWriter, TerminalInfo};

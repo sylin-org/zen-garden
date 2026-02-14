@@ -20,7 +20,7 @@ pub fn score_memory_headroom(free_mb: u64, total_mb: u64) -> i32 {
     if total_mb == 0 {
         return 0;
     }
-    
+
     let percent_free = (free_mb as f64 / total_mb as f64) * 100.0;
     let score = (20.0 * (percent_free / 100.0)).round() as i32;
     score.clamp(0, 20)
@@ -129,7 +129,9 @@ pub fn calculate_distribution_penalty(service_count: usize) -> i32 {
 /// // Fallback returns -15
 /// // Fail returns -999
 /// ```
-pub fn calculate_compatibility_penalty(decision: &crate::domain::compatibility::CompatibilityDecision) -> i32 {
+pub fn calculate_compatibility_penalty(
+    decision: &crate::domain::compatibility::CompatibilityDecision,
+) -> i32 {
     match decision {
         crate::domain::compatibility::CompatibilityDecision::Pass => 0,
         crate::domain::compatibility::CompatibilityDecision::Warning { .. } => -50, // Significant penalty but still viable
@@ -147,33 +149,33 @@ mod tests {
         assert_eq!(score_memory_headroom(16384, 32768), 10); // 50% free
         assert_eq!(score_memory_headroom(24576, 32768), 15); // 75% free
         assert_eq!(score_memory_headroom(32768, 32768), 20); // 100% free
-        assert_eq!(score_memory_headroom(0, 32768), 0);      // 0% free
-        
+        assert_eq!(score_memory_headroom(0, 32768), 0); // 0% free
+
         // Edge case: zero total
         assert_eq!(score_memory_headroom(1000, 0), 0);
     }
 
     #[test]
     fn test_cpu_scoring() {
-        assert_eq!(score_cpu_availability(0), 20);   // 0% load
-        assert_eq!(score_cpu_availability(10), 18);  // 10% load
-        assert_eq!(score_cpu_availability(25), 15);  // 25% load
-        assert_eq!(score_cpu_availability(50), 10);  // 50% load
-        assert_eq!(score_cpu_availability(75), 5);   // 75% load
-        assert_eq!(score_cpu_availability(100), 0);  // 100% load
-        
+        assert_eq!(score_cpu_availability(0), 20); // 0% load
+        assert_eq!(score_cpu_availability(10), 18); // 10% load
+        assert_eq!(score_cpu_availability(25), 15); // 25% load
+        assert_eq!(score_cpu_availability(50), 10); // 50% load
+        assert_eq!(score_cpu_availability(75), 5); // 75% load
+        assert_eq!(score_cpu_availability(100), 0); // 100% load
+
         // Edge case: over 100%
         assert_eq!(score_cpu_availability(150), 0);
     }
 
     #[test]
     fn test_storage_capacity_scoring() {
-        assert_eq!(score_storage_capacity(0), 0);    // Empty
-        assert_eq!(score_storage_capacity(25), 0);   // <50 GB
-        assert_eq!(score_storage_capacity(49), 0);   // Just under 50
-        assert_eq!(score_storage_capacity(50), 5);   // 50 GB
-        assert_eq!(score_storage_capacity(75), 5);   // 50-99 GB
-        assert_eq!(score_storage_capacity(99), 5);   // Just under 100
+        assert_eq!(score_storage_capacity(0), 0); // Empty
+        assert_eq!(score_storage_capacity(25), 0); // <50 GB
+        assert_eq!(score_storage_capacity(49), 0); // Just under 50
+        assert_eq!(score_storage_capacity(50), 5); // 50 GB
+        assert_eq!(score_storage_capacity(75), 5); // 50-99 GB
+        assert_eq!(score_storage_capacity(99), 5); // Just under 100
         assert_eq!(score_storage_capacity(100), 10); // 100 GB
         assert_eq!(score_storage_capacity(150), 10); // 100-199 GB
         assert_eq!(score_storage_capacity(199), 10); // Just under 200
@@ -192,9 +194,9 @@ mod tests {
 
     #[test]
     fn test_distribution_penalty() {
-        assert_eq!(calculate_distribution_penalty(0), 0);   // No services
-        assert_eq!(calculate_distribution_penalty(1), -3);  // 1 service
-        assert_eq!(calculate_distribution_penalty(3), -9);  // 3 services
+        assert_eq!(calculate_distribution_penalty(0), 0); // No services
+        assert_eq!(calculate_distribution_penalty(1), -3); // 1 service
+        assert_eq!(calculate_distribution_penalty(3), -9); // 3 services
         assert_eq!(calculate_distribution_penalty(5), -15); // 5 services
         assert_eq!(calculate_distribution_penalty(10), -30); // Heavy load
     }
@@ -202,8 +204,11 @@ mod tests {
     #[test]
     fn test_compatibility_penalty() {
         use crate::domain::compatibility::CompatibilityDecision;
-        
-        assert_eq!(calculate_compatibility_penalty(&CompatibilityDecision::Pass), 0);
+
+        assert_eq!(
+            calculate_compatibility_penalty(&CompatibilityDecision::Pass),
+            0
+        );
         assert_eq!(
             calculate_compatibility_penalty(&CompatibilityDecision::Fallback {
                 image: "fallback".to_string(),
@@ -229,7 +234,7 @@ mod tests {
         let storage_hw = score_storage_type(&DiskType::NVMe); // 12
         let distribution = calculate_distribution_penalty(3); // -9
         let tended_bonus = 3;
-        
+
         let total = memory + cpu + storage_cap + storage_hw + distribution + tended_bonus;
         assert_eq!(total, 54); // Strong candidate
     }

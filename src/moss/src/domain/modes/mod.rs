@@ -7,4 +7,4 @@
 
 pub mod detection;
 
-pub use detection::{DetectionOrchestrator, AggregatedDetectionResult};
+pub use detection::{AggregatedDetectionResult, DetectionOrchestrator};

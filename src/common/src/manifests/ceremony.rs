@@ -130,7 +130,10 @@ impl CeremonyPolicy {
 
     /// Check if this mode supports live snapshots
     pub fn supports_live_snapshot(&self) -> bool {
-        matches!(self.mode, CeremonyMode::Quiesceable | CeremonyMode::Stateless)
+        matches!(
+            self.mode,
+            CeremonyMode::Quiesceable | CeremonyMode::Stateless
+        )
     }
 }
 
@@ -187,11 +190,19 @@ mod tests {
         let policy = CeremonyPolicy {
             mode: CeremonyMode::Quiesceable,
             quiesce: Some(ExecConfig {
-                exec: vec!["mongosh".to_string(), "--eval".to_string(), "db.fsyncLock()".to_string()],
+                exec: vec![
+                    "mongosh".to_string(),
+                    "--eval".to_string(),
+                    "db.fsyncLock()".to_string(),
+                ],
                 timeout_seconds: 30,
             }),
             resume: Some(ExecConfig {
-                exec: vec!["mongosh".to_string(), "--eval".to_string(), "db.fsyncUnlock()".to_string()],
+                exec: vec![
+                    "mongosh".to_string(),
+                    "--eval".to_string(),
+                    "db.fsyncUnlock()".to_string(),
+                ],
                 timeout_seconds: 30,
             }),
             verify: None,

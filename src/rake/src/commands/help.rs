@@ -29,25 +29,55 @@ pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: 
     println!();
 
     // Category and remote capability
-    println!("{}{} {}", indent, fmt.label("Category:"), fmt.value(cmd.category.as_str()));
-    println!("{}{} {}", indent, fmt.label("Remote Capable:"), fmt.value(if cmd.remote_capable { "Yes" } else { "No" }));
+    println!(
+        "{}{} {}",
+        indent,
+        fmt.label("Category:"),
+        fmt.value(cmd.category.as_str())
+    );
+    println!(
+        "{}{} {}",
+        indent,
+        fmt.label("Remote Capable:"),
+        fmt.value(if cmd.remote_capable { "Yes" } else { "No" })
+    );
     println!();
 
     // Long description
-    println!("{}{}", indent, fmt.description(&cmd.long_description.replace('\n', &format!("\n{}", indent))));
+    println!(
+        "{}{}",
+        indent,
+        fmt.description(&cmd.long_description.replace('\n', &format!("\n{}", indent)))
+    );
     println!();
 
     // Parameters
     if !cmd.params.is_empty() {
         println!("{}{}", indent, fmt.group("PARAMETERS"));
         for param in &cmd.params {
-            let required = if param.required { fmt.label(" (required)") } else { String::new() };
+            let required = if param.required {
+                fmt.label(" (required)")
+            } else {
+                String::new()
+            };
             if !normative_only {
-                println!("{}  {} {}{}", indent, fmt.label("Zen:"), fmt.example(param.zen_syntax), required);
+                println!(
+                    "{}  {} {}{}",
+                    indent,
+                    fmt.label("Zen:"),
+                    fmt.example(param.zen_syntax),
+                    required
+                );
             }
             if let Some(norm_syntax) = param.normative_syntax {
                 if !zen_only {
-                    println!("{}  {} {}{}", indent, fmt.label("Normative:"), fmt.example(norm_syntax), required);
+                    println!(
+                        "{}  {} {}{}",
+                        indent,
+                        fmt.label("Normative:"),
+                        fmt.example(norm_syntax),
+                        required
+                    );
                 }
             }
             println!("{}    {}", indent, fmt.description(param.description));
@@ -82,18 +112,32 @@ pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: 
 
     // See also
     if !cmd.see_also.is_empty() {
-        println!("{}{} {}", indent, fmt.label("See also:"), fmt.command(&cmd.see_also.join(", ")));
+        println!(
+            "{}{} {}",
+            indent,
+            fmt.label("See also:"),
+            fmt.command(&cmd.see_also.join(", "))
+        );
         println!();
     }
 }
 
 /// Display commands in a specific category
-pub fn display_command_category(category: &CommandCategory, commands: &[&CommandDef], zen_only: bool, normative_only: bool) {
+pub fn display_command_category(
+    category: &CommandCategory,
+    commands: &[&CommandDef],
+    zen_only: bool,
+    normative_only: bool,
+) {
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let fmt = CliFormatter::new();
 
     println!();
-    println!("{}{}", indent, fmt.title(&format!("{} COMMANDS", category.as_str().to_uppercase())));
+    println!(
+        "{}{}",
+        indent,
+        fmt.title(&format!("{} COMMANDS", category.as_str().to_uppercase()))
+    );
     println!("{}{}", indent, fmt.divider(&"═".repeat(60)));
     println!();
 
@@ -104,14 +148,23 @@ pub fn display_command_category(category: &CommandCategory, commands: &[&Command
         }
         if let Some(norm) = cmd.normative_name {
             if !zen_only {
-                println!("{}  {} {}", indent, fmt.command(norm), fmt.hint("(normative)"));
+                println!(
+                    "{}  {} {}",
+                    indent,
+                    fmt.command(norm),
+                    fmt.hint("(normative)")
+                );
             }
         }
         println!("{}    {}", indent, fmt.description(cmd.description));
         println!();
     }
 
-    println!("{}{}", indent, fmt.hint("Use 'garden-rake commands <name>' for detailed information"));
+    println!(
+        "{}{}",
+        indent,
+        fmt.hint("Use 'garden-rake commands <name>' for detailed information")
+    );
     println!();
 }
 
@@ -135,7 +188,10 @@ pub fn display_all_commands(_zen_only: bool, normative_only: bool) {
         (command_manifest::CommandCategory::Adoption, "ADOPTION"),
         (command_manifest::CommandCategory::Management, "MANAGEMENT"),
         (command_manifest::CommandCategory::System, "SYSTEM"),
-        (command_manifest::CommandCategory::Pond, "POND (Multi-Stone Security)"),
+        (
+            command_manifest::CommandCategory::Pond,
+            "POND (Multi-Stone Security)",
+        ),
     ];
 
     for (category, display_name) in categories {
@@ -144,7 +200,12 @@ pub fn display_all_commands(_zen_only: bool, normative_only: bool) {
             println!("{}{}", indent, fmt.group(display_name));
             for cmd in commands {
                 if !normative_only {
-                    println!("{}    {:<20} {}", indent, fmt.command(cmd.zen_name), fmt.description(cmd.description));
+                    println!(
+                        "{}    {:<20} {}",
+                        indent,
+                        fmt.command(cmd.zen_name),
+                        fmt.description(cmd.description)
+                    );
                 }
                 // Normative variants hidden by default to reduce clutter
             }
@@ -154,7 +215,15 @@ pub fn display_all_commands(_zen_only: bool, normative_only: bool) {
 
     // Footer
     println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
-    println!("{}{}", indent, fmt.hint("For detailed examples:   garden-rake <command>?"));
-    println!("{}{}", indent, fmt.hint("Full directory view:     garden-rake commands"));
+    println!(
+        "{}{}",
+        indent,
+        fmt.hint("For detailed examples:   garden-rake <command>?")
+    );
+    println!(
+        "{}{}",
+        indent,
+        fmt.hint("Full directory view:     garden-rake commands")
+    );
     println!();
 }

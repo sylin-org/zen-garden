@@ -1,4 +1,4 @@
-﻿//! HTTP Client for Zen Garden Component APIs
+//! HTTP Client for Zen Garden Component APIs
 //! Provides reusable client for querying any Garden component (Moss, Lantern, etc.)
 
 use anyhow::Result;
@@ -34,7 +34,7 @@ impl<T> GardenApiResponse<T> {
 
 /// HTTP client for interacting with Zen Garden component APIs (Moss, Lantern, etc.)
 /// Provides consistent endpoint handling, request building, and response parsing
-/// 
+///
 /// This is shared infrastructure - any component that needs to query Garden APIs
 /// (Rake querying Moss, Lantern querying Moss, future monitoring tools) can use this client.
 pub struct GardenHttpClient<'a> {
@@ -45,12 +45,12 @@ pub struct GardenHttpClient<'a> {
 impl<'a> GardenHttpClient<'a> {
     /// Create a new Garden HTTP client for the given endpoint
     /// Automatically trims trailing slashes for consistent URL construction
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use reqwest::Client;
     /// use garden_common::client::GardenHttpClient;
-    /// 
+    ///
     /// let client = Client::new();
     /// let garden = GardenHttpClient::new(&client, "http://localhost:7185");
     /// ```
@@ -108,7 +108,11 @@ impl<'a> GardenHttpClient<'a> {
     }
 
     /// GET request with timeout, returning typed GardenApiResponse<T>
-    pub async fn get_with_timeout<T>(&self, path: &str, timeout: Duration) -> Result<GardenApiResponse<T>>
+    pub async fn get_with_timeout<T>(
+        &self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<GardenApiResponse<T>>
     where
         T: DeserializeOwned,
     {
@@ -118,7 +122,11 @@ impl<'a> GardenHttpClient<'a> {
     }
 
     /// GET request with timeout, returning raw Response
-    pub async fn get_raw_with_timeout(&self, path: &str, timeout: Duration) -> Result<reqwest::Response> {
+    pub async fn get_raw_with_timeout(
+        &self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<reqwest::Response> {
         let url = self.build_url(path);
         Ok(self.client.get(&url).timeout(timeout).send().await?)
     }
@@ -141,15 +149,15 @@ mod tests {
     #[test]
     fn test_endpoint_normalization() {
         let client = reqwest::Client::new();
-        
+
         // With trailing slash
         let garden = GardenHttpClient::new(&client, "http://localhost:7185/");
         assert_eq!(garden.endpoint(), "http://localhost:7185");
-        
+
         // Without trailing slash
         let garden = GardenHttpClient::new(&client, "http://localhost:7185");
         assert_eq!(garden.endpoint(), "http://localhost:7185");
-        
+
         // Multiple trailing slashes
         let garden = GardenHttpClient::new(&client, "http://localhost:7185///");
         assert_eq!(garden.endpoint(), "http://localhost:7185");
@@ -159,8 +167,14 @@ mod tests {
     fn test_url_construction() {
         let client = reqwest::Client::new();
         let garden = GardenHttpClient::new(&client, "http://localhost:7185");
-        
-        assert_eq!(garden.build_url("/api/v1/services"), "http://localhost:7185/api/v1/services");
-        assert_eq!(garden.build_url("/capabilities"), "http://localhost:7185/capabilities");
+
+        assert_eq!(
+            garden.build_url("/api/v1/services"),
+            "http://localhost:7185/api/v1/services"
+        );
+        assert_eq!(
+            garden.build_url("/capabilities"),
+            "http://localhost:7185/capabilities"
+        );
     }
 }

@@ -119,7 +119,9 @@ impl InfrastructureHandlerRegistry {
 
     /// Create an empty registry (for testing or when handlers are disabled)
     pub fn empty() -> Self {
-        Self { handlers: Vec::new() }
+        Self {
+            handlers: Vec::new(),
+        }
     }
 
     /// Called after topology changes to sync all handlers
@@ -156,9 +158,7 @@ impl InfrastructureHandlerRegistry {
                 for service in &stone.services {
                     // Get metadata from manifest registry
                     let manifest_entry = manifest_registry.sw.get(&service.offering);
-                    let tags = manifest_entry
-                        .map(|entry| entry.tags())
-                        .unwrap_or_default();
+                    let tags = manifest_entry.map(|entry| entry.tags()).unwrap_or_default();
                     let port = manifest_entry.and_then(|entry| entry.metadata.port);
 
                     if handler.matches(&service.offering, &service.category, &tags) {

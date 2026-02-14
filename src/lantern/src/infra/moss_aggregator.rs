@@ -64,10 +64,7 @@ pub async fn run_aggregation(
 }
 
 /// Fetch portrait data from a Moss stone and convert to enrichment.
-async fn fetch_portrait(
-    client: &MossClient,
-    endpoint: &str,
-) -> anyhow::Result<StoneEnrichment> {
+async fn fetch_portrait(client: &MossClient, endpoint: &str) -> anyhow::Result<StoneEnrichment> {
     let url = format!("{}/api/v1/stone/portrait", endpoint);
     let portrait: serde_json::Value = client.get_json(&url).await?;
 
@@ -90,14 +87,37 @@ async fn fetch_portrait(
             .iter()
             .filter_map(|o| {
                 Some(EnrichedOffering {
-                    offering_id: o.get("offering_id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    offering_id: o
+                        .get("offering_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                     name: o.get("name").and_then(|v| v.as_str())?.to_string(),
-                    offering: o.get("offering").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    category: o.get("category").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    status: o.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                    health: o.get("health").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+                    offering: o
+                        .get("offering")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    category: o
+                        .get("category")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    status: o
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    health: o
+                        .get("health")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
                     port: o.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
-                    instance_name: o.get("instance_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    instance_name: o
+                        .get("instance_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 })
             })
             .collect();
@@ -109,13 +129,26 @@ async fn fetch_portrait(
             .iter()
             .filter_map(|b| {
                 Some(EnrichedSeedBank {
-                    id: b.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    id: b
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                     name: b.get("name").and_then(|v| v.as_str())?.to_string(),
-                    capacity_bytes: (b.get("capacity_gb").and_then(|v| v.as_f64()).unwrap_or(0.0) * 1_073_741_824.0) as u64,
-                    used_bytes: (b.get("used_gb").and_then(|v| v.as_f64()).unwrap_or(0.0) * 1_073_741_824.0) as u64,
-                    visibility: b.get("visibility").and_then(|v| v.as_str()).unwrap_or("open").to_string(),
+                    capacity_bytes: (b.get("capacity_gb").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                        * 1_073_741_824.0) as u64,
+                    used_bytes: (b.get("used_gb").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                        * 1_073_741_824.0) as u64,
+                    visibility: b
+                        .get("visibility")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("open")
+                        .to_string(),
                     online: b.get("online").and_then(|v| v.as_bool()).unwrap_or(true),
-                    pool_id: b.get("pool_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    pool_id: b
+                        .get("pool_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 })
             })
             .collect();
@@ -128,9 +161,20 @@ async fn fetch_portrait(
             .filter_map(|c| {
                 Some(EnrichedCompanion {
                     id: c.get("id").and_then(|v| v.as_str())?.to_string(),
-                    name: c.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    status: c.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                    description: c.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    name: c
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    status: c
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    description: c
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 })
             })
             .collect();
@@ -142,14 +186,38 @@ async fn fetch_portrait(
         let memory = foundation.get("memory");
         let disk = foundation.get("disk");
 
-        let cpu_cores = cpu.and_then(|c| c.get("cores")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        let cpu_percent = cpu.and_then(|c| c.get("percent")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-        let mem_total = memory.and_then(|m| m.get("total_gb")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let mem_used = memory.and_then(|m| m.get("used_gb")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let mem_pct = memory.and_then(|m| m.get("percent")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-        let disk_total = disk.and_then(|d| d.get("total_gb")).and_then(|v| v.as_u64()).unwrap_or(0);
-        let disk_used = disk.and_then(|d| d.get("used_gb")).and_then(|v| v.as_u64()).unwrap_or(0);
-        let disk_pct = disk.and_then(|d| d.get("percent")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        let cpu_cores = cpu
+            .and_then(|c| c.get("cores"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let cpu_percent = cpu
+            .and_then(|c| c.get("percent"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let mem_total = memory
+            .and_then(|m| m.get("total_gb"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let mem_used = memory
+            .and_then(|m| m.get("used_gb"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let mem_pct = memory
+            .and_then(|m| m.get("percent"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let disk_total = disk
+            .and_then(|d| d.get("total_gb"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let disk_used = disk
+            .and_then(|d| d.get("used_gb"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let disk_pct = disk
+            .and_then(|d| d.get("percent"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
 
         enrichment.resources = Some(EnrichedResources {
             cpu_cores,

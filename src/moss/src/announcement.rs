@@ -65,12 +65,12 @@ pub async fn announce_if_changed(
 ) -> Result<bool> {
     let current_hash = calculate_state_hash(entry);
     let elapsed = last_announcement.elapsed();
-    
+
     // Announce if: forced, changed, or >5min since last
-    let should_announce = force 
+    let should_announce = force
         || *last_hash != Some(current_hash)
         || elapsed > tokio::time::Duration::from_secs(300);
-    
+
     if should_announce {
         announce(entry).await?;
         *last_hash = Some(current_hash);
@@ -90,7 +90,7 @@ pub async fn announce_if_changed(
 /// Performance: ~6μs (5μs JSON + 1μs hash), acceptable for 30s interval.
 fn calculate_state_hash(entry: &TopologyEntry) -> u64 {
     let mut hasher = DefaultHasher::new();
-    
+
     // Serialize to JSON for deterministic, maintainable hashing
     if let Ok(json) = serde_json::to_string(entry) {
         json.hash(&mut hasher);
@@ -98,7 +98,7 @@ fn calculate_state_hash(entry: &TopologyEntry) -> u64 {
         // Fallback: hash stone_id as unique identifier
         entry.stone_id.hash(&mut hasher);
     }
-    
+
     hasher.finish()
 }
 
@@ -110,11 +110,7 @@ fn calculate_state_hash(entry: &TopologyEntry) -> u64 {
 /// **REFACTORED (COMM-0001 Phase 2)**: Now uses p2p transport singleton instead of creating own socket.
 async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
     // Use p2p transport singleton (no socket creation)
-    p2p::send_announcement(
-        announcement_types::STONE_CHIRP,
-        entry,
-    )
-    .await?;
+    p2p::send_announcement(announcement_types::STONE_CHIRP, entry).await?;
 
     tracing::trace!(
         endpoint = %entry.endpoint,
@@ -146,11 +142,7 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
     );
 
     // Use p2p transport singleton (no socket creation)
-    p2p::send_announcement(
-        announcement_types::STONE_GOODBYE,
-        &goodbye,
-    )
-    .await?;
+    p2p::send_announcement(announcement_types::STONE_GOODBYE, &goodbye).await?;
 
     tracing::info!(
         stone = %goodbye.stone_name,

@@ -3,17 +3,17 @@
 //! Handles server binding, graceful shutdown, and error handling.
 //! Extracted from main.rs for cleaner separation of concerns.
 
+use axum::Router;
+use garden_common::console::{
+    try_boot_banner, try_shutdown_banner, BootBannerInfo, ConsoleEvent, ConsolePrinter,
+    EventCategory, EventStatus, ShutdownBannerInfo,
+};
+use garden_common::infra::platform::shutdown_signal;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use axum::Router;
 use tokio::net::TcpListener;
-use garden_common::console::{
-    ConsolePrinter, ConsoleEvent, EventCategory, EventStatus,
-    BootBannerInfo, ShutdownBannerInfo, try_boot_banner, try_shutdown_banner,
-};
-use garden_common::infra::platform::shutdown_signal;
 
 /// Server configuration
 pub struct ServerConfig {
@@ -45,18 +45,21 @@ pub async fn bind(port: u16, console: &ConsolePrinter) -> anyhow::Result<TcpList
         .map_err(|e| anyhow::anyhow!("Failed to create socket: {}", e))?;
 
     // Set SO_REUSEADDR - critical for Windows self-update
-    socket.set_reuse_address(true)
+    socket
+        .set_reuse_address(true)
         .map_err(|e| anyhow::anyhow!("Failed to set SO_REUSEADDR: {}", e))?;
 
     // Set non-blocking before converting to tokio
-    socket.set_nonblocking(true)
+    socket
+        .set_nonblocking(true)
         .map_err(|e| anyhow::anyhow!("Failed to set non-blocking: {}", e))?;
 
     // Bind the socket
     match socket.bind(&addr.into()) {
         Ok(()) => {
             // Listen with backlog
-            socket.listen(128)
+            socket
+                .listen(128)
                 .map_err(|e| anyhow::anyhow!("Failed to listen: {}", e))?;
 
             // Convert to tokio TcpListener
@@ -79,14 +82,16 @@ pub async fn bind(port: u16, console: &ConsolePrinter) -> anyhow::Result<TcpList
                 format!(
                     "Failed to bind HTTP server to {}:{}: {}\n\
                     Check firewall settings and ensure the port is available.",
-                    addr.ip(), addr.port(), e
+                    addr.ip(),
+                    addr.port(),
+                    e
                 )
             };
 
             console.emit(ConsoleEvent::new(
                 EventCategory::System,
                 EventStatus::Failed,
-                error_msg.clone()
+                error_msg.clone(),
             ));
 
             anyhow::bail!(error_msg);
@@ -130,24 +135,23 @@ pub async fn run(
     console.emit(ConsoleEvent::new(
         EventCategory::System,
         EventStatus::Ready,
-        format!("HTTP server → {}", api_endpoint)
+        format!("HTTP server → {}", api_endpoint),
     ));
 
     // Print boot banner to TTY1 (Linux only)
     try_boot_banner(boot_banner.as_ref());
 
     // Create server with graceful shutdown
-    let server = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            tracing::info!("Shutdown signal received, initiating graceful shutdown");
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        tracing::info!("Shutdown signal received, initiating graceful shutdown");
 
-            // Send goodbye announcement if callback provided
-            if let Some(callback) = shutdown_callback {
-                tracing::info!("Sending goodbye announcement before shutdown");
-                callback().await;
-            }
-        });
+        // Send goodbye announcement if callback provided
+        if let Some(callback) = shutdown_callback {
+            tracing::info!("Sending goodbye announcement before shutdown");
+            callback().await;
+        }
+    });
 
     // Clone console for shutdown events
     let shutdown_console = console.clone();
@@ -172,14 +176,20 @@ pub async fn run(
     }
 
     // Allow in-flight requests to complete
-    tracing::info!("Waiting up to {}s for in-flight requests to complete", config.graceful_shutdown_timeout_secs);
+    tracing::info!(
+        "Waiting up to {}s for in-flight requests to complete",
+        config.graceful_shutdown_timeout_secs
+    );
 
     console.emit(ConsoleEvent::new(
         EventCategory::System,
         EventStatus::Draining,
-        "In-flight requests".to_string()
+        "In-flight requests".to_string(),
     ));
-    tokio::time::sleep(tokio::time::Duration::from_secs(config.graceful_shutdown_timeout_secs)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(
+        config.graceful_shutdown_timeout_secs,
+    ))
+    .await;
 
     tracing::info!("Moss daemon shutdown complete");
 
@@ -189,7 +199,7 @@ pub async fn run(
     console.emit(ConsoleEvent::new(
         EventCategory::System,
         EventStatus::Stopped,
-        "Shutdown complete".to_string()
+        "Shutdown complete".to_string(),
     ));
 
     // Windows-only: Force exit to ensure ports are released

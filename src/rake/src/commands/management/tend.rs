@@ -1,4 +1,4 @@
-﻿//! Tend command - manage which stone to tend to
+//! Tend command - manage which stone to tend to
 //!
 //! The tend command manages the tending state, which determines
 //! which stone commands target by default.
@@ -75,7 +75,10 @@ impl Command for TendCommand {
                                 .json()
                                 .await?;
                             let caps = response.data;
-                            tending::write_tending(caps.stone_name.clone(), local_endpoint.clone())?;
+                            tending::write_tending(
+                                caps.stone_name.clone(),
+                                local_endpoint.clone(),
+                            )?;
 
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &local_endpoint).await;
@@ -98,7 +101,8 @@ impl Command for TendCommand {
                     match tending::discover_alternative_stone(Duration::from_secs(3)).await? {
                         Some(alternative) => {
                             // Validate and get stone name
-                            let health_url = format!("{}/health", alternative.endpoint.trim_end_matches('/'));
+                            let health_url =
+                                format!("{}/health", alternative.endpoint.trim_end_matches('/'));
                             match ctx
                                 .client
                                 .get(&health_url)
@@ -107,7 +111,10 @@ impl Command for TendCommand {
                                 .await
                             {
                                 Ok(resp) if resp.status().is_success() => {
-                                    let caps_url = format!("{}/api/v1/stone/capabilities", alternative.endpoint.trim_end_matches('/'));
+                                    let caps_url = format!(
+                                        "{}/api/v1/stone/capabilities",
+                                        alternative.endpoint.trim_end_matches('/')
+                                    );
                                     let response: GardenApiResponse<HardwareCapabilities> = ctx
                                         .client
                                         .get(&caps_url)
@@ -117,11 +124,14 @@ impl Command for TendCommand {
                                         .json()
                                         .await?;
                                     let caps = response.data;
-                                    tending::write_tending(caps.stone_name.clone(), alternative.endpoint.clone())?;
-                                    
+                                    tending::write_tending(
+                                        caps.stone_name.clone(),
+                                        alternative.endpoint.clone(),
+                                    )?;
+
                                     // Notify stone of tending (for visual feedback in Companions)
                                     let _ = notify_tending(ctx, &alternative.endpoint).await;
-                                    
+
                                     println!(
                                         "Switched to {}.local ({})",
                                         caps.stone_name,
@@ -161,7 +171,10 @@ impl Command for TendCommand {
                     match discovery::discover_moss().await {
                         Ok(endpoint) => {
                             // Get capabilities for stone name
-                            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+                            let caps_url = format!(
+                                "{}/api/v1/stone/capabilities",
+                                endpoint.trim_end_matches('/')
+                            );
                             let response: GardenApiResponse<HardwareCapabilities> = ctx
                                 .client
                                 .get(&caps_url)
@@ -172,10 +185,10 @@ impl Command for TendCommand {
                                 .await?;
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), endpoint.clone())?;
-                            
+
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &endpoint).await;
-                            
+
                             println!(
                                 "  Found {}.local ({})",
                                 caps.stone_name,
@@ -199,7 +212,8 @@ impl Command for TendCommand {
                         .await
                     {
                         Ok(resp) if resp.status().is_success() => {
-                            let caps_url = format!("{}/api/v1/stone/capabilities", url.trim_end_matches('/'));
+                            let caps_url =
+                                format!("{}/api/v1/stone/capabilities", url.trim_end_matches('/'));
                             let response: GardenApiResponse<HardwareCapabilities> = ctx
                                 .client
                                 .get(&caps_url)
@@ -210,24 +224,22 @@ impl Command for TendCommand {
                                 .await?;
                             let caps = response.data;
                             tending::write_tending(caps.stone_name.clone(), url.to_string())?;
-                            
+
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, url).await;
-                            
+
                             println!("Now tending to: {} ({})", caps.stone_name, url);
                         }
                         _ => {
-                            return Err(anyhow::anyhow!(
-                                "Could not connect to endpoint: {}",
-                                url
-                            ));
+                            return Err(anyhow::anyhow!("Could not connect to endpoint: {}", url));
                         }
                     }
                 }
                 stone_name => {
                     // Resolve stone name (or simple host) to an endpoint
                     // Note: We don't use cache here since tend is a setup operation
-                    let endpoint: String = resolve_target_endpoint(&ctx.client, stone_name, None).await?;
+                    let endpoint: String =
+                        resolve_target_endpoint(&ctx.client, stone_name, None).await?;
 
                     // Validate it and store tending state
                     let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
@@ -239,7 +251,10 @@ impl Command for TendCommand {
                         .await
                     {
                         Ok(resp) if resp.status().is_success() => {
-                            let caps_url = format!("{}/api/v1/stone/capabilities", endpoint.trim_end_matches('/'));
+                            let caps_url = format!(
+                                "{}/api/v1/stone/capabilities",
+                                endpoint.trim_end_matches('/')
+                            );
                             let caps: HardwareCapabilities = ctx
                                 .client
                                 .get(&caps_url)
@@ -250,10 +265,10 @@ impl Command for TendCommand {
                                 .await?
                                 .data;
                             tending::write_tending(caps.stone_name.clone(), endpoint.to_string())?;
-                            
+
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &endpoint).await;
-                            
+
                             println!(
                                 "Now tending to: {}.local ({})",
                                 caps.stone_name,
@@ -317,38 +332,42 @@ impl Command for TendCommand {
 }
 
 /// Send tending notification to stone (for visual feedback)
-/// 
+///
 /// POSTs to /api/v1/stone/presence/notify to trigger stone.tended event.
 /// Companions (Firefly, Cricket) can react with temporary glow/pulse.
-/// 
+///
 /// Used by:
 /// - Explicit tend commands
 /// - Auto-switch during dispatch when tended stone offline
 pub async fn notify_tending(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
     use garden_common::presence::ClientNotification;
-    
+
     // Get hostname for "from" field
     let hostname = hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
-    
+
     let notification = ClientNotification {
         event_type: "tended".to_string(),
         client: "rake".to_string(),
         from_host: Some(hostname.clone()),
         message: Some(format!("Tending from {}", hostname)),
     };
-    
-    let notify_url = format!("{}/api/v1/stone/presence/notify", endpoint.trim_end_matches('/'));
-    
+
+    let notify_url = format!(
+        "{}/api/v1/stone/presence/notify",
+        endpoint.trim_end_matches('/')
+    );
+
     // Fire and forget - don't fail tending if notification fails
-    let _ = ctx.client
+    let _ = ctx
+        .client
         .post(&notify_url)
         .json(&notification)
         .timeout(Duration::from_millis(500))
         .send()
         .await;
-    
+
     Ok(())
 }

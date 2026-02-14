@@ -1,11 +1,11 @@
-﻿// Binary-only modules (not needed by library)
+// Binary-only modules (not needed by library)
 mod dispatch;
 
 // Use shared modules from the library
+use garden_common::ui::rendering as ui;
 use garden_rake::command_manifest;
 use garden_rake::commands;
 use garden_rake::commands::Command;
-use garden_common::ui::rendering as ui;
 
 #[cfg(test)]
 mod discovery_tests;
@@ -108,7 +108,7 @@ enum Commands {
         /// If an install fails due to compatibility, automatically recommend across all discovered stones.
         #[arg(long)]
         anywhere_on_fail: bool,
-        
+
         /// Use intelligent placement recommendation (zen: somewhere, somewhere quietly)
         #[arg(long, value_enum)]
         placement_mode: Option<PlacementMode>,
@@ -161,14 +161,12 @@ enum Commands {
     },
 
     /// Uproot a service (hard delete - destroy container completely)
-    #[command(
-        long_about = "Permanently destroy a service and its container.\n\n\
+    #[command(long_about = "Permanently destroy a service and its container.\n\n\
         Unlike 'remove' which preserves the container as a stray, 'uproot' completely\n\
         destroys the container and cannot be recovered.\n\n\
         Examples:\n  \
         garden-rake uproot mongodb              # Destroy mongodb container\n  \
-        garden-rake uproot mongodb --force      # Skip confirmation"
-    )]
+        garden-rake uproot mongodb --force      # Skip confirmation")]
     Uproot {
         /// Service name to destroy
         service: String,
@@ -201,14 +199,12 @@ enum Commands {
     },
 
     /// Release an adopted service (stop managing, keep container running)
-    #[command(
-        long_about = "Release an adopted service back to the wild.\n\n\
+    #[command(long_about = "Release an adopted service back to the wild.\n\n\
         This removes the service from Zen Garden's management but leaves the\n\
         container running. Use this when you want to stop managing a service\n\
         without destroying it.\n\n\
         Examples:\n  \
-        garden-rake release mongodb             # Release adopted mongodb"
-    )]
+        garden-rake release mongodb             # Release adopted mongodb")]
     Release {
         /// Service name to release
         service: String,
@@ -219,11 +215,9 @@ enum Commands {
     },
 
     /// Locate strays (adoptable containers)
-    #[command(
-        long_about = "Locate adoptable containers (strays) on a stone.\n\n\
+    #[command(long_about = "Locate adoptable containers (strays) on a stone.\n\n\
         Examples:\n  \
-        garden-rake locate strays               # List containers not managed by Zen Garden"
-    )]
+        garden-rake locate strays               # List containers not managed by Zen Garden")]
     Locate {
         #[command(subcommand)]
         target: LocateTarget,
@@ -234,8 +228,7 @@ enum Commands {
     },
 
     /// Find running services across the garden
-    #[command(
-        long_about = "Find running services and return connection URIs.\n\n\
+    #[command(long_about = "Find running services and return connection URIs.\n\n\
         Supports search by name, category, or tags:\n  \
         - By name: garden-rake find mongodb\n  \
         - By category: garden-rake find c:database\n  \
@@ -249,8 +242,7 @@ enum Commands {
         garden-rake find mongodb                 # Find mongodb service\n  \
         garden-rake find c:database              # Find any database\n  \
         garden-rake find mongodb --format uri    # Just the connection string\n  \
-        garden-rake find mongodb wishfully       # Auto-provision if not found"
-    )]
+        garden-rake find mongodb wishfully       # Auto-provision if not found")]
     Find {
         /// Search query (name, c:category, or t:tag)
         query: String,
@@ -269,15 +261,13 @@ enum Commands {
     },
 
     /// Get service configuration for automation
-    #[command(
-        long_about = "Query detailed configuration for a service by name.\n\n\
+    #[command(long_about = "Query detailed configuration for a service by name.\n\n\
         Designed for automation and scripting scenarios.\n\
         Returns connection URIs, ports, hostname, and protocol information.\n\n\
         Examples:\n  \
         garden-rake config mongodb                           # Full config\n  \
         garden-rake config mongodb --output json             # JSON output\n  \
-        garden-rake config mongodb --field connection.uri    # Just the URI"
-    )]
+        garden-rake config mongodb --field connection.uri    # Just the URI")]
     Config {
         /// Service name to query
         service: String,
@@ -404,7 +394,7 @@ enum Commands {
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
         at: Option<String>,
-        
+
         /// Passphrase for encrypting pond certificate (keystone only)
         #[arg(long)]
         passphrase: Option<String>,
@@ -424,13 +414,11 @@ enum Commands {
     },
 
     /// Observe garden state (all stones or filtered)
-    #[command(
-        long_about = "Observe garden state with optional filtering.\n\n\
+    #[command(long_about = "Observe garden state with optional filtering.\n\n\
         Examples:\n  \
         garden-rake observe                    # All stones\n  \
         garden-rake observe stone-01           # Specific stone\n  \
-        garden-rake observe --offering mongodb,redis  # Filter by offerings"
-    )]
+        garden-rake observe --offering mongodb,redis  # Filter by offerings")]
     Observe {
         /// Specific stone name (omit for all stones)
         stone: Option<String>,
@@ -441,14 +429,12 @@ enum Commands {
     },
 
     /// Watch real-time events from a Stone
-    #[command(
-        long_about = "Stream real-time events from moss operations.\n\n\
+    #[command(long_about = "Stream real-time events from moss operations.\n\n\
         Examples:\n  \
         garden-rake watch stone-01                        # Watch all events\n  \
         garden-rake watch stone-01 until 'completed'     # Exit when string appears\n  \
         garden-rake watch --at http://stone-01:7185      # Explicit endpoint
-        garden-rake watch offering mongodb logs          # Watch offering logs"
-    )]
+        garden-rake watch offering mongodb logs          # Watch offering logs")]
     Watch {
         /// Subcommand: offering, stone, or none for events
         #[command(subcommand)]
@@ -464,15 +450,13 @@ enum Commands {
     },
 
     /// Stream presence events from a Stone (PRESENCE-0001)
-    #[command(
-        long_about = "Stream real-time presence events from a stone.\n\n\
+    #[command(long_about = "Stream real-time presence events from a stone.\n\n\
         Displays garden-native events (service started/stopped, stone health).\n\
         Press Ctrl+C to disconnect.\n\n\
         Examples:\n  \
         garden-rake presence                        # Connect to tended stone\n  \
         garden-rake presence stone-01               # Connect to specific stone\n  \
-        garden-rake presence --at http://stone-01:7185  # Explicit endpoint"
-    )]
+        garden-rake presence --at http://stone-01:7185  # Explicit endpoint")]
     Presence {
         /// Stone name (omit for tended stone)
         stone: Option<String>,
@@ -530,30 +514,26 @@ enum Commands {
     },
 
     /// Run guided workflows (scaffolded - not yet implemented)
-    #[command(
-        long_about = "Run guided workflows for common operations.\n\n\
+    #[command(long_about = "Run guided workflows for common operations.\n\n\
         This command is scaffolded but not yet implemented.\n\n\
         Future ceremonies may include:\n  \
         - garden-rake ceremony bootstrap      # First-time setup wizard\n  \
         - garden-rake ceremony migrate        # Service migration workflow\n  \
-        - garden-rake ceremony backup         # Guided backup configuration"
-    )]
+        - garden-rake ceremony backup         # Guided backup configuration")]
     Ceremony {
         /// Ceremony name to run
         name: Option<String>,
     },
 
     /// Manage tending state (which stone rake commands target)
-    #[command(
-        long_about = "Manage which stone garden-rake commands target.\n\n\
+    #[command(long_about = "Manage which stone garden-rake commands target.\n\n\
         Examples:\n  \
         garden-rake tend                      # Show current tending state\n  \
         garden-rake tend this                 # Tend to localhost\n  \
         garden-rake tend auto                 # Auto-discover and set\n  \
         garden-rake tend http://192.168.1.108:7185  # Set explicit endpoint\n  \
         garden-rake tend --clear              # Stop tending\n\n\
-        Tending state is cached for 90 seconds and automatically refreshed."
-    )]
+        Tending state is cached for 90 seconds and automatically refreshed.")]
     Tend {
         /// Target: 'this', 'local', 'auto', or explicit endpoint URL
         target: Option<String>,
@@ -564,8 +544,7 @@ enum Commands {
     },
 
     /// Manage pond security (normative syntax)
-    #[command(
-        long_about = "Manage pond security for multi-stone trust.\n\n\
+    #[command(long_about = "Manage pond security for multi-stone trust.\n\n\
         Examples:\n  \
         garden-rake pond init                 # Initialize pond (place keystone)\n  \
         garden-rake pond status               # Show pond status\n  \
@@ -573,12 +552,11 @@ enum Commands {
         garden-rake pond join <code>          # Join pond with code\n  \
         garden-rake pond remove               # Remove pond from stone\n  \
         garden-rake pond untrust stone-02     # Remove stone from pond\n\n\
-        Note: Pond security implementation pending (Phase 3b)."
-    )]
+        Note: Pond security implementation pending (Phase 3b).")]
     Pond {
         #[command(subcommand)]
         action: PondAction,
-        
+
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
         at: Option<String>,
@@ -594,18 +572,17 @@ enum Commands {
     Lift {
         /// Target type: 'keystone' or 'stone'
         target_type: String,
-        
+
         /// Stone name (required if target_type is 'stone')
         stone_name: Option<String>,
-        
+
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
         at: Option<String>,
     },
 
     /// Control stone console output (zen syntax)
-    #[command(
-        long_about = "Control stone console output verbosity.\n\n\
+    #[command(long_about = "Control stone console output verbosity.\n\n\
         Examples:\n  \
         garden-rake make stone sing              # Verbose output temporarily (30min timeout)\n  \
         garden-rake make stone sing forever      # Verbose output permanently\n  \
@@ -615,8 +592,7 @@ enum Commands {
         silent       - No console output (systemd/service use)\n  \
         minimal      - Critical events only\n  \
         informative  - Major lifecycle events (default)\n  \
-        verbose      - Full debug output (sing mode)"
-    )]
+        verbose      - Full debug output (sing mode)")]
     Make {
         /// Target: 'stone'
         target: String,
@@ -783,12 +759,10 @@ enum Commands {
     },
 
     /// Test distributed election protocol
-    #[command(
-        long_about = "Test distributed election protocol (ELECTION-0001).\n\n\
+    #[command(long_about = "Test distributed election protocol (ELECTION-0001).\n\n\
         Examples:\n  \
         garden-rake election start --election-type update_source --criteria '{\"moss_version\": {\"$gt\": \"0.1.0\"}}'\n  \
-        garden-rake election start --election-type ceremony_coordinator"
-    )]
+        garden-rake election start --election-type ceremony_coordinator")]
     Election(commands::election::ElectionCommand),
 
     /// Install moss as a system service (zen syntax)
@@ -804,7 +778,7 @@ enum Commands {
     TakeRoot {
         /// Target stone (positional zen syntax: "at stone-name")
         at: Option<String>,
-        
+
         /// Explicit stone name (follows "at" in zen syntax)
         stone: Option<String>,
     },
@@ -845,8 +819,7 @@ enum Commands {
     },
 
     /// Shut down a stone (power off)
-    #[command(
-        long_about = "Power off the target stone machine.\n\n\
+    #[command(long_about = "Power off the target stone machine.\n\n\
         Examples:\n  \
         garden-rake slumber                       # Shut down tended stone\n  \
         garden-rake slumber oak                   # Shut down stone 'oak' (by name)\n  \
@@ -854,8 +827,7 @@ enum Commands {
         garden-rake slumber --at http://10.0.0.5:7185  # By URL\n\n\
         Accepts: stone name, stone ID, or full URL.\n\
         The stone's MAC address is preserved in topology cache for Wake-on-LAN.\n\
-        Use 'garden-rake rouse <stone>' to wake it later."
-    )]
+        Use 'garden-rake rouse <stone>' to wake it later.")]
     Slumber {
         /// Stone name, stone ID, or endpoint URL (omit to use tended stone)
         stone: Option<String>,
@@ -866,15 +838,13 @@ enum Commands {
     },
 
     /// Reboot a stone
-    #[command(
-        long_about = "Restart the target stone machine.\n\n\
+    #[command(long_about = "Restart the target stone machine.\n\n\
         Examples:\n  \
         garden-rake stir                          # Reboot tended stone\n  \
         garden-rake stir oak                      # Reboot stone 'oak' (by name)\n  \
         garden-rake stir --at oak                 # Same as above\n  \
         garden-rake stir --at http://10.0.0.5:7185  # By URL\n\n\
-        Accepts: stone name, stone ID, or full URL."
-    )]
+        Accepts: stone name, stone ID, or full URL.")]
     Stir {
         /// Stone name, stone ID, or endpoint URL (omit to use tended stone)
         stone: Option<String>,
@@ -885,21 +855,19 @@ enum Commands {
     },
 
     /// Send commands to Companions (Cricket, Firefly, etc.)
-    #[command(
-        long_about = "Communicate with Zen Garden Companions.\n\n\
+    #[command(long_about = "Communicate with Zen Garden Companions.\n\n\
         Companions extend Moss with additional capabilities like audio feedback (Cricket),\n\
         LED displays (Firefly), and more.\n\n\
         Examples:\n  \
         garden-rake hey tell                     # List Companions\n  \
         garden-rake hey tell cricket?            # Show cricket commands\n  \
         garden-rake hey tell cricket select mr-robot\n  \
-        garden-rake hey stone-01 tell cricket volume 50"
-    )]
+        garden-rake hey stone-01 tell cricket volume 50")]
     Hey {
         /// Raw arguments passed to Companion subsystem
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
-        
+
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
         at: Option<String>,
@@ -948,16 +916,14 @@ enum Commands {
     },
 
     /// Display Moss HTTP API reference
-    #[command(
-        long_about = "Query and display Moss HTTP API documentation.\n\n\
+    #[command(long_about = "Query and display Moss HTTP API documentation.\n\n\
         Fetches live API manifest from Moss and displays formatted endpoint reference.\n\n\
         Examples:\n  \
         garden-rake api                                 # Show all endpoints by category\n  \
         garden-rake api --category offerings            # Show offerings API only\n  \
         garden-rake api /api/v1/stone/services          # Detailed docs for endpoint\n  \
         garden-rake api --examples                      # Include curl examples\n  \
-        garden-rake api /api/v1/stone/presence/stream   # SSE endpoint docs"
-    )]
+        garden-rake api /api/v1/stone/presence/stream   # SSE endpoint docs")]
     Api {
         /// Specific endpoint path to show details for
         endpoint: Option<String>,
@@ -976,16 +942,14 @@ enum Commands {
     },
 
     /// Restore an offering from backup
-    #[command(
-        long_about = "Restore an offering from a nurturing backup.\n\n\
+    #[command(long_about = "Restore an offering from a nurturing backup.\n\n\
         Supports restoring from local A/B slots or remote seed banks.\n\n\
         Examples:\n  \
         garden-rake restore mongodb                    # Restore from current slot\n  \
         garden-rake restore mongodb from slot A       # Restore from slot A\n  \
         garden-rake restore mongodb from slot B       # Restore from slot B\n  \
         garden-rake restore mongodb from seed-bank garden-data  # Restore from seed bank\n  \
-        garden-rake restore mongodb --dry-run         # Preview without restoring"
-    )]
+        garden-rake restore mongodb --dry-run         # Preview without restoring")]
     Restore {
         /// Offering name to restore
         offering: String,
@@ -1008,8 +972,7 @@ enum Commands {
     },
 
     /// Manage nurturing (backup) operations
-    #[command(
-        long_about = "Manage nurturing (backup) operations for offerings.\n\n\
+    #[command(long_about = "Manage nurturing (backup) operations for offerings.\n\n\
         Examples:\n  \
         garden-rake nurturing status                  # Show backup status for all offerings\n  \
         garden-rake nurturing status mongodb          # Detailed status for mongodb\n  \
@@ -1017,8 +980,7 @@ enum Commands {
         garden-rake nurturing list mongodb --local    # Local backups only\n  \
         garden-rake nurturing list mongodb --remote   # Remote backups only\n  \
         garden-rake nurturing trigger mongodb         # Trigger backup for mongodb\n  \
-        garden-rake nurturing trigger-all             # Trigger backup for all offerings"
-    )]
+        garden-rake nurturing trigger-all             # Trigger backup for all offerings")]
     Nurturing {
         #[command(subcommand)]
         action: NurturingAction,
@@ -1165,12 +1127,12 @@ enum TemplateCommands {
         #[arg(long)]
         at: Option<String>,
     },
-    
+
     /// Show template YAML content
     Show {
         /// Template name
         name: String,
-        
+
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
         at: Option<String>,
@@ -1183,7 +1145,7 @@ enum WatchTarget {
     Offering {
         /// Offering name
         name: String,
-        
+
         /// Subcommand (logs)
         #[command(subcommand)]
         mode: WatchOfferingMode,
@@ -1192,7 +1154,7 @@ enum WatchTarget {
     Stone {
         /// Stone name
         name: String,
-        
+
         /// Subcommand (logs)
         #[command(subcommand)]
         mode: WatchStoneMode,
@@ -1229,7 +1191,11 @@ fn count_verbosity(args: &[String]) -> u8 {
         } else if arg.starts_with("-") && !arg.starts_with("--") {
             // Count 'v' characters in short flags (e.g., -v, -vv, -vvv)
             // But skip if it's a value like -v123
-            let flag_chars: String = arg.chars().skip(1).take_while(|c| c.is_alphabetic()).collect();
+            let flag_chars: String = arg
+                .chars()
+                .skip(1)
+                .take_while(|c| c.is_alphabetic())
+                .collect();
             count = count.saturating_add(flag_chars.matches('v').count() as u8);
         }
     }
@@ -1237,7 +1203,9 @@ fn count_verbosity(args: &[String]) -> u8 {
 }
 
 /// Convert zen syntax to normative args for Clap
-fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> anyhow::Result<Vec<String>> {
+fn normalize_zen_to_clap(
+    parsed: &garden_common::cli::parser::ParsedCommand,
+) -> anyhow::Result<Vec<String>> {
     let mut args = Vec::new();
 
     // Map zen verbs to Commands
@@ -1430,19 +1398,19 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
             args.push("ceremony".to_string());
             args.extend(parsed.args.clone());
         }
-        
+
         // === TEST/DIAGNOSTIC ===
         "election" => {
             args.push("election".to_string());
             args.extend(parsed.args.clone());
         }
-        
+
         // === Companions ===
         "hey" => {
             args.push("hey".to_string());
             args.extend(parsed.args.clone());
         }
-        
+
         // === DEVELOPER TOOLS ===
         "api" => {
             args.push("api".to_string());
@@ -1495,12 +1463,16 @@ fn normalize_zen_to_clap(parsed: &garden_common::cli::parser::ParsedCommand) -> 
         args.push("--at".to_string());
         args.push(stone.clone());
     }
-    
+
     // Handle "somewhere" keyword for intelligent placement
     // This triggers placement recommendation instead of direct install
     if parsed.keywords.somewhere {
         // Determine mode based on "quietly" modifier
-        let mode = if parsed.keywords.quietly { "auto" } else { "interactive" };
+        let mode = if parsed.keywords.quietly {
+            "auto"
+        } else {
+            "interactive"
+        };
         args.push("--placement-mode".to_string());
         args.push(mode.to_string());
     }
@@ -1561,21 +1533,21 @@ async fn async_main() -> anyhow::Result<()> {
             _ => "trace",
         };
         // Set filter for garden crates only to avoid noise from dependencies
-        EnvFilter::new(format!("garden_rake={},garden_common={},garden_moss={}", level, level, level))
+        EnvFilter::new(format!(
+            "garden_rake={},garden_common={},garden_moss={}",
+            level, level, level
+        ))
     } else {
         // Default: use RUST_LOG env var or warn level
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("warn"))
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"))
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .init();
-    
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+
     // Check for help query syntax: command? or ?command
     if !raw_args.is_empty() {
         let first_arg = &raw_args[0];
-        
+
         // Handle: garden-rake ?command
         if first_arg.starts_with('?') {
             let cmd_name = first_arg.trim_start_matches('?');
@@ -1590,7 +1562,7 @@ async fn async_main() -> anyhow::Result<()> {
                 }
             }
         }
-        
+
         // Handle: garden-rake command?
         if first_arg.ends_with('?') {
             let cmd_name = first_arg.trim_end_matches('?');
@@ -1606,13 +1578,14 @@ async fn async_main() -> anyhow::Result<()> {
             }
         }
     }
-    
+
     let (cli, parsed_keywords) = if !raw_args.is_empty() {
         match garden_common::cli::parser::parse_args(raw_args.clone()) {
             Ok(parsed) if parsed.style == garden_common::cli::parser::CommandStyle::Zen => {
                 // Convert zen to normative args for Clap
                 let normalized = normalize_zen_to_clap(&parsed)?;
-                let cli = Cli::parse_from(std::iter::once("garden-rake".to_string()).chain(normalized));
+                let cli =
+                    Cli::parse_from(std::iter::once("garden-rake".to_string()).chain(normalized));
                 (cli, Some(parsed.keywords))
             }
             Ok(_) => {
@@ -1634,8 +1607,7 @@ async fn async_main() -> anyhow::Result<()> {
         || std::env::var("GARDEN_QUIET").is_ok();
 
     // Determine if fresh mode is active (--fresh flag or zen "fresh" keyword)
-    let fresh_mode = cli.fresh
-        || parsed_keywords.as_ref().map(|k| k.fresh).unwrap_or(false);
+    let fresh_mode = cli.fresh || parsed_keywords.as_ref().map(|k| k.fresh).unwrap_or(false);
 
     // Determine output format (--output flag or GARDEN_OUTPUT env var)
     // If --field is specified, force JSON mode internally
@@ -1655,7 +1627,7 @@ async fn async_main() -> anyhow::Result<()> {
     // - pool_max_idle_per_host: 10 (handle multiple concurrent operations)
     // - tcp_keepalive: 60 seconds (prevent connection drops during streams)
     // - timeout: 30 seconds (default per-request timeout, overridable)
-    // 
+    //
     // This eliminates repeated TCP handshakes and TLS negotiations,
     // reducing latency for sequential requests in watch/observe loops.
     let mut client_builder = reqwest::Client::builder()
@@ -1681,478 +1653,1064 @@ async fn async_main() -> anyhow::Result<()> {
             display_all_commands(false, false);
             return Ok(());
         }
-        
+
         Some(command) => match command {
-        Commands::Status { at } => {
-            let cmd = commands::discovery::StatusCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Offer { offering, action, at, prefer, anywhere_on_fail, placement_mode } => {
-            // Handle intelligent placement with "somewhere" keyword or --placement-mode
-            if let Some(mode) = placement_mode {
-                if let Some(name) = offering {
-                    let is_quiet = matches!(mode, PlacementMode::Auto) || quiet_mode;
-                    let cmd = commands::offering::OfferCommand::placement_recommend(name.to_string(), is_quiet);
-                    dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-                } else {
-                    anyhow::bail!("Usage: garden-rake offer <offering> --placement-mode <interactive|auto>");
-                }
-                return Ok(());
-            }
-            
-            // Handle --at anywhere (query across all stones)
-            if at.as_deref() == Some("anywhere") {
-                match (offering.as_deref(), action) {
-                    (Some("refresh"), None) => {
-                        anyhow::bail!("'offer refresh' requires a specific stone (remove --at anywhere)");
-                    }
-                    (Some(q), None) => {
-                        let cmd = commands::offering::OfferCommand::query_anywhere(q.to_string(), prefer, quiet_mode);
-                        dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-                    }
-                    _ => {
-                        anyhow::bail!("Usage with --at anywhere: garden-rake offer <query> --at anywhere [--prefer <token>]");
-                    }
-                }
-                return Ok(());
+            Commands::Status { at } => {
+                let cmd = commands::discovery::StatusCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
             }
 
-            // Determine the action to take
-            let cmd = match (offering.as_deref(), action) {
-                (None, None) => {
-                    // List all offerings
-                    commands::offering::OfferCommand::list(quiet_mode)
-                }
-                (Some("refresh"), None) => {
-                    // Refresh offerings index
-                    commands::offering::OfferCommand::refresh(quiet_mode)
-                }
-                (Some(name), Some(OfferAction::Info)) => {
-                    // Show offering info
-                    commands::offering::OfferCommand::info(name.to_string(), quiet_mode)
-                }
-                (Some(name), None) => {
-                    // Could be install or query - need to check if known offering
-                    // First resolve endpoint to check
-                    let endpoint = dispatch::resolve_endpoint(&client, at.clone(), Some(&*GLOBAL_CACHE)).await?;
-                    let is_known = commands::offering::OfferCommand::is_known_offering(&client, &endpoint, name).await;
-
-                    if name != "refresh" && !is_known {
-                        // Treat as query
-                        let cmd = commands::offering::OfferCommand::query(name.to_string(), prefer.clone(), quiet_mode);
-                        let ctx = garden_rake::CommandContext::with_endpoint(
-                            client.clone(),
-                            endpoint.clone(),
-                            None,
-                            quiet_mode,
-                            false,
-                            cli.verbose,
+            Commands::Offer {
+                offering,
+                action,
+                at,
+                prefer,
+                anywhere_on_fail,
+                placement_mode,
+            } => {
+                // Handle intelligent placement with "somewhere" keyword or --placement-mode
+                if let Some(mode) = placement_mode {
+                    if let Some(name) = offering {
+                        let is_quiet = matches!(mode, PlacementMode::Auto) || quiet_mode;
+                        let cmd = commands::offering::OfferCommand::placement_recommend(
+                            name.to_string(),
+                            is_quiet,
                         );
-                        cmd.execute(&ctx).await?;
-                        return Ok(());
+                        dispatch::dispatch_local(
+                            &cmd,
+                            &client,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                        )
+                        .await?;
+                    } else {
+                        anyhow::bail!("Usage: garden-rake offer <offering> --placement-mode <interactive|auto>");
                     }
-
-                    // Install the offering
-                    commands::offering::OfferCommand::install(name.to_string(), prefer, anywhere_on_fail, quiet_mode)
-                }
-                (None, Some(_)) => {
-                    anyhow::bail!("Usage: garden-rake offer <offering> info");
-                }
-            };
-
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::List { at } => {
-            let cmd = commands::discovery::ListCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Capabilities { action, offering, at } => {
-            match action {
-                Some(CapabilitiesAction::Add { offering, name, cap_type, dry_run }) => {
-                    let cmd = commands::discovery::AddCapabilityCommand::new(offering, name, cap_type, dry_run, quiet_mode);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                Some(CapabilitiesAction::Remove { offering, name, cap_type }) => {
-                    let cmd = commands::discovery::RemoveCapabilityCommand::new(offering, name, cap_type, quiet_mode);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                Some(CapabilitiesAction::Refresh { offering, cap_type, dry_run }) => {
-                    let cmd = commands::discovery::RefreshCapabilitiesCommand::new(offering, cap_type, dry_run, quiet_mode);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                Some(CapabilitiesAction::Mirror { offering, args }) => {
-                    let cmd = commands::discovery::MirrorCapabilitiesCommand::new(offering, args, quiet_mode);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                None => {
-                    // Default: list capabilities
-                    let offering = offering.expect("offering required when no subcommand");
-                    let cmd = commands::discovery::CapabilitiesCommand::new(offering, quiet_mode);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-            }
-        }
-
-        Commands::Remove { service, at, force } => {
-            let cmd = commands::lifecycle::RemoveCommand::new(service, force, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Uproot { service, at, force } => {
-            let cmd = commands::lifecycle::UprootCommand::new(service, force, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Adopt { container, at } => {
-            let cmd = commands::adoption::AdoptCommand::new(container, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Release { service, at } => {
-            let cmd = commands::adoption::ReleaseCommand::new(service, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Locate { target, at } => {
-            match target {
-                LocateTarget::Strays => {
-                    let cmd = commands::adoption::LocateStraysCommand::new(quiet_mode);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-            }
-        }
-
-        Commands::Find { query, format, wishful, at } => {
-            // Global --output/--field can override command-specific --format
-            let find_format = if field.is_some() || output_format.is_json() {
-                // Field extraction or global JSON mode -> use JSON internally
-                commands::discovery::FindOutputFormat::Json
-            } else {
-                format.parse().unwrap()
-            };
-            let wishfully = wishful || parsed_keywords.as_ref().map(|k| k.wishfully).unwrap_or(false);
-            let cmd = commands::discovery::FindCommand::with_field(
-                query,
-                find_format,
-                quiet_mode,
-                fresh_mode,
-                wishfully,
-                field.clone(),
-            );
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Config { service, at } => {
-            let json_output = output_format.is_json() || field.is_some();
-            let cmd = commands::discovery::ConfigCommand::new(
-                service,
-                quiet_mode,
-                json_output,
-                field.clone(),
-            );
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Adopted { at } => {
-            let cmd = commands::discovery::AdoptedCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Borrowed { at } => {
-            let cmd = commands::discovery::BorrowedCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Borrow { name, from, at } => {
-            let url_str = from.ok_or_else(|| anyhow::anyhow!(
-                "Missing URL. Use: garden-rake borrow {} from <url>", name
-            ))?;
-            let cmd = commands::adoption::BorrowCommand::new(name, url_str, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Return { name, at } => {
-            let cmd = commands::adoption::ReturnCommand::new(name, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Upgrade { service, all, at } => {
-            let cmd = commands::lifecycle::UpgradeCommand::new(service, all, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Rest { service, at } => {
-            let cmd = commands::lifecycle::RestCommand::new(service, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Wake { service, at } => {
-            let cmd = commands::lifecycle::WakeCommand::new(service, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Place {
-            target,
-            code,
-            passphrase,
-            at,
-        } => {
-            match commands::management::PlaceCommand::from_args(target, code, passphrase, quiet_mode) {
-                Ok(cmd) => {
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                Err(e) => {
-                    eprintln!("{}{} {}", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), e);
-                }
-            }
-        }
-
-        Commands::Invite { at } => {
-            let cmd = commands::management::InviteCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Observe { stone, offering } => {
-            let cmd = commands::discovery::ObserveCommand::new(stone, offering, quiet_mode);
-            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-        }
-
-        Commands::Nourish { stone, updates_only, auto_confirm, at: _ } => {
-            let cmd = commands::nourish::NourishCommand::new(stone, updates_only, auto_confirm);
-            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-        }
-
-        Commands::Prepare { target, device, name, random, fs, group, replica, at } => {
-            if target != "seed-bank" {
-                anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>] [--group <name>] [--replica <id>]");
-            }
-            let cmd = commands::storage::PrepareSeedBankCommand::new(device, name, random, fs, group, replica);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::ReleaseSeedBank { name, at } => {
-            let cmd = commands::storage::ReleaseSeedBankCommand::new(name);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::SeedBanks { at } => {
-            let cmd = commands::storage::ShowSeedBanksCommand::new();
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Store { operation, bucket, key, file, prefix, delimiter, app, at } => {
-            match operation.as_str() {
-                "put" => {
-                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for put operation"))?;
-                    let file = file.ok_or_else(|| anyhow::anyhow!("File required for put operation"))?;
-                    let cmd = commands::storage::StorePutCommand::new(bucket, key, std::path::PathBuf::from(file), app);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                "get" => {
-                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for get operation"))?;
-                    let output = file.map(std::path::PathBuf::from);
-                    let cmd = commands::storage::StoreGetCommand::new(bucket, key, output, app);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                "ls" | "list" => {
-                    // key is used as prefix if no --prefix flag
-                    let prefix = prefix.or(key);
-                    let cmd = commands::storage::StoreListCommand::new(bucket, prefix, delimiter, app);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                "rm" | "delete" => {
-                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for delete operation"))?;
-                    let cmd = commands::storage::StoreDeleteCommand::new(bucket, key, app);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                "head" | "info" => {
-                    let key = key.ok_or_else(|| anyhow::anyhow!("Key required for head operation"))?;
-                    let cmd = commands::storage::StoreHeadCommand::new(bucket, key, app);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-                }
-                _ => {
-                    anyhow::bail!("Unknown store operation '{}'. Use: put, get, ls, rm, head", operation);
-                }
-            }
-        }
-
-        Commands::Election(election_cmd) => {
-            commands::election::handle_election(election_cmd, &client).await?;
-        }
-
-        Commands::Watch { target, until, at } => {
-            let cmd = match target {
-                Some(WatchTarget::Offering { name, mode }) => {
-                    let WatchOfferingMode::Logs { timestamps } = mode;
-                    commands::discovery::WatchCommand::offering_logs(name, timestamps, quiet_mode)
-                }
-                Some(WatchTarget::Stone { name, mode }) => {
-                    let WatchStoneMode::Logs { timestamps } = mode;
-                    commands::discovery::WatchCommand::stone_logs(name, timestamps, quiet_mode)
-                }
-                None => {
-                    commands::discovery::WatchCommand::events(until, quiet_mode)
-                }
-            };
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Presence { stone, at } => {
-            commands::presence::presence_command(stone, at, &client, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Template { command } => {
-            use commands::local::TemplateAction;
-            let (action, at) = match command {
-                TemplateCommands::List { at } => (TemplateAction::List, at),
-                TemplateCommands::Show { name, at } => (TemplateAction::Show { name }, at),
-            };
-            let cmd = commands::local::TemplateCommand::new(action, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Ceremony { name } => {
-            let cmd = commands::local::CeremonyCommand::new(name, quiet_mode);
-            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-        }
-
-        Commands::Tend { target, clear } => {
-            let verbose = cli.verbose > 0;
-            let cmd = commands::management::TendCommand::new(target, clear, verbose);
-            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-        }
-
-        Commands::Pond { action, at } => {
-            use commands::management::PondActionType;
-            let action_type = match action {
-                PondAction::Init { passphrase } => PondActionType::Init { passphrase },
-                PondAction::Status => PondActionType::Status,
-                PondAction::Invite => PondActionType::Invite,
-                PondAction::Join { code } => PondActionType::Join { code },
-                PondAction::Remove => PondActionType::Remove,
-                PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },
-            };
-            let cmd = commands::management::PondCommand::new(action_type, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
-
-        Commands::Lift { target_type, stone_name, at } => {
-            use commands::management::LiftTarget;
-            let target = match target_type.as_str() {
-                "keystone" => LiftTarget::Keystone,
-                "stone" => {
-                    if stone_name.is_none() {
-                        eprintln!("{}{} Error: stone name required for 'lift stone'", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color));
-                        eprintln!("{}Example: garden-rake lift stone stone-02", " ".repeat(ui::constants::DEFAULT_INDENT));
-                        return Ok(());
-                    }
-                    LiftTarget::Stone { name: stone_name.unwrap() }
-                }
-                _ => {
-                    eprintln!("{}{} Invalid target: '{}'. Use 'keystone' or 'stone'", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), target_type);
                     return Ok(());
                 }
-            };
-            let cmd = commands::management::LiftCommand::new(target, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
 
-        Commands::Make { target, action, at } => {
-            if target != "stone" {
-                eprintln!("{}{} Invalid target: '{}'. Use 'stone'", " ".repeat(ui::constants::DEFAULT_INDENT), ui::status_indicator("error", term.supports_color), target);
-                eprintln!("{}Example: garden-rake make stone sing", " ".repeat(ui::constants::DEFAULT_INDENT));
-                return Ok(());
+                // Handle --at anywhere (query across all stones)
+                if at.as_deref() == Some("anywhere") {
+                    match (offering.as_deref(), action) {
+                        (Some("refresh"), None) => {
+                            anyhow::bail!(
+                                "'offer refresh' requires a specific stone (remove --at anywhere)"
+                            );
+                        }
+                        (Some(q), None) => {
+                            let cmd = commands::offering::OfferCommand::query_anywhere(
+                                q.to_string(),
+                                prefer,
+                                quiet_mode,
+                            );
+                            dispatch::dispatch_local(
+                                &cmd,
+                                &client,
+                                quiet_mode,
+                                fresh_mode,
+                                cli.verbose,
+                            )
+                            .await?;
+                        }
+                        _ => {
+                            anyhow::bail!("Usage with --at anywhere: garden-rake offer <query> --at anywhere [--prefer <token>]");
+                        }
+                    }
+                    return Ok(());
+                }
+
+                // Determine the action to take
+                let cmd = match (offering.as_deref(), action) {
+                    (None, None) => {
+                        // List all offerings
+                        commands::offering::OfferCommand::list(quiet_mode)
+                    }
+                    (Some("refresh"), None) => {
+                        // Refresh offerings index
+                        commands::offering::OfferCommand::refresh(quiet_mode)
+                    }
+                    (Some(name), Some(OfferAction::Info)) => {
+                        // Show offering info
+                        commands::offering::OfferCommand::info(name.to_string(), quiet_mode)
+                    }
+                    (Some(name), None) => {
+                        // Could be install or query - need to check if known offering
+                        // First resolve endpoint to check
+                        let endpoint =
+                            dispatch::resolve_endpoint(&client, at.clone(), Some(&*GLOBAL_CACHE))
+                                .await?;
+                        let is_known = commands::offering::OfferCommand::is_known_offering(
+                            &client, &endpoint, name,
+                        )
+                        .await;
+
+                        if name != "refresh" && !is_known {
+                            // Treat as query
+                            let cmd = commands::offering::OfferCommand::query(
+                                name.to_string(),
+                                prefer.clone(),
+                                quiet_mode,
+                            );
+                            let ctx = garden_rake::CommandContext::with_endpoint(
+                                client.clone(),
+                                endpoint.clone(),
+                                None,
+                                quiet_mode,
+                                false,
+                                cli.verbose,
+                            );
+                            cmd.execute(&ctx).await?;
+                            return Ok(());
+                        }
+
+                        // Install the offering
+                        commands::offering::OfferCommand::install(
+                            name.to_string(),
+                            prefer,
+                            anywhere_on_fail,
+                            quiet_mode,
+                        )
+                    }
+                    (None, Some(_)) => {
+                        anyhow::bail!("Usage: garden-rake offer <offering> info");
+                    }
+                };
+
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
             }
-            use commands::management::MakeActionType;
-            let action_type = match action {
-                MakeAction::Sing { forever } => MakeActionType::Sing { forever },
-                MakeAction::Quiet => MakeActionType::Quiet,
-                MakeAction::Silent => MakeActionType::Silent,
-                MakeAction::Minimal => MakeActionType::Minimal,
-            };
-            let cmd = commands::management::MakeCommand::new(action_type, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
 
-        Commands::TakeRoot { at: at_keyword, stone } => {
-            // Zen syntax: "garden-rake take-root at windows-01"
-            // at_keyword is Some("at"), stone is Some("windows-01")
-            let target = if at_keyword.as_deref() == Some("at") {
-                stone.clone()
-            } else {
-                // If at_keyword is not "at", treat it as the stone name (backward compat)
-                at_keyword.clone()
-            };
-            let cmd = commands::admin::InstallServiceCommand::take_root(quiet_mode);
-            dispatch::dispatch(&cmd, &client, target, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::List { at } => {
+                let cmd = commands::discovery::ListCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::InstallService { at } => {
-            let cmd = commands::admin::InstallServiceCommand::install_service(quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::Capabilities {
+                action,
+                offering,
+                at,
+            } => {
+                match action {
+                    Some(CapabilitiesAction::Add {
+                        offering,
+                        name,
+                        cap_type,
+                        dry_run,
+                    }) => {
+                        let cmd = commands::discovery::AddCapabilityCommand::new(
+                            offering, name, cap_type, dry_run, quiet_mode,
+                        );
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    Some(CapabilitiesAction::Remove {
+                        offering,
+                        name,
+                        cap_type,
+                    }) => {
+                        let cmd = commands::discovery::RemoveCapabilityCommand::new(
+                            offering, name, cap_type, quiet_mode,
+                        );
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    Some(CapabilitiesAction::Refresh {
+                        offering,
+                        cap_type,
+                        dry_run,
+                    }) => {
+                        let cmd = commands::discovery::RefreshCapabilitiesCommand::new(
+                            offering, cap_type, dry_run, quiet_mode,
+                        );
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    Some(CapabilitiesAction::Mirror { offering, args }) => {
+                        let cmd = commands::discovery::MirrorCapabilitiesCommand::new(
+                            offering, args, quiet_mode,
+                        );
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    None => {
+                        // Default: list capabilities
+                        let offering = offering.expect("offering required when no subcommand");
+                        let cmd =
+                            commands::discovery::CapabilitiesCommand::new(offering, quiet_mode);
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                }
+            }
 
-        Commands::Rouse { stone, at } => {
-            let cmd = commands::admin::RouseCommand::new(stone, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::Remove { service, at, force } => {
+                let cmd = commands::lifecycle::RemoveCommand::new(service, force, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Slumber { stone, at } => {
-            // Merge: positional stone takes precedence, then --at
-            let target = stone.or(at);
-            let cmd = commands::admin::SlumberCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, target, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::Uproot { service, at, force } => {
+                let cmd = commands::lifecycle::UprootCommand::new(service, force, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Stir { stone, at } => {
-            // Merge: positional stone takes precedence, then --at
-            let target = stone.or(at);
-            let cmd = commands::admin::StirCommand::new(quiet_mode);
-            dispatch::dispatch(&cmd, &client, target, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::Adopt { container, at } => {
+                let cmd = commands::adoption::AdoptCommand::new(container, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Hey { args, at } => {
-            let cmd = commands::hey::HeyTellCommand { args };
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::Release { service, at } => {
+                let cmd = commands::adoption::ReleaseCommand::new(service, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::BrowseCommands { name, category, zen, normative } => {
-            let cmd = commands::local::BrowseCommand::new(name, category, zen, normative);
-            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-        }
+            Commands::Locate { target, at } => match target {
+                LocateTarget::Strays => {
+                    let cmd = commands::adoption::LocateStraysCommand::new(quiet_mode);
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
+                }
+            },
 
-        Commands::Launch { at } => {
-            // Resolve endpoint first, then launch browser
-            let endpoint = dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
-            let cmd = commands::local::LaunchCommand::new(Some(endpoint));
-            dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose).await?;
-        }
+            Commands::Find {
+                query,
+                format,
+                wishful,
+                at,
+            } => {
+                // Global --output/--field can override command-specific --format
+                let find_format = if field.is_some() || output_format.is_json() {
+                    // Field extraction or global JSON mode -> use JSON internally
+                    commands::discovery::FindOutputFormat::Json
+                } else {
+                    format.parse().unwrap()
+                };
+                let wishfully = wishful
+                    || parsed_keywords
+                        .as_ref()
+                        .map(|k| k.wishfully)
+                        .unwrap_or(false);
+                let cmd = commands::discovery::FindCommand::with_field(
+                    query,
+                    find_format,
+                    quiet_mode,
+                    fresh_mode,
+                    wishfully,
+                    field.clone(),
+                );
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Api { endpoint, category, examples, at } => {
-            commands::api::execute_api_command(at, category, endpoint, examples).await?;
-        }
+            Commands::Config { service, at } => {
+                let json_output = output_format.is_json() || field.is_some();
+                let cmd = commands::discovery::ConfigCommand::new(
+                    service,
+                    quiet_mode,
+                    json_output,
+                    field.clone(),
+                );
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Refresh { component, from, at } => {
-            let endpoint = dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
-            println!("Refreshing {}...", component);
-            refresh_component(&client, &endpoint, &component, &from).await?;
-        }
+            Commands::Adopted { at } => {
+                let cmd = commands::discovery::AdoptedCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Reconcile { drop_invalid, at } => {
-            let cmd = commands::management::ReconcileCommand::new(drop_invalid, quiet_mode);
-            dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-        }
+            Commands::Borrowed { at } => {
+                let cmd = commands::discovery::BorrowedCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-        Commands::Restore { offering, source, dry_run, harvest_id, at } => {
-            // Parse source: "from slot A|B" or "from seed-bank <name>"
-            let source_str = source.join(" ").to_lowercase();
+            Commands::Borrow { name, from, at } => {
+                let url_str = from.ok_or_else(|| {
+                    anyhow::anyhow!("Missing URL. Use: garden-rake borrow {} from <url>", name)
+                })?;
+                let cmd = commands::adoption::BorrowCommand::new(name, url_str, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
 
-            if source_str.contains("seed-bank") || source_str.contains("seedbank") {
-                // Remote restore from seed bank
-                let seed_bank = source.iter()
+            Commands::Return { name, at } => {
+                let cmd = commands::adoption::ReturnCommand::new(name, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Upgrade { service, all, at } => {
+                let cmd = commands::lifecycle::UpgradeCommand::new(service, all, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Rest { service, at } => {
+                let cmd = commands::lifecycle::RestCommand::new(service, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Wake { service, at } => {
+                let cmd = commands::lifecycle::WakeCommand::new(service, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Place {
+                target,
+                code,
+                passphrase,
+                at,
+            } => {
+                match commands::management::PlaceCommand::from_args(
+                    target, code, passphrase, quiet_mode,
+                ) {
+                    Ok(cmd) => {
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "{}{} {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", term.supports_color),
+                            e
+                        );
+                    }
+                }
+            }
+
+            Commands::Invite { at } => {
+                let cmd = commands::management::InviteCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Observe { stone, offering } => {
+                let cmd = commands::discovery::ObserveCommand::new(stone, offering, quiet_mode);
+                dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose)
+                    .await?;
+            }
+
+            Commands::Nourish {
+                stone,
+                updates_only,
+                auto_confirm,
+                at: _,
+            } => {
+                let cmd = commands::nourish::NourishCommand::new(stone, updates_only, auto_confirm);
+                dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose)
+                    .await?;
+            }
+
+            Commands::Prepare {
+                target,
+                device,
+                name,
+                random,
+                fs,
+                group,
+                replica,
+                at,
+            } => {
+                if target != "seed-bank" {
+                    anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>] [--group <name>] [--replica <id>]");
+                }
+                let cmd = commands::storage::PrepareSeedBankCommand::new(
+                    device, name, random, fs, group, replica,
+                );
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::ReleaseSeedBank { name, at } => {
+                let cmd = commands::storage::ReleaseSeedBankCommand::new(name);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::SeedBanks { at } => {
+                let cmd = commands::storage::ShowSeedBanksCommand::new();
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Store {
+                operation,
+                bucket,
+                key,
+                file,
+                prefix,
+                delimiter,
+                app,
+                at,
+            } => {
+                match operation.as_str() {
+                    "put" => {
+                        let key =
+                            key.ok_or_else(|| anyhow::anyhow!("Key required for put operation"))?;
+                        let file =
+                            file.ok_or_else(|| anyhow::anyhow!("File required for put operation"))?;
+                        let cmd = commands::storage::StorePutCommand::new(
+                            bucket,
+                            key,
+                            std::path::PathBuf::from(file),
+                            app,
+                        );
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    "get" => {
+                        let key =
+                            key.ok_or_else(|| anyhow::anyhow!("Key required for get operation"))?;
+                        let output = file.map(std::path::PathBuf::from);
+                        let cmd = commands::storage::StoreGetCommand::new(bucket, key, output, app);
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    "ls" | "list" => {
+                        // key is used as prefix if no --prefix flag
+                        let prefix = prefix.or(key);
+                        let cmd = commands::storage::StoreListCommand::new(
+                            bucket, prefix, delimiter, app,
+                        );
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    "rm" | "delete" => {
+                        let key = key
+                            .ok_or_else(|| anyhow::anyhow!("Key required for delete operation"))?;
+                        let cmd = commands::storage::StoreDeleteCommand::new(bucket, key, app);
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    "head" | "info" => {
+                        let key =
+                            key.ok_or_else(|| anyhow::anyhow!("Key required for head operation"))?;
+                        let cmd = commands::storage::StoreHeadCommand::new(bucket, key, app);
+                        dispatch::dispatch(
+                            &cmd,
+                            &client,
+                            at,
+                            quiet_mode,
+                            fresh_mode,
+                            cli.verbose,
+                            Some(&*GLOBAL_CACHE),
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        anyhow::bail!(
+                            "Unknown store operation '{}'. Use: put, get, ls, rm, head",
+                            operation
+                        );
+                    }
+                }
+            }
+
+            Commands::Election(election_cmd) => {
+                commands::election::handle_election(election_cmd, &client).await?;
+            }
+
+            Commands::Watch { target, until, at } => {
+                let cmd = match target {
+                    Some(WatchTarget::Offering { name, mode }) => {
+                        let WatchOfferingMode::Logs { timestamps } = mode;
+                        commands::discovery::WatchCommand::offering_logs(
+                            name, timestamps, quiet_mode,
+                        )
+                    }
+                    Some(WatchTarget::Stone { name, mode }) => {
+                        let WatchStoneMode::Logs { timestamps } = mode;
+                        commands::discovery::WatchCommand::stone_logs(name, timestamps, quiet_mode)
+                    }
+                    None => commands::discovery::WatchCommand::events(until, quiet_mode),
+                };
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Presence { stone, at } => {
+                commands::presence::presence_command(
+                    stone,
+                    at,
+                    &client,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Template { command } => {
+                use commands::local::TemplateAction;
+                let (action, at) = match command {
+                    TemplateCommands::List { at } => (TemplateAction::List, at),
+                    TemplateCommands::Show { name, at } => (TemplateAction::Show { name }, at),
+                };
+                let cmd = commands::local::TemplateCommand::new(action, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Ceremony { name } => {
+                let cmd = commands::local::CeremonyCommand::new(name, quiet_mode);
+                dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose)
+                    .await?;
+            }
+
+            Commands::Tend { target, clear } => {
+                let verbose = cli.verbose > 0;
+                let cmd = commands::management::TendCommand::new(target, clear, verbose);
+                dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose)
+                    .await?;
+            }
+
+            Commands::Pond { action, at } => {
+                use commands::management::PondActionType;
+                let action_type = match action {
+                    PondAction::Init { passphrase } => PondActionType::Init { passphrase },
+                    PondAction::Status => PondActionType::Status,
+                    PondAction::Invite => PondActionType::Invite,
+                    PondAction::Join { code } => PondActionType::Join { code },
+                    PondAction::Remove => PondActionType::Remove,
+                    PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },
+                };
+                let cmd = commands::management::PondCommand::new(action_type, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Lift {
+                target_type,
+                stone_name,
+                at,
+            } => {
+                use commands::management::LiftTarget;
+                let target = match target_type.as_str() {
+                    "keystone" => LiftTarget::Keystone,
+                    "stone" => {
+                        if stone_name.is_none() {
+                            eprintln!(
+                                "{}{} Error: stone name required for 'lift stone'",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("error", term.supports_color)
+                            );
+                            eprintln!(
+                                "{}Example: garden-rake lift stone stone-02",
+                                " ".repeat(ui::constants::DEFAULT_INDENT)
+                            );
+                            return Ok(());
+                        }
+                        LiftTarget::Stone {
+                            name: stone_name.unwrap(),
+                        }
+                    }
+                    _ => {
+                        eprintln!(
+                            "{}{} Invalid target: '{}'. Use 'keystone' or 'stone'",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", term.supports_color),
+                            target_type
+                        );
+                        return Ok(());
+                    }
+                };
+                let cmd = commands::management::LiftCommand::new(target, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Make { target, action, at } => {
+                if target != "stone" {
+                    eprintln!(
+                        "{}{} Invalid target: '{}'. Use 'stone'",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", term.supports_color),
+                        target
+                    );
+                    eprintln!(
+                        "{}Example: garden-rake make stone sing",
+                        " ".repeat(ui::constants::DEFAULT_INDENT)
+                    );
+                    return Ok(());
+                }
+                use commands::management::MakeActionType;
+                let action_type = match action {
+                    MakeAction::Sing { forever } => MakeActionType::Sing { forever },
+                    MakeAction::Quiet => MakeActionType::Quiet,
+                    MakeAction::Silent => MakeActionType::Silent,
+                    MakeAction::Minimal => MakeActionType::Minimal,
+                };
+                let cmd = commands::management::MakeCommand::new(action_type, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::TakeRoot {
+                at: at_keyword,
+                stone,
+            } => {
+                // Zen syntax: "garden-rake take-root at windows-01"
+                // at_keyword is Some("at"), stone is Some("windows-01")
+                let target = if at_keyword.as_deref() == Some("at") {
+                    stone.clone()
+                } else {
+                    // If at_keyword is not "at", treat it as the stone name (backward compat)
+                    at_keyword.clone()
+                };
+                let cmd = commands::admin::InstallServiceCommand::take_root(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    target,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::InstallService { at } => {
+                let cmd = commands::admin::InstallServiceCommand::install_service(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Rouse { stone, at } => {
+                let cmd = commands::admin::RouseCommand::new(stone, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Slumber { stone, at } => {
+                // Merge: positional stone takes precedence, then --at
+                let target = stone.or(at);
+                let cmd = commands::admin::SlumberCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    target,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Stir { stone, at } => {
+                // Merge: positional stone takes precedence, then --at
+                let target = stone.or(at);
+                let cmd = commands::admin::StirCommand::new(quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    target,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Hey { args, at } => {
+                let cmd = commands::hey::HeyTellCommand { args };
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::BrowseCommands {
+                name,
+                category,
+                zen,
+                normative,
+            } => {
+                let cmd = commands::local::BrowseCommand::new(name, category, zen, normative);
+                dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose)
+                    .await?;
+            }
+
+            Commands::Launch { at } => {
+                // Resolve endpoint first, then launch browser
+                let endpoint =
+                    dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
+                let cmd = commands::local::LaunchCommand::new(Some(endpoint));
+                dispatch::dispatch_local(&cmd, &client, quiet_mode, fresh_mode, cli.verbose)
+                    .await?;
+            }
+
+            Commands::Api {
+                endpoint,
+                category,
+                examples,
+                at,
+            } => {
+                commands::api::execute_api_command(at, category, endpoint, examples).await?;
+            }
+
+            Commands::Refresh {
+                component,
+                from,
+                at,
+            } => {
+                let endpoint =
+                    dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
+                println!("Refreshing {}...", component);
+                refresh_component(&client, &endpoint, &component, &from).await?;
+            }
+
+            Commands::Reconcile { drop_invalid, at } => {
+                let cmd = commands::management::ReconcileCommand::new(drop_invalid, quiet_mode);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Restore {
+                offering,
+                source,
+                dry_run,
+                harvest_id,
+                at,
+            } => {
+                // Parse source: "from slot A|B" or "from seed-bank <name>"
+                let source_str = source.join(" ").to_lowercase();
+
+                if source_str.contains("seed-bank") || source_str.contains("seedbank") {
+                    // Remote restore from seed bank
+                    let seed_bank = source.iter()
                     .skip_while(|s| s.to_lowercase() != "seed-bank" && s.to_lowercase() != "seedbank")
                     .nth(1)
                     .cloned()
@@ -2161,54 +2719,114 @@ async fn async_main() -> anyhow::Result<()> {
                         offering
                     ))?;
 
-                let cmd = commands::nurturing::RestoreRemoteCommand::new(
-                    offering,
-                    seed_bank,
-                    harvest_id,
-                    dry_run,
-                );
-                dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
-            } else {
-                // Local restore from slot
-                let slot = if source_str.contains("slot") {
-                    source.iter()
-                        .skip_while(|s| s.to_lowercase() != "slot")
-                        .nth(1)
-                        .cloned()
-                } else if source.iter().any(|s| s.to_uppercase() == "A" || s.to_uppercase() == "B") {
-                    source.iter()
-                        .find(|s| s.to_uppercase() == "A" || s.to_uppercase() == "B")
-                        .cloned()
+                    let cmd = commands::nurturing::RestoreRemoteCommand::new(
+                        offering, seed_bank, harvest_id, dry_run,
+                    );
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
                 } else {
-                    None
-                };
+                    // Local restore from slot
+                    let slot = if source_str.contains("slot") {
+                        source
+                            .iter()
+                            .skip_while(|s| s.to_lowercase() != "slot")
+                            .nth(1)
+                            .cloned()
+                    } else if source
+                        .iter()
+                        .any(|s| s.to_uppercase() == "A" || s.to_uppercase() == "B")
+                    {
+                        source
+                            .iter()
+                            .find(|s| s.to_uppercase() == "A" || s.to_uppercase() == "B")
+                            .cloned()
+                    } else {
+                        None
+                    };
 
-                let cmd = commands::nurturing::RestoreLocalCommand::new(offering, slot, dry_run);
-                dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                    let cmd =
+                        commands::nurturing::RestoreLocalCommand::new(offering, slot, dry_run);
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
+                }
             }
-        }
 
-        Commands::Nurturing { action, at } => {
-            match action {
+            Commands::Nurturing { action, at } => match action {
                 NurturingAction::Status { offering } => {
                     let cmd = commands::nurturing::NurturingStatusCommand::new(offering);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
                 }
-                NurturingAction::List { offering, local, remote } => {
-                    let cmd = commands::nurturing::NurturingListCommand::new(offering, local, remote);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                NurturingAction::List {
+                    offering,
+                    local,
+                    remote,
+                } => {
+                    let cmd =
+                        commands::nurturing::NurturingListCommand::new(offering, local, remote);
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
                 }
                 NurturingAction::Trigger { offering } => {
                     let cmd = commands::nurturing::NurturingTriggerCommand::new(Some(offering));
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
                 }
                 NurturingAction::TriggerAll => {
                     let cmd = commands::nurturing::NurturingTriggerCommand::new(None);
-                    dispatch::dispatch(&cmd, &client, at, quiet_mode, fresh_mode, cli.verbose, Some(&*GLOBAL_CACHE)).await?;
+                    dispatch::dispatch(
+                        &cmd,
+                        &client,
+                        at,
+                        quiet_mode,
+                        fresh_mode,
+                        cli.verbose,
+                        Some(&*GLOBAL_CACHE),
+                    )
+                    .await?;
                 }
-            }
-        }
-        }
+            },
+        },
     }
 
     Ok(())
@@ -2221,32 +2839,34 @@ async fn refresh_component(
     binary_path: &std::path::Path,
 ) -> anyhow::Result<()> {
     use anyhow::{bail, Context};
-    
+
     // Normalize component name
     let normalized_component = match component.to_lowercase().as_str() {
         "moss" => "moss",
         "rake" | "garden-rake" => garden_common::constants::RAKE_BINARY,
         _ => bail!("Unknown component '{}'. Use 'moss' or 'rake'", component),
     };
-    
+
     // Read binary file
     println!("📤 Reading binary file...");
-    let binary_data = std::fs::read(binary_path)
-        .context(format!("Failed to read binary file: {}", binary_path.display()))?;
-    
+    let binary_data = std::fs::read(binary_path).context(format!(
+        "Failed to read binary file: {}",
+        binary_path.display()
+    ))?;
+
     let size_mb = binary_data.len() as f64 / 1024.0 / 1024.0;
     println!("   Size: {:.2} MB", size_mb);
-    
+
     // Basic validation: check for ELF header
     if binary_data.len() < 4 || &binary_data[0..4] != b"\x7fELF" {
         bail!("Not a valid ELF binary. Expected Linux executable.");
     }
     println!("   Format: ELF ✓");
-    
+
     // Encode to base64
     println!("📦 Encoding binary...");
     let encoded = base64::engine::general_purpose::STANDARD.encode(&binary_data);
-    
+
     // Send to moss
     println!("🚀 Uploading to stone...");
     let url = format!("{}/api/v1/system/refresh", endpoint.trim_end_matches('/'));
@@ -2260,24 +2880,29 @@ async fn refresh_component(
         .send()
         .await
         .context("Failed to send refresh request")?;
-    
+
     let status = response.status();
-    
+
     // Get response body as text first to see what we got
-    let body_text = response.text().await
+    let body_text = response
+        .text()
+        .await
         .context("Failed to read response body")?;
-    
+
     // Try to parse as JSON
     let body: serde_json::Value = match serde_json::from_str(&body_text) {
         Ok(json) => json,
         Err(e) => {
             println!("✗ Invalid JSON response");
             println!("   Status: {}", status);
-            println!("   Response body: {}", body_text.chars().take(500).collect::<String>());
+            println!(
+                "   Response body: {}",
+                body_text.chars().take(500).collect::<String>()
+            );
             bail!("Failed to parse JSON response: {}", e);
         }
     };
-    
+
     if !status.is_success() {
         println!("✗ Refresh failed");
         println!("   Status: {}", status);
@@ -2289,26 +2914,31 @@ async fn refresh_component(
         }
         bail!("Refresh request failed with status {}", status);
     }
-    
+
     // Success
     println!("✅ {} refreshed successfully", normalized_component);
-    
+
     if let Some(arch) = body.get("architecture").and_then(|v| v.as_str()) {
         println!("   Architecture: {}", arch);
     }
-    
+
     if normalized_component == "moss" {
         println!("⏳ Moss is restarting...");
         println!("   (This may take a few seconds)");
-        
+
         // Wait a moment for moss to restart
         tokio::time::sleep(Duration::from_secs(3)).await;
-        
+
         // Try to ping moss
         let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
         for attempt in 1..=5 {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            match client.get(&health_url).timeout(Duration::from_secs(2)).send().await {
+            match client
+                .get(&health_url)
+                .timeout(Duration::from_secs(2))
+                .send()
+                .await
+            {
                 Ok(resp) if resp.status().is_success() => {
                     println!("✅ Moss is back online");
                     return Ok(());
@@ -2321,11 +2951,11 @@ async fn refresh_component(
                 }
             }
         }
-        
+
         println!("\n⚠️  Moss did not respond after restart (this may be normal)");
         println!("   Check garden-moss status: systemctl status garden-moss.service");
     }
-    
+
     Ok(())
 }
 

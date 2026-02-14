@@ -1,4 +1,4 @@
-﻿//! Hardware-based Stone ID Generation
+//! Hardware-based Stone ID Generation
 //!
 //! Generates a stable, hardware-derived identifier for the stone that persists
 //! across OS reinstalls, hostname changes, and IP changes. Uses multiple fallback
@@ -31,8 +31,7 @@ use uuid::Uuid;
 /// Hardware ID namespace for GUIDv5 generation
 /// This is a fixed UUID that namespaces all hardware-derived IDs
 const HARDWARE_NAMESPACE: Uuid = Uuid::from_bytes([
-    0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1,
-    0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+    0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
 ]);
 
 /// Generate a hardware-derived stone ID
@@ -370,7 +369,9 @@ fn is_virtual_mac(mac: &str) -> bool {
     ];
 
     let mac_lower = mac.to_lowercase();
-    virtual_prefixes.iter().any(|prefix| mac_lower.starts_with(prefix))
+    virtual_prefixes
+        .iter()
+        .any(|prefix| mac_lower.starts_with(prefix))
 }
 
 /// Get path where hardware ID is cached

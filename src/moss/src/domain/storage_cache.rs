@@ -1,4 +1,4 @@
-﻿//! Storage routing cache - tracks seed banks across all stones
+//! Storage routing cache - tracks seed banks across all stones
 //!
 //! Separate from TopologyCache to keep storage routing concerns decoupled.
 //! References TopologyCache by stone_id for liveness checks.
@@ -162,7 +162,10 @@ pub async fn find_s3_gateways(cache: &StorageCache) -> Vec<(String, SeedBankAnno
 }
 
 /// Find seed bank by name
-pub async fn find_by_name(cache: &StorageCache, name: &str) -> Option<(String, SeedBankAnnouncement)> {
+pub async fn find_by_name(
+    cache: &StorageCache,
+    name: &str,
+) -> Option<(String, SeedBankAnnouncement)> {
     let inner = cache.read().await;
     inner
         .find_by_name(name)

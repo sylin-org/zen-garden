@@ -34,9 +34,18 @@ pub struct CompatCheckCapabilities {
 #[derive(Debug, Clone)]
 pub enum CompatibilityDecision {
     Pass,
-    Fallback { image: String, reason: String },
-    Warning { reason: String, suggestion: Option<String> },
-    Fail { reason: String, suggestion: Option<String> },
+    Fallback {
+        image: String,
+        reason: String,
+    },
+    Warning {
+        reason: String,
+        suggestion: Option<String>,
+    },
+    Fail {
+        reason: String,
+        suggestion: Option<String>,
+    },
 }
 
 /// Compiled compatibility result (serializable)
@@ -107,9 +116,17 @@ fn build_from_cached(caps: &HardwareCapabilities) -> CompatCheckCapabilities {
 /// Build compat capabilities from live system detection (slow path)
 fn build_from_live_detection() -> CompatCheckCapabilities {
     let (cpu_model, cpu_features, architecture) = garden_common::metrics::system::get_cpu_info()
-        .unwrap_or_else(|_| ("Unknown".to_string(), vec![], std::env::consts::ARCH.to_string()));
+        .unwrap_or_else(|_| {
+            (
+                "Unknown".to_string(),
+                vec![],
+                std::env::consts::ARCH.to_string(),
+            )
+        });
     let resources = garden_common::metrics::system::collect_stone_resources().ok();
-    let total_memory_mb = resources.as_ref().map(|r| r.memory.total_bytes / 1024 / 1024);
+    let total_memory_mb = resources
+        .as_ref()
+        .map(|r| r.memory.total_bytes / 1024 / 1024);
 
     let gpus = garden_common::metrics::system::detect_gpus();
 
@@ -274,29 +291,31 @@ pub fn evaluate_compatibility(
         // AI/GPU capability checks
         if let Some(requires_ai_any) = &condition.requires_ai_any {
             // Match if ANY of the specified runtimes are present (OR logic)
-            let has_match = requires_ai_any.iter().any(|runtime| {
-                match runtime.to_lowercase().as_str() {
-                    "cuda" => capabilities.has_cuda,
-                    "rocm" => capabilities.has_rocm,
-                    "directml" => capabilities.has_directml,
-                    "openvino" => capabilities.has_openvino,
-                    _ => false,
-                }
-            });
+            let has_match =
+                requires_ai_any
+                    .iter()
+                    .any(|runtime| match runtime.to_lowercase().as_str() {
+                        "cuda" => capabilities.has_cuda,
+                        "rocm" => capabilities.has_rocm,
+                        "directml" => capabilities.has_directml,
+                        "openvino" => capabilities.has_openvino,
+                        _ => false,
+                    });
             matches &= has_match;
         }
 
         if let Some(requires_ai_all) = &condition.requires_ai_all {
             // Match if ALL of the specified runtimes are present (AND logic)
-            let has_all = requires_ai_all.iter().all(|runtime| {
-                match runtime.to_lowercase().as_str() {
-                    "cuda" => capabilities.has_cuda,
-                    "rocm" => capabilities.has_rocm,
-                    "directml" => capabilities.has_directml,
-                    "openvino" => capabilities.has_openvino,
-                    _ => false,
-                }
-            });
+            let has_all =
+                requires_ai_all
+                    .iter()
+                    .all(|runtime| match runtime.to_lowercase().as_str() {
+                        "cuda" => capabilities.has_cuda,
+                        "rocm" => capabilities.has_rocm,
+                        "directml" => capabilities.has_directml,
+                        "openvino" => capabilities.has_openvino,
+                        _ => false,
+                    });
             matches &= has_all;
         }
 

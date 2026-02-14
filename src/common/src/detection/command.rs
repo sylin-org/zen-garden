@@ -7,11 +7,11 @@
 //! - Timeout handling
 //! - Windows fallback paths for common programs
 
+use crate::manifests::CommandDetection;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::process::Command;
 use std::time::Duration;
-use crate::manifests::CommandDetection;
 
 /// Windows fallback paths for common programs not in PATH
 #[cfg(windows)]
@@ -73,7 +73,10 @@ fn try_execute_command(program: &str, args: &[String]) -> std::io::Result<std::p
     // All fallbacks failed, return the original "not found" error
     Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
-        format!("Program '{}' not found in PATH or fallback locations", program)
+        format!(
+            "Program '{}' not found in PATH or fallback locations",
+            program
+        ),
     ))
 }
 
@@ -117,10 +120,8 @@ pub async fn detect_by_command(
         tokio::task::spawn_blocking({
             let program = program.to_string();
             let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-            move || {
-                try_execute_command(&program, &args)
-            }
-        })
+            move || try_execute_command(&program, &args)
+        }),
     )
     .await
     .context("Command execution timeout")?
@@ -160,14 +161,16 @@ pub async fn detect_by_command(
         return Ok(DetectionResult {
             detected: false,
             version: None,
-            details: format!("Exit code mismatch: expected {}, got {}", expected_code, actual_code),
+            details: format!(
+                "Exit code mismatch: expected {}, got {}",
+                expected_code, actual_code
+            ),
         });
     }
 
     // Check output pattern if specified
     if let Some(pattern_str) = &config.expected_pattern {
-        let pattern = Regex::new(pattern_str)
-            .context("Invalid regex pattern")?;
+        let pattern = Regex::new(pattern_str).context("Invalid regex pattern")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -258,7 +261,10 @@ mod tests {
 
     #[test]
     fn test_extract_version() {
-        assert_eq!(extract_version("MongoDB version 7.0.5"), Some("7.0.5".into()));
+        assert_eq!(
+            extract_version("MongoDB version 7.0.5"),
+            Some("7.0.5".into())
+        );
         assert_eq!(extract_version("v5.4.2"), Some("5.4.2".into()));
         assert_eq!(extract_version("PostgreSQL 15.3"), Some("15.3".into()));
         assert_eq!(extract_version("no version here"), None);
@@ -267,12 +273,19 @@ mod tests {
     #[tokio::test]
     async fn test_detect_by_command_success() {
         let config = CommandDetection {
-            command: if cfg!(windows) { "cmd /c echo test" } else { "echo test" }.into(),
+            command: if cfg!(windows) {
+                "cmd /c echo test"
+            } else {
+                "echo test"
+            }
+            .into(),
             expected_pattern: Some("test".into()),
             expected_exit_code: None,
         };
 
-        let result = detect_by_command(&config, Duration::from_secs(5)).await.unwrap();
+        let result = detect_by_command(&config, Duration::from_secs(5))
+            .await
+            .unwrap();
         assert!(result.detected);
     }
 
@@ -284,19 +297,28 @@ mod tests {
             expected_exit_code: None,
         };
 
-        let result = detect_by_command(&config, Duration::from_secs(5)).await.unwrap();
+        let result = detect_by_command(&config, Duration::from_secs(5))
+            .await
+            .unwrap();
         assert!(!result.detected);
     }
 
     #[tokio::test]
     async fn test_detect_by_command_pattern_mismatch() {
         let config = CommandDetection {
-            command: if cfg!(windows) { "cmd /c echo test" } else { "echo test" }.into(),
+            command: if cfg!(windows) {
+                "cmd /c echo test"
+            } else {
+                "echo test"
+            }
+            .into(),
             expected_pattern: Some("nonexistent_pattern".into()),
             expected_exit_code: None,
         };
 
-        let result = detect_by_command(&config, Duration::from_secs(5)).await.unwrap();
+        let result = detect_by_command(&config, Duration::from_secs(5))
+            .await
+            .unwrap();
         assert!(!result.detected);
     }
 

@@ -1,4 +1,4 @@
-﻿//! API Manifest - structured metadata for all Moss HTTP endpoints
+//! API Manifest - structured metadata for all Moss HTTP endpoints
 //!
 //! Similar to CommandManifest for Companions, this provides:
 //! - Single source of truth for API documentation
@@ -94,7 +94,11 @@ pub struct EndpointExample {
 
 impl EndpointSpec {
     /// Create a new endpoint spec
-    pub fn new(method: impl Into<String>, path: impl Into<String>, category: impl Into<String>) -> Self {
+    pub fn new(
+        method: impl Into<String>,
+        path: impl Into<String>,
+        category: impl Into<String>,
+    ) -> Self {
         Self {
             method: method.into(),
             path: path.into(),
@@ -194,7 +198,6 @@ impl EndpointRegistry {
     /// Get or initialize the global registry
     pub fn global() -> &'static EndpointRegistry {
         ENDPOINT_REGISTRY_INSTANCE.get_or_init(|| {
-            
             // Register all endpoints during initialization
             // This happens when the module is first loaded
             EndpointRegistry::default()
@@ -213,7 +216,8 @@ impl EndpointRegistry {
 
     /// Generate complete API manifest
     pub fn generate_manifest(&self, base_url: impl Into<String>) -> ApiManifest {
-        let mut categories_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        let mut categories_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
 
         // Group endpoints by category
         for endpoint in &self.endpoints {
@@ -290,15 +294,12 @@ mod tests {
     #[test]
     fn test_manifest_generation() {
         let mut registry = EndpointRegistry::default();
-        
-        registry.register(
-            EndpointSpec::new("GET", "/health", "health")
-                .description("Health check")
-        );
+
+        registry
+            .register(EndpointSpec::new("GET", "/health", "health").description("Health check"));
 
         registry.register(
-            EndpointSpec::new("GET", "/api/v1/services", "services")
-                .description("List services")
+            EndpointSpec::new("GET", "/api/v1/services", "services").description("List services"),
         );
 
         let manifest = registry.generate_manifest("http://localhost:7185");

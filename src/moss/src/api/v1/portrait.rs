@@ -1,4 +1,4 @@
-﻿//! Stone Portrait - Living landing page for Moss daemon
+//! Stone Portrait - Living landing page for Moss daemon
 //!
 //! Provides a single-page application that displays a stone's identity,
 //! resources, offerings, adapters, and visible network topology.
@@ -347,22 +347,23 @@ pub async fn get_portrait_data(
 ) -> Result<Json<PortraitResponse>, StatusCode> {
     // === Identity ===
     let stone_color = derive_stone_color(&state.stone_id);
-    
+
     // Role is always STONE for now — multi-role (LANTERN, CORNERSTONE) requires
     // a role field in AppState once Pond/elections are implemented.
     let role = "STONE".to_string();
-    
+
     // Build endpoint URL
     let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);
-    
+
     // Get uptime from resources
     let uptime = {
         let resources = state.system_resources.read().await;
-        resources.as_ref()
+        resources
+            .as_ref()
             .map(|r| r.uptime_friendly.clone())
             .unwrap_or_else(|| "–".into())
     };
-    
+
     // Get Moss daemon uptime
     let moss_uptime = {
         let secs = state.start_time.elapsed().as_secs();
@@ -422,7 +423,9 @@ pub async fn get_portrait_data(
 
         if let Some(ref res) = *resources {
             // Find primary disk (root mount or first available)
-            let primary_disk = res.storage.iter()
+            let primary_disk = res
+                .storage
+                .iter()
                 .find(|d| d.mount_point == "/" || d.mount_point == "C:\\")
                 .or_else(|| res.storage.first());
 
@@ -456,9 +459,20 @@ pub async fn get_portrait_data(
         } else {
             // No metrics yet - return placeholder
             PortraitFoundation {
-                cpu: FoundationCpu { cores: 0, percent: 0.0 },
-                memory: FoundationMemory { total_gb: 0.0, used_gb: 0.0, percent: 0.0 },
-                disk: FoundationDisk { total_gb: 0, used_gb: 0, percent: 0.0 },
+                cpu: FoundationCpu {
+                    cores: 0,
+                    percent: 0.0,
+                },
+                memory: FoundationMemory {
+                    total_gb: 0.0,
+                    used_gb: 0.0,
+                    percent: 0.0,
+                },
+                disk: FoundationDisk {
+                    total_gb: 0,
+                    used_gb: 0,
+                    percent: 0.0,
+                },
                 network,
             }
         }
@@ -487,7 +501,11 @@ pub async fn get_portrait_data(
                 PortraitOffering {
                     name: o.name.clone(),
                     // Managed offerings have containers, adopted/borrowed don't
-                    container: if o.is_managed() { Some(o.offering.clone()) } else { None },
+                    container: if o.is_managed() {
+                        Some(o.offering.clone())
+                    } else {
+                        None
+                    },
                     port: o.location.port,
                     status: status_str.to_string(),
                     health: health_str.to_string(),
@@ -501,32 +519,38 @@ pub async fn get_portrait_data(
     // NOTE: Read from cache - populated by storage_monitor on events + periodic refresh
     let seed_banks = {
         let cached = state.seed_bank_cache.read().await;
-        cached.iter().map(|bank| {
-            PortraitSeedBank {
+        cached
+            .iter()
+            .map(|bank| PortraitSeedBank {
                 name: bank.name.clone(),
                 used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
                 capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                filesystem: if bank.btrfs { "btrfs".into() } else { "ext4".into() },
+                filesystem: if bank.btrfs {
+                    "btrfs".into()
+                } else {
+                    "ext4".into()
+                },
                 visibility: bank.visibility.to_string(),
                 roaming: bank.roaming,
                 online: bank.online,
-            }
-        }).collect()
+            })
+            .collect()
     };
 
     // === Candidates (hopeful state - devices ready to become seed banks) ===
     // NOTE: Read from cache - populated by metrics_collector task + storage events
     let candidates = {
         let cached = state.candidates_cache.read().await;
-        cached.iter().map(|c| {
-            PortraitCandidate {
+        cached
+            .iter()
+            .map(|c| PortraitCandidate {
                 device: c.device.clone(),
                 label: c.label.clone(),
                 capacity_gb: c.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
                 state: format!("{:?}", c.state).to_lowercase(),
                 mount_path: c.mount_path.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     };
 
     // === Companions (adapters) ===
@@ -540,7 +564,11 @@ pub async fn get_portrait_data(
                 name: adapter.manifest.name.clone(),
                 description: adapter.manifest.description.clone(),
                 port: adapter.port(),
-                status: if running { "running".into() } else { "stopped".into() },
+                status: if running {
+                    "running".into()
+                } else {
+                    "stopped".into()
+                },
             });
         }
         result
@@ -625,11 +653,9 @@ pub async fn get_portrait_data(
 /// Supports HTTP caching via ETag header.
 ///
 /// Returns 204 No Content if no offerings have guidance.
-pub async fn get_portrait_guidance(
-    State(state): State<AppState>,
-) -> axum::response::Response {
-    use axum::response::Response;
+pub async fn get_portrait_guidance(State(state): State<AppState>) -> axum::response::Response {
     use axum::body::Body;
+    use axum::response::Response;
 
     // Collect all guidance from installed offerings (managed + adopted)
     let guidance_sections: Vec<(String, String)> = {

@@ -10,9 +10,8 @@
 
 use chrono::{DateTime, Utc};
 use garden_common::{
-    EVENT_DEPLOYED, EVENT_STARTED, EVENT_STOPPED, EVENT_REMOVED,
-    EVENT_DESTROYED, EVENT_UPDATED, EVENT_RENAMED, EVENT_HEALTH_CHANGED,
-    presence::event_types,
+    presence::event_types, EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED,
+    EVENT_RENAMED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
 };
 use serde::{Deserialize, Serialize};
 
@@ -141,14 +140,20 @@ impl JobEvent {
 
     pub fn to_message(&self) -> String {
         match self {
-            Self::Started { offering, operation, .. } => {
+            Self::Started {
+                offering,
+                operation,
+                ..
+            } => {
                 format!("Job started: {} {}", operation, offering)
             }
             Self::Progress { message, .. } => message.clone(),
             Self::Completed { offering, .. } => {
                 format!("Job completed: {}", offering)
             }
-            Self::Failed { offering, error, .. } => {
+            Self::Failed {
+                offering, error, ..
+            } => {
                 format!("Job failed: {} - {}", offering, error)
             }
         }
@@ -182,7 +187,11 @@ impl JobEvent {
     }
 
     // Builder helpers
-    pub fn started(job_id: impl Into<String>, offering: impl Into<String>, operation: impl Into<String>) -> Self {
+    pub fn started(
+        job_id: impl Into<String>,
+        offering: impl Into<String>,
+        operation: impl Into<String>,
+    ) -> Self {
         Self::Started {
             job_id: job_id.into(),
             offering: offering.into(),
@@ -191,7 +200,12 @@ impl JobEvent {
         }
     }
 
-    pub fn progress(job_id: impl Into<String>, offering: impl Into<String>, message: impl Into<String>, level: impl Into<String>) -> Self {
+    pub fn progress(
+        job_id: impl Into<String>,
+        offering: impl Into<String>,
+        message: impl Into<String>,
+        level: impl Into<String>,
+    ) -> Self {
         Self::Progress {
             job_id: job_id.into(),
             offering: offering.into(),
@@ -209,7 +223,11 @@ impl JobEvent {
         }
     }
 
-    pub fn failed(job_id: impl Into<String>, offering: impl Into<String>, error: impl Into<String>) -> Self {
+    pub fn failed(
+        job_id: impl Into<String>,
+        offering: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
         Self::Failed {
             job_id: job_id.into(),
             offering: offering.into(),
@@ -361,8 +379,15 @@ impl StoneEvent {
         match self {
             Self::Tended { by, .. } => format!("Stone tended by {}", by),
             Self::HealthChanged { health, .. } => format!("Stone health: {}", health),
-            Self::LoadUpdated { cpu_percent, memory_percent, .. } => {
-                format!("Stone load: CPU {:.0}%, Memory {:.0}%", cpu_percent, memory_percent)
+            Self::LoadUpdated {
+                cpu_percent,
+                memory_percent,
+                ..
+            } => {
+                format!(
+                    "Stone load: CPU {:.0}%, Memory {:.0}%",
+                    cpu_percent, memory_percent
+                )
             }
             Self::NetworkReady { ip, .. } => format!("Network ready: {}", ip),
         }
@@ -378,7 +403,11 @@ impl StoneEvent {
         }
     }
 
-    pub fn health_changed(health: impl Into<String>, cpu_percent: f64, memory_percent: f64) -> Self {
+    pub fn health_changed(
+        health: impl Into<String>,
+        cpu_percent: f64,
+        memory_percent: f64,
+    ) -> Self {
         Self::HealthChanged {
             health: health.into(),
             cpu_percent,
@@ -576,10 +605,20 @@ impl OfferingEvent {
             Self::Stopped { name, .. } => format!("Service {} stopped", name),
             Self::Removed { name, .. } => format!("Service {} removed", name),
             Self::Destroyed { name, .. } => format!("Service {} destroyed", name),
-            Self::Updated { name, from_image, to_image, .. } => {
-                format!("Service {} updated from {} to {}", name, from_image, to_image)
+            Self::Updated {
+                name,
+                from_image,
+                to_image,
+                ..
+            } => {
+                format!(
+                    "Service {} updated from {} to {}",
+                    name, from_image, to_image
+                )
             }
-            Self::Renamed { old_name, new_name, .. } => {
+            Self::Renamed {
+                old_name, new_name, ..
+            } => {
                 format!("Service {} renamed to {}", old_name, new_name)
             }
             Self::HealthChanged { name, status, .. } => {
@@ -591,7 +630,12 @@ impl OfferingEvent {
 
 /// Builder helpers for creating events with current timestamp
 impl OfferingEvent {
-    pub fn deployed(offering_id: impl Into<String>, name: impl Into<String>, stone_id: impl Into<String>, image: impl Into<String>) -> Self {
+    pub fn deployed(
+        offering_id: impl Into<String>,
+        name: impl Into<String>,
+        stone_id: impl Into<String>,
+        image: impl Into<String>,
+    ) -> Self {
         Self::Deployed {
             offering_id: offering_id.into(),
             name: name.into(),
@@ -601,7 +645,11 @@ impl OfferingEvent {
         }
     }
 
-    pub fn started(offering_id: impl Into<String>, name: impl Into<String>, stone_id: impl Into<String>) -> Self {
+    pub fn started(
+        offering_id: impl Into<String>,
+        name: impl Into<String>,
+        stone_id: impl Into<String>,
+    ) -> Self {
         Self::Started {
             offering_id: offering_id.into(),
             name: name.into(),
@@ -610,7 +658,11 @@ impl OfferingEvent {
         }
     }
 
-    pub fn stopped(offering_id: impl Into<String>, name: impl Into<String>, stone_id: impl Into<String>) -> Self {
+    pub fn stopped(
+        offering_id: impl Into<String>,
+        name: impl Into<String>,
+        stone_id: impl Into<String>,
+    ) -> Self {
         Self::Stopped {
             offering_id: offering_id.into(),
             name: name.into(),
@@ -619,7 +671,11 @@ impl OfferingEvent {
         }
     }
 
-    pub fn removed(offering_id: impl Into<String>, name: impl Into<String>, stone_id: impl Into<String>) -> Self {
+    pub fn removed(
+        offering_id: impl Into<String>,
+        name: impl Into<String>,
+        stone_id: impl Into<String>,
+    ) -> Self {
         Self::Removed {
             offering_id: offering_id.into(),
             name: name.into(),
@@ -628,7 +684,11 @@ impl OfferingEvent {
         }
     }
 
-    pub fn destroyed(offering_id: impl Into<String>, name: impl Into<String>, stone_id: impl Into<String>) -> Self {
+    pub fn destroyed(
+        offering_id: impl Into<String>,
+        name: impl Into<String>,
+        stone_id: impl Into<String>,
+    ) -> Self {
         Self::Destroyed {
             offering_id: offering_id.into(),
             name: name.into(),
@@ -714,6 +774,9 @@ mod tests {
     #[test]
     fn test_to_message() {
         let event = OfferingEvent::updated("id-1", "mongodb", "stone-01", "mongo:6", "mongo:7");
-        assert_eq!(event.to_message(), "Service mongodb updated from mongo:6 to mongo:7");
+        assert_eq!(
+            event.to_message(),
+            "Service mongodb updated from mongo:6 to mongo:7"
+        );
     }
 }

@@ -1,4 +1,4 @@
-﻿//! Formatting utilities
+//! Formatting utilities
 //!
 //! Consistent formatting for bytes, uptime, and display values.
 
@@ -84,13 +84,13 @@ mod tests {
         assert_eq!(format_bytes_short(1_073_741_824), "1.0 GB");
         assert_eq!(format_bytes(1_073_741_824), "1.00 GB");
         assert_eq!(format_bytes_whole(1_073_741_824), "1 GB");
-        
+
         assert_eq!(format_bytes_short(2_147_483_648), "2.0 GB");
         assert_eq!(format_bytes_short(5_242_880), "5.0 MB");
         assert_eq!(format_bytes_short(2048), "2.0 KB");
         assert_eq!(format_bytes_short(500), "500 B");
     }
-    
+
     #[test]
     fn test_format_memory_mb() {
         assert_eq!(format_memory_mb(8192), "8.0 GB");

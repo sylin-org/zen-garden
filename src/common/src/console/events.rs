@@ -1,4 +1,4 @@
-﻿//! Console event types and structures
+//! Console event types and structures
 
 /// Event categories for structured console output
 #[allow(dead_code)]
@@ -42,7 +42,7 @@ impl EventCategory {
             Self::Cluster => "Cluster  ",
         }
     }
-    
+
     /// Get color hint for this category (DRY - single source of truth)
     pub fn color_hint(&self) -> AnsiColor {
         match self {
@@ -70,60 +70,186 @@ impl EventCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventStatus {
     // System
-    Starting, Ready, Shutting, Stopped, FirstBoot, FirstBootDone, FsReady, FsError, FsPending,
-    FsWritable, FsRemount, SignalReceived, AdminShutdown, Draining, PreinstallComplete,
-    HttpError, Connected,
-    
+    Starting,
+    Ready,
+    Shutting,
+    Stopped,
+    FirstBoot,
+    FirstBootDone,
+    FsReady,
+    FsError,
+    FsPending,
+    FsWritable,
+    FsRemount,
+    SignalReceived,
+    AdminShutdown,
+    Draining,
+    PreinstallComplete,
+    HttpError,
+    Connected,
+
     // Config
-    Reading, Loaded, Merged, ParseError, ReadError, NotFound, PreinstallFound, PreinstallLoaded,
+    Reading,
+    Loaded,
+    Merged,
+    ParseError,
+    ReadError,
+    NotFound,
+    PreinstallFound,
+    PreinstallLoaded,
     PreinstallError,
-    
+
     // Manifests
-    Scanning, Found, Loading, Parsed, Validated, CompatRules, Refresh, Updated, Invalid,
-    DirFound, DirMissing, TryingCompose, CompatError, NoCompat,
-    
+    Scanning,
+    Found,
+    Loading,
+    Parsed,
+    Validated,
+    CompatRules,
+    Refresh,
+    Updated,
+    Invalid,
+    DirFound,
+    DirMissing,
+    TryingCompose,
+    CompatError,
+    NoCompat,
+
     // Offerings
-    Building, Built, BuildError, Planting, RebuildError,
-    
+    Building,
+    Built,
+    BuildError,
+    Planting,
+    RebuildError,
+
     // Services (reuse Starting/Stopped from System)
-    Requesting, Pulling, Creating, Running, Healthy, Stopping, Removing, Removed,
-    Upgrading, Upgraded, Adopting, OrphanFound, NoManifest, AdoptError, ScanComplete, ScanError,
-    ListError, CleanupError, StopError, StartError, UpgradeError,
-    
+    Requesting,
+    Pulling,
+    Creating,
+    Running,
+    Healthy,
+    Stopping,
+    Removing,
+    Removed,
+    Upgrading,
+    Upgraded,
+    Adopting,
+    OrphanFound,
+    NoManifest,
+    AdoptError,
+    ScanComplete,
+    ScanError,
+    ListError,
+    CleanupError,
+    StopError,
+    StartError,
+    UpgradeError,
+
     // Jobs (reuse Retry from Docker, CompatError from Manifests)
-    Queued, Started, Progress, Completed, Failed, Cancelled, PreinstallDone,
-    
+    Queued,
+    Started,
+    Progress,
+    Completed,
+    Failed,
+    Cancelled,
+    PreinstallDone,
+
     // Storage
-    Saving, SaveError, LoadError, DeleteError, WriteError, MkdirError, ChmodError, MoveError,
-    
+    Saving,
+    SaveError,
+    LoadError,
+    DeleteError,
+    WriteError,
+    MkdirError,
+    ChmodError,
+    MoveError,
+
     // Network
-    Listening, Binding, BindError,
-    
+    Listening,
+    Binding,
+    BindError,
+
     // Docker
-    Disconnected, PullProgress, PullComplete, Retry, ImagePull,
-    
+    Disconnected,
+    PullProgress,
+    PullComplete,
+    Retry,
+    ImagePull,
+
     // Discovery
-    Request, Response, MdnsActive, MdnsError, UdpError, LanternReg, LanternUnreachable,
-    LanternError, LanternFatal,
-    
+    Request,
+    Response,
+    MdnsActive,
+    MdnsError,
+    UdpError,
+    LanternReg,
+    LanternUnreachable,
+    LanternError,
+    LanternFatal,
+
     // Health
-    Ok, Degraded, Unhealthy,
-    
+    Ok,
+    Degraded,
+    Unhealthy,
+
     // API
-    Post, Get, Put, Delete, SseLag, LogStreamError,
-    
+    Post,
+    Get,
+    Put,
+    Delete,
+    SseLag,
+    LogStreamError,
+
     // Security
-    KeystoneGen, KeystoneLoad, KeystoneExp, AuthEnable, AuthDisable, AuthSuccess, AuthDenied,
-    AuthExpired, RateLimited, StoneTrust, StoneReject, TlsEnabled,
-    
+    KeystoneGen,
+    KeystoneLoad,
+    KeystoneExp,
+    AuthEnable,
+    AuthDisable,
+    AuthSuccess,
+    AuthDenied,
+    AuthExpired,
+    RateLimited,
+    StoneTrust,
+    StoneReject,
+    TlsEnabled,
+
     // Ops (remove duplicate Validated)
-    Active, Cordon, DrainStart, DrainDone, Uncordon, RetireSched, RetireStart, RetireDone,
-    StoneJoin, StoneLeave, RefreshReq, DecodeError, ValidationError, UnknownComponent,
-    Staged, RestartReq, RestartTriggered, RestartWarning, RestartError, ShutdownReq, ShutdownDone,
-    ShutdownTimeout, ShutdownError, Kill, Conflict, ForceFlag, ForceError,
-    
-    // Cluster  
-    Joined, Left, LeaderElected, LeaderLost, Syncing, Synced,
+    Active,
+    Cordon,
+    DrainStart,
+    DrainDone,
+    Uncordon,
+    RetireSched,
+    RetireStart,
+    RetireDone,
+    StoneJoin,
+    StoneLeave,
+    RefreshReq,
+    DecodeError,
+    ValidationError,
+    UnknownComponent,
+    Staged,
+    RestartReq,
+    RestartTriggered,
+    RestartWarning,
+    RestartError,
+    ShutdownReq,
+    ShutdownDone,
+    ShutdownTimeout,
+    ShutdownError,
+    Kill,
+    Conflict,
+    ForceFlag,
+    ForceError,
+
+    // Cluster
+    Joined,
+    Left,
+    LeaderElected,
+    LeaderLost,
+    Syncing,
+    Synced,
 }
 
 impl EventStatus {
@@ -148,7 +274,7 @@ impl EventStatus {
             Self::PreinstallComplete => "PREINSTALL_OK ",
             Self::HttpError => "HTTP_ERROR    ",
             Self::Connected => "CONNECTED     ",
-            
+
             // Config
             Self::Reading => "READING       ",
             Self::Loaded => "LOADED        ",
@@ -159,7 +285,7 @@ impl EventStatus {
             Self::PreinstallFound => "PREINSTALL_FOUND",
             Self::PreinstallLoaded => "PREINSTALL_LOADED",
             Self::PreinstallError => "PREINSTALL_ERR",
-            
+
             // Manifests
             Self::Scanning => "SCANNING      ",
             Self::Found => "FOUND         ",
@@ -175,14 +301,14 @@ impl EventStatus {
             Self::TryingCompose => "TRYING_COMPOSE",
             Self::CompatError => "COMPAT_ERROR  ",
             Self::NoCompat => "NO_COMPAT     ",
-            
+
             // Offerings
             Self::Building => "BUILDING      ",
             Self::Built => "BUILT         ",
             Self::BuildError => "BUILD_ERROR   ",
             Self::Planting => "PLANTING      ",
             Self::RebuildError => "REBUILD_ERROR ",
-            
+
             // Services (Starting/Stopped are in System, DeleteError in Storage)
             Self::Requesting => "REQUESTING    ",
             Self::Pulling => "PULLING       ",
@@ -205,7 +331,7 @@ impl EventStatus {
             Self::StopError => "STOP_ERROR    ",
             Self::StartError => "START_ERROR   ",
             Self::UpgradeError => "UPGRADE_ERROR ",
-            
+
             // Jobs (Retry in Docker, CompatError in Manifests)
             Self::Queued => "QUEUED        ",
             Self::Started => "STARTED       ",
@@ -214,7 +340,7 @@ impl EventStatus {
             Self::Failed => "FAILED        ",
             Self::Cancelled => "CANCELLED     ",
             Self::PreinstallDone => "PREINSTALL_DONE",
-            
+
             // Storage
             Self::Saving => "SAVING        ",
             Self::SaveError => "SAVE_ERROR    ",
@@ -224,19 +350,19 @@ impl EventStatus {
             Self::MkdirError => "MKDIR_ERROR   ",
             Self::ChmodError => "CHMOD_ERROR   ",
             Self::MoveError => "MOVE_ERROR    ",
-            
+
             // Network
             Self::Listening => "LISTENING     ",
             Self::Binding => "BINDING       ",
             Self::BindError => "BIND_ERROR    ",
-            
+
             // Docker (Connected is in System)
             Self::Disconnected => "DISCONNECTED  ",
             Self::PullProgress => "PULL_PROGRESS ",
             Self::PullComplete => "PULL_COMPLETE ",
             Self::Retry => "RETRY         ",
             Self::ImagePull => "IMAGE_PULL    ",
-            
+
             // Discovery
             Self::Request => "REQUEST       ",
             Self::Response => "RESPONSE      ",
@@ -247,12 +373,12 @@ impl EventStatus {
             Self::LanternUnreachable => "LANTERN_UNREACH",
             Self::LanternError => "LANTERN_ERROR ",
             Self::LanternFatal => "LANTERN_FATAL ",
-            
+
             // Health
             Self::Ok => "OK            ",
             Self::Degraded => "DEGRADED      ",
             Self::Unhealthy => "UNHEALTHY     ",
-            
+
             // API
             Self::Post => "POST          ",
             Self::Get => "GET           ",
@@ -260,7 +386,7 @@ impl EventStatus {
             Self::Delete => "DELETE        ",
             Self::SseLag => "SSE_LAG       ",
             Self::LogStreamError => "LOG_STREAM_ERR",
-            
+
             // Security
             Self::KeystoneGen => "KEYSTONE_GEN  ",
             Self::KeystoneLoad => "KEYSTONE_LOAD ",
@@ -274,7 +400,7 @@ impl EventStatus {
             Self::StoneTrust => "STONE_TRUST   ",
             Self::StoneReject => "STONE_REJECT  ",
             Self::TlsEnabled => "TLS_ENABLED   ",
-            
+
             // Ops
             Self::Active => "ACTIVE        ",
             Self::Cordon => "CORDON        ",
@@ -303,7 +429,7 @@ impl EventStatus {
             Self::Conflict => "CONFLICT      ",
             Self::ForceFlag => "FORCE_FLAG    ",
             Self::ForceError => "FORCE_ERROR   ",
-            
+
             // Cluster
             Self::Joined => "JOINED        ",
             Self::Left => "LEFT          ",
@@ -313,43 +439,94 @@ impl EventStatus {
             Self::Synced => "SYNCED        ",
         }
     }
-    
+
     /// Determine if this status represents an error/failure
     pub fn is_error(&self) -> bool {
-        matches!(self,
-            Self::ParseError | Self::ReadError | Self::BuildError | Self::RebuildError |
-            Self::Failed | Self::SaveError | Self::LoadError | Self::DeleteError |
-            Self::WriteError | Self::MkdirError | Self::ChmodError | Self::MoveError |
-            Self::BindError | Self::MdnsError | Self::UdpError | Self::LanternError |
-            Self::LanternFatal | Self::Unhealthy | Self::LogStreamError | Self::DecodeError |
-            Self::ValidationError | Self::RestartError | Self::ShutdownError | Self::ShutdownTimeout |
-            Self::FsError | Self::HttpError | Self::CleanupError | Self::StopError |
-            Self::StartError | Self::UpgradeError | Self::ScanError |
-            Self::ListError | Self::AdoptError | Self::CompatError | Self::PreinstallError |
-            Self::Invalid | Self::NoManifest | Self::DirMissing |
-            Self::ForceError
+        matches!(
+            self,
+            Self::ParseError
+                | Self::ReadError
+                | Self::BuildError
+                | Self::RebuildError
+                | Self::Failed
+                | Self::SaveError
+                | Self::LoadError
+                | Self::DeleteError
+                | Self::WriteError
+                | Self::MkdirError
+                | Self::ChmodError
+                | Self::MoveError
+                | Self::BindError
+                | Self::MdnsError
+                | Self::UdpError
+                | Self::LanternError
+                | Self::LanternFatal
+                | Self::Unhealthy
+                | Self::LogStreamError
+                | Self::DecodeError
+                | Self::ValidationError
+                | Self::RestartError
+                | Self::ShutdownError
+                | Self::ShutdownTimeout
+                | Self::FsError
+                | Self::HttpError
+                | Self::CleanupError
+                | Self::StopError
+                | Self::StartError
+                | Self::UpgradeError
+                | Self::ScanError
+                | Self::ListError
+                | Self::AdoptError
+                | Self::CompatError
+                | Self::PreinstallError
+                | Self::Invalid
+                | Self::NoManifest
+                | Self::DirMissing
+                | Self::ForceError
         )
     }
-    
+
     /// Determine if this status represents a warning
     pub fn is_warning(&self) -> bool {
-        matches!(self,
-            Self::Retry | Self::Degraded | Self::RestartWarning | Self::FsPending |
-            Self::LanternUnreachable | Self::OrphanFound | Self::Conflict | Self::ForceFlag
+        matches!(
+            self,
+            Self::Retry
+                | Self::Degraded
+                | Self::RestartWarning
+                | Self::FsPending
+                | Self::LanternUnreachable
+                | Self::OrphanFound
+                | Self::Conflict
+                | Self::ForceFlag
         )
     }
-    
+
     /// Determine if this status represents success/completion
     pub fn is_success(&self) -> bool {
-        matches!(self,
-            Self::Ready | Self::Completed | Self::Loaded | Self::Built | Self::Validated |
-            Self::Healthy | Self::Connected | Self::Upgraded | Self::FirstBootDone |
-            Self::FsReady | Self::PreinstallComplete | Self::ShutdownDone | Self::Synced |
-            Self::PullComplete | Self::Ok | Self::Joined | Self::LeaderElected |
-            Self::FsWritable | Self::PreinstallDone
+        matches!(
+            self,
+            Self::Ready
+                | Self::Completed
+                | Self::Loaded
+                | Self::Built
+                | Self::Validated
+                | Self::Healthy
+                | Self::Connected
+                | Self::Upgraded
+                | Self::FirstBootDone
+                | Self::FsReady
+                | Self::PreinstallComplete
+                | Self::ShutdownDone
+                | Self::Synced
+                | Self::PullComplete
+                | Self::Ok
+                | Self::Joined
+                | Self::LeaderElected
+                | Self::FsWritable
+                | Self::PreinstallDone
         )
     }
-    
+
     /// Get severity hint for this status (DRY - single source of truth for semantic level)
     pub fn severity_hint(&self) -> Severity {
         if self.is_error() {
@@ -383,7 +560,7 @@ impl ConsoleEvent {
             hint: None,
         }
     }
-    
+
     /// Create a new event with format hint
     pub fn with_hint(
         category: EventCategory,
@@ -398,7 +575,7 @@ impl ConsoleEvent {
             hint: Some(hint),
         }
     }
-    
+
     /// Helper to determine if this event should be logged (useful for deduplication checks)
     pub fn dedupe_key(&self) -> String {
         format!("{:?}::{:?}::{}", self.category, self.status, self.message)
@@ -414,14 +591,17 @@ pub struct FormatHint {
 
 impl FormatHint {
     pub fn new() -> Self {
-        Self { color: None, severity: None }
+        Self {
+            color: None,
+            severity: None,
+        }
     }
-    
+
     pub fn with_color(mut self, color: AnsiColor) -> Self {
         self.color = Some(color);
         self
     }
-    
+
     pub fn with_severity(mut self, severity: Severity) -> Self {
         self.severity = Some(severity);
         self

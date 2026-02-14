@@ -1,9 +1,9 @@
 //! Zen Common Types
 //! Core data structures for service discovery, health, resources, and registry
 
+use crate::constants::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::constants::*;
 
 pub mod topology;
 
@@ -90,7 +90,9 @@ impl SubCapability {
 
     /// Check if this capability includes a specific item
     pub fn has(&self, item: &str) -> bool {
-        self.items.iter().any(|i| i == item || i.to_lowercase() == item.to_lowercase())
+        self.items
+            .iter()
+            .any(|i| i == item || i.to_lowercase() == item.to_lowercase())
     }
 
     /// Get the count of items
@@ -281,14 +283,14 @@ pub enum ServiceHealthStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheck {
-    pub status: String,  // "pass", "warn", or "fail"
+    pub status: String, // "pass", "warn", or "fail"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealth {
-    pub status: String,  // "healthy", "degraded", or "unhealthy"
+    pub status: String, // "healthy", "degraded", or "unhealthy"
     #[serde(flatten)]
     pub details: HashMap<String, serde_json::Value>,
 }
@@ -318,13 +320,13 @@ impl ComponentHealth {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonHealthStatus {
-    pub status: String,  // "healthy", "degraded", or "unhealthy"
-    pub version: String,  // Software version (e.g., "0.1.202601231053")
-    pub timestamp: String,  // ISO 8601 timestamp
+    pub status: String,    // "healthy", "degraded", or "unhealthy"
+    pub version: String,   // Software version (e.g., "0.1.202601231053")
+    pub timestamp: String, // ISO 8601 timestamp
     pub components: HashMap<String, ComponentHealth>,
     // Platform information for deployment tools
-    pub os: String,  // Operating system (e.g., "windows", "linux", "macos")
-    pub architecture: String,  // CPU architecture (e.g., "x86_64", "aarch64")
+    pub os: String,           // Operating system (e.g., "windows", "linux", "macos")
+    pub architecture: String, // CPU architecture (e.g., "x86_64", "aarch64")
     // Legacy fields for backward compatibility
     #[serde(skip_serializing)]
     pub docker_available: bool,
@@ -352,23 +354,22 @@ pub enum DiskType {
 }
 
 /// Storage metrics (live data, collected every 30s)
-/// 
+///
 /// Replaces separate static inventory + dynamic usage approach.
 /// Contains both device info and current usage in one structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageMetrics {
-    pub identifier: String,      // e.g., "sda", "nvme0n1", "C:"
-    pub mount_point: String,      // e.g., "/", "/data", "C:\"
+    pub identifier: String,  // e.g., "sda", "nvme0n1", "C:"
+    pub mount_point: String, // e.g., "/", "/data", "C:\"
     pub total_gb: u64,
     pub used_gb: u64,
     pub available_gb: u64,
     pub used_percent: f32,
     pub disk_type: DiskType,
-    pub filesystem: String,       // e.g., "ext4", "NTFS"
+    pub filesystem: String, // e.g., "ext4", "NTFS"
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AiRuntime {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cuda_version: Option<String>,
@@ -380,7 +381,6 @@ pub struct AiRuntime {
     pub has_openvino: bool,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfo {
     pub vendor: String,
@@ -388,7 +388,7 @@ pub struct GpuInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vram_mb: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub capabilities: Vec<String>,  // "cuda", "rocm", "vulkan", "directml", "opencl"
+    pub capabilities: Vec<String>, // "cuda", "rocm", "vulkan", "directml", "opencl"
 
     /// Detected AI runtimes in dual format
     /// Supports both simple ("cuda") and versioned ("cuda:12.2") formats
@@ -398,14 +398,14 @@ pub struct GpuInfo {
 }
 
 /// Live system resources (collected every 5s for CPU/memory, 30s for storage)
-/// 
+///
 /// This is the single source of truth for runtime metrics.
 /// Storage inventory included here due to semi-dynamic nature (hot-swap, mounts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoneResources {
     pub cpu: CpuMetrics,
     pub memory: MemoryMetrics,
-    pub storage: Vec<StorageMetrics>,  // All mounted disks with live usage
+    pub storage: Vec<StorageMetrics>, // All mounted disks with live usage
     pub uptime_seconds: u64,
     pub uptime_friendly: String,
 }
@@ -558,7 +558,7 @@ pub struct MemoryCapabilities {
 pub struct DiskCapabilities {
     pub total_gb: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub disk_type: Option<String>,  // "SSD", "HDD", "NVMe"
+    pub disk_type: Option<String>, // "SSD", "HDD", "NVMe"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -722,13 +722,15 @@ impl TopologyServiceEntry {
                 ServiceStatus::Maintenance => SERVICE_MAINTENANCE,
                 ServiceStatus::Degraded => SERVICE_DEGRADED,
                 ServiceStatus::Unknown => SERVICE_UNKNOWN,
-            }.to_string(),
+            }
+            .to_string(),
         }
     }
-    
+
     /// Batch convert ServiceInfo vec to TopologyServiceEntry vec
     pub fn from_service_infos(services: &[ServiceInfo]) -> Vec<Self> {
-        services.iter()
+        services
+            .iter()
             .map(|svc| Self::from_service_info(svc, None))
             .collect()
     }
@@ -747,15 +749,14 @@ impl TopologyServiceEntry {
                 OfferingStatus::Maintenance => SERVICE_MAINTENANCE,
                 OfferingStatus::Degraded => SERVICE_DEGRADED,
                 OfferingStatus::Unknown => SERVICE_UNKNOWN,
-            }.to_string(),
+            }
+            .to_string(),
         }
     }
 
     /// Batch convert Offering vec to TopologyServiceEntry vec
     pub fn from_offerings(offerings: &[Offering]) -> Vec<Self> {
-        offerings.iter()
-            .map(Self::from_offering)
-            .collect()
+        offerings.iter().map(Self::from_offering).collect()
     }
 }
 
@@ -786,7 +787,7 @@ impl std::fmt::Display for StoneStatus {
 /// - Chirp wire format (UDP broadcast payload)
 ///
 /// Health progresses: starting → initializing → thriving/degraded
-/// 
+///
 /// **Services**: Full ServiceInfo (richer than ChirpServiceInfo)
 /// - Enables detailed service state across all use cases
 /// - UDP chirps will be larger (~3-4x) but provide complete info
@@ -1076,13 +1077,9 @@ pub enum PortRemediation {
         files: Option<Vec<RemediationFile>>,
     },
     /// Show message and fail - user must manually resolve
-    Manual {
-        message: String,
-    },
+    Manual { message: String },
     /// Fail with error - no remediation possible
-    Fail {
-        message: String,
-    },
+    Fail { message: String },
 }
 
 /// File to create as part of remediation
@@ -1121,7 +1118,6 @@ pub enum AdoptedControlLevel {
     /// Moss announces existence only (discovery)
     Announce,
 }
-
 
 /// Health check method for borrowed offerings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1284,8 +1280,7 @@ fn default_protocol() -> String {
     "http".to_string()
 }
 
-impl OfferingLocation {
-}
+impl OfferingLocation {}
 
 /// Mode-specific data as enum variants
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1534,7 +1529,6 @@ pub enum TaskCategory {
     /// Custom/other tasks
     Custom,
 }
-
 
 impl std::fmt::Display for TaskCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

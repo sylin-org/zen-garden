@@ -47,11 +47,11 @@ pub use compatibility::{
     validate_binary_architecture, CompatCheckCapabilities, CompatibilityDecision,
     CompiledCompatibility,
 };
-pub use connectivity::{ConnectivityOrchestrator, ConnectivityOutcome, ConnectivityStatus};
 pub use connection::{
     build_hostname, default_template, extract_ip, infer_protocol, resolve_connection, resolve_uris,
     ResolvedConnection,
 };
+pub use connectivity::{ConnectivityOrchestrator, ConnectivityOutcome, ConnectivityStatus};
 pub use health::{
     build_disk_component, build_memory_component, check_disk_health, check_memory_health,
     determine_overall_status,

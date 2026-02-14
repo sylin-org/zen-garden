@@ -44,7 +44,8 @@ pub trait DiscoveryProvider: Send + Sync {
     ///
     /// Sends broadcast on port 3999, waits for responses.
     /// Returns all discovered stones within timeout.
-    async fn discover_all(&self, timeout: Duration) -> Result<Vec<DiscoveryResult>, DiscoveryError>;
+    async fn discover_all(&self, timeout: Duration)
+        -> Result<Vec<DiscoveryResult>, DiscoveryError>;
 
     /// Find a specific stone by name
     ///
@@ -62,5 +63,8 @@ pub trait DiscoveryProvider: Send + Sync {
     /// 2. GARDEN_STONE env var
     /// 3. Tended stone from config
     /// 4. UDP broadcast (first responder)
-    async fn resolve_stone(&self, explicit_target: Option<&str>) -> Result<DiscoveryResult, DiscoveryError>;
+    async fn resolve_stone(
+        &self,
+        explicit_target: Option<&str>,
+    ) -> Result<DiscoveryResult, DiscoveryError>;
 }

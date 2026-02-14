@@ -12,8 +12,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use crate::suggestions;
-use garden_common::ui::rendering as ui;
 use async_trait::async_trait;
+use garden_common::ui::rendering as ui;
 
 /// Pond action to perform
 pub enum PondActionType {
@@ -158,7 +158,10 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
         Ok(response) if response.status().is_success() => {
             if let Ok(body) = response.json::<serde_json::Value>().await {
                 if let Some(data) = body.get("data") {
-                    let active = data.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+                    let active = data
+                        .get("active")
+                        .and_then(|a| a.as_bool())
+                        .unwrap_or(false);
                     let tier = data
                         .get("tier")
                         .and_then(|t| t.as_str())
@@ -171,8 +174,7 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
                             " ".repeat(ui::constants::DEFAULT_INDENT),
                             ui::status_indicator("ok", ctx.term.supports_color)
                         );
-                        if let Some(cornerstone) =
-                            data.get("cornerstone").and_then(|c| c.as_str())
+                        if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str())
                         {
                             println!("   Cornerstone: {}", cornerstone);
                         }
@@ -276,11 +278,7 @@ async fn execute_pond_invite(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
     Ok(())
 }
 
-async fn execute_pond_join(
-    ctx: &CommandContext,
-    endpoint: &str,
-    code: &str,
-) -> anyhow::Result<()> {
+async fn execute_pond_join(ctx: &CommandContext, endpoint: &str, code: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond/join", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "code": code });
 

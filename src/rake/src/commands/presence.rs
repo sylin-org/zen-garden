@@ -1,11 +1,11 @@
-﻿//! Presence command - Stream real-time presence events from a stone
+//! Presence command - Stream real-time presence events from a stone
 //!
 //! Implements Stone Presence Protocol (PRESENCE-0001) client.
 //! Connects to /api/v1/stone/presence/stream and displays events.
 
-use anyhow::{Result, Context};
-use garden_common::presence::{event_types, PresenceSnapshot, StoneState, OfferingState};
+use anyhow::{Context, Result};
 use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
+use garden_common::presence::{event_types, OfferingState, PresenceSnapshot, StoneState};
 
 /// Stream presence events from a stone
 pub async fn presence_command(
@@ -24,7 +24,12 @@ pub async fn presence_command(
     // Resolve endpoint using dispatch resolution logic
     let endpoint = if let Some(explicit_at) = at {
         // Explicit --at flag takes priority
-        crate::client::resolve_target_endpoint(client, &explicit_at, cache.map(|c| c as &dyn crate::client::CachedStoneOps)).await?
+        crate::client::resolve_target_endpoint(
+            client,
+            &explicit_at,
+            cache.map(|c| c as &dyn crate::client::CachedStoneOps),
+        )
+        .await?
     } else if let Ok(env_endpoint) = std::env::var("GARDEN_STONE") {
         // Environment variable
         env_endpoint
@@ -34,7 +39,8 @@ pub async fn presence_command(
             Ok(tending_state) => tending_state.endpoint,
             Err(_) => {
                 // Auto-discover
-                let responses = crate::discovery::discover_moss_auto(std::time::Duration::from_secs(3)).await?;
+                let responses =
+                    crate::discovery::discover_moss_auto(std::time::Duration::from_secs(3)).await?;
                 if responses.is_empty() {
                     anyhow::bail!("No stones discovered. Use --at to specify endpoint or run 'garden-rake tend'.");
                 }
@@ -49,8 +55,7 @@ pub async fn presence_command(
     println!("Press Ctrl+C to disconnect\n");
 
     // Create HTTP client for SSE with no timeout (stable connection)
-    let sse_client = reqwest::Client::builder()
-        .build()?;
+    let sse_client = reqwest::Client::builder().build()?;
 
     let response = sse_client
         .get(&url)
@@ -65,14 +70,14 @@ pub async fn presence_command(
     // Process SSE events line by line
     use futures_util::StreamExt;
     let mut stream = response.bytes_stream();
-    
+
     let mut current_event_type = String::new();
     let mut current_data = Vec::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         let text = String::from_utf8_lossy(&chunk);
-        
+
         for line in text.lines() {
             if let Some(stripped) = line.strip_prefix("event:") {
                 current_event_type = stripped.trim().to_string();
@@ -101,8 +106,8 @@ pub async fn presence_command(
 fn handle_presence_event(event_type: &str, data: &str) -> Result<()> {
     match event_type {
         event_types::PRESENCE_SNAPSHOT => {
-            let snapshot: PresenceSnapshot = serde_json::from_str(data)
-                .context("Failed to parse snapshot")?;
+            let snapshot: PresenceSnapshot =
+                serde_json::from_str(data).context("Failed to parse snapshot")?;
             display_snapshot(&snapshot);
         }
         event_types::SERVICE_STARTED => {
@@ -139,16 +144,22 @@ fn handle_presence_event(event_type: &str, data: &str) -> Result<()> {
             let parsed: serde_json::Value = serde_json::from_str(data)?;
             if let (Some(old), Some(new)) = (
                 parsed.get("old").and_then(|o| o.as_str()),
-                parsed.get("new").and_then(|n| n.as_str())
+                parsed.get("new").and_then(|n| n.as_str()),
             ) {
                 println!("❤️  Stone health changed: {} → {}", old, new);
             }
         }
         event_types::STONE_TENDED => {
             let parsed: serde_json::Value = serde_json::from_str(data)?;
-            let by = parsed.get("by").and_then(|b| b.as_str()).unwrap_or("unknown");
-            let from = parsed.get("from").and_then(|f| f.as_str()).unwrap_or("unknown");
-            
+            let by = parsed
+                .get("by")
+                .and_then(|b| b.as_str())
+                .unwrap_or("unknown");
+            let from = parsed
+                .get("from")
+                .and_then(|f| f.as_str())
+                .unwrap_or("unknown");
+
             // Prominent visual feedback - Companions will show glow/pulse
             println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             println!("👋 TENDING STARTED");
@@ -193,12 +204,12 @@ fn display_stone_state(stone: &StoneState) {
         "wilting" => "💀",
         _ => "❓",
     };
-    
+
     println!("\n{} Stone: {} ({})", health_icon, stone.name, stone.health);
     println!("  CPU:    {:.1}%", stone.cpu_percent);
     println!("  Memory: {:.1}%", stone.memory_percent);
     println!("  Disk:   {:.1}%", stone.disk_percent);
-    
+
     let uptime_hours = stone.uptime_seconds / 3600;
     let uptime_minutes = (stone.uptime_seconds % 3600) / 60;
     println!("  Uptime: {}h {}m", uptime_hours, uptime_minutes);

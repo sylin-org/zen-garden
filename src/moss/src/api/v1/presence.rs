@@ -6,19 +6,21 @@
 
 use axum::{
     extract::{Query, State},
-    response::sse::{Event, KeepAlive, Sse},
     http::StatusCode,
+    response::sse::{Event, KeepAlive, Sse},
     Json,
 };
 use futures_util::stream::Stream;
+use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
-use serde::Deserialize;
 
-use crate::AppState;
 use crate::domain::StoneEvent;
 use crate::infra::SseEvent;
-use garden_common::presence::{event_types, EventFilter, PresenceSnapshot, StoneState, OfferingState, ClientNotification};
+use crate::AppState;
+use garden_common::presence::{
+    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneState,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct PresenceQuery {
@@ -74,17 +76,16 @@ pub async fn stream_stone_presence(
             .data(snapshot_json)
     })
     .chain(
-        tokio_stream::wrappers::BroadcastStream::new(rx)
-            .filter_map(move |result| {
-                let filter = filter.clone();
-                match result {
-                    Ok(sse_event) => translate_to_presence(sse_event, &filter),
-                    Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                        tracing::warn!("Presence client lagged {} events", n);
-                        None
-                    }
+        tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
+            let filter = filter.clone();
+            match result {
+                Ok(sse_event) => translate_to_presence(sse_event, &filter),
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    tracing::warn!("Presence client lagged {} events", n);
+                    None
                 }
-            })
+            }
+        }),
     )
     .map(Ok);
 
@@ -113,7 +114,9 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
         let resources = state.system_resources.read().await;
         if let Some(ref res) = *resources {
             // Use primary mount point (root or largest disk) for summary disk %
-            let primary_disk_percent = res.storage.iter()
+            let primary_disk_percent = res
+                .storage
+                .iter()
                 .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
                 .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
                 .map(|s| s.used_percent as f64)
@@ -162,11 +165,17 @@ fn compute_health(cpu: f64, memory: f64) -> String {
 /// Filters by category and converts to the format expected by Companions.
 fn translate_to_presence(sse_event: SseEvent, filter: &EventFilter) -> Option<Event> {
     // Determine category from event type
-    let category = if sse_event.event_type.starts_with(event_types::PREFIX_SERVICE) {
+    let category = if sse_event
+        .event_type
+        .starts_with(event_types::PREFIX_SERVICE)
+    {
         event_types::CATEGORY_SERVICE
     } else if sse_event.event_type.starts_with(event_types::PREFIX_STONE) {
         event_types::CATEGORY_STONE
-    } else if sse_event.event_type.starts_with(event_types::PREFIX_STORAGE) {
+    } else if sse_event
+        .event_type
+        .starts_with(event_types::PREFIX_STORAGE)
+    {
         event_types::CATEGORY_STORAGE
     } else if sse_event.event_type.starts_with(event_types::PREFIX_JOB) {
         event_types::CATEGORY_JOB
@@ -196,9 +205,11 @@ fn translate_to_presence(sse_event: SseEvent, filter: &EventFilter) -> Option<Ev
         }
     }
 
-    Some(Event::default()
-        .event(&sse_event.event_type)
-        .data(data.to_string()))
+    Some(
+        Event::default()
+            .event(&sse_event.event_type)
+            .data(data.to_string()),
+    )
 }
 
 /// POST /api/v1/stone/presence/notify - Client-initiated presence notification

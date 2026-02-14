@@ -44,18 +44,11 @@ impl EventBus {
 
         match self.sender.send(event) {
             Ok(count) => {
-                tracing::debug!(
-                    event_type,
-                    receivers = count,
-                    "Event emitted"
-                );
+                tracing::debug!(event_type, receivers = count, "Event emitted");
             }
             Err(_) => {
                 // No receivers - this is fine, just means no listeners are active
-                tracing::trace!(
-                    event_type,
-                    "Event emitted (no receivers)"
-                );
+                tracing::trace!(event_type, "Event emitted (no receivers)");
             }
         }
     }
@@ -113,11 +106,7 @@ pub fn spawn_listener<L: EventListener>(
             match receiver.recv().await {
                 Ok(event) => {
                     let event_type = event.event_type();
-                    tracing::trace!(
-                        listener = listener_name,
-                        event_type,
-                        "Processing event"
-                    );
+                    tracing::trace!(listener = listener_name, event_type, "Processing event");
                     listener.on_event(&event).await;
                 }
                 Err(broadcast::error::RecvError::Lagged(count)) => {
@@ -128,7 +117,10 @@ pub fn spawn_listener<L: EventListener>(
                     );
                 }
                 Err(broadcast::error::RecvError::Closed) => {
-                    tracing::info!(listener = listener_name, "Event bus closed, listener stopping");
+                    tracing::info!(
+                        listener = listener_name,
+                        "Event bus closed, listener stopping"
+                    );
                     break;
                 }
             }
@@ -139,7 +131,7 @@ pub fn spawn_listener<L: EventListener>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::events::{OfferingEvent, StorageEvent, StoneEvent};
+    use crate::domain::events::{OfferingEvent, StoneEvent, StorageEvent};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::{sleep, Duration};
 
@@ -171,7 +163,9 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         // Emit some events
-        bus.emit(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
+        bus.emit(OfferingEvent::deployed(
+            "id-1", "mongodb", "stone-01", "mongo:7",
+        ));
         bus.emit(OfferingEvent::started("id-1", "mongodb", "stone-01"));
         bus.emit(OfferingEvent::stopped("id-1", "mongodb", "stone-01"));
 
@@ -197,7 +191,9 @@ mod tests {
 
         sleep(Duration::from_millis(10)).await;
 
-        bus.emit(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
+        bus.emit(OfferingEvent::deployed(
+            "id-1", "mongodb", "stone-01", "mongo:7",
+        ));
 
         sleep(Duration::from_millis(50)).await;
 
@@ -216,7 +212,12 @@ mod tests {
         let _handle = spawn_listener(&bus, listener.clone());
         sleep(Duration::from_millis(10)).await;
 
-        bus.emit(StorageEvent::seed_bank_detected("backup", "/dev/sdb1", "/mnt/backup", 500));
+        bus.emit(StorageEvent::seed_bank_detected(
+            "backup",
+            "/dev/sdb1",
+            "/mnt/backup",
+            500,
+        ));
         bus.emit(StorageEvent::seed_bank_removed("backup", "/dev/sdb1"));
 
         sleep(Duration::from_millis(50)).await;
@@ -246,6 +247,8 @@ mod tests {
     fn test_no_receivers_ok() {
         let bus = EventBus::new();
         // Should not panic with no receivers
-        bus.emit(OfferingEvent::deployed("id-1", "mongodb", "stone-01", "mongo:7"));
+        bus.emit(OfferingEvent::deployed(
+            "id-1", "mongodb", "stone-01", "mongo:7",
+        ));
     }
 }

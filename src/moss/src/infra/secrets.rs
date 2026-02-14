@@ -9,10 +9,10 @@
 
 use anyhow::{Context, Result};
 use base64::Engine;
+use garden_common::constants::CONFIG_DIR;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use garden_common::constants::CONFIG_DIR;
 
 /// Secret storage backend trait
 pub trait SecretBackend: Send + Sync {
@@ -203,8 +203,8 @@ impl EncryptedFileBackend {
 
     /// Derive encryption key from machine-specific data
     fn derive_encryption_key() -> Result<Vec<u8>> {
-        use argon2::{Argon2, PasswordHasher};
         use argon2::password_hash::SaltString;
+        use argon2::{Argon2, PasswordHasher};
 
         // Get machine ID (platform-specific)
         let machine_id = Self::get_machine_id()?;
@@ -212,7 +212,8 @@ impl EncryptedFileBackend {
         // Use fixed salt derived from machine ID for deterministic key
         // This is acceptable since the machine ID itself is secret
         let salt_bytes = blake3::hash(machine_id.as_bytes());
-        let salt_str = base64::engine::general_purpose::STANDARD.encode(&salt_bytes.as_bytes()[..16]);
+        let salt_str =
+            base64::engine::general_purpose::STANDARD.encode(&salt_bytes.as_bytes()[..16]);
         let salt = SaltString::encode_b64(&salt_str.as_bytes()[..22])
             .map_err(|e| anyhow::anyhow!("Failed to create salt: {:?}", e))?;
 
@@ -297,26 +298,21 @@ impl EncryptedFileBackend {
             });
         }
 
-        let data = std::fs::read(&self.secrets_path)
-            .context("Failed to read secrets file")?;
+        let data = std::fs::read(&self.secrets_path).context("Failed to read secrets file")?;
 
-        serde_json::from_slice(&data)
-            .context("Failed to parse secrets file")
+        serde_json::from_slice(&data).context("Failed to parse secrets file")
     }
 
     /// Save secrets file
     fn save_secrets(&self, secrets: &SecretsFile) -> Result<()> {
-        let data = serde_json::to_vec_pretty(secrets)
-            .context("Failed to serialize secrets")?;
+        let data = serde_json::to_vec_pretty(secrets).context("Failed to serialize secrets")?;
 
         // Ensure directory exists
         if let Some(parent) = self.secrets_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create secrets directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create secrets directory")?;
         }
 
-        std::fs::write(&self.secrets_path, data)
-            .context("Failed to write secrets file")?;
+        std::fs::write(&self.secrets_path, data).context("Failed to write secrets file")?;
 
         // Set restrictive permissions (Unix only)
         #[cfg(unix)]
@@ -339,8 +335,8 @@ impl EncryptedFileBackend {
         let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
             .map_err(|e| anyhow::anyhow!("Invalid encryption key: {:?}", e))?;
 
-        let nonce_bytes = chacha20poly1305::aead::rand_core::RngCore::next_u64(&mut OsRng)
-            .to_le_bytes();
+        let nonce_bytes =
+            chacha20poly1305::aead::rand_core::RngCore::next_u64(&mut OsRng).to_le_bytes();
         let mut nonce_array = [0u8; 12];
         nonce_array[..8].copy_from_slice(&nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_array);
@@ -371,8 +367,7 @@ impl EncryptedFileBackend {
             .decrypt(nonce, secret.ciphertext.as_ref())
             .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))?;
 
-        String::from_utf8(plaintext)
-            .context("Decrypted data is not valid UTF-8")
+        String::from_utf8(plaintext).context("Decrypted data is not valid UTF-8")
     }
 }
 

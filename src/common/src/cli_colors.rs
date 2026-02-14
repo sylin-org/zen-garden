@@ -158,7 +158,13 @@ impl CliFormatter {
     /// Apply bold + color to text
     fn apply_bold(&self, text: &str, color: AnsiColor) -> String {
         if self.support.enabled {
-            format!("{}{}{}{}", AnsiColor::Bold.code(), color.code(), text, AnsiColor::Reset.code())
+            format!(
+                "{}{}{}{}",
+                AnsiColor::Bold.code(),
+                color.code(),
+                text,
+                AnsiColor::Reset.code()
+            )
         } else {
             text.to_string()
         }
@@ -184,7 +190,12 @@ impl CliFormatter {
     /// Usage: ───────────, ═══════════
     pub fn divider(&self, text: &str) -> String {
         if self.support.enabled {
-            format!("{}{}{}", AnsiColor::Dim.code(), text, AnsiColor::Reset.code())
+            format!(
+                "{}{}{}",
+                AnsiColor::Dim.code(),
+                text,
+                AnsiColor::Reset.code()
+            )
         } else {
             text.to_string()
         }
@@ -216,7 +227,12 @@ impl CliFormatter {
     /// Usage: View the current garden state - explanatory text
     pub fn description(&self, text: &str) -> String {
         if self.support.enabled {
-            format!("{}{}{}", AnsiColor::Dim.code(), text, AnsiColor::Reset.code())
+            format!(
+                "{}{}{}",
+                AnsiColor::Dim.code(),
+                text,
+                AnsiColor::Reset.code()
+            )
         } else {
             text.to_string()
         }
@@ -236,7 +252,13 @@ impl CliFormatter {
     /// Usage: Use 'garden-rake <cmd>?' for help - tips and suggestions
     pub fn hint(&self, text: &str) -> String {
         if self.support.enabled {
-            format!("{}{}{}{}", AnsiColor::Dim.code(), AnsiColor::Cyan.code(), text, AnsiColor::Reset.code())
+            format!(
+                "{}{}{}{}",
+                AnsiColor::Dim.code(),
+                AnsiColor::Cyan.code(),
+                text,
+                AnsiColor::Reset.code()
+            )
         } else {
             text.to_string()
         }
@@ -268,7 +290,12 @@ impl CliFormatter {
     /// Usage: ● dormant, ? unknown - offline/unknown state
     pub fn dormant(&self, text: &str) -> String {
         if self.support.enabled {
-            format!("{}{}{}", AnsiColor::Dim.code(), text, AnsiColor::Reset.code())
+            format!(
+                "{}{}{}",
+                AnsiColor::Dim.code(),
+                text,
+                AnsiColor::Reset.code()
+            )
         } else {
             text.to_string()
         }
@@ -309,7 +336,12 @@ impl CliFormatter {
 
     /// Format a command with its description: "command    description"
     pub fn command_line(&self, cmd: &str, desc: &str, width: usize) -> String {
-        format!("{:<width$} {}", self.command(cmd), self.description(desc), width = width)
+        format!(
+            "{:<width$} {}",
+            self.command(cmd),
+            self.description(desc),
+            width = width
+        )
     }
 
     /// Format a key-value pair: "Key: value"

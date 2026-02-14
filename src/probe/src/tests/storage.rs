@@ -1,4 +1,4 @@
-﻿//! Storage tests - seed bank detection, beacon protocol
+//! Storage tests - seed bank detection, beacon protocol
 
 use crate::registry::TestDef;
 use crate::{Bag, LiveGarden, StepResult};
@@ -680,7 +680,10 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     let key = format!("gateway-roundtrip-{}.txt", timestamp);
     let test_content = format!("Zen Garden gateway test at {}", timestamp);
     let test_bytes = test_content.as_bytes().to_vec();
-    let url = format!("{}/api/v1/storage/{}/{}", gateway_stone.endpoint, bucket, key);
+    let url = format!(
+        "{}/api/v1/storage/{}/{}",
+        gateway_stone.endpoint, bucket, key
+    );
 
     bag.record_step(
         "gateway_target",

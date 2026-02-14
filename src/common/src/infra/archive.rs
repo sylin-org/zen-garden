@@ -1,4 +1,4 @@
-﻿//! Archive operations for backup and compression
+//! Archive operations for backup and compression
 //!
 //! Provides centralized archive functionality using tar.gz:
 //! - Creating compressed archives from directories
@@ -65,7 +65,11 @@ impl Archiver {
     /// Create a compressed archive from a source directory
     ///
     /// Returns metadata about the created archive including size and checksum.
-    pub async fn create(&self, source: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<ArchiveInfo> {
+    pub async fn create(
+        &self,
+        source: impl AsRef<Path>,
+        dest: impl AsRef<Path>,
+    ) -> Result<ArchiveInfo> {
         create_archive(source.as_ref(), dest.as_ref()).await
     }
 
@@ -114,10 +118,7 @@ pub async fn create_archive(source: &Path, dest: &Path) -> Result<ArchiveInfo> {
         .unwrap_or(Path::new("."))
         .to_str()
         .context("Invalid parent path encoding")?;
-    let dir_name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(".");
+    let dir_name = source.file_name().and_then(|n| n.to_str()).unwrap_or(".");
 
     tracing::debug!(source = %source_str, dest = %dest_str, "Creating archive");
 

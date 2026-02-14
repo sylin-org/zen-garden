@@ -1,4 +1,4 @@
-﻿//! SSE event handler for Cricket
+//! SSE event handler for Cricket
 //!
 //! Handles presence events from Moss and triggers audio playback.
 
@@ -55,7 +55,11 @@ pub struct CricketEventHandler {
 
 impl CricketEventHandler {
     /// Create a new event handler
-    pub fn new(mixer: Arc<Mixer>, tune_manager: Arc<TuneManager>, state: Arc<CompanionState>) -> Self {
+    pub fn new(
+        mixer: Arc<Mixer>,
+        tune_manager: Arc<TuneManager>,
+        state: Arc<CompanionState>,
+    ) -> Self {
         Self {
             mixer,
             tune_manager,

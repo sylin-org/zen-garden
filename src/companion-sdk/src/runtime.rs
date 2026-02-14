@@ -1,4 +1,4 @@
-﻿//! Companion runtime - main loop and shutdown coordination
+//! Companion runtime - main loop and shutdown coordination
 //!
 //! The runtime manages:
 //! - HTTP command server lifecycle
@@ -149,8 +149,8 @@ pub fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use garden_common::command_manifest::CommandResponse;
     use async_trait::async_trait;
+    use garden_common::command_manifest::CommandResponse;
 
     struct TestHandler;
 

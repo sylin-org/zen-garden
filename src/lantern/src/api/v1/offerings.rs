@@ -37,13 +37,14 @@ pub async fn get_offerings(State(state): State<AppState>) -> Json<Value> {
     for (key, entry) in &topology.stones {
         if let Some(enrichment) = topology.enrichment.get(key) {
             for offering in &enrichment.offerings {
-                let group = groups
-                    .entry(offering.offering.clone())
-                    .or_insert_with(|| OfferingGroup {
-                        offering: offering.offering.clone(),
-                        category: offering.category.clone(),
-                        instances: Vec::new(),
-                    });
+                let group =
+                    groups
+                        .entry(offering.offering.clone())
+                        .or_insert_with(|| OfferingGroup {
+                            offering: offering.offering.clone(),
+                            category: offering.category.clone(),
+                            instances: Vec::new(),
+                        });
 
                 group.instances.push(OfferingInstance {
                     stone_id: entry.stone_id.clone(),

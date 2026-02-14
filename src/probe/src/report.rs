@@ -1,4 +1,4 @@
-﻿//! Test reporting and output formatting
+//! Test reporting and output formatting
 
 use crate::{Bag, StepResult};
 use colored::Colorize;
@@ -126,10 +126,7 @@ impl SuiteReport {
         let failed = self.failed();
         let total = self.total();
 
-        let summary = format!(
-            "{} passed, {} failed, {} total",
-            passed, failed, total
-        );
+        let summary = format!("{} passed, {} failed, {} total", passed, failed, total);
 
         let summary_colored = if failed == 0 {
             summary.green().bold()
@@ -139,8 +136,7 @@ impl SuiteReport {
 
         println!(
             "Tests: {} | Duration: {}ms",
-            summary_colored,
-            self.total_duration_ms
+            summary_colored, self.total_duration_ms
         );
         println!();
     }

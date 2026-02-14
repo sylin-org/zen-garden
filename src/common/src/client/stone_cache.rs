@@ -1,4 +1,4 @@
-﻿//! Client-side stone discovery cache with TTL
+//! Client-side stone discovery cache with TTL
 //!
 //! Hot cache architecture for stone discovery results.
 //! Used across commands to avoid redundant network requests.
@@ -45,7 +45,9 @@ pub struct CachedStone {
 impl CachedStone {
     /// Get the cache key for this stone (stone_id if available, otherwise stone_name)
     pub fn cache_key(&self) -> String {
-        self.stone_id.clone().unwrap_or_else(|| self.stone_name.clone())
+        self.stone_id
+            .clone()
+            .unwrap_or_else(|| self.stone_name.clone())
     }
 }
 
@@ -63,7 +65,7 @@ impl StoneCache {
     /// Get stone from cache if not expired
     pub fn get(&self, stone_name: &str) -> Option<CachedStone> {
         let mut cache = self.stones.lock().unwrap();
-        
+
         if let Some(cached) = cache.get(stone_name) {
             // Check if still valid (TTL not expired)
             if cached.last_seen.elapsed() < CACHE_TTL {
@@ -79,7 +81,7 @@ impl StoneCache {
                 cache.remove(stone_name);
             }
         }
-        
+
         tracing::debug!(stone = %stone_name, "Cache miss");
         None
     }
@@ -109,7 +111,7 @@ impl StoneCache {
     /// Get all stones from cache (removes expired entries)
     pub fn get_all(&self) -> Vec<CachedStone> {
         let mut cache = self.stones.lock().unwrap();
-        
+
         // Remove expired entries
         cache.retain(|stone_name, cached| {
             let valid = cached.last_seen.elapsed() < CACHE_TTL;
@@ -118,7 +120,7 @@ impl StoneCache {
             }
             valid
         });
-        
+
         cache.values().cloned().collect()
     }
 

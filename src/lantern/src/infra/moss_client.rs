@@ -18,10 +18,7 @@ impl MossClient {
     }
 
     /// Fetch JSON from a Moss endpoint
-    pub async fn get_json<T: serde::de::DeserializeOwned>(
-        &self,
-        url: &str,
-    ) -> Result<T> {
+    pub async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
         let resp = self
             .client
             .get(url)
@@ -80,10 +77,7 @@ impl MossClient {
             .with_context(|| format!("Failed to proxy to {}", url))?;
 
         let status = resp.status();
-        let response_body: serde_json::Value = resp
-            .json()
-            .await
-            .unwrap_or(serde_json::Value::Null);
+        let response_body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
         Ok((status, response_body))
     }
@@ -101,10 +95,7 @@ impl MossClient {
             .with_context(|| format!("Failed to proxy DELETE to {}", url))?;
 
         let status = resp.status();
-        let response_body: serde_json::Value = resp
-            .json()
-            .await
-            .unwrap_or(serde_json::Value::Null);
+        let response_body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
         Ok((status, response_body))
     }

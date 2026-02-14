@@ -1,4 +1,3 @@
-﻿
 //! System metrics collection task
 //!
 //! Periodically gathers CPU, memory, disk, and network metrics using garden_common::metrics::system.
@@ -15,10 +14,10 @@
 
 use tokio::time::interval;
 
-use crate::AppState;
 use crate::infra::storage::SeedBankRegistry;
-use garden_common::metrics::system::{get_fast_metrics, get_storage_metrics, get_network_metrics};
-use garden_common::constants::timeouts::{metrics_fast_interval, metrics_disk_interval};
+use crate::AppState;
+use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_interval};
+use garden_common::metrics::system::{get_fast_metrics, get_network_metrics, get_storage_metrics};
 use garden_common::storage::SeedBankInfo;
 #[cfg(target_os = "linux")]
 use garden_common::storage::StorageDetectedInfo;
@@ -39,7 +38,7 @@ use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 pub async fn run_metrics_collector(state: AppState) {
     let mut fast_interval = interval(metrics_fast_interval());
     let mut disk_interval = interval(metrics_disk_interval());
-    
+
     // Collect initial complete snapshot immediately
     match get_fast_metrics() {
         Ok((cpu, memory, uptime_seconds, uptime_friendly)) => {
@@ -111,7 +110,7 @@ pub async fn run_metrics_collector(state: AppState) {
             }
         }
     }
-    
+
     loop {
         tokio::select! {
             _ = fast_interval.tick() => {

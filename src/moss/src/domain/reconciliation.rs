@@ -7,8 +7,8 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::AppState;
 use crate::domain::adopt_offering_container;
+use crate::AppState;
 use garden_common::console;
 
 /// Reconcile container state with the registry
@@ -36,10 +36,7 @@ use garden_common::console;
 /// - Persisting registry changes (if adopted or dropped any)
 /// - Emitting events
 /// - HTTP response formatting
-pub async fn reconcile_services(
-    state: &AppState,
-    drop_invalid: bool,
-) -> ReconciliationResult {
+pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> ReconciliationResult {
     let existing = match state.docker.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {
@@ -71,7 +68,15 @@ pub async fn reconcile_services(
             continue;
         }
 
-        match adopt_offering_container(&state.docker, &state.manifest_registry, &offering, &state.stone_name, cached_caps_ref).await {
+        match adopt_offering_container(
+            &state.docker,
+            &state.manifest_registry,
+            &offering,
+            &state.stone_name,
+            cached_caps_ref,
+        )
+        .await
+        {
             Ok(Some(adopted_offering)) => {
                 tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
                 let mut offerings = state.offerings.write().await;
@@ -83,7 +88,11 @@ pub async fn reconcile_services(
                 // no known template/manifest mapping for that offering.
                 if drop_invalid {
                     tracing::warn!(offering = %offering, "Reconciliation: dropping invalid container (no matching template)");
-                    match state.docker.remove_service(&offering, Some(&state.console)).await {
+                    match state
+                        .docker
+                        .remove_service(&offering, Some(&state.console))
+                        .await
+                    {
                         Ok(_) => {
                             dropped_invalid.push(offering.clone());
                             // Emit console event for dropped container

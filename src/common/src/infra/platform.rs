@@ -1,4 +1,4 @@
-﻿//! Platform-specific utility functions
+//! Platform-specific utility functions
 //!
 //! Provides OS-specific operations:
 //! - Drive type detection (Windows)
@@ -102,10 +102,9 @@ pub async fn shutdown_signal() {
     {
         use tokio::signal::unix::{signal, SignalKind};
 
-        let mut sigterm = signal(SignalKind::terminate())
-            .expect("Failed to install SIGTERM handler");
-        let mut sigint = signal(SignalKind::interrupt())
-            .expect("Failed to install SIGINT handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
 
         tokio::select! {
             _ = sigterm.recv() => {

@@ -149,8 +149,14 @@ mod tests {
                 }
             }
         });
-        assert_eq!(extract_nested_string(&body, "health.status"), Some("healthy"));
-        assert_eq!(extract_nested_string(&body, "health.details.cpu"), Some("ok"));
+        assert_eq!(
+            extract_nested_string(&body, "health.status"),
+            Some("healthy")
+        );
+        assert_eq!(
+            extract_nested_string(&body, "health.details.cpu"),
+            Some("ok")
+        );
         assert_eq!(extract_nested_string(&body, "health.missing"), None);
     }
 

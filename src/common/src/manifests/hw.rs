@@ -229,7 +229,7 @@ impl HwManifests {
                 Ok(json) => {
                     let json = crate::utils::strings::strip_bom(&json);
                     serde_json::from_str::<HwFrontmatter>(json).ok()
-                },
+                }
                 Err(_) => None,
             }
         } else {
@@ -284,11 +284,17 @@ impl HwManifests {
 
     /// Find a hardware manifest that matches the given system identity
     /// Uses DMI/SMBIOS values from the running system
-    pub fn find_matching(&self, manufacturer: Option<&str>, product: Option<&str>) -> Option<&HwEntry> {
+    pub fn find_matching(
+        &self,
+        manufacturer: Option<&str>,
+        product: Option<&str>,
+    ) -> Option<&HwEntry> {
         let mfr = manufacturer?;
         let prod = product?;
-        
-        self.entries.values().find(|entry| entry.matches_dmidecode(mfr, prod))
+
+        self.entries
+            .values()
+            .find(|entry| entry.matches_dmidecode(mfr, prod))
     }
 }
 impl HwEntry {
@@ -334,8 +340,8 @@ impl HwEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_hw_manifest(dir: &Path, vendor: &str, model: &str) {
         let vendor_dir = dir.join(vendor);
@@ -354,7 +360,8 @@ identity:
 "#,
                 model, vendor, model
             ),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]

@@ -1,10 +1,10 @@
-﻿//! API manifest endpoint - returns structured API documentation
+//! API manifest endpoint - returns structured API documentation
 //!
 //! GET /api/v1/manifest - Returns complete API manifest
 
+use crate::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use garden_common::api_manifest::{ApiManifest, EndpointSpec};
-use crate::AppState;
 
 /// GET /api/v1/manifest - Return complete API manifest
 pub async fn get_api_manifest_v1(
@@ -12,10 +12,10 @@ pub async fn get_api_manifest_v1(
 ) -> Result<Json<ApiManifest>, StatusCode> {
     // Build base URL from stone name and API port
     let base_url = format!("http://{}:{}", state.stone_name(), state.api_port);
-    
+
     // Generate manifest from registry
     let manifest = build_manifest(&base_url);
-    
+
     Ok(Json(manifest))
 }
 
@@ -23,7 +23,7 @@ pub async fn get_api_manifest_v1(
 #[allow(clippy::vec_init_then_push)]
 fn build_manifest(base_url: &str) -> ApiManifest {
     let mut endpoints = Vec::new();
-    
+
     // Health & Monitoring
     endpoints.push(
         EndpointSpec::new("GET", "/health", "health")
@@ -32,10 +32,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Check health",
                 "curl http://stone-01:7185/health",
-                r#"{"status": "healthy", "components": {"docker": {"status": "healthy"}}}"#
-            )
+                r#"{"status": "healthy", "components": {"docker": {"status": "healthy"}}}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/capabilities", "health")
             .description("Hardware capabilities - CPU, memory, GPU, AI runtimes")
@@ -43,10 +43,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Get capabilities",
                 "curl http://stone-01:7185/capabilities",
-                r#"{"data": {"hardware": {"cpu": {"cores": 8}, "gpus": []}}}"#
-            )
+                r#"{"data": {"hardware": {"cpu": {"cores": 8}, "gpus": []}}}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/metrics", "health")
             .description("Prometheus metrics")
@@ -54,10 +54,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Get metrics",
                 "curl http://stone-01:7185/metrics",
-                "# HELP moss_uptime_seconds Moss uptime\nmoss_uptime_seconds 3600"
-            )
+                "# HELP moss_uptime_seconds Moss uptime\nmoss_uptime_seconds 3600",
+            ),
     );
-    
+
     // Offerings (Human Layer)
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/offerings", "offerings")
@@ -67,10 +67,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "List all offerings",
                 "curl http://stone-01:7185/api/v1/offerings",
-                r#"{"data": [{"name": "mongodb", "state": "installed"}]}"#
-            )
+                r#"{"data": [{"name": "mongodb", "state": "installed"}]}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/offerings/search", "offerings")
             .description("Search offerings with intelligent ranking")
@@ -81,10 +81,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Search for databases",
                 "curl 'http://stone-01:7185/api/v1/offerings/search?q=nosql%20database&limit=3'",
-                r#"{"data": {"results": [{"name": "mongodb", "score": 95}]}}"#
-            )
+                r#"{"data": {"results": [{"name": "mongodb", "score": 95}]}}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("POST", "/api/v1/offerings", "offerings")
             .description("Plant (install) an offering")
@@ -97,7 +97,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             )
             .note("Returns 202 Accepted for async operations. Poll job_id for status.")
     );
-    
+
     endpoints.push(
         EndpointSpec::new("DELETE", "/api/v1/offerings/:name", "offerings")
             .description("Take away (uninstall) an offering")
@@ -106,10 +106,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Remove MongoDB",
                 "curl -X DELETE http://stone-01:7185/api/v1/offerings/mongodb",
-                r#"{"data": {"name": "mongodb", "state": "removed"}}"#
-            )
+                r#"{"data": {"name": "mongodb", "state": "removed"}}"#,
+            ),
     );
-    
+
     // Services (Technical Layer)
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/services", "services")
@@ -123,7 +123,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
                 r#"{"data": [{"name": "mongodb", "status": "Running", "resources": {"cpu_percent": 2.5}}]}"#
             )
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/services/:service/logs", "services")
             .description("Stream service logs (SSE)")
@@ -134,10 +134,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Tail MongoDB logs",
                 "curl -N http://stone-01:7185/api/v1/services/mongodb/logs?tail=50",
-                "data: [2026-01-27T12:00:00Z] MongoDB starting...\n\n"
-            )
+                "data: [2026-01-27T12:00:00Z] MongoDB starting...\n\n",
+            ),
     );
-    
+
     // Stone Operations
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/stone/info", "stone")
@@ -146,10 +146,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Get stone info",
                 "curl http://stone-01:7185/api/v1/stone/info",
-                r#"{"data": {"stone_name": "stone-01", "moss_version": "0.1.0.312"}}"#
-            )
+                r#"{"data": {"stone_name": "stone-01", "moss_version": "0.1.0.312"}}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/stone/companions", "stone")
             .description("List registered Companions (Cricket, Firefly, OLED)")
@@ -157,10 +157,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "List Companions",
                 "curl http://stone-01:7185/api/v1/stone/companions",
-                r#"{"data": {"companions": [{"id": "cricket", "port": 7187, "running": true}]}}"#
-            )
+                r#"{"data": {"companions": [{"id": "cricket", "port": 7187, "running": true}]}}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("POST", "/api/v1/stone/companions/:id/command", "stone")
             .description("Send command to Companion (forwarded to Companion HTTP port)")
@@ -174,7 +174,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             )
             .note("Timeout: 5 seconds. Forwarded to http://127.0.0.1:{companion_port}/command")
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/stone/presence/stream", "stone")
             .description("Stream Stone presence events (SSE - chirps, service changes)")
@@ -182,9 +182,9 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Monitor presence",
                 "curl -N http://stone-01:7185/api/v1/stone/presence/stream",
-                "event: stone_chirp\ndata: {\"stone_id\": \"...\", \"services\": []}\n\n"
+                "event: stone_chirp\ndata: {\"stone_id\": \"...\", \"services\": []}\n\n",
             )
-            .note("Long-running connection. Events broadcast every 30s + on service state change.")
+            .note("Long-running connection. Events broadcast every 30s + on service state change."),
     );
 
     endpoints.push(
@@ -194,10 +194,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Check storage health",
                 "curl http://stone-01:7185/api/v1/stone/storage/health",
-                r#"{"data": {"ready": true, "mount_path": "/garden/storage", "bank_count": 1}}"#
-            )
+                r#"{"data": {"ready": true, "mount_path": "/garden/storage", "bank_count": 1}}"#,
+            ),
     );
-    
+
     // Garden Topology
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/garden/topology", "garden")
@@ -206,10 +206,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Get topology",
                 "curl http://stone-01:7185/api/v1/garden/topology",
-                r#"{"data": {"stones": [{"stone_id": "...", "services": []}]}}"#
-            )
+                r#"{"data": {"stones": [{"stone_id": "...", "services": []}]}}"#,
+            ),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/garden/nourishment", "garden")
             .description("Check garden-wide updates (software + firmware)")
@@ -217,11 +217,11 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Check updates",
                 "curl http://stone-01:7185/api/v1/garden/nourishment",
-                r#"{"data": {"offerings": {"available": 3}, "firmware": {"available": 1}}}"#
+                r#"{"data": {"offerings": {"available": 3}, "firmware": {"available": 1}}}"#,
             )
-            .note("Orchestrated: tended Moss queries all stones and aggregates results")
+            .note("Orchestrated: tended Moss queries all stones and aggregates results"),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("POST", "/api/v1/garden/nourishment/execute", "garden")
             .description("Execute garden-wide updates")
@@ -234,7 +234,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             )
             .note("Orchestrated: tended Moss dispatches to each affected stone")
     );
-    
+
     // Events & Jobs
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/events", "events")
@@ -246,7 +246,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
                 "event: offering_install\ndata: {\"offering\": \"mongodb\", \"status\": \"started\"}\n\n"
             )
     );
-    
+
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/jobs/:job_id", "events")
             .description("Get job status (async operation tracking)")
@@ -255,10 +255,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Check job",
                 "curl http://stone-01:7185/api/v1/jobs/job_01936e8b-1234-7def-8123-456789abcdef",
-                r#"{"data": {"job_id": "job_...", "status": "completed", "progress": 100}}"#
-            )
+                r#"{"data": {"job_id": "job_...", "status": "completed", "progress": 100}}"#,
+            ),
     );
-    
+
     // Admin Operations
     endpoints.push(
         EndpointSpec::new("POST", "/api/v1/admin/moss/shutdown", "admin")
@@ -267,11 +267,11 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Shutdown Moss",
                 "curl -X POST http://stone-01:7185/api/v1/admin/moss/shutdown",
-                r#"{"data": {"status": "shutting_down"}}"#
+                r#"{"data": {"status": "shutting_down"}}"#,
             )
-            .note("Stops Companions, flushes logs, closes connections. Stone remains on.")
+            .note("Stops Companions, flushes logs, closes connections. Stone remains on."),
     );
-    
+
     endpoints.push(
         EndpointSpec::new("POST", "/api/v1/admin/stone/reboot", "admin")
             .description("Reboot the Stone (machine-level)")
@@ -279,11 +279,11 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             .example(
                 "Reboot stone",
                 "curl -X POST http://stone-01:7185/api/v1/admin/stone/reboot",
-                r#"{"data": {"status": "rebooting"}}"#
+                r#"{"data": {"status": "rebooting"}}"#,
             )
-            .note("Requires sudo. Stone will be offline during reboot (~30-60s).")
+            .note("Requires sudo. Stone will be offline during reboot (~30-60s)."),
     );
-    
+
     ApiManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         base_url: base_url.into(),
@@ -330,10 +330,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             garden_common::api_manifest::ApiCategory {
                 name: "events".into(),
                 description: "Event streams and job tracking".into(),
-                endpoints: vec![
-                    "/api/v1/events".into(),
-                    "/api/v1/jobs/:job_id".into(),
-                ],
+                endpoints: vec!["/api/v1/events".into(), "/api/v1/jobs/:job_id".into()],
             },
             garden_common::api_manifest::ApiCategory {
                 name: "admin".into(),

@@ -1,10 +1,10 @@
 //! Zen Common Constants
 //! Centralized constants for ports, names, paths, timeouts, limits, and error codes
 
-pub mod timeouts;
-pub mod paths;
-pub mod limits;
 pub mod headers;
+pub mod limits;
+pub mod paths;
+pub mod timeouts;
 
 /// Configuration directory path (platform-specific)
 ///

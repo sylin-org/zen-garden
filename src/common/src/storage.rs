@@ -1,13 +1,13 @@
-﻿//! Storage and seed bank types
+//! Storage and seed bank types
 //!
 //! Shared contracts between Moss and Rake for USB seed bank management.
 //! See docs/specs/STORAGE-0001-seed-bank-onboarding.md for full specification.
 
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
-use crate::OfferingMode;
 use crate::manifests::Offering as OfferingManifest;
 use crate::types::Offering;
+use crate::OfferingMode;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // Device State Types
@@ -32,7 +32,10 @@ pub enum DeviceState {
 impl DeviceState {
     /// Returns true if device can be prepared as a seed bank
     pub fn is_eligible(&self) -> bool {
-        matches!(self, DeviceState::Unpartitioned | DeviceState::Unformatted | DeviceState::Empty)
+        matches!(
+            self,
+            DeviceState::Unpartitioned | DeviceState::Unformatted | DeviceState::Empty
+        )
     }
 }
 
@@ -57,27 +60,27 @@ impl std::fmt::Display for DeviceState {
 pub struct StorageDetectedInfo {
     /// Device path (e.g., "/dev/sdb1")
     pub device: String,
-    
+
     /// Mount path if mounted (e.g., "/mnt/usb")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mount_path: Option<String>,
-    
+
     /// Device label if available (e.g., "SANDISK_32GB")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    
+
     /// Capacity in bytes
     pub capacity_bytes: u64,
-    
+
     /// Current state of the device
     pub state: DeviceState,
-    
+
     /// Whether device is eligible for preparation
     pub eligible: bool,
-    
+
     /// Whether device is removable (USB, SD card, etc.)
     pub removable: bool,
-    
+
     /// Reason if not eligible
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ineligible_reason: Option<String>,
@@ -228,10 +231,10 @@ fn default_btrfs() -> String {
 pub struct PrepareSeedBankResponse {
     /// Job ID for tracking progress
     pub job_id: String,
-    
+
     /// Expected seed bank name (may differ from requested if collision)
     pub name: String,
-    
+
     /// Whether operation started successfully
     pub started: bool,
 }
@@ -282,9 +285,9 @@ pub struct MergeSeedBankRequest {
     pub policy: MergePolicy,
 }
 
-// ============================================================================ 
+// ============================================================================
 // Hydration Metadata
-// ============================================================================ 
+// ============================================================================
 
 /// Offering manifest snapshot stored alongside memories for hydration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,21 +354,21 @@ pub enum JournalOp {
 pub struct JournalEntry {
     /// GUIDv7 - serves as unique ID and timestamp
     pub id: String,
-    
+
     /// Operation type
     pub op: JournalOp,
-    
+
     /// Object key (path relative to seed bank root)
     pub key: String,
-    
+
     /// Size in bytes (for Put operations)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
-    
+
     /// BLAKE3 hash (for Put operations)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
-    
+
     /// Stone that performed the operation
     pub stone: String,
 }
@@ -382,7 +385,7 @@ impl JournalEntry {
             stone: stone.to_string(),
         }
     }
-    
+
     /// Create a new Delete entry
     pub fn delete(key: &str, stone: &str) -> Self {
         Self {
@@ -458,7 +461,12 @@ impl SeedBankManifest {
     pub const CURRENT_VERSION: u32 = 2;
 
     /// Create a new manifest (simple, non-replicated seed bank)
-    pub fn new(name: &str, origin_stone: &str, filesystem: &str, visibility: SeedBankVisibility) -> Self {
+    pub fn new(
+        name: &str,
+        origin_stone: &str,
+        filesystem: &str,
+        visibility: SeedBankVisibility,
+    ) -> Self {
         let id = crate::utils::ids::generate_guidv7();
         let pool_id = SeedBankInfo::pool_id_from_guid(&id);
 
@@ -538,25 +546,25 @@ impl SeedBankManifest {
 // ============================================================================
 
 /// Storage capability beacon - lightweight announcement for routing
-/// 
+///
 /// Broadcast on seed bank mount/unmount/visibility change.
 /// All stones lurk-listen and update their StorageCache.
-/// 
+///
 /// See docs/decisions/STORAGE-0003-beacon-protocol.md
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageBeacon {
     /// Stone ID (links to TopologyEntry in TopologyCache)
     pub stone_id: String,
-    
+
     /// Human-readable stone name
     pub stone_name: String,
-    
+
     /// HTTP endpoint for storage API (e.g., "http://stone-alpha.local:7185")
     pub endpoint: String,
-    
+
     /// List of available seed banks (empty = no storage)
     pub seed_banks: Vec<SeedBankAnnouncement>,
-    
+
     /// Beacon timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -572,15 +580,17 @@ impl StorageBeacon {
             timestamp: Utc::now(),
         }
     }
-    
+
     /// Check if this stone has any storage capability
     pub fn has_storage(&self) -> bool {
         !self.seed_banks.is_empty()
     }
-    
+
     /// Check if this stone supports S3 protocol
     pub fn supports_s3(&self) -> bool {
-        self.seed_banks.iter().any(|sb| sb.protocols.contains(&"s3".to_string()))
+        self.seed_banks
+            .iter()
+            .any(|sb| sb.protocols.contains(&"s3".to_string()))
     }
 }
 
@@ -589,25 +599,25 @@ impl StorageBeacon {
 pub struct SeedBankAnnouncement {
     /// Unique seed bank ID (GUIDv7)
     pub id: String,
-    
+
     /// Human-readable name
     pub name: String,
-    
+
     /// Supported protocols (e.g., ["s3", "storage"])
     pub protocols: Vec<String>,
-    
+
     /// Access type
     pub access: StorageAccess,
-    
+
     /// Visibility ("open" or "closed")
     pub visibility: String,
-    
+
     /// Health status ("healthy", "degraded", "read-only")
     pub health: String,
-    
+
     /// Total capacity in bytes
     pub capacity_bytes: u64,
-    
+
     /// Used space in bytes
     pub used_bytes: u64,
 }
@@ -651,7 +661,6 @@ pub enum StorageAccess {
     },
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,7 +680,7 @@ mod tests {
         assert!(!DeviceState::Prepared.is_eligible());
         assert!(!DeviceState::HasData.is_eligible());
     }
-    
+
     #[test]
     fn test_manifest_creation() {
         let manifest = SeedBankManifest::new(
@@ -713,12 +722,23 @@ mod tests {
 
         // Simple seed bank
         let simple = SeedBankManifest::new("my-backup", "stone", "ext4", SeedBankVisibility::Open);
-        assert_eq!(simple.derive_mount_path(base), "/var/lib/zen-garden/mounts/my-backup");
+        assert_eq!(
+            simple.derive_mount_path(base),
+            "/var/lib/zen-garden/mounts/my-backup"
+        );
 
         // Replicated seed bank
         let replica = SeedBankManifest::new_replica(
-            "primary-backup", "primary", 2, "stone", "ext4", SeedBankVisibility::Open
+            "primary-backup",
+            "primary",
+            2,
+            "stone",
+            "ext4",
+            SeedBankVisibility::Open,
         );
-        assert_eq!(replica.derive_mount_path(base), "/var/lib/zen-garden/mounts/primary/replica-2");
+        assert_eq!(
+            replica.derive_mount_path(base),
+            "/var/lib/zen-garden/mounts/primary/replica-2"
+        );
     }
 }

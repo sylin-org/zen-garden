@@ -68,10 +68,16 @@ impl ConstraintViolation {
     /// Get human-readable error message
     pub fn message(&self) -> String {
         match self {
-            ConstraintViolation::MissingCpuFeature { required, cpu_model } => {
+            ConstraintViolation::MissingCpuFeature {
+                required,
+                cpu_model,
+            } => {
                 format!("Requires {} (CPU: {})", required.to_uppercase(), cpu_model)
             }
-            ConstraintViolation::InsufficientMemory { required, available } => {
+            ConstraintViolation::InsufficientMemory {
+                required,
+                available,
+            } => {
                 format!(
                     "Requires {}GB memory (Available: {}GB)",
                     required / 1024,
@@ -79,11 +85,7 @@ impl ConstraintViolation {
                 )
             }
             ConstraintViolation::IncompatibleArchitecture { required, current } => {
-                format!(
-                    "Requires {} (Current: {})",
-                    required.join(" or "),
-                    current
-                )
+                format!("Requires {} (Current: {})", required.join(" or "), current)
             }
         }
     }
@@ -133,12 +135,7 @@ pub fn check_constraints(
             .map(|f| f.iter().map(|s| s.as_str()).collect::<Vec<_>>())
             .unwrap_or_default();
 
-        let cpu_model = hardware
-            .hardware
-            .cpu
-            .model
-            .as_deref()
-            .unwrap_or("Unknown");
+        let cpu_model = hardware.hardware.cpu.model.as_deref().unwrap_or("Unknown");
 
         for required_feature in &requirements.cpu_features {
             // Normalize feature names (handle both "sse4_2" and "sse4.2" formats)
@@ -164,7 +161,7 @@ pub fn check_constraints(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use garden_common::{CpuCapabilities, HardwareInventory, MemoryCapabilities, DetectionStatus};
+    use garden_common::{CpuCapabilities, DetectionStatus, HardwareInventory, MemoryCapabilities};
 
     fn mock_hardware(
         cpu_features: Vec<String>,
@@ -183,7 +180,9 @@ mod tests {
                     architecture: architecture.to_string(),
                     features: Some(cpu_features),
                 },
-                memory: MemoryCapabilities { total_mb: memory_mb },
+                memory: MemoryCapabilities {
+                    total_mb: memory_mb,
+                },
                 gpus: vec![],
                 disk: None,
                 swap_mb: None,
@@ -227,7 +226,11 @@ mod tests {
         let result = check_constraints(&requirements, &hardware);
         assert!(result.is_err());
 
-        if let Err(ConstraintViolation::MissingCpuFeature { required, cpu_model }) = result {
+        if let Err(ConstraintViolation::MissingCpuFeature {
+            required,
+            cpu_model,
+        }) = result
+        {
             assert_eq!(required, "avx");
             assert_eq!(cpu_model, "Intel Celeron J4105");
         } else {
@@ -244,7 +247,11 @@ mod tests {
         let result = check_constraints(&requirements, &hardware);
         assert!(result.is_err());
 
-        if let Err(ConstraintViolation::InsufficientMemory { required, available }) = result {
+        if let Err(ConstraintViolation::InsufficientMemory {
+            required,
+            available,
+        }) = result
+        {
             assert_eq!(required, 8192);
             assert_eq!(available, 4096);
         } else {
@@ -272,12 +279,7 @@ mod tests {
     #[test]
     fn test_constraints_feature_normalization() {
         // Test that "sse4.2" matches "sse4_2"
-        let hardware = mock_hardware(
-            vec!["sse4_2".to_string()],
-            8192,
-            "x86_64",
-            "Intel Core i5",
-        );
+        let hardware = mock_hardware(vec!["sse4_2".to_string()], 8192, "x86_64", "Intel Core i5");
 
         let requirements = Requirements::new().require_cpu_feature("sse4.2");
 

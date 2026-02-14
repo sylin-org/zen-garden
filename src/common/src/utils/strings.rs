@@ -1,4 +1,4 @@
-﻿//! String utilities
+//! String utilities
 //!
 //! Helper functions for common string operations.
 
@@ -94,8 +94,9 @@ pub fn to_snake_case(s: &str) -> String {
 
 /// Check if string is a valid identifier (alphanumeric + underscore/hyphen)
 pub fn is_valid_identifier(s: &str) -> bool {
-    !s.is_empty() 
-        && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
         && !s.starts_with(|c: char| c.is_numeric())
 }
 
@@ -150,7 +151,7 @@ mod tests {
         assert!(is_valid_identifier("valid-name"));
         assert!(is_valid_identifier("valid123"));
         assert!(is_valid_identifier("_valid"));
-        
+
         assert!(!is_valid_identifier(""));
         assert!(!is_valid_identifier("123invalid"));
         assert!(!is_valid_identifier("invalid name"));

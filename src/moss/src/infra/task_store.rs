@@ -156,8 +156,8 @@ impl TaskStore {
                 .context("Failed to create tasks directory")?;
         }
 
-        let content = serde_json::to_string_pretty(registry)
-            .context("Failed to serialize task registry")?;
+        let content =
+            serde_json::to_string_pretty(registry).context("Failed to serialize task registry")?;
 
         // Atomic write
         let tmp_path = self.registry_path.with_extension("tmp");

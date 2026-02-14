@@ -1278,7 +1278,9 @@ async fn resolve_offering_for_capability(
 
     // Prefer a single running instance when multiple exist.
     let running: Vec<Offering> = matches
-        .iter().filter(|&o| o.status == OfferingStatus::Running).cloned()
+        .iter()
+        .filter(|&o| o.status == OfferingStatus::Running)
+        .cloned()
         .collect();
 
     let selected = if running.len() == 1 {

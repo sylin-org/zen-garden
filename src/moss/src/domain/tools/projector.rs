@@ -22,24 +22,25 @@ pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
         };
         let (tool_state, ready) = offering_readiness(offering);
 
-        let (protocol, uri_template) =
-            if let Some(manifest) = state.manifest_registry.get_offering(&offering.offering) {
-                let protocol = connection::infer_protocol_from_manifest_metadata(
-                    &offering.offering,
-                    &manifest.category,
-                    manifest.connection.as_ref(),
-                );
-                let template =
-                    connection::select_uri_template(manifest.connection.as_ref(), &manifest.category);
-                (protocol, template)
+        let (protocol, uri_template) = if let Some(manifest) =
+            state.manifest_registry.get_offering(&offering.offering)
+        {
+            let protocol = connection::infer_protocol_from_manifest_metadata(
+                &offering.offering,
+                &manifest.category,
+                manifest.connection.as_ref(),
+            );
+            let template =
+                connection::select_uri_template(manifest.connection.as_ref(), &manifest.category);
+            (protocol, template)
+        } else {
+            let location_protocol = offering.location.protocol.trim().to_ascii_lowercase();
+            if location_protocol.is_empty() {
+                ("tcp".to_string(), None)
             } else {
-                let location_protocol = offering.location.protocol.trim().to_ascii_lowercase();
-                if location_protocol.is_empty() {
-                    ("tcp".to_string(), None)
-                } else {
-                    (location_protocol, None)
-                }
-            };
+                (location_protocol, None)
+            }
+        };
 
         let connection = if offering.location.port > 0 {
             let resolved = connection::resolve_connection(

@@ -31,12 +31,19 @@ impl EventListener for SeedBankCacheListener {
     async fn on_event(&self, event: &DomainEvent) {
         if let DomainEvent::Storage(storage_event) = event {
             match storage_event {
-                StorageEvent::SeedBankDetected { name, device, mount_path, capacity_gb, .. } => {
+                StorageEvent::SeedBankDetected {
+                    name,
+                    device,
+                    mount_path,
+                    capacity_gb,
+                    ..
+                } => {
                     // Re-scan registry to get full SeedBankInfo
                     // This is acceptable here because it's event-driven, not on every portrait request
                     match SeedBankRegistry::scan().await {
                         Ok(registry) => {
-                            let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
+                            let banks: Vec<SeedBankInfo> =
+                                registry.list().into_iter().cloned().collect();
                             let count = banks.len();
                             let mut cache = self.cache.write().await;
                             *cache = banks;

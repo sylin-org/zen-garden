@@ -34,30 +34,25 @@ pub mod task_scheduler;
 pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
 pub use coordinator::{
-    start_all_background_tasks,
-    start_discovery_listener, start_hardware_detection,
-    start_registry_loader, start_catalog_builder,
-    start_health_monitor, start_auto_adoption, start_auto_adoption_with_config,
-    start_lantern_registration, start_topology_maintenance,
-    start_storage_maintenance,
+    start_all_background_tasks, start_auto_adoption, start_auto_adoption_with_config,
+    start_catalog_builder, start_discovery_listener, start_hardware_detection,
+    start_health_monitor, start_lantern_registration, start_registry_loader,
+    start_storage_maintenance, start_topology_maintenance,
 };
 pub use discovery::lantern_registration_loop;
+pub use docker_monitor::{DockerEvent, DockerMonitor, DockerMonitorConfig};
 pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{
-    install_service_task, install_batch_task,
-    build_guidance, backfill_missing_guidance,
-    build_adopted_guidance,
-    refresh_capabilities_task, add_capability_task,
+    add_capability_task, backfill_missing_guidance, build_adopted_guidance, build_guidance,
+    install_batch_task, install_service_task, refresh_capabilities_task,
 };
 pub use metrics_collector::run_metrics_collector;
-pub use network_monitor::{NetworkMonitor, NetworkMonitorConfig, NetworkEvent};
-pub use docker_monitor::{DockerMonitor, DockerMonitorConfig, DockerEvent};
+pub use network_monitor::{NetworkEvent, NetworkMonitor, NetworkMonitorConfig};
 pub use nurturing_scheduler::{
-    NurturingScheduler, NurturingWorkflowConfig, NurturingWorkflowResult,
-    ReplicationAttempt, RoutingStrategy, trigger_nurturing, trigger_all_nurturing,
+    trigger_all_nurturing, trigger_nurturing, NurturingScheduler, NurturingWorkflowConfig,
+    NurturingWorkflowResult, ReplicationAttempt, RoutingStrategy,
 };
 pub use task_scheduler::{
-    TaskSchedulerConfig, start_task_scheduler, backfill_missing_tasks,
-    run_scheduler_iteration,
+    backfill_missing_tasks, run_scheduler_iteration, start_task_scheduler, TaskSchedulerConfig,
 };

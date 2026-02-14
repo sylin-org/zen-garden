@@ -93,7 +93,9 @@ fn find_embedded_uri_scheme(template: &str) -> Option<String> {
             }
         }
 
-        let candidate = template[scheme_start..scheme_end].trim().to_ascii_lowercase();
+        let candidate = template[scheme_start..scheme_end]
+            .trim()
+            .to_ascii_lowercase();
         if is_literal_uri_scheme(&candidate) {
             return Some(candidate);
         }
@@ -449,11 +451,7 @@ mod tests {
             uri_template: Some("mongodb://{host}:{port}".to_string()),
             endpoints: std::collections::BTreeMap::new(),
         };
-        let protocol = infer_protocol_from_manifest_metadata(
-            "mongodb",
-            "data",
-            Some(&profile),
-        );
+        let protocol = infer_protocol_from_manifest_metadata("mongodb", "data", Some(&profile));
         assert_eq!(protocol, "mongodb");
     }
 

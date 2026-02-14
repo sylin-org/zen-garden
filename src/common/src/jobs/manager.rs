@@ -2,8 +2,8 @@
 
 use super::persistence::JsonJobPersistence;
 use super::types::{Job, JobId, JobInput, JobStatus};
-use crate::events::{EventBus, DomainEvent, JobEvent};
-use crate::traits::job_executor::{JobExecutor, JobExecutionError};
+use crate::events::{DomainEvent, EventBus, JobEvent};
+use crate::traits::job_executor::{JobExecutionError, JobExecutor};
 use crate::traits::persistence::PersistenceError;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -310,7 +310,11 @@ mod tests {
             &self.job_type
         }
 
-        async fn execute(&self, _job_id: &str, _input: Value) -> Result<JobResult, JobExecutionError> {
+        async fn execute(
+            &self,
+            _job_id: &str,
+            _input: Value,
+        ) -> Result<JobResult, JobExecutionError> {
             if self.should_succeed {
                 Ok(JobResult::success("Mock success"))
             } else {
@@ -366,9 +370,7 @@ mod tests {
         let manager = JobManager::new(persistence, event_bus);
 
         // Try to submit without registering executor
-        let result = manager
-            .submit("nonexistent-job", json!({}), None)
-            .await;
+        let result = manager.submit("nonexistent-job", json!({}), None).await;
 
         assert!(matches!(result, Err(JobManagerError::ExecutorNotFound(_))));
     }
@@ -387,7 +389,10 @@ mod tests {
         manager.register_executor(executor).await;
 
         // Submit first job and wait for it to be persisted
-        let job_id1 = manager.submit("test-job", json!({"a": 1}), None).await.unwrap();
+        let job_id1 = manager
+            .submit("test-job", json!({"a": 1}), None)
+            .await
+            .unwrap();
 
         // Wait for first job to complete before submitting second
         for _ in 0..20 {
@@ -400,7 +405,10 @@ mod tests {
         }
 
         // Submit second job
-        let job_id2 = manager.submit("test-job", json!({"b": 2}), None).await.unwrap();
+        let job_id2 = manager
+            .submit("test-job", json!({"b": 2}), None)
+            .await
+            .unwrap();
 
         // Wait for second job to complete
         for _ in 0..20 {

@@ -86,43 +86,43 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::adoption::list_borrowed_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name",
+            "/api/v1/stone/offerings/{name}",
             get(api::v1::offerings::get_offering_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name",
+            "/api/v1/stone/offerings/{name}",
             delete(api::v1::offerings::take_away_offering_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name/manifest",
+            "/api/v1/stone/offerings/{name}/manifest",
             get(api::v1::offerings::get_offering_manifest_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name/capabilities",
+            "/api/v1/stone/offerings/{name}/capabilities",
             get(api::v1::offering_capabilities::list_offering_capabilities_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name/capabilities",
+            "/api/v1/stone/offerings/{name}/capabilities",
             post(api::v1::offering_capabilities::add_offering_capability_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name/capabilities/refresh",
+            "/api/v1/stone/offerings/{name}/capabilities/refresh",
             post(api::v1::offering_capabilities::refresh_offering_capabilities_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name/capabilities/mirror",
+            "/api/v1/stone/offerings/{name}/capabilities/mirror",
             post(api::v1::offering_capabilities::mirror_offering_capabilities_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:name/capabilities/:capability",
+            "/api/v1/stone/offerings/{name}/capabilities/{capability}",
             delete(api::v1::offering_capabilities::remove_offering_capability_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:offering/adopt",
+            "/api/v1/stone/offerings/{offering}/adopt",
             post(api::v1::adoption::adopt_offering_v1),
         )
         .route(
-            "/api/v1/stone/offerings/:offering/adopt",
+            "/api/v1/stone/offerings/{offering}/adopt",
             delete(api::v1::adoption::unadopt_offering_v1),
         )
         .route(
@@ -130,7 +130,7 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::adoption::borrow_service_v1),
         )
         .route(
-            "/api/v1/stone/offerings/borrow/:name",
+            "/api/v1/stone/offerings/borrow/{name}",
             delete(api::v1::adoption::unborrow_service_v1),
         )
         // Stone services (running containers on THIS stone)
@@ -159,47 +159,47 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::services::refresh_all_capabilities_v1),
         )
         .route(
-            "/api/v1/stone/services/:name/manifest",
+            "/api/v1/stone/services/{name}/manifest",
             get(api::v1::services::get_manifest_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/capabilities",
+            "/api/v1/stone/services/{service}/capabilities",
             get(api::v1::services::discover_service_capabilities_v1),
         )
         .route(
-            "/api/v1/stone/services/:service",
+            "/api/v1/stone/services/{service}",
             get(api::v1::services::get_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service",
+            "/api/v1/stone/services/{service}",
             delete(api::v1::services::delete_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/logs",
+            "/api/v1/stone/services/{service}/logs",
             get(api::v1::services::stream_service_logs_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/restart",
+            "/api/v1/stone/services/{service}/restart",
             post(api::v1::services::restart_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/rest",
+            "/api/v1/stone/services/{service}/rest",
             post(api::v1::services::rest_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/wake",
+            "/api/v1/stone/services/{service}/wake",
             post(api::v1::services::wake_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/nourish",
+            "/api/v1/stone/services/{service}/nourish",
             post(api::v1::services::nourish_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/destroy",
+            "/api/v1/stone/services/{service}/destroy",
             post(api::v1::services::destroy_service_v1),
         )
         .route(
-            "/api/v1/stone/services/:service/cordon",
+            "/api/v1/stone/services/{service}/cordon",
             post(api::v1::services::cordon_service_v1),
         )
         // Stone Companions (Cricket, Firefly, etc.)
@@ -212,19 +212,19 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::companions::refresh_companions),
         )
         .route(
-            "/api/v1/stone/companions/:id",
+            "/api/v1/stone/companions/{id}",
             get(api::v1::companions::get_companion_manifest),
         )
         .route(
-            "/api/v1/stone/companions/:id/command",
+            "/api/v1/stone/companions/{id}/command",
             post(api::v1::companions::send_companion_command),
         )
         .route(
-            "/api/v1/stone/companions/:id/up",
+            "/api/v1/stone/companions/{id}/up",
             post(api::v1::companions::start_companion),
         )
         .route(
-            "/api/v1/stone/companions/:id/down",
+            "/api/v1/stone/companions/{id}/down",
             post(api::v1::companions::stop_companion),
         )
         // Stone storage (seed banks on THIS stone)
@@ -253,39 +253,39 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::storage::list_banks_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id",
+            "/api/v1/stone/storage/bank/{id}",
             get(api::v1::storage::get_bank_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id",
+            "/api/v1/stone/storage/bank/{id}",
             delete(api::v1::storage::delete_bank_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/visibility",
+            "/api/v1/stone/storage/bank/{id}/visibility",
             patch(api::v1::storage::set_visibility_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/rename",
+            "/api/v1/stone/storage/bank/{id}/rename",
             patch(api::v1::storage::rename_bank_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/release",
+            "/api/v1/stone/storage/bank/{id}/release",
             post(api::v1::storage::release_bank_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/*path",
+            "/api/v1/stone/storage/bank/{id}/{*path}",
             get(api::v1::storage::get_object_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/*path",
+            "/api/v1/stone/storage/bank/{id}/{*path}",
             put(api::v1::storage::put_object_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/*path",
+            "/api/v1/stone/storage/bank/{id}/{*path}",
             delete(api::v1::storage::delete_object_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/:id/*path",
+            "/api/v1/stone/storage/bank/{id}/{*path}",
             head(api::v1::storage::head_object_v1),
         )
         // Stone presence (PRESENCE-0001)
@@ -307,18 +307,12 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::nourishment::execute_stone),
         )
         .route(
-            "/api/v1/stone/nourishment/stream/:job_id",
+            "/api/v1/stone/nourishment/stream/{job_id}",
             get(api::v1::nourishment::stream_status),
         )
         // Stone logs (daemon log access)
-        .route(
-            "/api/v1/stone/logs",
-            get(api::v1::logs::get_recent_logs),
-        )
-        .route(
-            "/api/v1/stone/logs/stream",
-            get(api::v1::logs::stream_logs),
-        )
+        .route("/api/v1/stone/logs", get(api::v1::logs::get_recent_logs))
+        .route("/api/v1/stone/logs/stream", get(api::v1::logs::stream_logs))
         // Stone maintenance (caretaking sweeps)
         .route(
             "/api/v1/stone/maintenance/history",
@@ -334,24 +328,24 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::nurturing::list_nurturing),
         )
         .route(
-            "/api/v1/stone/nurturing/:offering",
+            "/api/v1/stone/nurturing/{offering}",
             get(api::v1::nurturing::get_offering_slots),
         )
         .route(
-            "/api/v1/stone/nurturing/:offering",
+            "/api/v1/stone/nurturing/{offering}",
             post(api::v1::nurturing::create_snapshot),
         )
         .route(
-            "/api/v1/stone/nurturing/:offering",
+            "/api/v1/stone/nurturing/{offering}",
             delete(api::v1::nurturing::delete_nurturing),
         )
         .route(
-            "/api/v1/stone/nurturing/:offering/restore",
+            "/api/v1/stone/nurturing/{offering}/restore",
             post(api::v1::nurturing::restore_snapshot),
         )
         // Stone nurturing - timer triggers (for systemd/Task Scheduler)
         .route(
-            "/api/v1/nurturing/:offering/trigger",
+            "/api/v1/nurturing/{offering}/trigger",
             post(api::v1::nurturing::trigger_offering_nurturing),
         )
         .route(
@@ -360,15 +354,15 @@ pub fn configure(state: AppState) -> Router {
         )
         // Stone nurturing - seed bank integration (remote backup)
         .route(
-            "/api/v1/stone/nurturing/:offering/replicate",
+            "/api/v1/stone/nurturing/{offering}/replicate",
             post(api::v1::nurturing::replicate_to_seed_bank),
         )
         .route(
-            "/api/v1/stone/nurturing/:offering/restore-remote",
+            "/api/v1/stone/nurturing/{offering}/restore-remote",
             post(api::v1::nurturing::restore_from_seed_bank),
         )
         .route(
-            "/api/v1/stone/nurturing/remote/:seed_bank",
+            "/api/v1/stone/nurturing/remote/{seed_bank}",
             get(api::v1::nurturing::list_remote_snapshots),
         )
         // ══════════════════════════════════════════════════════════════════
@@ -381,7 +375,7 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::garden::get_topology_v1),
         )
         .route(
-            "/api/v1/garden/stones/:stone_name",
+            "/api/v1/garden/stones/{stone_name}",
             get(api::v1::garden::get_stone_v1),
         )
         .route(
@@ -413,23 +407,23 @@ pub fn configure(state: AppState) -> Router {
         // Garden storage (S3-compatible interface)
         .route("/api/v1/storage/s3", get(api::v1::s3_gateway::list_buckets))
         .route(
-            "/api/v1/storage/s3/:bucket",
+            "/api/v1/storage/s3/{bucket}",
             get(api::v1::s3_gateway::list_objects),
         )
         .route(
-            "/api/v1/storage/s3/:bucket/*key",
+            "/api/v1/storage/s3/{bucket}/{*key}",
             put(api::v1::s3_gateway::put_object),
         )
         .route(
-            "/api/v1/storage/s3/:bucket/*key",
+            "/api/v1/storage/s3/{bucket}/{*key}",
             get(api::v1::s3_gateway::get_object),
         )
         .route(
-            "/api/v1/storage/s3/:bucket/*key",
+            "/api/v1/storage/s3/{bucket}/{*key}",
             head(api::v1::s3_gateway::head_object),
         )
         .route(
-            "/api/v1/storage/s3/:bucket/*key",
+            "/api/v1/storage/s3/{bucket}/{*key}",
             delete(api::v1::s3_gateway::delete_object),
         )
         // Garden storage (REST interface for SDKs)
@@ -438,33 +432,33 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::storage_gateway::list_buckets),
         )
         .route(
-            "/api/v1/storage/*path",
+            "/api/v1/storage/{*path}",
             get(api::v1::storage_gateway::get_object),
         )
         .route(
-            "/api/v1/storage/*path",
+            "/api/v1/storage/{*path}",
             put(api::v1::storage_gateway::put_object),
         )
         .route(
-            "/api/v1/storage/*path",
+            "/api/v1/storage/{*path}",
             head(api::v1::storage_gateway::head_object),
         )
         .route(
-            "/api/v1/storage/*path",
+            "/api/v1/storage/{*path}",
             delete(api::v1::storage_gateway::delete_object),
         )
         // Garden memories (read-only backups for hydration)
         .route("/api/v1/memories", get(api::v1::memories::list_memories))
         .route(
-            "/api/v1/memories/:offering_id/manifest",
+            "/api/v1/memories/{offering_id}/manifest",
             get(api::v1::memories::get_offering_manifest),
         )
         .route(
-            "/api/v1/memories/:offering_id/:harvest_id",
+            "/api/v1/memories/{offering_id}/{harvest_id}",
             get(api::v1::memories::download_snapshot),
         )
         .route(
-            "/api/v1/memories/:offering_id",
+            "/api/v1/memories/{offering_id}",
             get(api::v1::memories::list_offering_snapshots),
         )
         // ══════════════════════════════════════════════════════════════════
@@ -472,7 +466,7 @@ pub fn configure(state: AppState) -> Router {
         // Note: Event streaming consolidated to /api/v1/stone/presence/stream
         // ══════════════════════════════════════════════════════════════════
         .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
-        .route("/api/v1/jobs/:job_id", get(api::v1::jobs::get_job_status))
+        .route("/api/v1/jobs/{job_id}", get(api::v1::jobs::get_job_status))
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/helpers/* - Internal utility endpoints
         // ══════════════════════════════════════════════════════════════════
@@ -502,7 +496,7 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
         .route(
-            "/api/v1/pond/stones/:stone_name",
+            "/api/v1/pond/stones/{stone_name}",
             delete(api::v1::pond::pond_untrust_v1),
         )
         .route("/api/v1/pond/status", get(api::v1::pond::pond_status_v1))
@@ -537,7 +531,7 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::admin::stone_reboot),
         )
         .route(
-            "/api/v1/admin/stone/:name/wake",
+            "/api/v1/admin/stone/{name}/wake",
             post(api::v1::admin::stone_wake),
         )
         // ══════════════════════════════════════════════════════════════════

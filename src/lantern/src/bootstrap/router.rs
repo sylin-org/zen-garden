@@ -21,11 +21,14 @@ pub fn configure(state: AppState) -> Router {
         // ── Garden aggregation endpoints ─────────────────────────────
         .route("/api/v1/garden/stones", get(v1::stones::get_stones))
         .route(
-            "/api/v1/garden/stones/:stone_id",
+            "/api/v1/garden/stones/{stone_id}",
             get(v1::stones::get_stone_detail),
         )
         .route("/api/v1/garden/topology", get(v1::stones::get_topology))
-        .route("/api/v1/garden/offerings", get(v1::offerings::get_offerings))
+        .route(
+            "/api/v1/garden/offerings",
+            get(v1::offerings::get_offerings),
+        )
         .route("/api/v1/garden/seeds", get(v1::seeds::get_seeds))
         .route("/api/v1/garden/pond", get(v1::pond::get_pond))
         .route("/api/v1/garden/activity", get(v1::activity::get_activity))
@@ -36,32 +39,32 @@ pub fn configure(state: AppState) -> Router {
         )
         // ── Action proxying ──────────────────────────────────────────
         .route(
-            "/api/v1/garden/stones/:stone_id/services/:svc/rest",
+            "/api/v1/garden/stones/{stone_id}/services/{svc}/rest",
             post(v1::actions::post_service_rest),
         )
         .route(
-            "/api/v1/garden/stones/:stone_id/services/:svc/wake",
+            "/api/v1/garden/stones/{stone_id}/services/{svc}/wake",
             post(v1::actions::post_service_wake),
         )
         .route(
-            "/api/v1/garden/stones/:stone_id/offerings",
+            "/api/v1/garden/stones/{stone_id}/offerings",
             post(v1::actions::post_deploy_offering),
         )
         .route(
-            "/api/v1/garden/stones/:stone_id/offerings/:name",
+            "/api/v1/garden/stones/{stone_id}/offerings/{name}",
             delete(v1::actions::delete_offering),
         )
         .route(
-            "/api/v1/garden/stones/:stone_id/companions",
+            "/api/v1/garden/stones/{stone_id}/companions",
             get(v1::companions::get_companions),
         )
         .route(
-            "/api/v1/garden/stones/:stone_id/companions/:cid/command",
+            "/api/v1/garden/stones/{stone_id}/companions/{cid}/command",
             post(v1::actions::post_companion_command),
         )
         // ── SPA static files ─────────────────────────────────────────
         .route("/", get(v1::spa::serve_index))
-        .route("/assets/*path", get(v1::spa::serve_spa))
+        .route("/assets/{*path}", get(v1::spa::serve_spa))
         // SPA fallback: any non-API path serves index.html for client-side routing
         .fallback(get(v1::spa::serve_index))
         // ── Middleware ────────────────────────────────────────────────

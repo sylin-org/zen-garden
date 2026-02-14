@@ -9,9 +9,7 @@
 /samples
 
 # Runtime artifacts (generated during operation)
-.zen-garden/capabilities.json
-.zen-garden/offerings_cache.json
-.zen-garden/adapter-ports.json
+.zen-garden/
 rake-errors.txt
 /docs/presentations/node_modules
 

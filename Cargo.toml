@@ -35,6 +35,8 @@ serde_json = "1.0"
 thiserror = "2"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 koi-embedded = { path = "../koi/crates/koi-embedded" }
+koi-certmesh = { path = "../koi/crates/koi-certmesh" }
+koi-crypto = { path = "../koi/crates/koi-crypto" }
 # Minimal tokio features - each crate adds what it needs
 tokio = { version = "1.35", features = ["sync", "time", "macros"] }
 tracing = "0.1"

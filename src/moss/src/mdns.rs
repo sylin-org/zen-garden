@@ -5,6 +5,7 @@
 //! Koi handles service registration, lease management, and browse internally.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use garden_common::constants::MDNS_SERVICE_TYPE;
@@ -27,6 +28,8 @@ pub struct MdnsHandle {
     version: String,
     /// Current health status (updated on transitions)
     health: std::sync::RwLock<String>,
+    /// Pond active flag — shared with AppState for TXT property updates
+    pond_active: Arc<AtomicBool>,
 }
 
 impl MdnsHandle {
@@ -60,6 +63,7 @@ impl MdnsHandle {
             &self.version,
             &self.health.read().unwrap_or_else(|e| e.into_inner()),
             self.port,
+            self.pond_active.load(Ordering::Relaxed),
         );
 
         let result = mdns.register(koi_embedded::RegisterPayload {
@@ -165,6 +169,7 @@ impl Drop for MdnsHandle {
 ///
 /// If `current_ip` is a loopback address, the handle is created but
 /// registration is deferred until a valid IP is available (via `reregister()`).
+#[allow(clippy::too_many_arguments)]
 pub async fn announce_moss(
     koi_handle: Arc<KoiHandle>,
     stone_id: Option<&str>,
@@ -173,6 +178,7 @@ pub async fn announce_moss(
     mac: Option<&str>,
     current_ip: &str,
     version: &str,
+    pond_active: Arc<AtomicBool>,
 ) -> anyhow::Result<MdnsHandle> {
     let handle = MdnsHandle {
         koi: koi_handle,
@@ -182,6 +188,7 @@ pub async fn announce_moss(
         port,
         version: version.to_string(),
         health: std::sync::RwLock::new("healthy".to_string()),
+        pond_active,
     };
 
     // Gate: Don't advertise if we have a loopback IP
@@ -269,6 +276,7 @@ pub fn build_txt_properties(
     version: &str,
     health: &str,
     api_port: u16,
+    pond_active: bool,
 ) -> HashMap<String, String> {
     let mut properties = HashMap::new();
     if let Some(id) = stone_id {
@@ -280,6 +288,17 @@ pub fn build_txt_properties(
     properties.insert("api_port".to_string(), api_port.to_string());
     if let Some(mac_addr) = mac {
         properties.insert("mac".to_string(), mac_addr.to_string());
+    }
+    // Pond TXT properties — advertise pond membership and HTTPS port
+    if pond_active {
+        properties.insert(
+            garden_common::constants::TXT_POND.to_string(),
+            garden_common::constants::POND_ACTIVE.to_string(),
+        );
+        properties.insert(
+            garden_common::constants::TXT_HTTPS_PORT.to_string(),
+            garden_common::constants::MOSS_HTTPS.to_string(),
+        );
     }
     properties
 }

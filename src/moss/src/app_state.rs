@@ -141,6 +141,10 @@ pub struct AppState {
     /// Shared across all subsystems; sub-handles accessed via `koi_handle.mdns()`, `.dns()`, etc.
     pub koi_handle: Arc<koi_embedded::KoiHandle>,
 
+    /// Pond active flag — true when certmesh CA is initialized and unlocked.
+    /// Cached for fast checks (chirp signing, HTTPS routing). Updated by pond handlers.
+    pub pond_active: Arc<std::sync::atomic::AtomicBool>,
+
     // === Ceremony Infrastructure ===
     /// Active ceremony registry (in-memory state)
     pub ceremony_registry: Arc<CeremonyRegistry>,

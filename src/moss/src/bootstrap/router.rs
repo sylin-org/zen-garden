@@ -495,11 +495,14 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/pond", delete(api::v1::pond::pond_remove_v1))
         .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
+        .route("/api/v1/pond/unlock", post(api::v1::pond::pond_unlock_v1))
+        .route("/api/v1/pond/promote", post(api::v1::pond::pond_promote_v1))
         .route(
             "/api/v1/pond/stones/{stone_name}",
             delete(api::v1::pond::pond_untrust_v1),
         )
         .route("/api/v1/pond/status", get(api::v1::pond::pond_status_v1))
+        .route("/api/v1/pond/ca.pem", get(api::v1::pond::pond_ca_cert_v1))
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/console/* - Console control
         // ══════════════════════════════════════════════════════════════════

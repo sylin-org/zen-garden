@@ -39,6 +39,22 @@ pub const MOSS_HTTP: u16 = 7185;
 /// HTTP port for Lantern API
 pub const LANTERN_HTTP: u16 = 7186;
 
+/// HTTPS port for Moss API (when pond is active)
+pub const MOSS_HTTPS: u16 = 7187;
+
+// ============================================================================
+// Pond / mDNS TXT Keys
+// ============================================================================
+
+/// mDNS TXT key: pond state ("active" or absent)
+pub const TXT_POND: &str = "pond";
+
+/// mDNS TXT key: HTTPS port advertised when pond is active
+pub const TXT_HTTPS_PORT: &str = "https_port";
+
+/// mDNS TXT value: pond is active (certmesh CA initialized and unlocked)
+pub const POND_ACTIVE: &str = "active";
+
 // ============================================================================
 // Component Names
 // ============================================================================

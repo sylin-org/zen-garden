@@ -4,6 +4,14 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-16
+
+- Phase 2: Pond Security via Certmesh — rewired all pond handlers from stubs to live koi-certmesh ops
+- Enabled certmesh in Koi embedded builder (init, status, enroll, unlock, destroy, revoke, promote)
+- Added pond unlock, promote, ca.pem routes; Rake CLI gains unlock/promote/invite --passphrase
+- mDNS TXT now advertises pond + https_port when pond is active; pond_active seeded at startup
+- Added koi-certmesh, koi-crypto, tower dependencies to workspace and moss crate
+
 ## 2026-02-15
 
 - Embedded koi-embedded for unified mDNS: replaced platform-split mdns-sd + KoiClient HTTP with single KoiHandle

@@ -286,11 +286,16 @@ pub async fn run(
         }
     }
 
-    // Phase 4: Initialize Koi embedded (mDNS + all capabilities ready for future phases)
-    // All capabilities are enabled so their dependencies compile in; inactive ones
-    // (certmesh, dns, proxy, health) remain dormant until explicitly started in later phases.
+    // Phase 4: Initialize Koi embedded (mDNS + certmesh + capabilities)
+    // Certmesh is now enabled for Pond security (CA lifecycle, enrollment, certs).
+    // Other capabilities (dns, proxy, health) remain dormant until explicitly started.
     let koi_data_dir =
         std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi");
+
+    // Shared pond state flag — created before mDNS so both MdnsHandle and AppState
+    // observe the same value. Handlers flip this after init/unlock/destroy.
+    let pond_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let koi_handle = {
         let koi = koi_embedded::Builder::new()
             .data_dir(koi_data_dir)
@@ -298,7 +303,7 @@ pub async fn run(
             .mdns(true)
             .dns_enabled(false)
             .health(false)
-            .certmesh(false)
+            .certmesh(true)
             .proxy(false)
             .events(|event| {
                 tracing::debug!(?event, "koi event");
@@ -311,9 +316,24 @@ pub async fn run(
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start Koi embedded: {}", e))?;
 
-        tracing::info!("Koi embedded started (mDNS active)");
+        tracing::info!("Koi embedded started (mDNS + certmesh active)");
         Arc::new(handle)
     };
+
+    // Phase 4.0.1: Seed pond_active from persisted certmesh state
+    // If the CA was previously initialized, the flag starts true (but CA may be locked).
+    // Unlock is required after restart — handlers check locked state separately.
+    if let Ok(cm) = koi_handle.certmesh() {
+        if let Ok(core) = cm.core() {
+            let status = core.certmesh_status().await;
+            if status.ca_initialized && !status.ca_locked {
+                pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
+                tracing::info!("Pond active — CA initialized and unlocked from previous session");
+            } else if status.ca_initialized {
+                tracing::info!("Pond CA exists but is locked — run 'garden-rake pond unlock'");
+            }
+        }
+    }
 
     // Phase 4.1: mDNS announcement — includes stone_id and MAC in TXT records
     // Must happen before IP change handler so we can pass the handle
@@ -328,6 +348,7 @@ pub async fn run(
         mac_for_mdns.as_deref(),
         &current_ip, // Gate: won't register if loopback
         crate::cli::VERSION,
+        pond_active.clone(),
     )
     .await
     {
@@ -478,6 +499,7 @@ pub async fn run(
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
+        pond_active: pond_active.clone(),
         ceremony_registry,
         ceremony_journal,
         harvest_store,

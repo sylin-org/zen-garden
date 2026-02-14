@@ -1094,22 +1094,41 @@ enum PondAction {
         /// Passphrase for encrypting pond certificate
         #[arg(long)]
         passphrase: Option<String>,
+        /// Trust profile: just-me, my-team, my-organization
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Show pond status
     Status,
-    /// Generate invitation code
-    Invite,
-    /// Join pond with invitation code
+    /// Generate TOTP invitation for enrollment
+    Invite {
+        /// Passphrase (needed to rotate auth and open enrollment)
+        #[arg(long)]
+        passphrase: Option<String>,
+    },
+    /// Join pond with TOTP code
     Join {
-        /// TOTP invitation code
+        /// TOTP code from authenticator app
         code: String,
     },
-    /// Remove pond from this stone
+    /// Unlock pond CA after restart
+    Unlock {
+        /// Passphrase to decrypt the CA key
+        #[arg(long)]
+        passphrase: Option<String>,
+    },
+    /// Drain pond (destroy CA and all certificates)
     Remove,
-    /// Remove a stone from the pond
+    /// Revoke a stone from the pond
     Untrust {
-        /// Stone name to remove
+        /// Stone name to revoke
         stone_name: String,
+    },
+    /// Promote this stone to standby CA
+    Promote {
+        /// Passphrase for CA key decryption during promotion
+        #[arg(long)]
+        passphrase: Option<String>,
     },
 }
 
@@ -2443,12 +2462,20 @@ async fn async_main() -> anyhow::Result<()> {
             Commands::Pond { action, at } => {
                 use commands::management::PondActionType;
                 let action_type = match action {
-                    PondAction::Init { passphrase } => PondActionType::Init { passphrase },
+                    PondAction::Init {
+                        passphrase,
+                        profile,
+                    } => PondActionType::Init {
+                        passphrase,
+                        profile,
+                    },
                     PondAction::Status => PondActionType::Status,
-                    PondAction::Invite => PondActionType::Invite,
+                    PondAction::Invite { passphrase } => PondActionType::Invite { passphrase },
                     PondAction::Join { code } => PondActionType::Join { code },
+                    PondAction::Unlock { passphrase } => PondActionType::Unlock { passphrase },
                     PondAction::Remove => PondActionType::Remove,
                     PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },
+                    PondAction::Promote { passphrase } => PondActionType::Promote { passphrase },
                 };
                 let cmd = commands::management::PondCommand::new(action_type, quiet_mode);
                 dispatch::dispatch(

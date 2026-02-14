@@ -392,6 +392,7 @@ function Get-ExternalTools {
             Destination  = $Config.externalTools.destination
             ManifestPath = $manifestPath
             Manifest     = $manifest
+            Retired      = [bool]($manifest.retired -eq $true)
         }
     }
 
@@ -405,6 +406,7 @@ function Copy-ExternalToolToStaging {
     .DESCRIPTION
         Locates the pre-built binary from the tool's local dist path and copies
         it to the package staging directory under bin/tools/.
+        For retired tools, stages a .retired marker instead of the binary.
     #>
     [CmdletBinding()]
     param(
@@ -418,6 +420,17 @@ function Copy-ExternalToolToStaging {
         [ValidateSet('linux', 'windows')]
         [string]$Platform
     )
+
+    $destDir = Join-Path $StagingRoot $Tool.Destination
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+
+    # Retired tools: stage a .retired marker so Moss will uninstall and remove the old binary
+    if ($Tool.Retired) {
+        $markerPath = Join-Path $destDir "$($Tool.Binary).retired"
+        Set-Content -Path $markerPath -Value "Retired: $($Tool.Manifest.retiredReason)" -NoNewline
+        Write-Host "  ~ $($Tool.Destination)$($Tool.Binary).retired (retired tool)" -ForegroundColor DarkYellow
+        return $true
+    }
 
     if (-not $Tool.LocalDist) {
         Write-Warning "External tool '$($Tool.Name)': no localDist configured, skipping"

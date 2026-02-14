@@ -34,47 +34,47 @@ fn log_update(msg: &str) {
 /// 5. Self-cleanup
 #[cfg(target_os = "windows")]
 pub async fn spawn_windows_updater() -> anyhow::Result<()> {
-    use std::process::Command;
     use anyhow::Context;
+    use std::process::Command;
 
     log_update("=== spawn_windows_updater: STARTED ===");
-    
-    let current_exe = std::env::current_exe()
-        .context("Failed to get current executable path")?;
+
+    let current_exe = std::env::current_exe().context("Failed to get current executable path")?;
     log_update(&format!("Current exe: {:?}", current_exe));
-    
-    let exe_dir = current_exe.parent()
+
+    let exe_dir = current_exe
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
     log_update(&format!("Exe directory: {:?}", exe_dir));
-    
+
     let temp_updater = exe_dir.join("garden-moss-temp.exe");
     log_update(&format!("Temp updater path: {:?}", temp_updater));
-    
+
     tracing::info!(
         source = ?current_exe,
         temp = ?temp_updater,
         "Copying self to temporary updater"
     );
-    
+
     // Copy current executable to temp location
     log_update("Copying current exe to temp...");
     std::fs::copy(&current_exe, &temp_updater)
         .context("Failed to copy executable to temp location")?;
     log_update("Copy successful!");
-    
+
     // Spawn updater process (detached, does not wait)
     tracing::info!("Spawning updater process: garden-moss-temp.exe --update-finalize");
     log_update("Spawning temp updater with --update-finalize");
-    
+
     let child = Command::new(&temp_updater)
         .arg("--update-finalize")
         .spawn()
         .context("Failed to spawn updater process")?;
-    
+
     log_update(&format!("Updater spawned with PID: {:?}", child.id()));
     tracing::info!("Updater spawned successfully, shutdown will be triggered");
     log_update("=== spawn_windows_updater: COMPLETE ===");
-    
+
     Ok(())
 }
 
@@ -92,8 +92,8 @@ pub async fn spawn_windows_updater() -> anyhow::Result<()> {
 /// - `sc delete ZenGardenMoss` - Remove service (uproot)
 #[cfg(target_os = "windows")]
 pub async fn install_windows_service() -> anyhow::Result<()> {
-    use std::process::Command;
     use std::path::PathBuf;
+    use std::process::Command;
 
     println!("🌱 Taking root as Windows service...");
     println!();
@@ -214,8 +214,8 @@ pub async fn install_windows_service() -> anyhow::Result<()> {
 /// Waits for the old process to exit, installs staged binaries, and restarts.
 #[cfg(target_os = "windows")]
 pub async fn finalize_service_update() -> anyhow::Result<()> {
-    use std::process::Command;
     use std::path::Path;
+    use std::process::Command;
 
     log_update("=== finalize_service_update: STARTED ===");
     println!("Finalizing Moss update...");
@@ -223,7 +223,9 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()?;
     log_update(&format!("Current exe: {:?}", current_exe));
 
-    let exe_dir = current_exe.parent().ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    let exe_dir = current_exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
     log_update(&format!("Exe directory (install dir): {:?}", exe_dir));
 
     // Staged binaries are in data_dir/staging/validated/bin/
@@ -235,7 +237,10 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
 
     if !staging_bin_dir.exists() {
         log_update("ERROR: Staging bin directory does not exist");
-        return Err(anyhow::anyhow!("Staging bin directory not found: {:?}", staging_bin_dir));
+        return Err(anyhow::anyhow!(
+            "Staging bin directory not found: {:?}",
+            staging_bin_dir
+        ));
     }
 
     // Wait for old process to exit (up to 30 seconds)
@@ -270,8 +275,10 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         if let Ok(entries) = std::fs::read_dir(&existing_tools_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let tool_path = entry.path();
-                if tool_path.is_file() && tool_path.extension().map(|e| e == "exe").unwrap_or(false) {
-                    let tool_name = tool_path.file_stem()
+                if tool_path.is_file() && tool_path.extension().map(|e| e == "exe").unwrap_or(false)
+                {
+                    let tool_name = tool_path
+                        .file_stem()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
@@ -283,6 +290,54 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         }
         // Brief settle time for services to release file handles
         std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    // Remove retired tools: check staging for .retired markers and delete installed binaries.
+    // This handles tools that were replaced by embedded functionality (e.g., koi → koi-embedded).
+    let staging_tools_dir = staging_bin_dir.join("tools");
+    if staging_tools_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&staging_tools_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let marker_path = entry.path();
+                if marker_path
+                    .extension()
+                    .map(|e| e == "retired")
+                    .unwrap_or(false)
+                {
+                    let tool_name = marker_path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    log_update(&format!("Retiring external tool: {}", tool_name));
+                    println!("  Retiring tool: {} (replaced by embedded)", tool_name);
+
+                    // Delete the installed binary
+                    let installed_exe = existing_tools_dir.join(format!("{}.exe", tool_name));
+                    if installed_exe.exists() {
+                        match std::fs::remove_file(&installed_exe) {
+                            Ok(_) => {
+                                log_update(&format!(
+                                    "Removed retired tool binary: {:?}",
+                                    installed_exe
+                                ));
+                                println!("  ✓ {} removed", tool_name);
+                            }
+                            Err(e) => {
+                                log_update(&format!(
+                                    "Failed to remove retired tool {}: {}",
+                                    tool_name, e
+                                ));
+                                eprintln!("  ⚠ {} removal failed: {}", tool_name, e);
+                            }
+                        }
+                    }
+
+                    // Remove the marker itself so it doesn't linger
+                    let _ = std::fs::remove_file(&marker_path);
+                }
+            }
+        }
     }
 
     // Copy all staged binaries to install directory
@@ -314,10 +369,17 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
                 // All subdirectories go to data_dir (e.g., .zen-garden/Companions)
                 let data_dir_str = garden_common::constants::paths::data_dir();
                 let subdir_dest = Path::new(&data_dir_str).join(&file_name);
-                log_update(&format!("Copying subdir {:?} -> {:?}", src_path, subdir_dest));
+                log_update(&format!(
+                    "Copying subdir {:?} -> {:?}",
+                    src_path, subdir_dest
+                ));
 
                 // Recursively copy directory
-                fn copy_dir_recursive(src: &Path, dest: &Path, log_fn: &dyn Fn(&str)) -> std::io::Result<u32> {
+                fn copy_dir_recursive(
+                    src: &Path,
+                    dest: &Path,
+                    log_fn: &dyn Fn(&str),
+                ) -> std::io::Result<u32> {
                     let mut count = 0;
                     if !dest.exists() {
                         std::fs::create_dir_all(dest)?;
@@ -343,7 +405,11 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
                         println!("  ✓ {}/ ({} files)", file_name.to_string_lossy(), count);
                     }
                     Err(e) => {
-                        log_update(&format!("ERROR copying {}: {}", file_name.to_string_lossy(), e));
+                        log_update(&format!(
+                            "ERROR copying {}: {}",
+                            file_name.to_string_lossy(),
+                            e
+                        ));
                         eprintln!("  ✗ {}/ - {}", file_name.to_string_lossy(), e);
                     }
                 }
@@ -359,7 +425,10 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
     // Convention: each .exe in tools/ supports `{exe} install` for service registration + start.
     let installed_tools_dir = Path::new(&garden_common::constants::paths::data_dir()).join("tools");
     if installed_tools_dir.exists() {
-        log_update(&format!("Installing external tools from: {:?}", installed_tools_dir));
+        log_update(&format!(
+            "Installing external tools from: {:?}",
+            installed_tools_dir
+        ));
         println!("Installing external tools...");
 
         let mut tools_ok: u32 = 0;
@@ -368,11 +437,13 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         if let Ok(entries) = std::fs::read_dir(&installed_tools_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let tool_path = entry.path();
-                if tool_path.is_file() && tool_path.extension().map(|e| e == "exe").unwrap_or(false) {
-                    let tool_name = tool_path.file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    log_update(&format!("Installing external tool: {} ({:?})", tool_name, tool_path));
+                if tool_path.is_file() && tool_path.extension().map(|e| e == "exe").unwrap_or(false)
+                {
+                    let tool_name = tool_path.file_stem().unwrap_or_default().to_string_lossy();
+                    log_update(&format!(
+                        "Installing external tool: {} ({:?})",
+                        tool_name, tool_path
+                    ));
                     println!("  Installing tool: {}...", tool_name);
 
                     match Command::new(&tool_path).arg("install").output() {
@@ -384,8 +455,16 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
                         Ok(output) => {
                             let stderr = String::from_utf8_lossy(&output.stderr);
                             let stdout = String::from_utf8_lossy(&output.stdout);
-                            log_update(&format!("Tool {} install returned non-zero: {} {}", tool_name, stdout, stderr));
-                            eprintln!("  ⚠ {} install: {} {}", tool_name, stdout.trim(), stderr.trim());
+                            log_update(&format!(
+                                "Tool {} install returned non-zero: {} {}",
+                                tool_name, stdout, stderr
+                            ));
+                            eprintln!(
+                                "  ⚠ {} install: {} {}",
+                                tool_name,
+                                stdout.trim(),
+                                stderr.trim()
+                            );
                             tools_err += 1;
                         }
                         Err(e) => {
@@ -401,9 +480,15 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         if tools_err == 0 {
             println!("✓ External tools: {} installed", tools_ok);
         } else {
-            println!("⚠ External tools: {} installed, {} failed", tools_ok, tools_err);
+            println!(
+                "⚠ External tools: {} installed, {} failed",
+                tools_ok, tools_err
+            );
         }
-        log_update(&format!("External tools: {} installed, {} failed", tools_ok, tools_err));
+        log_update(&format!(
+            "External tools: {} installed, {} failed",
+            tools_ok, tools_err
+        ));
     }
 
     // Check if running as service
@@ -416,7 +501,10 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         let output = Command::new("sc")
             .args(["start", "ZenGardenMoss"])
             .output()?;
-        log_update(&format!("Service start output: {:?}", String::from_utf8_lossy(&output.stdout)));
+        log_update(&format!(
+            "Service start output: {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
         println!("✓ Service start triggered");
     } else {
         // Wait for port 7185 to become available (up to 10 seconds)
@@ -428,12 +516,18 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
             match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
                 Ok(listener) => {
                     drop(listener); // Release the port immediately
-                    log_update(&format!("Port {} available after attempt {}", port, attempt));
+                    log_update(&format!(
+                        "Port {} available after attempt {}",
+                        port, attempt
+                    ));
                     break;
                 }
                 Err(_) => {
                     if attempt == 20 {
-                        log_update(&format!("WARNING: Port {} still in use after 10s, launching anyway", port));
+                        log_update(&format!(
+                            "WARNING: Port {} still in use after 10s, launching anyway",
+                            port
+                        ));
                     }
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 }
@@ -442,10 +536,11 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
 
         let target_exe = exe_dir.join("garden-moss.exe");
         println!("Launching new Moss...");
-        log_update(&format!("Launching new Moss: {:?} --cleanup-updater", target_exe));
-        let child = Command::new(&target_exe)
-            .arg("--cleanup-updater")
-            .spawn()?;
+        log_update(&format!(
+            "Launching new Moss: {:?} --cleanup-updater",
+            target_exe
+        ));
+        let child = Command::new(&target_exe).arg("--cleanup-updater").spawn()?;
         log_update(&format!("New Moss spawned with PID: {:?}", child.id()));
         println!("✓ New Moss launched");
     }
@@ -466,14 +561,16 @@ pub async fn cleanup_after_service_update() -> anyhow::Result<()> {
     log_update("=== cleanup_after_service_update: STARTED ===");
 
     let current_exe = std::env::current_exe()?;
-    let exe_dir = current_exe.parent().ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+    let exe_dir = current_exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
     let temp_exe = exe_dir.join("garden-moss-temp.exe");
 
     log_update(&format!("Looking for temp updater: {:?}", temp_exe));
 
     if temp_exe.exists() {
         log_update("Temp updater file found, waiting for process to exit...");
-        
+
         // Wait for garden-moss-temp.exe process to exit
         for attempt in 1..=20 {
             let output = Command::new("tasklist")
@@ -482,7 +579,10 @@ pub async fn cleanup_after_service_update() -> anyhow::Result<()> {
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             if !stdout.contains("garden-moss-temp.exe") {
-                log_update(&format!("Temp updater process exited after attempt {}", attempt));
+                log_update(&format!(
+                    "Temp updater process exited after attempt {}",
+                    attempt
+                ));
                 break;
             }
 
@@ -511,22 +611,23 @@ pub async fn cleanup_after_service_update() -> anyhow::Result<()> {
 #[cfg(target_os = "windows")]
 pub async fn cleanup_updater_process() -> anyhow::Result<()> {
     use std::process::Command;
-    
+
     log_update("=== cleanup_updater_process: STARTED ===");
-    
+
     let current_exe = std::env::current_exe()?;
     log_update(&format!("Current exe: {:?}", current_exe));
-    
-    let exe_dir = current_exe.parent()
+
+    let exe_dir = current_exe
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
     log_update(&format!("Exe directory: {:?}", exe_dir));
-    
+
     let temp_exe = exe_dir.join("garden-moss-temp.exe");
     log_update(&format!("Temp exe to clean: {:?}", temp_exe));
-    
+
     if temp_exe.exists() {
         log_update("Temp updater exists, waiting for it to exit...");
-        
+
         // Wait for updater process to exit
         for attempt in 1..=40 {
             let output = Command::new("tasklist")
@@ -550,9 +651,9 @@ pub async fn cleanup_updater_process() -> anyhow::Result<()> {
     } else {
         log_update("Temp updater does not exist (already cleaned or never created)");
     }
-    
+
     log_update("=== cleanup_updater_process: COMPLETE ===");
-    
+
     // Continue with normal startup
     Ok(())
 }

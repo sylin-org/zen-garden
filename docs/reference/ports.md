@@ -2,7 +2,7 @@
 audience: [contributor, operator, developer]
 doc_type: reference
 status: current
-last_verified: 2026-01-19
+last_verified: 2026-02-16
 canonical: true
 note: "Authoritative port registry for all Zen Garden services."
 ---
@@ -24,7 +24,10 @@ note: "Authoritative port registry for all Zen Garden services."
 | **7184** | P2P Discovery | UDP | Stone-to-Stone peer discovery broadcasts | ✅ Active |
 | **7185** | Garden-Moss HTTP API | HTTP/TCP | Stone management API endpoint | ✅ Active |
 | **7186** | Garden-Lantern Registry | HTTP/TCP | Centralized service registry and topology API | 🔜 Planned |
+| **7187** | Moss HTTPS (Pond) | HTTPS/TCP | mTLS-authenticated API when pond is active | ✅ Defined |
 | **7187-7199** | Moss Companions | HTTP/TCP | Companion command servers (Cricket, Firefly, OLED, etc.) | ✅ Active |
+
+> **Note:** MOSS_HTTPS and Companion port base share 7187. This works because Companions bind to `127.0.0.1` (localhost only) while MOSS_HTTPS will bind to `0.0.0.0` (all interfaces). A future update may shift the Companion base to avoid the overlap.
 
 **Companion Port Allocation:**
 - **Base:** 7187 (ASCII sum "moss Companion" = 1187 + 6000)
@@ -91,6 +94,30 @@ Moss → Rake IP:ephemeral (unicast)
 - Bind: `0.0.0.0:7185` (all interfaces)
 - Authentication: Bearer tokens (HMAC-SHA256 JWT) when pond mode active
 - CORS: Disabled (internal network only)
+
+---
+
+### 7187 - Moss HTTPS / Pond mTLS (TCP)
+
+**Current Name:** "HTTPS port 7187 (Moss Pond)"  
+**Function:** mTLS-authenticated Stone API when pond security is active  
+**Protocol:** HTTPS/TLS 1.3 (ECDSA P-256 certificates from koi-certmesh)  
+**Status:** Port constant defined (`MOSS_HTTPS = 7187`). HTTPS listener binding planned for Phase 4.
+
+**When active:**
+- Moss binds HTTPS on `0.0.0.0:7187` using its certmesh-issued certificate
+- Sensitive API endpoints served only on :7187
+- HTTP port (:7185) becomes a "lobby" for health checks and pond join requests
+- mDNS TXT record advertises `pond=active` and `https_port=7187`
+
+**Configuration:**
+- Constant: `src/common/src/constants/mod.rs` → `pub const MOSS_HTTPS: u16 = 7187`
+- Not configurable at runtime (hardcoded)
+
+**Security:**
+- mTLS: Both client and server present certmesh-issued certificates
+- CA: ECDSA P-256, managed by koi-certmesh
+- Certificate lifetime: 30 days (auto-renewal planned)
 
 ---
 

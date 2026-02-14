@@ -128,20 +128,20 @@ HTTP directory service (port 7184) for cross-subnet discovery and Windows compat
 
 ### Pond (Optional)
 
-Encrypted communication layer for Stone-to-Stone traffic.
+Encrypted communication layer for Stone-to-Stone traffic via koi-certmesh.
 
-**Security model**: P2P shared-secret. All pond members hold the complete keypair. Any member can invite new stones. Cornerstone is ceremonial (not a control point).
+**Security model**: CA-based mTLS. The cornerstone holds the ECDSA P-256 CA private key. Individual stones receive certificates. The cornerstone controls enrollment and revocation.
 
 **Components**:
-- **Keystone**: Encrypted file with CA keypair (shared secret)
-- **Cornerstone**: Stone that initialized the pond
-- **Encrypted UDP**: XChaCha20-Poly1305 for all pond traffic
+- **Keystone**: Encrypted CA private key (passphrase-protected, AES-256-GCM)
+- **Cornerstone**: Stone that initialized the pond (holds CA authority)
+- **mTLS**: Mutual TLS authentication between enrolled stones
 
-**Admission**: TOTP-based Bluetooth-style pairing (6-character code, 5-minute window)
+**Admission**: TOTP-based Bluetooth-style pairing (6-digit code, 30-second period, configurable enrollment window)
 
-**Revocation**: Drain only (all-or-nothing reset)
+**Revocation**: Individual stone revocation via `pond untrust`, or full drain via `pond remove`
 
-→ See: [specs/POND-0001-protocol.md](../specs/POND-0001-protocol.md), [security/overview.md](../security/overview.md)
+→ See: [proposals/koi-embedded-integration.md](../proposals/koi-embedded-integration.md), [security/overview.md](../security/overview.md)
 
 ---
 

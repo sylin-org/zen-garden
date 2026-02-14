@@ -498,30 +498,65 @@ garden-rake make stone minimal                   # Critical events only
 
 ## Pond Security Commands
 
-Pond commands manage multi-stone trust relationships.
+Pond commands manage multi-stone trust relationships via koi-certmesh.
 
 ### `pond` (normative syntax)
 
 ```bash
-garden-rake pond init                            # Initialize pond (place keystone)
-garden-rake pond init --passphrase "my secret"   # With passphrase
-garden-rake pond status                          # Show pond status
-garden-rake pond invite                          # Generate invitation code
-garden-rake pond join ABC123                     # Join pond with invitation code
-garden-rake pond remove                          # Remove pond from this stone
-garden-rake pond untrust stone-02                # Remove a stone from the pond
+garden-rake pond init --passphrase "my secret"                  # Initialize pond (place keystone)
+garden-rake pond init --passphrase "my secret" --profile my-team  # With trust profile
+garden-rake pond status                                          # Show pond status
+garden-rake pond invite --passphrase "my secret"                 # Open enrollment, generate TOTP URI
+garden-rake pond join ABC123                                     # Join pond with TOTP code
+garden-rake pond unlock --passphrase "my secret"                 # Unlock CA after restart
+garden-rake pond promote --passphrase "my secret"                # Promote stone to standby CA
+garden-rake pond remove                                          # Destroy pond (drain)
+garden-rake pond untrust stone-02                                # Revoke a stone's certificate
 ```
 
 ### Zen syntax equivalents
 
 | Zen Syntax | Normative Equivalent |
 |------------|---------------------|
-| `place keystone` | `pond init` |
 | `place keystone --passphrase "secret"` | `pond init --passphrase "secret"` |
+| `place keystone --passphrase "secret" --profile my-team` | `pond init --passphrase "secret" --profile my-team` |
 | `place stone --code ABC123` | `pond join ABC123` |
-| `invite` | `pond invite` |
+| `invite --passphrase "secret"` | `pond invite --passphrase "secret"` |
 | `lift keystone` | `pond remove` |
 | `lift stone stone-02` | `pond untrust stone-02` |
+
+### `pond init`
+
+Initialize the pond by creating a CA and placing the keystone.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--passphrase <PASS>` | Yes | Encrypts the CA private key |
+| `--profile <PROFILE>` | No | Trust profile: `just-me` (default), `my-team`, `my-organization` |
+
+### `pond invite`
+
+Open enrollment window and generate a TOTP URI for stone admission.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--passphrase <PASS>` | Yes | CA passphrase to authorize the operation |
+
+### `pond unlock`
+
+Unlock the CA private key after a Moss restart.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--passphrase <PASS>` | Yes | CA passphrase |
+
+### `pond promote`
+
+Promote this stone to standby CA (receive CA key material).
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--passphrase <PASS>` | Yes | CA passphrase |
 
 ---
 

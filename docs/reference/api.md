@@ -37,8 +37,8 @@ Both layers access the same underlying resources but provide different views opt
 
 ### Authentication
 
-**Current:** None (Phase 1-3)  
-**Future:** mTLS with pond security certificates (Phase 3b)
+**Default:** None (open garden mode)  
+**With Pond:** mTLS via koi-certmesh (ECDSA P-256 certificates). When pond is active, Moss binds HTTPS on port 7187 using certmesh-issued certificates.
 
 ### Response Format
 
@@ -606,40 +606,76 @@ Returns the same data as `/garden/stones/:stone_name` but always for the local s
 
 ## Pond Security API
 
-**Status:** Phase 3 - Scaffolding complete, implementation pending (Phase 3b)
+**Status:** Implemented — backed by koi-certmesh (ECDSA P-256 CA, TOTP enrollment, mTLS)
 
-All pond endpoints currently return `501 Not Implemented` with informative messages. These endpoints prepare the structure for future multi-stone security with mTLS certificates.
+Pond endpoints manage the certificate authority lifecycle, stone enrollment, and trust operations. All handlers delegate to the embedded koi-certmesh subsystem.
+
+### Error Format
+
+All error responses use a standard envelope:
+
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable description",
+    "details": {}
+  }
+}
+```
+
+**Shared Error Codes:**
+
+| HTTP | Code | Meaning |
+|------|------|---------|
+| 401 | `INVALID_AUTH` | Wrong passphrase or TOTP code |
+| 403 | `ENROLLMENT_CLOSED` | No active enrollment window |
+| 403 | `APPROVAL_DENIED` | Operator denied enrollment |
+| 403 | `REVOKED` | Stone already revoked |
+| 404 | `NOT_FOUND` | Resource not found |
+| 409 | `POND_NOT_INITIALIZED` | CA not created yet |
+| 409 | `ALREADY_ENROLLED` | Stone hostname already enrolled |
+| 423 | `POND_LOCKED` | CA key encrypted (needs unlock after restart) |
+| 429 | `RATE_LIMITED` | Too many failed auth attempts |
+| 500 | `CERTMESH_ERROR` | Internal certmesh failure |
+| 503 | `CERTMESH_UNAVAILABLE` | Certmesh subsystem not loaded |
+
+---
 
 ### POST /api/v1/pond/init
 
-**Initialize pond security (place keystone).**
+**Initialize pond security — create CA and place keystone.**
 
-**Future Functionality:**
-- Generates cornerstone identity (CA certificate)
-- Creates encrypted keystone file (private key)
-- Initializes pond trust network
-- Passphrase-protected certificate encryption
+Creates a new ECDSA P-256 certificate authority, encrypts the private key with the given passphrase, and designates this stone as the cornerstone.
 
 **Request:**
 ```json
 {
-  "passphrase": "secure-passphrase"
+  "passphrase": "secure-passphrase",
+  "profile": "just-me"
 }
 ```
 
-**Current Response (501 Not Implemented):**
+| Field | Required | Description |
+|-------|----------|-------------|
+| `passphrase` | Yes | Encrypts the CA private key |
+| `profile` | No | Trust profile: `just-me` (default), `my-team`, `my-organization` |
+
+**Response (200 OK):**
 ```json
 {
-  "error": {
-    "code": "POND_NOT_IMPLEMENTED",
-    "message": "Pond security implementation pending (Phase 3b - cryptographic implementation)",
-    "details": {
-      "phase": "3b",
-      "feature": "pond-security"
-    }
+  "data": {
+    "cornerstone": "stone-coral-prairie",
+    "keystone_path": "/var/lib/zen-garden/certmesh/ca",
+    "certificate_expires": "30 days",
+    "status": "active",
+    "totp_uri": "otpauth://totp/certmesh:stone-coral-prairie?secret=BASE32&issuer=certmesh&algorithm=SHA1&digits=6&period=30",
+    "ca_fingerprint": "AB:CD:EF:01:23:45:67:89..."
   }
 }
 ```
+
+**Errors:** `400 INVALID_PROFILE`, `500 CA_CREATION_FAILED`, `503 CERTMESH_UNAVAILABLE`
 
 **CLI Examples:**
 ```bash
@@ -647,7 +683,7 @@ All pond endpoints currently return `501 Not Implemented` with informative messa
 garden-rake place keystone --passphrase "my-secure-pass"
 
 # Normative syntax
-garden-rake pond init --passphrase "my-secure-pass"
+garden-rake pond init --passphrase "my-secure-pass" --profile "my-team"
 ```
 
 ---
@@ -656,49 +692,48 @@ garden-rake pond init --passphrase "my-secure-pass"
 
 **Get pond security status and membership.**
 
-**Current Response (200 OK):**
+Returns CA state, enrolled stones, trust profile, and enrollment window status.
+
+**Response (200 OK) — not initialized:**
 ```json
 {
-  "status": "success",
   "data": {
     "active": false,
+    "locked": false,
     "cornerstone": null,
     "stones": [],
-    "tier": "garden-pond",
-    "note": "Pond security not initialized. Run 'garden-rake place keystone' to secure your garden."
+    "profile": "JustMe",
+    "ca_fingerprint": null,
+    "enrollment_state": "Closed"
   }
 }
 ```
 
-**Future Response (when active):**
+**Response (200 OK) — active:**
 ```json
 {
-  "status": "success",
   "data": {
     "active": true,
-    "cornerstone": "stone-01",
+    "locked": false,
+    "cornerstone": "stone-coral-prairie",
     "stones": [
       {
-        "name": "stone-01",
-        "is_cornerstone": true,
-        "certificate_expires": "2027-01-17T10:30:00Z",
-        "joined_at": "2026-01-17T10:30:00Z"
-      },
-      {
-        "name": "stone-02",
-        "is_cornerstone": false,
-        "certificate_expires": "2027-01-17T11:00:00Z",
-        "joined_at": "2026-01-17T11:00:00Z"
+        "name": "stone-coral-prairie",
+        "role": "primary",
+        "status": "active",
+        "certificate_expires": "2026-03-16T12:00:00Z",
+        "joined_at": null
       }
     ],
-    "tier": "garden-pond"
+    "profile": "MyTeam",
+    "ca_fingerprint": "AB:CD:EF:01:23:45:67:89...",
+    "enrollment_state": "Open"
   }
 }
 ```
 
 **CLI Examples:**
 ```bash
-# Both syntax forms
 garden-rake pond status
 ```
 
@@ -706,86 +741,87 @@ garden-rake pond status
 
 ### POST /api/v1/pond/invite
 
-**Generate time-limited TOTP invitation code.**
+**Open enrollment window and generate TOTP URI for stone admission.**
 
-**Future Functionality:**
-- Generates 6-digit TOTP code
-- 90-second validity window
-- One-time use for stone joining
-- Includes inviter stone identity
+Rotates the TOTP secret and opens enrollment for the specified TTL. The returned URI can be shared with stones that need to join.
 
-**Current Response (501 Not Implemented)**
-
-**Future Response:**
+**Request:**
 ```json
 {
-  "status": "success",
-  "data": {
-    "code": "123456",
-    "expires_at": "2026-01-17T10:31:30Z",
-    "ttl_seconds": 90,
-    "inviter_stone": "stone-01"
-  },
-  "suggestions": [
-    "Share this code with the stone you want to invite",
-    "Code expires in 90 seconds",
-    "Use 'garden-rake place stone --code 123456' on the new stone"
-  ]
+  "passphrase": "secure-passphrase",
+  "ttl_minutes": 30
 }
 ```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `passphrase` | Yes | CA passphrase to authorize the operation |
+| `ttl_minutes` | No | Enrollment window duration (default: 30) |
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "totp_uri": "otpauth://totp/certmesh:stone-coral-prairie?secret=BASE32&issuer=certmesh&algorithm=SHA1&digits=6&period=30",
+    "expires_at": "2026-02-14T12:57:00+00:00",
+    "ttl_seconds": 1800,
+    "inviter_stone": "stone-coral-prairie",
+    "enrollment_state": "open"
+  }
+}
+```
+
+**Errors:** `401 INVALID_AUTH`, `409 POND_NOT_INITIALIZED`, `423 POND_LOCKED`
 
 **CLI Examples:**
 ```bash
 # Zen syntax
-garden-rake invite
+garden-rake invite --passphrase "my-secure-pass"
 
 # Normative syntax
-garden-rake pond invite
+garden-rake pond invite --passphrase "my-secure-pass"
 ```
 
 ---
 
 ### POST /api/v1/pond/join
 
-**Join pond using invitation code.**
+**Join pond using a TOTP code.**
 
-**Future Functionality:**
-- Validates TOTP code
-- Exchanges certificates with cornerstone
-- Establishes mTLS trust
-- Registers stone in pond membership
+Validates the TOTP code against the cornerstone's enrollment secret. On success, issues a certificate for the joining stone.
 
 **Request:**
 ```json
 {
-  "code": "123456"
+  "code": "123456",
+  "hostname": "stone-02",
+  "sans": ["192.168.1.50"]
 }
 ```
 
-**Current Response (501 Not Implemented)**
+| Field | Required | Description |
+|-------|----------|-------------|
+| `code` | Yes | 6-digit TOTP code from the invite URI |
+| `hostname` | No | Override hostname (auto-detected if omitted) |
+| `sans` | No | Additional Subject Alternative Names |
 
-**Future Response:**
+**Response (200 OK):**
 ```json
 {
-  "status": "success",
   "data": {
     "stone_name": "stone-02",
-    "cornerstone": "stone-01",
-    "certificate_expires": "2027-01-17T10:30:00Z",
-    "status": "joined"
-  },
-  "suggestions": [
-    "Successfully joined pond",
-    "All cross-stone communication now uses mTLS",
-    "Use 'garden-rake observe' to see all stones in your garden"
-  ]
+    "cornerstone": "stone-coral-prairie",
+    "certificate_expires": "30 days",
+    "status": "active",
+    "ca_fingerprint": "AB:CD:EF:01:23:45:67:89..."
+  }
 }
 ```
 
-**Errors (future):**
-- `400` - Invalid or expired code
-- `409` - Stone already in a pond
-- `500` - Certificate exchange failure
+**Errors:**
+- `401 INVALID_AUTH` — wrong or expired TOTP code
+- `403 ENROLLMENT_CLOSED` — no active enrollment window
+- `409 ALREADY_ENROLLED` — stone hostname already in roster
 
 **CLI Examples:**
 ```bash
@@ -798,17 +834,107 @@ garden-rake pond join 123456
 
 ---
 
+### POST /api/v1/pond/unlock
+
+**Unlock the CA after a Moss restart.**
+
+After a Moss restart, the CA private key is locked (encrypted at rest). This endpoint decrypts it so pond operations can resume.
+
+**Request:**
+```json
+{
+  "passphrase": "secure-passphrase"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "unlocked": true
+  }
+}
+```
+
+**Errors:** `401 INVALID_AUTH`, `409 POND_NOT_INITIALIZED`, `429 RATE_LIMITED`
+
+**CLI Examples:**
+```bash
+garden-rake pond unlock --passphrase "my-secure-pass"
+```
+
+---
+
+### POST /api/v1/pond/promote
+
+**Promote this stone to standby CA (receive CA key material).**
+
+Copies the CA private key material to this stone so it can act as a backup certificate authority.
+
+**Request:**
+```json
+{
+  "passphrase": "secure-passphrase"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "promoted": true,
+    "ca_fingerprint": "AB:CD:EF:01:23:45:67:89..."
+  }
+}
+```
+
+**Errors:** `401 INVALID_AUTH`, `409 POND_NOT_INITIALIZED`, `423 POND_LOCKED`
+
+**CLI Examples:**
+```bash
+garden-rake pond promote --passphrase "my-secure-pass"
+```
+
+---
+
+### GET /api/v1/pond/ca.pem
+
+**Download the CA public certificate.**
+
+Returns the PEM-encoded CA certificate for manual trust installation.
+
+**Response (200 OK):**
+```
+Content-Type: application/x-pem-file
+
+-----BEGIN CERTIFICATE-----
+MIIBxTCCAW...
+-----END CERTIFICATE-----
+```
+
+**Errors:** `404 POND_NOT_INITIALIZED`, `500 CA_READ_ERROR`
+
+**CLI Examples:**
+```bash
+curl http://stone:7185/api/v1/pond/ca.pem -o ca.pem
+```
+
+---
+
 ### DELETE /api/v1/pond
 
-**Remove pond from this stone.**
+**Drain the pond — destroy the CA and all certificates.**
 
-**Future Functionality:**
-- Removes local certificates
-- Deletes keystone file
-- Unregisters from pond topology
-- Reverts to non-authenticated mode
+Removes the certificate authority, all issued certificates, and reverts the stone to unauthenticated mode.
 
-**Current Response (501 Not Implemented)**
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "destroyed": true
+  }
+}
+```
 
 **CLI Examples:**
 ```bash
@@ -823,20 +949,25 @@ garden-rake pond remove
 
 ### DELETE /api/v1/pond/stones/:stone_name
 
-**Remove a stone from pond (untrust).**
+**Revoke a stone's certificate (untrust).**
 
-**Future Functionality:**
-- Revokes stone's certificate
-- Removes from pond membership
-- Broadcasts revocation to all stones
-- Cornerstone-only operation
+Revokes the named stone's certificate and removes it from the pond roster.
 
-**Current Response (501 Not Implemented)**
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "revoked": true,
+    "stone_name": "stone-02"
+  }
+}
+```
 
-**Errors (future):**
-- `404` - Stone not in pond
-- `403` - Caller is not cornerstone
-- `409` - Cannot untrust cornerstone itself
+**Errors:**
+- `404 NOT_FOUND` — stone not in pond roster
+- `403 REVOKED` — stone already revoked
+- `409 POND_NOT_INITIALIZED` — CA not created
+- `423 POND_LOCKED` — CA locked after restart
 
 **CLI Examples:**
 ```bash
@@ -1603,7 +1734,7 @@ Stops all services and shuts down the Moss HTTP server.
 - Closes HTTP server
 - Exits process with code 0
 
-**Security:** No authentication - administrative access control pending (Phase 3b+)
+**Security:** No authentication on HTTP. When pond is active, use HTTPS (:7187) for authenticated access.
 
 ---
 
@@ -1635,7 +1766,12 @@ Stops all services and shuts down the Moss HTTP server.
 | `IMAGE_PULL_FAILED` | 500 | Cannot pull container image |
 | `CONTAINER_START_FAILED` | 500 | Container failed to start |
 | `RESOURCE_EXHAUSTED` | 503 | Insufficient disk/memory resources |
-| `POND_NOT_IMPLEMENTED` | 501 | Pond security not yet implemented |
+| `POND_NOT_INITIALIZED` | 409 | Pond CA not created yet |
+| `POND_LOCKED` | 423 | CA key encrypted, needs unlock after restart |
+| `INVALID_AUTH` | 401 | Wrong passphrase or TOTP code |
+| `ENROLLMENT_CLOSED` | 403 | No active enrollment window |
+| `ALREADY_ENROLLED` | 409 | Stone hostname already in pond roster |
+| `RATE_LIMITED` | 429 | Too many failed auth attempts |
 
 ---
 
@@ -1650,20 +1786,18 @@ Stops all services and shuts down the Moss HTTP server.
 - Offerings catalog with compatibility
 - Health and capabilities introspection
 
-**Phase 3 (Complete - Scaffolding):**
-- Pond security endpoints (stubs returning 501)
-- Status endpoint returns inactive state
-
-**Phase 3b (Planned):**
-- Pond security cryptographic implementation
-- mTLS certificate exchange
-- TOTP invitation system
-- Cross-stone authentication
+**Phase 3 (Complete — Pond Security):**
+- 9 pond endpoints: init, status, join, invite, unlock, remove, untrust, promote, ca.pem
+- CA-based mTLS via koi-certmesh (ECDSA P-256)
+- TOTP enrollment (6-digit, 30-second period, configurable TTL)
+- Trust profiles: just-me, my-team, my-organization
+- CA unlock after restart, promote for standby CA
+- mDNS TXT advertises pond and https_port when active
 
 **Phase 4 (Planned):**
+- HTTPS listener on :7187 with route splitting (public vs authenticated)
+- Web dashboard integration
 - Automated integration tests
-- Performance benchmarks
-- Extended error handling
 
 ---
 
@@ -1689,6 +1823,6 @@ None yet - contributions welcome!
 
 ---
 
-**Last Updated:** January 17, 2026  
+**Last Updated:** February 16, 2026  
 **API Version:** v1  
-**Implementation Status:** Phase 3 Complete
+**Implementation Status:** Phase 3 Complete (Pond Security implemented)

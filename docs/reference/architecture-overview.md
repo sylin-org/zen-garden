@@ -244,7 +244,7 @@ See `src/common/src/constants/` for full list.
 ## Future Enhancements
 
 - **Layered Refactoring**: Split moss/rake main.rs into api/domain/infra modules
-- **Pond Security**: mTLS and authentication (currently scaffolded)
+- **Pond Security**: mTLS and authentication via koi-certmesh (ECDSA P-256 CA, TOTP enrollment)
 - **Advanced Scheduling**: Resource-aware service placement
 
 ## References

@@ -2,7 +2,7 @@
 audience: operator
 doc_type: reference
 status: current
-last_verified: 2026-02-07
+last_verified: 2026-02-16
 ---
 
 # Roadmap
@@ -97,16 +97,23 @@ Applications resolve `zen-garden:mongodb/mydb` to actual connection strings with
 
 ---
 
-## Phase 3: Pond Security
+## Phase 3: Pond Security ✅
 
-**Goal**: Optional mTLS for authenticated, encrypted communication.
+**Goal**: Optional mTLS for authenticated, encrypted communication.  
+**Status**: Complete — implemented via koi-certmesh (February 2026)
 
-- **Keystone**: Encrypted CA keypair storage
+- **Keystone**: Encrypted CA private key (ECDSA P-256, passphrase-protected)
 - **Cornerstone**: First Stone as certificate authority
-- **Certificate binding**: mTLS for all Stone-to-Stone traffic
-- **Admission control**: New Stones require approval
-- **Encrypted UDP**: XChaCha20-Poly1305 for all pond traffic
-- **TOTP invitation**: Bluetooth-pairing style device admission
+- **9 API endpoints**: init, status, join, invite, unlock, remove, untrust, promote, ca.pem
+- **TOTP enrollment**: Bluetooth-pairing style device admission (6-digit, 30-second period)
+- **Trust profiles**: just-me, my-team, my-organization
+- **mDNS integration**: TXT records advertise pond and https_port when active
+- **CA lifecycle**: unlock after restart, promote standby CA, drain (destroy)
+
+**Not yet active:**
+- HTTPS listener on :7187 (port defined, binding planned for Phase 4)
+- Encrypted chirps (XChaCha20-Poly1305 for UDP traffic)
+- Certificate auto-renewal
 
 ---
 

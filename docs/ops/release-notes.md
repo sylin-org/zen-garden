@@ -2,7 +2,7 @@
 audience: operator
 doc_type: reference
 status: current
-last_verified: 2026-02-07
+last_verified: 2026-02-16
 ---
 
 # Release Notes
@@ -105,16 +105,22 @@ The former `/api/v1/events` endpoint is consolidated into `/api/v1/stone/presenc
 1. **`POST /api/v1/offerings` (plant offering)** — Requires full installation logic with environment generation. Currently forwards to services API.
 2. **`POST /api/v1/services/:name:cordon` (cordon service)** — Requires ServiceStatus enum extension (add Cordoned state).
 
+**Pond Security (Implemented):**
+- 9 endpoints: init, status, join, invite, unlock, remove, untrust, promote, ca.pem
+- CA-based mTLS via koi-certmesh (ECDSA P-256)
+- TOTP enrollment (6-digit, 30-second period, configurable TTL)
+- Trust profiles: just-me, my-team, my-organization
+
 **Future features:**
 - Garden topology endpoints (`/api/v1/garden/*`) — present in code but not documented
-- Pond security endpoints (`/api/v1/pond/*`) — stubbed for Phase 3
+- HTTPS listener on :7187 (port defined, binding planned)
 
 #### Known Limitations
 
 1. **Native protocol only:** Agnostic Data API sidecars not yet implemented
 2. **Single Stone focus:** Garden-wide operations (`--all` flag) work but have limited testing
 3. **Manual discovery:** mDNS announcements work on Linux; Windows requires UDP broadcast discovery
-4. **No RBAC:** Pond security (mTLS) planned for Phase 3
+4. **No RBAC:** Pond security (mTLS) implemented via certmesh; per-user access control not planned
 5. **Basic health monitoring:** Advanced health checks (restart loops, resource thresholds) planned for Phase 2
 
 ---
@@ -316,7 +322,7 @@ When new deprecations occur:
 
 - **0.3.0 (Phase 3):** Advanced features
   - Lantern UI integration (dashboard, topology visualization)
-  - Pond security (mTLS, certificate auto-renewal)
+  - HTTPS listener on :7187 with route splitting (public vs authenticated)
   - Cursor-based polling optimization (delta updates)
   - Lifecycle event broadcasting (moss_online, moss_offline)
   - Client bindings (Python, JavaScript, .NET)

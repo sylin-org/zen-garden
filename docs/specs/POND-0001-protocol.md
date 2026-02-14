@@ -1,11 +1,14 @@
 ﻿# POND-0001: Pond Security Protocol Specification
 
-**Status**: Draft  
+**Status**: Superseded  
 **Created**: 2026-01-26  
-**Updated**: 2026-01-26  
+**Updated**: 2026-02-16  
 **Authors**: Leo Botinelly  
 **Supersedes**: None (additive to security.md)  
+**Superseded by**: koi-certmesh implementation (CA-based mTLS, ECDSA P-256). See [koi-embedded-integration proposal](../proposals/koi-embedded-integration.md).  
 **Related**: [security.md](security.md), [ELECTION-0001](ELECTION-0001-distributed-election.md)
+
+> **⚠ Historical document.** This specification described a P2P shared-secret model (Ed25519/XChaCha20-Poly1305/BLAKE3) that was never implemented. The actual Pond implementation uses koi-certmesh with ECDSA P-256 certificates, TOTP enrollment, and CA-based mTLS. See the [API reference](../reference/api.md#pond-security-api) for current behavior.
 
 ---
 

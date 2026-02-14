@@ -11,6 +11,7 @@ All notable changes to Zen Garden will be documented in this file.
 - Added pond unlock, promote, ca.pem routes; Rake CLI gains unlock/promote/invite --passphrase
 - mDNS TXT now advertises pond + https_port when pond is active; pond_active seeded at startup
 - Added koi-certmesh, koi-crypto, tower dependencies to workspace and moss crate
+- Documentation sweep: aligned all docs with implemented certmesh-backed Pond security
 
 ## 2026-02-15
 

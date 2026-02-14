@@ -2641,7 +2641,7 @@ Services requiring Pond:
 | KMS | Key management |
 | Presigned URLs | Cryptographic signatures |
 
-Without Pond, these services return `501 Not Implemented`.
+Without Pond, these services require Pond security to be initialized and active.
 
 ### Network Security
 

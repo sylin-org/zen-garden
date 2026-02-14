@@ -21,9 +21,9 @@ This eliminates ~2,400 lines of platform-conditional HTTP/SSE client code, deliv
 
 ### Current State
 
-1. **mDNS is platform-split.** Moss and Lantern maintain two independent mDNS implementations — `mdns_sd::ServiceDaemon` on Linux and `KoiClient` HTTP on Windows — with `#[cfg]` conditionals across ~1,500 LOC. The Windows path requires an external Koi sidecar process, SSE stream parsing, heartbeat loops, reconnection logic, and TTL-based dedup caches.
+1. **mDNS was platform-split.** ✅ **Resolved in Phase 1.** Moss and Lantern now use embedded koi for unified mDNS on all platforms. The ~1,500 LOC of `#[cfg]`-split code and external Koi sidecar were removed.
 
-2. **Pond security is fully unimplemented.** Every API endpoint returns `501 NOT_IMPLEMENTED` with "Phase 3b" messages. The [POND-0001 specification](../specs/POND-0001-protocol.md) defines a complete protocol (Ed25519 keys, XChaCha20-Poly1305 encryption, BLAKE3 hashing, TOTP invitation, certificate lifecycle) — representing months of security-critical cryptographic engineering that has not started.
+2. **Pond security was fully unimplemented.** ✅ **Resolved in Phase 2.** All 9 pond endpoints are implemented via koi-certmesh (ECDSA P-256 CA, TOTP enrollment, trust profiles). The original POND-0001 specification described a P2P shared-secret model (Ed25519/XChaCha20); the actual implementation uses a CA-based mTLS model.
 
 3. **Services are reachable only by IP:port.** After deploying `zen-offering-grafana`, users access it via `http://192.168.1.10:3000`. There is no name resolution, no TLS, and no friendly URLs. The [LANTERN-0003](../decisions/LANTERN-0003-mdns-service-discovery.md) decision anticipated a Tier 3 with reverse proxy (Caddy/Traefik), but this hasn't been built.
 
@@ -88,17 +88,17 @@ Certificates have 30-day lifetimes with automatic renewal handled by certmesh.
 | Port | Protocol | When | Purpose |
 |---|---|---|---|
 | **7185** | HTTP | Always | Discovery, health checks, pond join requests, public status |
-| **7186** | HTTPS | When pond active | All authenticated stone-to-stone communication |
+| **7187** | HTTPS | When pond active | All authenticated stone-to-stone communication |
 
-After a stone joins the pond, Moss binds HTTPS on **7186** using its certmesh-issued certificate. The mDNS TXT record advertises the pond state:
+After a stone joins the pond, Moss binds HTTPS on **7187** using its certmesh-issued certificate. The mDNS TXT record advertises the pond state:
 
 ```
 pond=active
 http_port=7185
-https_port=7186
+https_port=7187
 ```
 
-**Security boundary:** When pond is active, sensitive API endpoints (service management, configuration, data access) are served only on :7186. The HTTP port (:7185) becomes a "lobby" — serving health checks, public status, and pond join requests only.
+**Security boundary:** When pond is active, sensitive API endpoints (service management, configuration, data access) are served only on :7187. The HTTP port (:7185) becomes a "lobby" — serving health checks, public status, and pond join requests only.
 
 ### Join Flow
 
@@ -118,7 +118,7 @@ New Stone (no cert)                      Keystone Stone (CA holder)
    - Returns: cert.pem, key.pem, ca.pem
 
 4. Stone installs CA in system trust store
-   Moss binds HTTPS on :7186
+   Moss binds HTTPS on :7187
    Announces pond=active in mDNS TXT
 
 5. All pond members now reachable via HTTPS  ← trust established
@@ -318,12 +318,12 @@ pub struct MdnsHandle {
 **Changes — Koi:** None expected. Phase 1 uses existing mDNS API surface.
 
 **Verification:**
-- [ ] Moss announces `_moss._tcp` via embedded Koi on both Windows and Linux
-- [ ] Lantern discovers stones via embedded Koi on both platforms
-- [ ] Heartbeat/lease management handled by Koi internally (no manual loop)
-- [ ] KoiClient HTTP code fully removed
-- [ ] `cargo check --workspace` passes
-- [ ] `cargo test --workspace` passes
+- [x] Moss announces `_moss._tcp` via embedded Koi on both Windows and Linux
+- [x] Lantern discovers stones via embedded Koi on both platforms
+- [x] Heartbeat/lease management handled by Koi internally (no manual loop)
+- [x] KoiClient HTTP code fully removed
+- [x] `cargo check --workspace` passes
+- [x] `cargo test --workspace` passes
 
 ---
 
@@ -336,11 +336,11 @@ pub struct MdnsHandle {
 | File | Action |
 |---|---|
 | `src/moss/src/api/v1/pond.rs` | Rewire all handlers from `501 NOT_IMPLEMENTED` to `handle.certmesh()` calls |
-| `src/moss/src/main.rs` | Add conditional HTTPS binding on :7186 when pond is active |
+| `src/moss/src/main.rs` | Add conditional HTTPS binding on :7187 when pond is active |
 | `src/moss/src/bootstrap/router.rs` | Split routes: public (HTTP-only) vs authenticated (HTTPS-only) |
-| `src/moss/src/mdns.rs` | Add `pond=active`, `https_port=7186` to mDNS TXT records |
+| `src/moss/src/mdns.rs` | Add `pond=active`, `https_port=7187` to mDNS TXT records |
 | `src/moss/src/api/v1/pond.rs` | Add `GET /api/v1/pond/ca.pem` endpoint for CA download |
-| `src/common/src/constants/mod.rs` | Add `MOSS_HTTPS` port constant (7186) |
+| `src/common/src/constants/mod.rs` | Add `MOSS_HTTPS` port constant (7187) |
 | `src/common/src/types.rs` | Align `PondConfig` fields with certmesh state |
 | `src/moss/src/infra/listeners/chirp.rs` | Add signature to outbound chirps when pond active |
 | `src/moss/src/infra/listeners/chirp.rs` | Verify signature on inbound chirps when pond active |
@@ -385,17 +385,17 @@ if let Ok(certmesh) = koi_handle.certmesh() {
 **Changes — Koi:** None expected. Phase 2 uses existing certmesh API. The `enroll()`, `unlock()`, `revoke_member()`, `destroy()` methods are all implemented.
 
 **Verification:**
-- [ ] `garden-rake place keystone` creates a certmesh CA with trust profile wizard
-- [ ] `garden-rake pond invite` generates TOTP code / shows QR
-- [ ] `garden-rake pond join <code>` on a second stone succeeds over HTTP :7185
-- [ ] Joined stone binds HTTPS on :7186 with a valid certmesh-issued cert
+- [x] `garden-rake place keystone` creates a certmesh CA with trust profile wizard
+- [x] `garden-rake pond invite` generates TOTP code / shows QR
+- [x] `garden-rake pond join <code>` on a second stone succeeds over HTTP :7185
+- [ ] Joined stone binds HTTPS on :7187 with a valid certmesh-issued cert
 - [ ] `reqwest` on an enrolled stone validates HTTPS to other enrolled stones
-- [ ] `garden-rake pond status` shows real membership from certmesh roster
-- [ ] `garden-rake pond untrust <stone>` revokes via certmesh
-- [ ] `garden-rake drain pond` destroys CA and clears all certs
+- [x] `garden-rake pond status` shows real membership from certmesh roster
+- [x] `garden-rake pond untrust <stone>` revokes via certmesh
+- [x] `garden-rake drain pond` destroys CA and clears all certs
 - [ ] Chirps from non-pond stones are rejected when pond is active
 - [ ] Chirps from pond stones are verified and accepted
-- [ ] CA unlock prompt after Moss restart
+- [x] CA unlock prompt after Moss restart
 
 ---
 

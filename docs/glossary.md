@@ -92,13 +92,13 @@
 
 ## Security
 
-**Pond** - Optional security layer for encrypted Stone-to-Stone communication. Uses shared-secret P2P model with Ed25519/X25519 cryptography. Prevents network sniffing and rogue device admission.  
+**Pond** - Optional security layer for encrypted Stone-to-Stone communication. Uses a CA-based mTLS model with ECDSA P-256 certificates, backed by koi-certmesh. Prevents network sniffing and rogue device admission.  
 → See: [security/overview.md](security/overview.md), [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md)
 
-**Keystone** - Encrypted file containing Pond CA keypair (shared secret). All pond members hold the complete keypair (P2P trust model). Protected using best available method: TPM 2.0 (hardware-backed), vTPM (hypervisor-backed), or passphrase encryption (software-backed).  
+**Keystone** - Encrypted CA private key stored on the cornerstone. Protected by passphrase encryption (AES-256-GCM via Argon2id KDF). Only the cornerstone (and promoted standby stones) hold the CA private key.  
 → See: [security/pond-setup.md](security/pond-setup.md), [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
 
-**Cornerstone** - Stone that initialized the pond (ran `place keystone`). Ceremonial role—not a control point. Any pond member can invite new stones.  
+**Cornerstone** - Stone that initialized the pond (ran `place keystone`). Holds the CA private key and acts as the certificate authority — the trust anchor for the pond. Can promote other stones to standby CA.  
 → See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md)
 
 **TPM (Trusted Platform Module)** - Hardware security chip for cryptographic operations. Zen Garden auto-detects TPM 2.0 and seals Keystone in hardware when available. Provides physical tamper resistance and boot attestation.  
@@ -111,7 +111,7 @@
 - **Software-backed**: Passphrase encryption (AES-256-GCM fallback)  
   → See: [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
 
-**Stone Admission** - Process of joining a Stone to a Pond. Uses TOTP-based Bluetooth-style pairing (6-character code, 5-minute window). Any pond member can invite new stones.  
+**Stone Admission** - Process of joining a Stone to a Pond. Uses TOTP-based Bluetooth-style pairing (6-digit code, 30-second period, configurable enrollment window). The cornerstone generates invitations; any stone with the TOTP URI can produce valid codes.  
 → See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md#invitation-protocol)
 
 **Drain** - Emergency pond reset. Destroys pond credentials on all stones, reverting garden to open mode. Only form of revocation (all-or-nothing).  

@@ -62,9 +62,9 @@ The current Pond design provides:
 The invitation flow:
 
 ```
-garden-rake place keystone
-garden-rake invite stone-02
-# Type 6 characters. Done.
+garden-rake pond init --passphrase "my-pass" --profile just-me
+garden-rake pond invite --passphrase "my-pass"
+# Generate a 6-digit code from the TOTP URI. Done.
 ```
 
 A small business owner can do this. A developer can do this. Your aunt can do this (with help).
@@ -82,7 +82,7 @@ When evaluating new features, ask: *does a small business owner running MongoDB 
 | Multiple invitation modes | Cognitive load. One path is enough. |
 | Authenticator app integration | Complexity for marginal benefit. |
 | Enterprise compliance features | Those users have Kubernetes. |
-| Certificate rotation | No certificates. Shared secret model. |
+| Certificate rotation | 30-day expiry with auto-renewal planned. |
 | Multi-admin approval | Single trusted admin is the model. |
 | MAC-based blocking | Doesn't work anyway. |
 

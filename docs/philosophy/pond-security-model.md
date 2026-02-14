@@ -26,10 +26,11 @@ Before the pond, everything is visible. You can walk anywhere. There are no barr
 
 After the pond, there's a boundary. Some stones sit above water, some below. The submerged stones are still visible—but through water, differently. To reach them, you must enter the pond. The pond has an edge, an inside and an outside.
 
-In Zen Garden, the **Pond** is a security layer built on mutual TLS. When you fill a pond:
+In Zen Garden, the **Pond** is a security layer built on mutual TLS via koi-certmesh. When you fill a pond:
 
+- The cornerstone creates a Certificate Authority (ECDSA P-256)
 - Stones receive certificates identifying them
-- Communication between Stones is encrypted
+- Communication between Stones is authenticated via mTLS
 - New Stones must be *admitted*—they can't just wander in
 - The boundary becomes real: inside the pond, you're trusted; outside, you're not
 
@@ -46,32 +47,32 @@ You've done this with Bluetooth devices. Put one device in pairing mode. It show
 Pond admission works the same way:
 
 ```
-On the Cornerstone (existing Stone with authority):
-$ garden-rake invite stone-02
+On the Cornerstone (the Stone that holds the CA):
+$ garden-rake pond invite --passphrase "my-pass"
 
-Invitation ready for: stone-02
+Enrollment open for 30 minutes.
 
-TOTP Code: KP7X9M
-Valid for: 5 minutes
+TOTP URI: otpauth://totp/certmesh:stone-01?secret=BASE32&...
 
-Display this code to the administrator at stone-02.
+Share this URI or add it to an authenticator app.
+Generate a 6-digit code on the joining stone.
 ```
 
 ```
 On stone-02 (the new Stone):
-$ garden-rake pond join --code KP7X9M
+$ garden-rake pond join --code 123456
 
 Validating code...
 ✓ Code accepted
 ✓ Certificate issued
-✓ Joined pond "garden-pond"
+✓ Joined pond
 
 stone-02 is now part of the pond.
 ```
 
 That's it. No pre-shared secrets. No certificate signing requests. No PKI ceremony. Just: show a code, type a code, you're in.
 
-The code is a TOTP—a time-based one-time password, the same technology your two-factor authentication app uses. It's valid for five minutes. It can only be used once. And critically, it requires *physical proximity*: someone must read the code from one screen and type it on another. You cannot join a pond from across the internet by guessing.
+The code is a TOTP—a time-based one-time password, the same technology your two-factor authentication app uses. It uses a 30-second period with 6-digit codes (SHA1, RFC 6238). The enrollment window is configurable (default 30 minutes). And critically, it requires *proximity or trust*: someone must share the TOTP URI from the cornerstone to the joining stone. You cannot join a pond by guessing.
 
 This is security that feels like pairing your headphones. Familiar. Obvious. Hard to get wrong.
 
@@ -81,22 +82,19 @@ This is security that feels like pairing your headphones. Familiar. Obvious. Har
 
 Every pond has a **Cornerstone**: the first Stone, the one that holds authority.
 
-When you fill a pond, the Stone you're on becomes the Cornerstone. It generates a certificate authority—a keypair that can issue certificates to other Stones. This keypair is the **Keystone**: the cryptographic foundation that everything else rests on.
+When you fill a pond, the Stone you're on becomes the Cornerstone. It generates a certificate authority—an ECDSA P-256 keypair that can issue certificates to other Stones. This keypair is the **Keystone**: the cryptographic foundation that everything else rests on.
 
 ```
-$ garden-rake place keystone
+$ garden-rake pond init --passphrase "my-secure-pass" --profile just-me
 
 Initializing Pond...
 
-How would you like to create your passphrase?
-1. Let me mash the keyboard! (fun & secure)
-2. Generate one for me (quick & easy)
-3. I'll type my own (advanced)
+✓ CA created (ECDSA P-256)
+✓ Cornerstone: stone-01
+✓ Keystone sealed
 
-Choice [1]: 1
-
-Mash your keyboard randomly... GO!
-████████████████████ 100%
+CA Fingerprint: AB:CD:EF:01:23:...
+TOTP URI: otpauth://totp/certmesh:stone-01?secret=BASE32&...
 
 ✓ Collected 248 bits of entropy
 
@@ -109,9 +107,9 @@ Generated passphrase: forest-lantern-compass-71
 Next: garden-rake invite <stone-name>
 ```
 
-The passphrase protects the Keystone. If someone steals the file, they still need the passphrase to use it. The keyboard mashing isn't a gimmick—it's entropy collection. Your random key-presses generate randomness that seeds the passphrase generator.
+The passphrase protects the Keystone. If someone steals the file, they still need the passphrase to use it. The CA private key is encrypted using AES-256-GCM with an Argon2id-derived key.
 
-If your hardware has a TPM (Trusted Platform Module), the Keystone is sealed in hardware automatically. The system detects what protection is available and uses the strongest option. You don't have to configure this. It just happens.
+After a Moss restart, the CA key is locked (encrypted at rest). Run `garden-rake pond unlock --passphrase "my-pass"` to resume pond operations. You can also promote another stone to standby CA with `garden-rake pond promote --passphrase "my-pass"`.
 
 ---
 
@@ -119,7 +117,7 @@ If your hardware has a TPM (Trusted Platform Module), the Keystone is sealed in 
 
 Not all ponds are the same depth.
 
-**Garden Pond (Tier 1)** is for home labs and small teams. It assumes:
+**Garden Pond** is for home labs and small teams. It assumes:
 
 - Single administrator, or small group of trusted people
 - Physical security (the Stones are in your house, your office, your rack)
@@ -127,14 +125,14 @@ Not all ponds are the same depth.
 
 Garden Pond provides:
 
-- Encryption in transit (no one can sniff your traffic)
-- Authentication (Stones prove their identity)
-- Admission control (new Stones must be explicitly invited)
-- Short-lived certificates (1 hour, auto-renewed)
+- Encryption in transit (mTLS for all API communication)
+- Authentication (Stones prove their identity via ECDSA certificates)
+- Admission control (new Stones must be explicitly invited via TOTP)
+- Certificate lifecycle (30-day expiry, unlock after restart, standby CA promotion)
 
 This is enough for most home labs. It stops casual snooping and prevents random devices from joining your garden. It doesn't stop a determined attacker with physical access to your Cornerstone.
 
-**Deep Pond (Tier 2)** is for environments with real adversaries:
+**Deep Pond** is for environments with real adversaries:
 
 - Multiple administrators who don't fully trust each other
 - Compliance requirements (GDPR, SOC2, HIPAA)
@@ -211,15 +209,15 @@ This is the Stone that will hold the Keystone—the certificate authority. Pick 
 
 **3. Place the keystone.**
 ```
-$ garden-rake place keystone
+$ garden-rake pond init --passphrase "my-secure-pass" --profile just-me
 ```
-Follow the prompts. Protect your passphrase. The system will use TPM if available.
+Follow the prompts. Protect your passphrase.
 
-**4. Invite your other Stones.**
+**4. Open enrollment and invite your other Stones.**
 ```
-$ garden-rake invite stone-02
+$ garden-rake pond invite --passphrase "my-secure-pass"
 ```
-Walk to stone-02 (or SSH in), run the join command with the code. Repeat for each Stone.
+Share the TOTP URI with each stone. On each joining stone, run the join command with a 6-digit code from the URI. Repeat for each Stone.
 
 **5. Verify pond status.**
 ```

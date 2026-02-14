@@ -25,11 +25,11 @@
 **Philosophy**: "Set your stones, make sure everything is working, fill the pond."
 
 **What Pond provides**:
-- Encryption (protect traffic from network sniffing)
-- Admission control (control which Stones can join)
-- Authentication (verify Stone identity via shared secret)
+- Encryption (mTLS for all authenticated Stone-to-Stone communication)
+- Admission control (TOTP-based enrollment — control which Stones can join)
+- Authentication (verify Stone identity via ECDSA P-256 certificates)
 
-**Security model**: P2P shared-secret. All pond members hold the complete keypair. Any member can invite new stones. Cornerstone is ceremonial (the stone that initialized the pond), not a control point.
+**Security model**: CA-based mTLS via koi-certmesh. The cornerstone holds the CA private key and acts as the trust anchor. Stones receive individual certificates. The cornerstone controls enrollment and revocation.
 
 ---
 
@@ -46,37 +46,16 @@
 
 Pond security depends on Keystone encryption. Use a strong passphrase:
 
-**Zen Garden offers three generation methods:**
-1. **Keyboard mashing** (default) - Fun & secure entropy collection
-2. **Auto-generated** - XKCD-style 4-word passphrases
-3. **Manual entry** - For password manager users
+The passphrase encrypts the CA private key using AES-256-GCM with an Argon2id-derived key. If someone steals the keystone file, they still need the passphrase.
 
 ```bash
-# Interactive generation (recommended)
-garden-rake place keystone
-
-How would you like to create your passphrase?
-1. Let me mash the keyboard! 🎹 (fun & secure)
-2. Generate one for me (quick & easy)
-3. I'll type my own (advanced)
-
-Choice [1]: 1
-
-# Mash your keyboard for ~3 seconds
-# System generates: forest-lantern-compass-71
-
-# Or use standalone generator
-garden-rake generate-passphrase
-
-Output:
-  Passphrase: autumn-laptop-database-71
-  Entropy: 52 bits (strong)
-  Memorization: "Autumn laptop database, room 71"
+# Initialize pond with passphrase
+garden-rake pond init --passphrase "my-secure-passphrase" --profile just-me
 ```
 
 **Requirements:**
-- Minimum: 40 bits entropy (validated automatically)
-- Recommended: 52+ bits (4 XKCD words + number)
+- Minimum: Use a passphrase that's hard to guess
+- Recommended: 20+ characters or multi-word passphrases
 - Pattern: `word1-word2-word3-number` (e.g., `compass-twilight-harvest-82`)
 
 **Learn more:** [XKCD 936](https://xkcd.com/936/)
@@ -89,110 +68,70 @@ Store passphrases securely (1Password, Bitwarden, etc.). **Never plain text.**
 
 ### Step 1: Choose Initial Stone (Cornerstone)
 
-Select any Stone to initialize the pond:
+Select a stable Stone to be the cornerstone (CA holder):
 
 ```bash
 # On your chosen Stone (e.g., stone-01)
-garden-rake place keystone
+garden-rake pond init --passphrase "my-secure-passphrase" --profile just-me
 
-Initializing Pond...
-
-How would you like to create your passphrase?
-1. Let me mash the keyboard! (fun & secure)
-2. Generate one for me (quick & easy)
-3. I'll type my own (advanced)
-
-Choice [1]: 1
-
-Mash your keyboard randomly... GO!
-████████████████████ 100%
-
-✓ Collected 248 bits of entropy
-
-Generated passphrase: forest-lantern-compass-71
-Memorization: "A forest with lanterns and compass #71"
-
-Use this passphrase? [Y/n]: y
-
-✓ Pond created (hardware-backed via TPM 2.0)
+✓ CA created (ECDSA P-256)
 ✓ Cornerstone: stone-01
-✓ Keystone sealed in TPM
-✓ CA keypair generated (shared secret model)
+✓ Keystone sealed
+
+CA Fingerprint: AB:CD:EF:01:23:45:67:89...
+TOTP URI: otpauth://totp/certmesh:stone-01?secret=BASE32&issuer=certmesh&algorithm=SHA1&digits=6&period=30
 
 Next steps:
-  1. Verify status: garden-rake status --security
-  2. Invite other Stones: garden-rake invite <stone-name>
+  1. Verify status: garden-rake pond status
+  2. Open enrollment: garden-rake pond invite --passphrase "..."
 ```
 
+**Trust profiles:**
+- `just-me` (default) — Solo operator, auto-approve enrollment
+- `my-team` — Small trusted team
+- `my-organization` — Requires explicit approval for each enrollment
+
 **What happened**:
-- Generated Pond CA keypair (Ed25519)
-- **Auto-detected TPM** and sealed Keystone in hardware (or encrypted with passphrase if no TPM)
-- Enabled encrypted UDP mode for all pond traffic
-
-**Protection tier shown:** System automatically uses best available:
-- `hardware-backed via TPM 2.0` - Sealed in physical security module
-- `hypervisor-backed via KVM` - vTPM in virtual machine
-- `software-backed` - Passphrase encryption (fallback)
-
-**Learn more:** [Keystone Protection Tiers](../decisions/SECURITY-0003-keystone-protection-tiers.md)
+- Generated a CA keypair (ECDSA P-256)
+- Encrypted the CA private key with the passphrase (AES-256-GCM, Argon2id KDF)
+- Designated this stone as the cornerstone
+- Generated a TOTP secret for enrollment
 
 ### Step 2: Verify Pond Status
 
 ```bash
-garden-rake status --security
+garden-rake pond status
 
 Pond Status: Active
 Cornerstone: stone-01
-Role: Founder (ceremonial)
-Joined Stones: 1
-Pending Joins: 0
-Last Audit: 1 event (pond initialized)
+Profile: JustMe
+Enrollment: Closed
+Stones: 1 (primary, active)
+CA Fingerprint: AB:CD:EF:01:23:45:67:89...
 ```
 
 ---
 
 ## Join Stones to Pond
 
-### Option A: Baptism (During Pond Creation)
+### Step 3: Open Enrollment
 
-When creating a pond, optionally auto-invite all existing stones:
-
-```bash
-garden-rake place keystone --auto-invite
-
-✓ Pond created
-✓ Sending baptism to 3 stones...
-  ✓ stone-02 baptized
-  ✓ stone-03 baptized
-  ✓ stone-04 baptized
-
-Pond ready with 4 members.
-```
-
-**What happened**:
-- Cornerstone read topology cache (known stones)
-- Sent encrypted credentials to each stone individually (unicast)
-- Each stone verified and stored credentials
-- All stones now in encrypted mode
-
-### Option B: Individual Invitation (Later)
-
-Any pond member can invite new stones:
+On the cornerstone, open enrollment and get a TOTP URI:
 
 ```bash
-# On any pond member (e.g., stone-01 or stone-02)
-garden-rake invite stone-05
+# On the cornerstone (stone-01)
+garden-rake pond invite --passphrase "my-secure-passphrase"
 
-Invitation ready for: stone-05
+Enrollment open for 30 minutes.
 
-TOTP Code: KP7X9M
-Valid for: 5 minutes
-Expires at: 14:35:00 UTC
+TOTP URI: otpauth://totp/certmesh:stone-01?secret=BASE32&issuer=certmesh&algorithm=SHA1&digits=6&period=30
+Expires at: 14:57:00 UTC
 
-Display this code to the administrator adding stone-05.
+Share this URI with stones that need to join.
+Generate a 6-digit code from the URI to use on each joining stone.
 ```
 
-**Security model**: TOTP code displayed locally on both Stones (never transmitted over network). Inspired by Bluetooth pairing - familiar UX, proven security.
+**Security model**: The TOTP URI encodes a shared secret. Any authenticator app (Google Authenticator, Authy, etc.) can generate valid 6-digit codes from it. Codes rotate every 30 seconds.
 
 ### Step 4: Join from New Stone
 
@@ -200,31 +139,24 @@ On the Stone you want to join:
 
 ```bash
 # On stone-05
-garden-rake join pond
+garden-rake pond join --code 123456
 
-Discovering pond members...
-✓ Found pond member: stone-01
-
-Requesting join...
-
-Enter TOTP code: KP7X9M
-
-Validating...
-✓ Code valid
-✓ Credentials received
+Validating code...
+✓ Code accepted
+✓ Certificate issued (ECDSA P-256)
 ✓ Joined pond
 
-Pond Status: Active
-Joined as: Member
-Encryption: XChaCha20-Poly1305
+Stone: stone-05
+Cornerstone: stone-01
+CA Fingerprint: AB:CD:EF:01:23:45:67:89...
 ```
 
 **What happened**:
-- stone-05 discovered an existing pond member via mDNS
-- Generated join request encrypted with Pond CA public key
-- Administrator verified matching TOTP code
-- Received complete pond credentials (shared secret)
-- stone-05 now authenticated in Pond
+- stone-05 generated a TOTP code from the shared URI
+- Sent the code to the cornerstone via HTTP POST
+- Cornerstone validated the code and issued a certificate
+- stone-05 received its certificate and the CA public certificate
+- stone-05 is now an authenticated pond member
 
 ---
 
@@ -233,39 +165,19 @@ Encryption: XChaCha20-Poly1305
 ### Check All Stones
 
 ```bash
-garden-rake status --security --all
+garden-rake pond status
 
-stone-01 (Cornerstone):
-  Role: Founder
-  Status: Healthy
+Pond Status: Active
+Cornerstone: stone-01
+Profile: JustMe
+Enrollment: Closed
+CA Fingerprint: AB:CD:EF:01:23:45:67:89...
 
-stone-02:
-  Role: Member
-  Status: Healthy
-
-stone-03:
-  Role: Member
-  Status: Healthy
-
-stone-04:
-  Role: Member
-  Status: Healthy
-
-Summary:
-  Pond: Active
-  Stones: 4 joined, 0 pending
-  Encryption: XChaCha20-Poly1305
-```
-
-### View Audit Log
-
-```bash
-garden-rake audit show --last 10
-
-2026-01-18 14:30:15 | stone-01 | pond_initialized
-2026-01-18 14:32:48 | stone-02 | stone_joined | invited_by=stone-01
-2026-01-18 14:35:12 | stone-03 | stone_joined | invited_by=stone-01
-2026-01-18 14:38:05 | stone-04 | stone_joined | invited_by=stone-02
+Stones:
+  stone-01 [primary] (active)
+  stone-02 [member] (active)
+  stone-03 [member] (active)
+  stone-04 [member] (active)
 ```
 
 ---
@@ -275,72 +187,75 @@ garden-rake audit show --last 10
 ### Join Failed: Invalid Code
 
 ```
-Error: TOTP code validation failed
+Error: INVALID_AUTH — wrong or expired TOTP code
 
 Possible causes:
-  1. Code expired (5-minute window)
-  2. Clock drift between Stones (±10 min tolerance)
+  1. Code expired (30-second rotation period)
+  2. Clock drift between Stones
   3. Typo in entered code
-  4. Code already used (one-time use)
+  4. Enrollment window closed
 
 Solutions:
-  1. Request new code: garden-rake invite <stone> (on any pond member)
-  2. Check time sync: garden-rake check-time
-  3. Verify NTP: systemctl status systemd-timesyncd
+  1. Generate a fresh code from the TOTP URI
+  2. Check time sync: systemctl status systemd-timesyncd
+  3. Re-open enrollment: garden-rake pond invite --passphrase "..."
 ```
 
 ### Keystone Passphrase Forgotten
 
 ```
-Problem: Lost Keystone passphrase, cannot unlock keystone
+Problem: Lost Keystone passphrase, cannot unlock CA after restart
 
 Recovery:
-  1. No recovery possible (Keystone is encrypted, no backdoor)
+  1. No recovery possible (CA key is encrypted, no backdoor)
   2. Options:
-     a) If you have another pond member with unlocked keystone, pond continues working
-     b) Create new Pond (requires draining old pond, re-inviting all Stones)
+     a) If a promoted standby stone has the CA key, use that stone
+     b) Drain the pond and create a new one (re-invite all Stones)
 
 Prevention:
   - Store passphrase in password manager
-  - Backup Keystone file: /var/lib/zen-garden/keystone.enc
-  - Test passphrase: garden-rake verify-keystone
+  - Promote a standby CA: garden-rake pond promote --passphrase "..."
 ```
 
-### Outsider Detected
+### CA Locked After Restart
 
 ```bash
-# A stone without pond credentials is detected
-garden-rake status
+# After Moss restarts, the CA key is locked
+garden-rake pond status
 
-⚠️  Outsider detected: stone-new (192.168.1.50)
-    This stone is sending plaintext messages.
+Pond Status: Locked
+Cornerstone: stone-01
 
-Actions:
-  1. If legitimate: garden-rake invite stone-new
-  2. If unauthorized: Check your network for rogue devices
+# Unlock with passphrase
+garden-rake pond unlock --passphrase "my-secure-passphrase"
+
+✓ CA key unlocked
 ```
 
 ### Pond Compromise (Emergency)
 
-If you suspect a stone is compromised and has leaked the shared secret:
+If you suspect a stone is compromised:
 
 ```bash
-# Drain the entire pond (nuclear option)
-garden-rake drain pond --yes-i-am-sure
+# Option 1: Revoke a single stone
+garden-rake pond untrust stone-05
 
-⚠️  This will destroy the pond and revert all stones to open mode.
-    All stones will need to be re-invited to a new pond.
-
-Draining pond...
-✓ Drain signal sent to 4 stones
-✓ Local credentials destroyed
-✓ Pond dissolved
-
-All stones are now in open (unencrypted) mode.
-To secure again: garden-rake place keystone
+✓ Certificate revoked for stone-05
 ```
 
-**Why drain?** With shared-secret model, if one stone is compromised, the attacker has the complete keypair. Individual revocation is not possible. Drain resets everything.
+```bash
+# Option 2: Drain the entire pond (nuclear option)
+garden-rake pond remove
+
+✓ CA destroyed
+✓ All certificates invalidated
+✓ Pond dissolved
+
+All stones are now in open (unauthenticated) mode.
+To secure again: garden-rake pond init --passphrase "..."
+```
+
+**Individual revocation:** Unlike the old shared-secret model, the CA-based model supports revoking individual stones without draining the entire pond.
 
 ---
 
@@ -348,26 +263,25 @@ To secure again: garden-rake place keystone
 
 ```bash
 # Status
-garden-rake status --security              # Local Stone security status
-garden-rake status --security --all        # All Stones in Garden
+garden-rake pond status                         # Pond status and membership
 
-# Join/Leave
-garden-rake join pond                      # Join existing Pond
-garden-rake drain pond                     # Drain Pond (emergency reset)
+# Initialize
+garden-rake pond init --passphrase "..." --profile just-me  # Create pond
 
-# Invitation (any pond member)
-garden-rake invite <stone>                 # Generate TOTP for Stone join
+# Enrollment
+garden-rake pond invite --passphrase "..."      # Open enrollment, get TOTP URI
+garden-rake pond join --code 123456             # Join with TOTP code
 
-# Keystone
-garden-rake verify-keystone                # Test Keystone passphrase
+# CA Lifecycle
+garden-rake pond unlock --passphrase "..."      # Unlock CA after restart
+garden-rake pond promote --passphrase "..."     # Promote to standby CA
 
-# Audit
-garden-rake audit show                     # View audit log
-garden-rake audit --filter stone_joined    # Filter by event type
+# Revocation
+garden-rake pond untrust stone-02               # Revoke a stone's certificate
+garden-rake pond remove                         # Drain pond (destroy CA)
 
-# Troubleshooting
-garden-rake check-time                     # Verify time sync
-garden-rake diagnose pond                  # Pond health check
+# CA Certificate
+curl http://stone:7185/api/v1/pond/ca.pem       # Download CA public cert
 ```
 
 ---
@@ -375,13 +289,9 @@ garden-rake diagnose pond                  # Pond health check
 ## Related Documentation
 
 - **[Security Overview](overview.md)** - Threat model and security philosophy
-- **[Pond Protocol Specification](../specs/POND-0001-protocol.md)** - Complete protocol design
-- **[Keystone Protection Tiers](../decisions/SECURITY-0003-keystone-protection-tiers.md)** - TPM/vTPM/passphrase protection
+- **[Pond Protocol Specification](../specs/POND-0001-protocol.md)** - Original protocol design (superseded by certmesh implementation)
+- **[Koi Embedded Integration](../proposals/koi-embedded-integration.md)** - Implementation proposal and verification
 
 ---
 
-**Last Updated**: 2026-01-26
-
----
-
-**Last Updated**: 2026-01-18
+**Last Updated**: 2026-02-16

@@ -5,7 +5,7 @@
 **Purpose**: Understand specific attack vectors and security defenses  
 **Audience**: Security, Maintainer
 
-> **Note**: This analysis was written during design phase. "Tier 2" references document theoretical enterprise enhancements that were evaluated and deferred. See [SECURITY-0004](../decisions/SECURITY-0004-tier2-deferral.md) for deferral rationale. Current implementation is shared-secret P2P model (no certificates, no Tier 2 features).
+> **Note**: This analysis was written during design phase. "Tier 2" references document theoretical enterprise enhancements that were evaluated and deferred. See [SECURITY-0004](../decisions/SECURITY-0004-tier2-deferral.md) for deferral rationale. Current implementation uses CA-based mTLS via koi-certmesh (ECDSA P-256 certificates, TOTP enrollment). Tier 2 features remain deferred.
 
 ---
 

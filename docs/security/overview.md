@@ -72,13 +72,13 @@ Every security feature includes:
 
 ## Pond Security
 
-**Pond** - Optional security layer for encrypted Stone-to-Stone communication using P2P shared-secret model.
+**Pond** — Optional security layer for encrypted Stone-to-Stone communication using CA-based mTLS (ECDSA P-256 certificates via koi-certmesh).
 
 **Philosophy**: "Set your stones, make sure everything is working, fill the pond."
 
 Users start without Pond (frictionless), then enable security when ready:
 ```bash
-garden-rake place keystone
+garden-rake pond init --passphrase "my-secure-pass" --profile just-me
 ```
 
 ### Bluetooth Pairing Model
@@ -98,13 +98,13 @@ Bluetooth Pairing          →  Pond Join
 
 ### Components
 
-**Keystone** - Encrypted file containing Pond CA keypair (shared secret). All pond members hold the complete keypair (P2P trust model).
+**Keystone** — Encrypted CA private key stored on the cornerstone. Protected by passphrase encryption (AES-256-GCM via Argon2id KDF). Only the cornerstone (and promoted standby stones) hold the CA private key.
 
-**Cornerstone** - Stone that initialized the pond (ran `place keystone`). Ceremonial role—not a control point. Any pond member can invite new stones.
+**Cornerstone** — Stone that initialized the pond (ran `pond init`). Holds the CA private key and acts as the certificate authority — the trust anchor for the pond.
 
-**Encrypted UDP** - All pond traffic uses XChaCha20-Poly1305 encryption. Strong, fast, modern cryptography (same primitives as WireGuard).
+**mTLS** — All inter-Stone communication uses mutual TLS with ECDSA P-256 certificates issued by the pond CA. When pond is active, Moss binds HTTPS on port 7187.
 
-**TOTP Codes** - Time-based one-time passwords for Stone admission. 6 characters, 5-minute window, validated locally (never transmitted).
+**TOTP Codes** — Time-based one-time passwords for Stone admission. 6 digits, 30-second period (SHA1), configurable enrollment window (default 30 minutes).
 
 ---
 
@@ -112,10 +112,10 @@ Bluetooth Pairing          →  Pond Join
 
 ### ✅ Protection Provided
 
-**1. Encryption** - Protect traffic from network sniffing
+**1. Encryption** — Protect traffic from network sniffing
 ```
-Without Pond: UDP announcements plaintext, traffic visible
-With Pond: XChaCha20-Poly1305 encryption for all inter-Stone communication
+Without Pond: HTTP API plaintext, traffic visible
+With Pond: mTLS (ECDSA P-256) encryption for all inter-Stone communication
 ```
 
 **2. Admission Control** - Control which Stones can join Garden
@@ -182,10 +182,10 @@ Scope: Out of scope (home lab focus)
 Reality: Home labs are not APT targets
 ```
 
-**6. Insider Attack** - If trusted admin goes rogue:
+**6. Insider Attack** — If trusted admin goes rogue:
 ```
-Risk: Full access to all systems (shared-secret model)
-Mitigation: This is the trust model. Use Drain if trust is broken.
+Risk: Full access to all systems (CA model — cornerstone controls trust)
+Mitigation: Cornerstone passphrase required for key operations. Use Drain if trust is broken.
 ```
 
 ---
@@ -211,7 +211,7 @@ Mitigation: This is the trust model. Use Drain if trust is broken.
 **Start simple, add security when needed**:
 1. Deploy Stones without Pond (get familiar)
 2. Validate discovery and services working
-3. Enable Pond when ready: `garden-rake place keystone`
+3. Enable Pond when ready: `garden-rake pond init --passphrase "my-pass"`
 4. Existing services continue (zero downtime)
 5. All pond traffic encrypted automatically
 
@@ -225,4 +225,4 @@ Mitigation: This is the trust model. Use Drain if trust is broken.
 
 ---
 
-**Last Updated**: 2026-01-26
+**Last Updated**: 2026-02-16

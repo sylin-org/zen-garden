@@ -9,6 +9,7 @@
 //! - remove: Drain pond (destroy CA)
 //! - untrust: Revoke a stone from pond
 //! - promote: Promote this stone to standby CA
+//! - rename: Rename the pond (decorative)
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
@@ -38,6 +39,8 @@ pub enum PondActionType {
     Untrust { stone_name: String },
     /// Promote this stone to standby CA
     Promote { passphrase: Option<String> },
+    /// Rename the pond (decorative, no cryptographic impact)
+    Rename { name: Option<String> },
 }
 
 /// Pond command for security management
@@ -84,6 +87,9 @@ impl Command for PondCommand {
             }
             PondActionType::Promote { passphrase } => {
                 execute_pond_promote(ctx, endpoint, passphrase.clone()).await?;
+            }
+            PondActionType::Rename { name } => {
+                execute_pond_rename(ctx, endpoint, name.clone()).await?;
             }
         }
 
@@ -525,6 +531,58 @@ async fn execute_pond_promote(
             let body = response.text().await.unwrap_or_default();
             eprintln!(
                 "{}{} Failed to promote stone: {} {}",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("error", ctx.term.supports_color),
+                status,
+                body
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{}{} Request failed: {}",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("error", ctx.term.supports_color),
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn execute_pond_rename(
+    ctx: &CommandContext,
+    endpoint: &str,
+    name: Option<String>,
+) -> anyhow::Result<()> {
+    let url = format!("{}/api/v1/pond/name", endpoint.trim_end_matches('/'));
+    let payload = match name {
+        Some(ref n) => serde_json::json!({ "name": n }),
+        None => serde_json::json!({}),
+    };
+
+    match ctx.client.put(&url).json(&payload).send().await {
+        Ok(response) if response.status().is_success() => {
+            if let Ok(body) = response.json::<serde_json::Value>().await {
+                if let Some(data) = body.get("data") {
+                    let new_name = data
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("unknown");
+                    println!(
+                        "{}{} Pond renamed to '{}'",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("ok", ctx.term.supports_color),
+                        new_name
+                    );
+                }
+            }
+        }
+        Ok(response) => {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            eprintln!(
+                "{}{} Failed to rename pond: {} {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
                 status,

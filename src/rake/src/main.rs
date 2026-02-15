@@ -1130,6 +1130,11 @@ enum PondAction {
         #[arg(long)]
         passphrase: Option<String>,
     },
+    /// Rename the pond (decorative, no crypto impact)
+    Rename {
+        /// New pond name (auto-generated if omitted)
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2476,6 +2481,7 @@ async fn async_main() -> anyhow::Result<()> {
                     PondAction::Remove => PondActionType::Remove,
                     PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },
                     PondAction::Promote { passphrase } => PondActionType::Promote { passphrase },
+                    PondAction::Rename { name } => PondActionType::Rename { name },
                 };
                 let cmd = commands::management::PondCommand::new(action_type, quiet_mode);
                 dispatch::dispatch(

@@ -313,7 +313,7 @@ pub fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option
         return None;
     }
 
-    let port = record.port.unwrap_or(7185);
+    let port = record.port.unwrap_or(garden_common::constants::MOSS_HTTP);
     let txt = &record.txt;
 
     let stone_name = txt

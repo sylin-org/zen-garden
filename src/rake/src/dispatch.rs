@@ -185,14 +185,16 @@ pub async fn resolve_endpoint(
             "No Zen Garden stones discovered.\n\n\
             Possible causes:\n\
               • No stones present on your network\n\
-              • Firewall is blocking UDP broadcast (port 7184)\n\
+              • Firewall is blocking UDP broadcast (port {})\n\
               • Stone's garden-moss service is not running\n\n\
             To fix:\n\
               • Create a new stone: Run installer/NewStone-linux-x64.ps1\n\
               • Set tending: garden-rake tend <endpoint>\n\
-              • Specify endpoint manually: garden-rake <command> --at http://<IP>:7185\n\
+              • Specify endpoint manually: garden-rake <command> --at http://<IP>:{}\n\
               • Or use a stone name: garden-rake <command> --at <stone-name>\n\
-              • Check stone status: ssh stone@<ip> systemctl status garden-moss.service"
+              • Check stone status: ssh stone@<ip> systemctl status garden-moss.service",
+            garden_common::constants::DISCOVERY_UDP,
+            garden_common::constants::MOSS_HTTP,
         )),
     }
 }

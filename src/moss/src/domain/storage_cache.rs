@@ -188,7 +188,11 @@ mod tests {
         StorageBeacon {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
-            endpoint: format!("http://{}.local:7185", stone_name),
+            endpoint: format!(
+                "http://{}.local:{}",
+                stone_name,
+                garden_common::constants::MOSS_HTTP
+            ),
             seed_banks: seed_banks
                 .into_iter()
                 .map(|name| SeedBankAnnouncement {

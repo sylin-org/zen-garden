@@ -30,6 +30,11 @@ pub const MDNS_SERVICE_TYPE_LOCAL: &str = "_moss._tcp.local.";
 // Network Ports
 // ============================================================================
 
+/// HTTPS port for Moss API (when pond is active)
+///
+/// Below the baseline 7184 to avoid conflicts with the companion port range.
+pub const MOSS_HTTPS: u16 = 7183;
+
 /// UDP port for stone discovery broadcasts
 pub const DISCOVERY_UDP: u16 = 7184;
 
@@ -39,8 +44,14 @@ pub const MOSS_HTTP: u16 = 7185;
 /// HTTP port for Lantern API
 pub const LANTERN_HTTP: u16 = 7186;
 
-/// HTTPS port for Moss API (when pond is active)
-pub const MOSS_HTTPS: u16 = 7187;
+/// Base port for companion command servers (Cricket, Firefly, etc.)
+///
+/// Derived from ASCII sum of "moss Companion" (1187) + 6000 = 7187.
+/// Range: 7187–7199 (13 companions max). Assigned by Moss via port ledger.
+pub const COMPANION_PORT_BASE: u16 = 7187;
+
+/// Maximum port for companion command servers
+pub const COMPANION_PORT_MAX: u16 = 7199;
 
 // ============================================================================
 // Pond / mDNS TXT Keys

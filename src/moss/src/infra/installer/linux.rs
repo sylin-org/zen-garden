@@ -253,7 +253,7 @@ fn install_service_unit() -> anyhow::Result<()> {
 
 fn generate_unit_file() -> String {
     // Use the same unit file content as the package-assets template
-    "\
+    format!("\
 [Unit]
 Description=Garden Moss Daemon - Zen Garden Stone Manager
 Documentation=https://github.com/koan-framework/zen-garden
@@ -275,7 +275,7 @@ SyslogIdentifier=garden-moss
 
 # Environment
 Environment=\"RUST_LOG=info\"
-Environment=\"PORT=7185\"
+Environment=\"PORT={port}\"
 
 # Security hardening
 NoNewPrivileges=false
@@ -289,8 +289,7 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-"
-    .to_string()
+", port = garden_common::constants::MOSS_HTTP)
 }
 
 // ── Uninstall ────────────────────────────────────────────────────────

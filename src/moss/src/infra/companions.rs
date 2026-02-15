@@ -25,13 +25,10 @@ use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use garden_common::constants::{COMPANION_PORT_BASE, COMPANION_PORT_MAX};
+
 /// Timeout for Companion --dump-commands execution
 const DUMP_COMMANDS_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Port range for Companion command servers (assigned by Moss)
-/// Base port: ASCII sum of "moss Companion" (1187) + 6000 = 7187
-const COMPANION_PORT_BASE: u16 = 7187;
-const COMPANION_PORT_MAX: u16 = 7199;
 
 /// Ledger file name for persisting port assignments
 const PORT_LEDGER_FILE: &str = "companion-ports.json";

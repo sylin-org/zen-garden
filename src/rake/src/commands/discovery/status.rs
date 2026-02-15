@@ -66,13 +66,14 @@ impl Command for StatusCommand {
         );
         // Parse endpoint to extract IP and port
         let endpoint_clean = endpoint.trim_start_matches("http://").trim_end_matches('/');
+        let default_port = garden_common::constants::MOSS_HTTP.to_string();
         let (ip_addr, port) = if let Some(colon_pos) = endpoint_clean.rfind(':') {
             (
                 &endpoint_clean[..colon_pos],
                 &endpoint_clean[colon_pos + 1..],
             )
         } else {
-            (endpoint_clean, "7185")
+            (endpoint_clean, default_port.as_str())
         };
 
         // mDNS name is stone_name.local (lowercase)

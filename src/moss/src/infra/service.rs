@@ -203,7 +203,10 @@ pub async fn install_windows_service() -> anyhow::Result<()> {
     println!("  sc start ZenGardenMoss      Start service");
     println!("  sc delete ZenGardenMoss     Remove service (uproot)");
     println!();
-    println!("Access the web UI at: http://localhost:7185");
+    println!(
+        "Access the web UI at: http://localhost:{}",
+        garden_common::constants::MOSS_HTTP
+    );
 
     Ok(())
 }
@@ -508,8 +511,14 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
         println!("✓ Service start triggered");
     } else {
         // Wait for port 7185 to become available (up to 10 seconds)
-        println!("Waiting for port 7185 to become available...");
-        log_update("Checking port 7185 availability...");
+        println!(
+            "Waiting for port {} to become available...",
+            garden_common::constants::MOSS_HTTP
+        );
+        log_update(&format!(
+            "Checking port {} availability...",
+            garden_common::constants::MOSS_HTTP
+        ));
 
         let port = garden_common::constants::MOSS_HTTP;
         for attempt in 1..=20 {

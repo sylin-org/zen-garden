@@ -8,6 +8,7 @@ use super::config::DaemonConfig;
 use crate::run_first_boot_initialization;
 use crate::{
     bind_server,
+    bootstrap::tls,
     connect_docker,
     // Infrastructure
     infra,
@@ -321,19 +322,42 @@ pub async fn run(
     };
 
     // Phase 4.0.1: Seed pond_active from persisted certmesh state
-    // If the CA was previously initialized, the flag starts true (but CA may be locked).
-    // Unlock is required after restart — handlers check locked state separately.
+    // Two cases: (a) cornerstone with CA initialized + unlocked, or
+    // (b) enrolled member with cert files from a prior enrollment.
+    // Also seeds the PondState domain surface (no event emitted at boot).
+    let pond_state = crate::domain::PondState::new();
     if let Ok(cm) = koi_handle.certmesh() {
         if let Ok(core) = cm.core() {
             let status = core.certmesh_status().await;
             if status.ca_initialized && !status.ca_locked {
                 pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
+                pond_state.seed_enrolled(true);
                 tracing::info!("Pond active — CA initialized and unlocked from previous session");
             } else if status.ca_initialized {
                 tracing::info!("Pond CA exists but is locked — run 'garden-rake pond unlock'");
             }
         }
     }
+    // Enrolled member fallback: check for enrollment certs on disk
+    if !pond_active.load(std::sync::atomic::Ordering::Relaxed) {
+        let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
+            .join("koi")
+            .join("certs")
+            .join(&stone_name);
+        if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
+            pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
+            pond_state.seed_enrolled(true);
+            tracing::info!("Pond active — enrolled member with certs from previous enrollment");
+        }
+    }
+
+    // Seed pond name from persisted metadata
+    let pond_metadata = crate::domain::load_pond_metadata();
+    pond_state.seed_name(pond_metadata.name).await;
+
+    // Phase 4.0.2–4.0.3: Chirp signing + verification
+    // Deferred to Phase 18 boot (activate_pond_security) and the
+    // enrollment-change listener (Phase 11.3). No duplicated code here.
 
     // Phase 4.1: mDNS announcement — includes stone_id and MAC in TXT records
     // Must happen before IP change handler so we can pass the handle
@@ -499,7 +523,9 @@ pub async fn run(
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
+        pond: pond_state,
         pond_active: pond_active.clone(),
+        https_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         ceremony_registry,
         ceremony_journal,
         harvest_store,
@@ -713,7 +739,45 @@ pub async fn run(
         tracing::debug!("mDNS health-change listener spawned (ARCH-0066)");
     }
 
-    // Phase 11.3: Sync self_entry services after registry loads
+    // Phase 11.3: Enrollment-change listener (Pond domain event)
+    // Reacts to PondEvent::EnrollmentChanged by starting/stopping HTTPS + chirp signing.
+    // This eliminates the need for handlers to manage HTTPS directly.
+    {
+        let state_for_pond = state.clone();
+        let console_for_pond = console_printer.clone();
+        let mut pond_rx = state.event_bus.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match pond_rx.recv().await {
+                    Ok(crate::domain::DomainEvent::Pond(
+                        crate::domain::PondEvent::EnrollmentChanged { enrolled, .. },
+                    )) => {
+                        if enrolled {
+                            activate_pond_security(&state_for_pond, &console_for_pond).await;
+                        } else {
+                            // HTTPS shutdown is not implemented yet (Phase 3+).
+                            // For now, just update the flag so new connections see the change.
+                            state_for_pond
+                                .https_started
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            tracing::info!("Pond unenrolled — HTTPS deactivated (flag cleared)");
+                        }
+                    }
+                    Ok(_) => {} // Ignore non-pond events
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "Pond enrollment listener: missed events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Pond enrollment listener: event bus closed");
+                        break;
+                    }
+                }
+            }
+        });
+        tracing::debug!("Pond enrollment-change listener spawned");
+    }
+
+    // Phase 11.4: Sync self_entry services after registry loads
     let state_for_sync = state.clone();
     tokio::spawn(async move {
         // Wait for registry to load
@@ -992,7 +1056,32 @@ pub async fn run(
 
     // Phase 18: HTTP server
     tracing::info!("Setting up HTTP router with 200 MB body limit");
-    let app = router::configure(state.clone());
+
+    // When pond security is active, split routes across two listeners:
+    // - HTTP :7185 → public lobby (health, discovery, pond join/status)
+    // - HTTPS :7183 → all routes (authenticated, full API)
+    let pond_is_active = state.pond_active.load(std::sync::atomic::Ordering::Relaxed);
+
+    // If already enrolled at boot, activate HTTPS + chirp signing/verification
+    if pond_is_active {
+        activate_pond_security(&state, &console_printer).await;
+    }
+
+    let app = if pond_is_active
+        && state
+            .https_started
+            .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::info!(
+            "Pond active: HTTP :{} serves public lobby, HTTPS :{} serves all routes",
+            port,
+            garden_common::constants::MOSS_HTTPS
+        );
+        router::configure_public(state.clone())
+    } else {
+        router::configure(state.clone())
+    };
+
     let listener = bind_server(port, &console_printer).await?;
 
     // Create shutdown callback to flush topology and send goodbye announcement
@@ -1419,4 +1508,111 @@ async fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
 
     tracing::info!(name = %name, "Set Windows DNS hostname (reboot required)");
     Ok(())
+}
+
+/// Activate pond security features (HTTPS + chirp signing/verification).
+///
+/// Called reactively from the enrollment-change listener or at boot.
+/// Idempotent: HTTPS binding guarded by `https_started`; chirp enricher/verifier
+/// use `OnceLock` which silently ignores second calls.
+async fn activate_pond_security(
+    state: &AppState,
+    console: &garden_common::console::ConsolePrinter,
+) {
+    let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
+        .join("koi")
+        .join("certs")
+        .join(&state.stone_name);
+    let key_path = certs_dir.join("key.pem");
+    let cert_path = certs_dir.join("cert.pem");
+
+    // --- Chirp signing ---
+    if key_path.exists() && cert_path.exists() {
+        if let Ok(key_pem) = std::fs::read_to_string(&key_path) {
+            if let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
+                use base64::Engine;
+                let public_key_pem = keypair.public_key_pem();
+                let _ = garden_common::infra::communications::p2p::set_envelope_enricher(Box::new(
+                    move |announcement| {
+                        if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
+                            let sig = koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
+                            announcement.signature =
+                                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
+                            announcement.sender_cert = Some(public_key_pem.clone());
+                        }
+                    },
+                ));
+                tracing::info!("Chirp signing enabled");
+            }
+        }
+    }
+
+    // --- Chirp verification ---
+    let ca_cert_path = koi_certmesh::ca::ca_cert_path();
+    if ca_cert_path.exists() {
+        if let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
+            let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(
+                move |announcement| {
+                    use base64::Engine;
+
+                    let (sig_b64, _sender_cert) = match (
+                        announcement.signature.as_deref(),
+                        announcement.sender_cert.as_deref(),
+                    ) {
+                        (Some(s), Some(c)) => (s, c),
+                        _ => return true, // Accept unsigned during transition
+                    };
+
+                    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(sig_b64)
+                    {
+                        Ok(b) => b,
+                        Err(_) => return false,
+                    };
+
+                    let data_bytes = match serde_json::to_vec(&announcement.data) {
+                        Ok(b) => b,
+                        Err(_) => return false,
+                    };
+
+                    let sender_cert_pem = announcement.sender_cert.as_deref().unwrap_or_default();
+
+                    koi_crypto::signing::verify_signature(sender_cert_pem, &data_bytes, &sig_bytes)
+                },
+            ));
+            tracing::info!("Chirp verification enabled");
+        }
+    }
+
+    // --- HTTPS listener ---
+    if state
+        .https_started
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_ok()
+    {
+        let handle = tls::try_start_https(
+            garden_common::constants::MOSS_HTTPS,
+            &state.stone_name,
+            router::configure(state.clone()),
+            console,
+            state.shutdown_tx.clone(),
+        )
+        .await;
+
+        if handle.is_none() {
+            state
+                .https_started
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!("HTTPS listener not started (certs may not be ready)");
+        } else {
+            tracing::info!(
+                port = garden_common::constants::MOSS_HTTPS,
+                "HTTPS listener started (pond security)"
+            );
+        }
+    }
 }

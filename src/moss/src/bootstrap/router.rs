@@ -9,6 +9,12 @@
 //! - /api/v1/admin/*: Administrative operations (privileged)
 //! - /api/v1/pond/*: Security/trust management
 //! - /api/v1/console/*: Console control
+//!
+//! When pond security is active, routes are split across two listeners:
+//! - HTTP :7185 → `configure_public()` (lobby: health, status, discovery, pond join)
+//! - HTTPS :7183 → `configure()` (all routes, including public)
+//!
+//! When pond is not active, HTTP :7185 → `configure()` (all routes, backwards compatible).
 
 use crate::{api, AppState};
 use axum::{
@@ -17,7 +23,166 @@ use axum::{
 };
 use tower_http::trace::TraceLayer;
 
+/// Configure the **public lobby** router for HTTP when pond security is active.
+///
+/// This subset of routes remains accessible over plain HTTP even after pond
+/// initialization. It includes health checks, read-only stone/garden info,
+/// discovery endpoints, and pond join/status/CA-cert — everything a
+/// non-enrolled client needs to discover the garden and request membership.
+///
+/// Mutation endpoints, admin operations, and service management are only
+/// available on the HTTPS listener via `configure()`.
+pub fn configure_public(state: AppState) -> Router {
+    Router::new()
+        // ══════════════════════════════════════════════════════════════════
+        // ROOT LEVEL - Industry standard endpoints
+        // ══════════════════════════════════════════════════════════════════
+        .route("/", get(api::v1::portrait::get_portrait_page))
+        .route("/health", get(api::v1::health::get_health))
+        // ══════════════════════════════════════════════════════════════════
+        // Stone info (read-only)
+        // ══════════════════════════════════════════════════════════════════
+        .route("/api/v1/stone", get(api::v1::garden::get_local_stone_v1))
+        .route("/api/v1/stone/info", get(api::v1::stone::get_stone_info_v1))
+        .route(
+            "/api/v1/stone/portrait",
+            get(api::v1::portrait::get_portrait_data),
+        )
+        .route(
+            "/api/v1/stone/portrait/guidance",
+            get(api::v1::portrait::get_portrait_guidance),
+        )
+        .route(
+            "/api/v1/stone/capabilities",
+            get(api::v1::capabilities::get_capabilities),
+        )
+        .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        // ══════════════════════════════════════════════════════════════════
+        // Read-only stone endpoints
+        // ══════════════════════════════════════════════════════════════════
+        .route(
+            "/api/v1/stone/offerings",
+            get(api::v1::offerings::list_offerings_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/search",
+            get(api::v1::offerings::search_offerings_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}",
+            get(api::v1::offerings::get_offering_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/manifest",
+            get(api::v1::offerings::get_offering_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/services",
+            get(api::v1::services::list_services_v1),
+        )
+        .route(
+            "/api/v1/stone/services/manifests",
+            get(api::v1::services::list_manifests_v1),
+        )
+        .route(
+            "/api/v1/stone/services/{service}",
+            get(api::v1::services::get_service_v1),
+        )
+        .route(
+            "/api/v1/stone/storage",
+            get(api::v1::storage::storage_overview_v1),
+        )
+        .route(
+            "/api/v1/stone/storage/health",
+            get(api::v1::storage::storage_health_v1),
+        )
+        .route(
+            "/api/v1/stone/presence/stream",
+            get(api::v1::presence::stream_stone_presence),
+        )
+        .route(
+            "/api/v1/stone/nourishment",
+            get(api::v1::nourishment::check_stone),
+        )
+        .route(
+            "/api/v1/stone/companions",
+            get(api::v1::companions::get_companions),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Garden topology (read-only discovery)
+        // ══════════════════════════════════════════════════════════════════
+        .route("/api/v1/garden", get(api::v1::garden::get_garden_v1))
+        .route(
+            "/api/v1/garden/topology",
+            get(api::v1::garden::get_topology_v1),
+        )
+        .route(
+            "/api/v1/garden/stones/{stone_name}",
+            get(api::v1::garden::get_stone_v1),
+        )
+        .route(
+            "/api/v1/garden/services",
+            get(api::v1::services::find_services_v1),
+        )
+        .route(
+            "/api/v1/garden/tools",
+            get(api::v1::tools::list_garden_tools_v1),
+        )
+        .route(
+            "/api/v1/garden/tools/stream",
+            get(api::v1::tools::stream_garden_tools_v1),
+        )
+        .route(
+            "/api/v1/garden/nourishment",
+            get(api::v1::nourishment::check_garden),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Jobs & manifests (read-only)
+        // ══════════════════════════════════════════════════════════════════
+        .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
+        .route("/api/v1/jobs/{job_id}", get(api::v1::jobs::get_job_status))
+        .route(
+            "/api/v1/manifest",
+            get(api::v1::manifest::get_api_manifest_v1),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Pond lobby - must be accessible for enrollment
+        // ══════════════════════════════════════════════════════════════════
+        .route("/api/v1/pond/init", post(api::v1::pond::pond_init_v1))
+        .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
+        .route("/api/v1/pond/status", get(api::v1::pond::pond_status_v1))
+        .route("/api/v1/pond/ca.pem", get(api::v1::pond::pond_ca_cert_v1))
+        // ══════════════════════════════════════════════════════════════════
+        // Stone deploy/upgrade - must work over HTTP for infrastructure
+        // ══════════════════════════════════════════════════════════════════
+        .route(
+            "/api/v1/stone/upgrade",
+            post(api::v1::stone::upgrade_stone_v1),
+        )
+        .route(
+            "/api/v1/stone/deploy",
+            post(api::v1::stone::deploy_stone_v1),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Console (read-only)
+        // ══════════════════════════════════════════════════════════════════
+        .route(
+            "/api/v1/console/mode",
+            get(api::v1::console::get_console_mode_v1),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Middleware
+        // ══════════════════════════════════════════════════════════════════
+        .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
 /// Configure the HTTP router with all API endpoints
+///
+/// When pond is NOT active, this is served on HTTP :7185.
+/// When pond IS active, this is served on HTTPS :7183 (the full set)
+/// while HTTP :7185 serves the reduced `configure_public()` set.
 pub fn configure(state: AppState) -> Router {
     Router::new()
         // ══════════════════════════════════════════════════════════════════
@@ -496,6 +661,7 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
         .route("/api/v1/pond/unlock", post(api::v1::pond::pond_unlock_v1))
+        .route("/api/v1/pond/name", put(api::v1::pond::pond_rename_v1))
         .route("/api/v1/pond/promote", post(api::v1::pond::pond_promote_v1))
         .route(
             "/api/v1/pond/stones/{stone_name}",

@@ -31,6 +31,8 @@ pub enum DomainEvent {
     Stone(StoneEvent),
     /// Job events (installation/removal progress)
     Job(JobEvent),
+    /// Pond security events (enrollment changes)
+    Pond(PondEvent),
 }
 
 impl DomainEvent {
@@ -41,6 +43,7 @@ impl DomainEvent {
             Self::Storage(e) => e.event_type(),
             Self::Stone(e) => e.event_type(),
             Self::Job(e) => e.event_type(),
+            Self::Pond(e) => e.event_type(),
         }
     }
 
@@ -51,6 +54,7 @@ impl DomainEvent {
             Self::Storage(e) => e.to_message(),
             Self::Stone(e) => e.to_message(),
             Self::Job(e) => e.to_message(),
+            Self::Pond(e) => e.to_message(),
         }
     }
 
@@ -61,6 +65,7 @@ impl DomainEvent {
             Self::Storage(_) => false, // Storage is local-only
             Self::Stone(_) => false,   // Stone events are local-only
             Self::Job(_) => false,     // Job progress is local-only
+            Self::Pond(_) => false,    // Pond events are local-only
         }
     }
 }
@@ -87,6 +92,64 @@ impl From<StoneEvent> for DomainEvent {
 impl From<JobEvent> for DomainEvent {
     fn from(e: JobEvent) -> Self {
         Self::Job(e)
+    }
+}
+
+impl From<PondEvent> for DomainEvent {
+    fn from(e: PondEvent) -> Self {
+        Self::Pond(e)
+    }
+}
+
+// ============================================================================
+// Pond Events
+// ============================================================================
+
+/// Pond security events (enrollment state changes)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PondEvent {
+    /// Enrollment state changed (enrolled or unenrolled)
+    EnrollmentChanged {
+        enrolled: bool,
+        cornerstone: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl PondEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::EnrollmentChanged { .. } => event_types::POND_ENROLLMENT_CHANGED,
+        }
+    }
+
+    pub fn to_message(&self) -> String {
+        match self {
+            Self::EnrollmentChanged {
+                enrolled: true,
+                cornerstone,
+                ..
+            } => {
+                if let Some(cs) = cornerstone {
+                    format!("Stone enrolled in pond (cornerstone: {})", cs)
+                } else {
+                    "Stone enrolled in pond".to_string()
+                }
+            }
+            Self::EnrollmentChanged {
+                enrolled: false, ..
+            } => "Stone unenrolled from pond".to_string(),
+        }
+    }
+
+    /// Builder: enrollment changed
+    pub fn enrollment_changed(enrolled: bool, cornerstone: Option<String>) -> Self {
+        Self::EnrollmentChanged {
+            enrolled,
+            cornerstone,
+            timestamp: Utc::now(),
+        }
     }
 }
 

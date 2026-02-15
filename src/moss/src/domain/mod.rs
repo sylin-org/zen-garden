@@ -31,6 +31,7 @@ pub mod network;
 pub mod nurturing;
 pub mod offerings;
 pub mod placement;
+pub mod pond;
 pub mod reconciliation;
 pub mod registry;
 pub mod scoring;
@@ -75,7 +76,7 @@ pub use ceremony::{
     execute_nourish_offering, Ceremony, CeremonyId, CeremonyInitiator, CeremonyOptions,
     CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
 };
-pub use events::{DomainEvent, OfferingEvent, StoneEvent, StorageEvent};
+pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
 pub use garden_common::TopologyEntry;
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
@@ -88,6 +89,7 @@ pub use network::{
 pub use nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
 };
+pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
 pub use storage_cache::{
     find_by_name, find_s3_gateways, new_storage_cache, remove_stone as remove_stone_storage,
     update_from_beacon, StorageCache, StorageCacheInner,

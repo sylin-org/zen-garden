@@ -46,6 +46,16 @@ impl From<&DomainEvent> for SseEvent {
             DomainEvent::Storage(e) => Self::from_storage(e),
             DomainEvent::Stone(e) => Self::from_stone(e),
             DomainEvent::Job(e) => Self::from_job(e),
+            DomainEvent::Pond(e) => Self {
+                timestamp: Utc::now().to_rfc3339(),
+                level: SSE_LEVEL_INFO.to_string(),
+                event_type: e.event_type().to_string(),
+                message: e.to_message(),
+                job_id: None,
+                offering: None,
+                offering_id: None,
+                data: None,
+            },
         }
     }
 }

@@ -135,6 +135,12 @@ pub fn logs_dir() -> String {
     std::env::var("ZG_LOGS_DIR").unwrap_or_else(|_| format!("{}/logs", data_dir()))
 }
 
+/// Get pond metadata file path
+/// Layout: {data_dir}/pond.json
+pub fn pond_metadata_file() -> String {
+    format!("{}/pond.json", data_dir())
+}
+
 // ============================================================================
 // Linux-Specific Paths (for SSH validation from Windows to Linux stones)
 // ============================================================================

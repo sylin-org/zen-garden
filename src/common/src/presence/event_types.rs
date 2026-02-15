@@ -39,6 +39,9 @@ pub const STONE_HEALTH_CHANGED: &str = "stone.health.changed";
 pub const STONE_TENDED: &str = "stone.tended";
 pub const STONE_NETWORK_READY: &str = "stone.network.ready";
 
+// Pond security events
+pub const POND_ENROLLMENT_CHANGED: &str = "pond.enrollment.changed";
+
 // Job events (installation/removal progress)
 pub const CATEGORY_JOB: &str = "job";
 pub const PREFIX_JOB: &str = "job.";

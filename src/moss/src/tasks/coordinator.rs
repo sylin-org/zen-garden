@@ -704,7 +704,12 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                 );
 
                 // Update storage cache since mounts changed
-                let endpoint = state_persistence.self_entry.read().await.address.http_base();
+                let endpoint = state_persistence
+                    .self_entry
+                    .read()
+                    .await
+                    .address
+                    .http_base();
                 if let Err(e) = crate::infra::storage::update_and_broadcast(
                     &state_persistence.storage_cache,
                     &state_persistence.stone_id,

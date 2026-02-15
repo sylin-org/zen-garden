@@ -141,9 +141,18 @@ pub struct AppState {
     /// Shared across all subsystems; sub-handles accessed via `koi_handle.mdns()`, `.dns()`, etc.
     pub koi_handle: Arc<koi_embedded::KoiHandle>,
 
+    /// Pond domain surface — enrollment state and cornerstone identity.
+    /// Properties: `enrolled()`, `cornerstone()`.
+    /// Mutations trigger `PondEvent::EnrollmentChanged` on the EventBus.
+    pub pond: crate::domain::PondState,
+
     /// Pond active flag — true when certmesh CA is initialized and unlocked.
     /// Cached for fast checks (chirp signing, HTTPS routing). Updated by pond handlers.
     pub pond_active: Arc<std::sync::atomic::AtomicBool>,
+
+    /// HTTPS listener started flag — guards against double-binding :7183.
+    /// Set true after the first successful HTTPS bind (boot or dynamic).
+    pub https_started: Arc<std::sync::atomic::AtomicBool>,
 
     // === Ceremony Infrastructure ===
     /// Active ceremony registry (in-memory state)

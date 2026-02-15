@@ -322,6 +322,76 @@ After CA creation, the passphrase can optionally be saved to a local file (`auto
 
 The threat model is honest: if an attacker has root on your Pi, they already have everything. Auto-unlock trades a theoretical protection (encrypted key with passphrase next to it) for real-world usability (garden survives power outages without human intervention).
 
+### Future: Envelope Encryption & Alternative Unlock Methods
+
+The current unlock model is **passphrase-direct**: the passphrase is the KDF input that encrypts the CA private key. This means only the passphrase (or a copy of it) can unlock the CA. TOTP codes rotate every 30 seconds and carry ~20 bits of entropy — they can't serve as a stable decryption key. Standard FIDO2 assertions prove identity but produce no reusable secret.
+
+To support TOTP and FIDO2 unlock, the storage model must change to **envelope encryption with key slots** (similar to LUKS):
+
+#### Architecture
+
+```
+CA Private Key
+  └─ encrypted by ─→ Master Key (random 256-bit, generated once)
+                        └─ protected by Key Slot Table:
+                           ┌────────────────────────────────────────┐
+                           │ Slot 0: Passphrase (always present)    │
+                           │ Slot 1: Auto-unlock (local file)       │
+                           │ Slot 2: TOTP-escrow (peer holds key)   │
+                           │ Slot 3: FIDO2-escrow (peer holds key)  │
+                           └────────────────────────────────────────┘
+```
+
+Any single slot can independently unwrap the master key. The passphrase slot is always present — you cannot lock yourself out.
+
+#### Slot types
+
+**Passphrase (local).** `passphrase → Argon2id(salt) → slot_kek → AES-256-GCM(master_key)`. Stored on disk: salt, nonce, ciphertext. This is the current model, just one level of indirection deeper.
+
+**Auto-unlock (local).** The master key (or a slot_kek that wraps it) is stored in a plaintext file with restrictive permissions. Equivalent to the current `auto-unlock-key` mechanism.
+
+**TOTP-escrow (distributed).** Requires ≥1 peer stone in the pond.
+
+Setup (during ceremony or post-init):
+1. Generate TOTP `shared_secret`, display QR to operator.
+2. Generate random `slot_kek`.
+3. `AES-256-GCM(master_key, slot_kek) → local_blob` — stored on this stone.
+4. Escrow `slot_kek` to peer stone, encrypted with peer's storage key and gated by TOTP verification. Peer stores: `{ totp_shared_secret, encrypt(slot_kek, peer_key) }`.
+
+Unlock flow:
+1. Operator enters TOTP code.
+2. Stone sends code to peer over HTTPS (stone verifies peer cert against known CA public key — CA public key is always readable, only the private key is locked).
+3. Peer verifies code against stored `shared_secret`.
+4. Peer decrypts `slot_kek`, returns it over the verified TLS channel.
+5. Stone unwraps `master_key` from `local_blob` using `slot_kek`.
+
+Security properties: the TOTP `shared_secret` never exists on the locked stone (only the peer). The `master_key` never leaves the locked stone. An attacker needs *both* a valid TOTP code *and* disk access to `local_blob` — two-factor by construction.
+
+**FIDO2-escrow (distributed).** Same architecture as TOTP-escrow, but the peer verifies a WebAuthn assertion instead of a TOTP code.
+
+Setup: register a FIDO2 credential with the peer (via `/pond` web UI). Peer stores `{ credential_id, public_key, encrypt(slot_kek, peer_key) }`.
+
+Unlock: peer issues challenge → operator touches security key → stone sends assertion → peer verifies → releases `slot_kek`. Physical presence required.
+
+#### Why escrow is necessary
+
+A local-only TOTP slot is cryptographically meaningless: you'd need the TOTP `shared_secret` on disk to verify the code, and the same secret could derive the wrapping key — making it equivalent to auto-unlock with extra steps. The secret that *verifies* the operator must not be co-located with the secret that *unlocks* the key. Escrow to a peer stone achieves this separation.
+
+Standard FIDO2 (without the PRF extension) faces the same constraint: assertions prove identity but don't produce a stable secret. The peer acts as the bridge — it trusts the assertion and releases the escrowed key.
+
+#### Bootstrap problem
+
+When the CA is locked, the stone's own TLS certificate is unusable. But the CA *public* key (needed to verify the peer's cert) is always readable. So the locked stone can verify the peer's identity via one-way TLS, while the TOTP/FIDO2 authentication proves the operator to the peer. The stone's own identity is implicitly verified because only it holds the `local_blob`.
+
+#### Prerequisites
+
+- Envelope encryption refactoring in koi-certmesh (migrate from passphrase-direct to master-key + slots)
+- Escrow protocol in certmesh API (store, retrieve, revoke escrowed keys)
+- At least 2 stones in the pond (escrow needs a peer)
+- Migration path from current passphrase-direct to envelope model for existing ponds
+
+This is a Phase 5+ enhancement. The current passphrase + auto-unlock model covers JustMe and MyTeam. Envelope encryption becomes valuable when MyOrganization profiles need unlock without storing the passphrase on disk.
+
 The rules are free to add derived keys to the bag during evaluation. For example, when `auth_mode=totp` is set, the rules generate a TOTP secret internally and store it in the bag as `_totp_secret` (underscore = internal, not prompted). The QR code message is derived from this internal key.
 
 Future ceremonies (key rotation, backup/restore, promote) add new rule sets without changing the protocol.

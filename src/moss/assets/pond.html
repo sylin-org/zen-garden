@@ -152,6 +152,18 @@
         .msg.summary { background: var(--vellum-white); border: 1px solid var(--vellum-border); }
         .msg-title { font-weight: 600; font-size: 0.8rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
 
+        /* Rendered markdown inside messages */
+        .msg h1, .msg h2, .msg h3 { margin: 0.5rem 0 0.25rem; color: var(--stone-900); }
+        .msg h1 { font-size: 1.1rem; }
+        .msg h2 { font-size: 1.3rem; font-family: ui-monospace, monospace; letter-spacing: 0.02em; color: var(--accent-sage); }
+        .msg h3 { font-size: 0.9rem; }
+        .msg p { margin: 0.4rem 0; }
+        .msg code { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.05); padding: 0.1em 0.3em; border-radius: 2px; font-size: 0.9em; }
+        .msg em { font-style: italic; color: var(--stone-500); }
+        .msg strong { font-weight: 600; color: var(--stone-900); }
+        .msg ul { margin: 0.3rem 0; padding-left: 1.2rem; }
+        .msg li { margin: 0.15rem 0; }
+
         /* Summary key-value */
         .summary-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; font-size: 0.8rem; }
         .summary-grid dt { color: var(--stone-400); font-family: ui-monospace, monospace; }
@@ -547,9 +559,9 @@
                     title.textContent = msg.title;
                     div.appendChild(title);
                 }
-                const p = document.createElement('p');
-                p.textContent = msg.content;
-                div.appendChild(p);
+                const body = document.createElement('div');
+                body.innerHTML = parseMarkdown(msg.content);
+                div.appendChild(body);
                 break;
             }
             default: { // info
@@ -560,9 +572,9 @@
                     title.textContent = msg.title;
                     div.appendChild(title);
                 }
-                const p = document.createElement('p');
-                p.textContent = msg.content;
-                div.appendChild(p);
+                const body = document.createElement('div');
+                body.innerHTML = parseMarkdown(msg.content);
+                div.appendChild(body);
                 break;
             }
         }
@@ -839,6 +851,31 @@
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
+    }
+
+    // Mini-markdown renderer (shared with portrait.html)
+    function parseMarkdown(md) {
+        if (!md) return '';
+        let html = md.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+            return `<pre><code>${code.trim()}</code></pre>`;
+        });
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+        html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+        html = html.split(/\n\n+/).map(block => {
+            if (block.match(/^<(h[1-3]|ul|ol|pre|li|hr)/)) return block;
+            const text = block.replace(/\n/g, ' ').trim();
+            return text ? `<p>${text}</p>` : '';
+        }).join('\n');
+        html = html.replace(/<p>---<\/p>/g, '<hr>');
+        return html;
     }
 
     function formatKey(k) {

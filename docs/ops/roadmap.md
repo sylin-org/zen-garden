@@ -111,7 +111,7 @@ Applications resolve `zen-garden:mongodb/mydb` to actual connection strings with
 - **CA lifecycle**: unlock after restart, promote standby CA, drain (destroy)
 
 **Not yet active:**
-- HTTPS listener on :7187 (port defined, binding planned for Phase 4)
+- HTTPS listener on :7183 (active when pond enabled)
 - Encrypted chirps (XChaCha20-Poly1305 for UDP traffic)
 - Certificate auto-renewal
 

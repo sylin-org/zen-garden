@@ -77,6 +77,7 @@ garden-rake pond init --passphrase "my-secure-passphrase" --profile just-me
 ✓ CA created (ECDSA P-256)
 ✓ Cornerstone: stone-01
 ✓ Keystone sealed
+✓ Pond name: pond-moonlit-basin
 
 CA Fingerprint: AB:CD:EF:01:23:45:67:89...
 TOTP URI: otpauth://totp/certmesh:stone-01?secret=BASE32&issuer=certmesh&algorithm=SHA1&digits=6&period=30
@@ -85,6 +86,8 @@ Next steps:
   1. Verify status: garden-rake pond status
   2. Open enrollment: garden-rake pond invite --passphrase "..."
 ```
+
+The pond receives a water-themed name automatically — something like `pond-moonlit-basin` or `pond-shallow-lotus`. You can rename it any time; it's a friendly label with no effect on security.
 
 **Trust profiles:**
 - `just-me` (default) — Solo operator, auto-approve enrollment
@@ -95,6 +98,7 @@ Next steps:
 - Generated a CA keypair (ECDSA P-256)
 - Encrypted the CA private key with the passphrase (AES-256-GCM, Argon2id KDF)
 - Designated this stone as the cornerstone
+- Generated a water-themed pond name (persisted to `pond.json`)
 - Generated a TOTP secret for enrollment
 
 ### Step 2: Verify Pond Status
@@ -102,7 +106,8 @@ Next steps:
 ```bash
 garden-rake pond status
 
-Pond Status: Active
+Pond: pond-moonlit-basin
+Status: Active
 Cornerstone: stone-01
 Profile: JustMe
 Enrollment: Closed
@@ -167,7 +172,8 @@ CA Fingerprint: AB:CD:EF:01:23:45:67:89...
 ```bash
 garden-rake pond status
 
-Pond Status: Active
+Pond: pond-moonlit-basin
+Status: Active
 Cornerstone: stone-01
 Profile: JustMe
 Enrollment: Closed
@@ -279,6 +285,10 @@ garden-rake pond promote --passphrase "..."     # Promote to standby CA
 # Revocation
 garden-rake pond untrust stone-02               # Revoke a stone's certificate
 garden-rake pond remove                         # Drain pond (destroy CA)
+
+# Naming
+garden-rake pond rename pond-glacial-heron    # Rename pond
+garden-rake pond rename                          # Auto-generate new name
 
 # CA Certificate
 curl http://stone:7185/api/v1/pond/ca.pem       # Download CA public cert

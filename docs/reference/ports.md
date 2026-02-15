@@ -21,13 +21,11 @@ note: "Authoritative port registry for all Zen Garden services."
 
 | Port | Service | Protocol | Purpose | Status |
 |------|---------|----------|---------|--------|
+| **7183** | Moss HTTPS (Pond) | HTTPS/TCP | mTLS-authenticated API when pond is active | ✅ Active |
 | **7184** | P2P Discovery | UDP | Stone-to-Stone peer discovery broadcasts | ✅ Active |
 | **7185** | Garden-Moss HTTP API | HTTP/TCP | Stone management API endpoint | ✅ Active |
 | **7186** | Garden-Lantern Registry | HTTP/TCP | Centralized service registry and topology API | 🔜 Planned |
-| **7187** | Moss HTTPS (Pond) | HTTPS/TCP | mTLS-authenticated API when pond is active | ✅ Defined |
 | **7187-7199** | Moss Companions | HTTP/TCP | Companion command servers (Cricket, Firefly, OLED, etc.) | ✅ Active |
-
-> **Note:** MOSS_HTTPS and Companion port base share 7187. This works because Companions bind to `127.0.0.1` (localhost only) while MOSS_HTTPS will bind to `0.0.0.0` (all interfaces). A future update may shift the Companion base to avoid the overlap.
 
 **Companion Port Allocation:**
 - **Base:** 7187 (ASCII sum "moss Companion" = 1187 + 6000)
@@ -97,21 +95,21 @@ Moss → Rake IP:ephemeral (unicast)
 
 ---
 
-### 7187 - Moss HTTPS / Pond mTLS (TCP)
+### 7183 - Moss HTTPS / Pond mTLS (TCP)
 
-**Current Name:** "HTTPS port 7187 (Moss Pond)"  
+**Current Name:** "HTTPS port 7183 (Moss Pond)"  
 **Function:** mTLS-authenticated Stone API when pond security is active  
 **Protocol:** HTTPS/TLS 1.3 (ECDSA P-256 certificates from koi-certmesh)  
-**Status:** Port constant defined (`MOSS_HTTPS = 7187`). HTTPS listener binding planned for Phase 4.
+**Status:** Active (`MOSS_HTTPS = 7183`).
 
 **When active:**
-- Moss binds HTTPS on `0.0.0.0:7187` using its certmesh-issued certificate
-- Sensitive API endpoints served only on :7187
+- Moss binds HTTPS on `0.0.0.0:7183` using its certmesh-issued certificate
+- Sensitive API endpoints served only on :7183
 - HTTP port (:7185) becomes a "lobby" for health checks and pond join requests
-- mDNS TXT record advertises `pond=active` and `https_port=7187`
+- mDNS TXT record advertises `pond=active` and `https_port=7183`
 
 **Configuration:**
-- Constant: `src/common/src/constants/mod.rs` → `pub const MOSS_HTTPS: u16 = 7187`
+- Constant: `src/common/src/constants/mod.rs` → `pub const MOSS_HTTPS: u16 = 7183`
 - Not configurable at runtime (hardcoded)
 
 **Security:**
@@ -246,10 +244,12 @@ Rake → POST /api/v1/stone/companions/{id}/command
 
 ## Port Range Rationale
 
-**7184-7199 (16 ports)** reserved for Zen Garden infrastructure:
-- **7184**: GRDN baseline (phone keypad)
-- **7185-7187**: Core services (Moss, Lantern HTTP, Lantern UDP)
-- **7188-7199**: Future expansion (e.g., metrics aggregator, distributed logs, federation)
+**7183-7199 (17 ports)** reserved for Zen Garden infrastructure:
+- **7183**: Moss HTTPS (pond mTLS)
+- **7184**: GRDN baseline (phone keypad, P2P discovery)
+- **7185**: Moss HTTP API
+- **7186**: Lantern HTTP registry
+- **7187-7199**: Companion command servers (13 slots)
 
 **Semantic Meaning:**
 - 7184 = GRDN (Garden)
@@ -262,6 +262,9 @@ Rake → POST /api/v1/stone/companions/{id}/command
 
 **For stone-to-stone communication:**
 ```bash
+# Moss HTTPS (Pond mTLS)
+sudo ufw allow 7183/tcp comment "Zen Garden Moss HTTPS"
+
 # UDP P2P Discovery (broadcast)
 sudo ufw allow 7184/udp comment "Zen Garden P2P discovery"
 
@@ -270,13 +273,13 @@ sudo ufw allow 7185/tcp comment "Zen Garden Moss API"
 
 # Garden-Lantern Registry (TCP)
 sudo ufw allow 7186/tcp comment "Zen Garden Garden-Lantern Registry"
-
-# Garden-Lantern Election (UDP)
-sudo ufw allow 7187/udp comment "Zen Garden Garden-Lantern Election"
 ```
 
 **Windows Firewall (PowerShell):**
 ```powershell
+# Moss HTTPS (Pond mTLS)
+New-NetFirewallRule -DisplayName "Zen Garden Moss HTTPS" -Direction Inbound -Protocol TCP -LocalPort 7183 -Action Allow
+
 # UDP P2P Discovery
 New-NetFirewallRule -DisplayName "Zen Garden P2P Discovery" -Direction Inbound -Protocol UDP -LocalPort 7184 -Action Allow
 
@@ -285,9 +288,6 @@ New-NetFirewallRule -DisplayName "Zen Garden Moss API" -Direction Inbound -Proto
 
 # Garden-Lantern Registry
 New-NetFirewallRule -DisplayName "Zen Garden Garden-Lantern Registry" -Direction Inbound -Protocol TCP -LocalPort 7186 -Action Allow
-
-# Garden-Lantern Election
-New-NetFirewallRule -DisplayName "Zen Garden Garden-Lantern Election" -Direction Inbound -Protocol UDP -LocalPort 7187 -Action Allow
 ```
 
 ---
@@ -322,13 +322,8 @@ curl http://localhost:7185/health
 
 ## Reserved Port Expansion Ideas
 
-**Future Services (7188-7199):**
-- **7188**: Metrics aggregator (Prometheus exporter)
-- **7189**: Distributed logging (centralized logs collector)
-- **7190**: Federation gateway (multi-garden coordination)
-- **7191**: Backup coordinator (snapshot orchestration)
-- **7192**: MCP gateway (Model Context Protocol proxy)
-- **7193-7199**: Reserved for future infrastructure
+**Future Services (7200+):**
+- Metrics aggregator, distributed logging, federation, etc.
 
 ---
 
@@ -337,6 +332,7 @@ curl http://localhost:7185/health
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
 | 2026-01-16 | 1.0 | Initial port allocation (7184-7187) | Architecture Team |
+| 2026-02-14 | 1.1 | Moved MOSS_HTTPS to 7183; added COMPANION_PORT_BASE/MAX constants | Architecture Team |
 
 ---
 

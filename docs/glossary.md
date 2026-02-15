@@ -92,8 +92,8 @@
 
 ## Security
 
-**Pond** - Optional security layer for encrypted Stone-to-Stone communication. Uses a CA-based mTLS model with ECDSA P-256 certificates, backed by koi-certmesh. Prevents network sniffing and rogue device admission.  
-→ See: [security/overview.md](security/overview.md), [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md)
+**Pond** - Optional security layer for encrypted Stone-to-Stone communication. Uses a CA-based mTLS model with ECDSA P-256 certificates, backed by koi-certmesh. Prevents network sniffing and rogue device admission. Each pond receives a water-themed display name (e.g. `pond-moonlit-basin`) that can be changed at any time.  
+→ See: [security/overview.md](security/overview.md), [security/pond-setup.md](security/pond-setup.md)
 
 **Keystone** - Encrypted CA private key stored on the cornerstone. Protected by passphrase encryption (AES-256-GCM via Argon2id KDF). Only the cornerstone (and promoted standby stones) hold the CA private key.  
 → See: [security/pond-setup.md](security/pond-setup.md), [decisions/SECURITY-0003-keystone-protection-tiers.md](decisions/SECURITY-0003-keystone-protection-tiers.md)
@@ -114,8 +114,11 @@
 **Stone Admission** - Process of joining a Stone to a Pond. Uses TOTP-based Bluetooth-style pairing (6-digit code, 30-second period, configurable enrollment window). The cornerstone generates invitations; any stone with the TOTP URI can produce valid codes.  
 → See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md#invitation-protocol)
 
-**Drain** - Emergency pond reset. Destroys pond credentials on all stones, reverting garden to open mode. Only form of revocation (all-or-nothing).  
-→ See: [specs/POND-0001-protocol.md](specs/POND-0001-protocol.md#revocation-drain)
+**Drain** - Emergency pond reset. Destroys pond credentials on all stones, reverting garden to open mode.  
+→ See: [security/pond-setup.md](security/pond-setup.md)
+
+**Pond Name** - Water-themed display name assigned when a pond is created (`pond-{adjective}-{noun}`). Generated from a dictionary of 64 adjectives × 64 nouns (4,096 combinations) evoking water, reflection, and stillness. Purely decorative — can be changed at any time without affecting certificates or membership.  
+→ See: [security/pond-setup.md](security/pond-setup.md)
 
 ---
 
@@ -187,6 +190,7 @@
 | mDNS              | Multicast DNS discovery protocol           | Discovery |
 | Connection String | `zen-garden:<type>[/<db>]`                 | Discovery |
 | Pond              | mTLS security layer                        | Security  |
+| Pond Name         | Water-themed display name (decorative)     | Security  |
 | Keystone          | Encrypted CA keypair file                  | Security  |
 | Cornerstone       | First Stone with CA authority              | Security  |
 | Lantern           | Optional HTTP directory (port 7186)        | Discovery |

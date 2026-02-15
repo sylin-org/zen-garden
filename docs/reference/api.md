@@ -38,7 +38,7 @@ Both layers access the same underlying resources but provide different views opt
 ### Authentication
 
 **Default:** None (open garden mode)  
-**With Pond:** mTLS via koi-certmesh (ECDSA P-256 certificates). When pond is active, Moss binds HTTPS on port 7187 using certmesh-issued certificates.
+**With Pond:** mTLS via koi-certmesh (ECDSA P-256 certificates). When pond is active, Moss binds HTTPS on port 7183 using certmesh-issued certificates.
 
 ### Response Format
 
@@ -660,12 +660,14 @@ Creates a new ECDSA P-256 certificate authority, encrypts the private key with t
 |-------|----------|-------------|
 | `passphrase` | Yes | Encrypts the CA private key |
 | `profile` | No | Trust profile: `just-me` (default), `my-team`, `my-organization` |
+| `name` | No | Pond display name (`pond-{adj}-{noun}` format). Auto-generated if omitted. |
 
 **Response (200 OK):**
 ```json
 {
   "data": {
     "cornerstone": "stone-coral-prairie",
+    "name": "pond-moonlit-basin",
     "keystone_path": "/var/lib/zen-garden/certmesh/ca",
     "certificate_expires": "30 days",
     "status": "active",
@@ -675,7 +677,7 @@ Creates a new ECDSA P-256 certificate authority, encrypts the private key with t
 }
 ```
 
-**Errors:** `400 INVALID_PROFILE`, `500 CA_CREATION_FAILED`, `503 CERTMESH_UNAVAILABLE`
+**Errors:** `400 INVALID_PROFILE`, `400 INVALID_POND_NAME`, `500 CA_CREATION_FAILED`, `503 CERTMESH_UNAVAILABLE`
 
 **CLI Examples:**
 ```bash
@@ -701,6 +703,7 @@ Returns CA state, enrolled stones, trust profile, and enrollment window status.
     "active": false,
     "locked": false,
     "cornerstone": null,
+    "name": null,
     "stones": [],
     "profile": "JustMe",
     "ca_fingerprint": null,
@@ -716,6 +719,7 @@ Returns CA state, enrolled stones, trust profile, and enrollment window status.
     "active": true,
     "locked": false,
     "cornerstone": "stone-coral-prairie",
+    "name": "pond-moonlit-basin",
     "stones": [
       {
         "name": "stone-coral-prairie",
@@ -917,6 +921,42 @@ MIIBxTCCAW...
 **CLI Examples:**
 ```bash
 curl http://stone:7185/api/v1/pond/ca.pem -o ca.pem
+```
+
+---
+
+### PUT /api/v1/pond/name
+
+**Rename the pond.**
+
+Changes the pond's display name. Accepts a specific name in `pond-{adjective}-{noun}` format, or omit/empty to auto-generate a new one. Pond names are decorative — renaming has no effect on certificates or enrollment.
+
+**Request:**
+```json
+{
+  "name": "pond-glacial-heron"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No | New name in `pond-{adj}-{noun}` format. Omit or send empty string to auto-generate. |
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "name": "pond-glacial-heron"
+  }
+}
+```
+
+**Errors:** `400 INVALID_POND_NAME`, `409 POND_NOT_INITIALIZED`
+
+**CLI Examples:**
+```bash
+garden-rake pond rename pond-glacial-heron       # Set specific name
+garden-rake pond rename                           # Auto-generate new name
 ```
 
 ---
@@ -1734,7 +1774,7 @@ Stops all services and shuts down the Moss HTTP server.
 - Closes HTTP server
 - Exits process with code 0
 
-**Security:** No authentication on HTTP. When pond is active, use HTTPS (:7187) for authenticated access.
+**Security:** No authentication on HTTP. When pond is active, use HTTPS (:7183) for authenticated access.
 
 ---
 
@@ -1795,7 +1835,7 @@ Stops all services and shuts down the Moss HTTP server.
 - mDNS TXT advertises pond and https_port when active
 
 **Phase 4 (Planned):**
-- HTTPS listener on :7187 with route splitting (public vs authenticated)
+- HTTPS listener on :7183 with route splitting (public vs authenticated)
 - Web dashboard integration
 - Automated integration tests
 

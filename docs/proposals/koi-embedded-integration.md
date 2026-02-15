@@ -88,43 +88,54 @@ Certificates have 30-day lifetimes with automatic renewal handled by certmesh.
 | Port | Protocol | When | Purpose |
 |---|---|---|---|
 | **7185** | HTTP | Always | Discovery, health checks, pond join requests, public status |
-| **7187** | HTTPS | When pond active | All authenticated stone-to-stone communication |
+| **7183** | HTTPS | When pond active | All authenticated stone-to-stone communication |
 
-After a stone joins the pond, Moss binds HTTPS on **7187** using its certmesh-issued certificate. The mDNS TXT record advertises the pond state:
+After a stone joins the pond, Moss binds HTTPS on **7183** using its certmesh-issued certificate. The mDNS TXT record advertises the pond state:
 
 ```
 pond=active
 http_port=7185
-https_port=7187
+https_port=7183
 ```
 
-**Security boundary:** When pond is active, sensitive API endpoints (service management, configuration, data access) are served only on :7187. The HTTP port (:7185) becomes a "lobby" — serving health checks, public status, and pond join requests only.
+**Security boundary:** When pond is active, sensitive API endpoints (service management, configuration, data access) are served only on :7183. The HTTP port (:7185) becomes a "lobby" — serving health checks, public status, and pond join requests only.
 
 ### Join Flow
 
+Rake only talks to the tended stone. Non-cornerstone stones discover the cornerstone via the topology cache and proxy the enrollment request.
+
 ```
-New Stone (no cert)                      Keystone Stone (CA holder)
-───────────────────                      ────────────────────────────
+Rake              Tended Stone (no cert)           Cornerstone (CA holder)
+────              ──────────────────────           ──────────────────────────
 
-1. mDNS browse: discovers _moss._tcp
-   Reads TXT: pond=active, http_port=7185
+1. POST /api/v1/pond/join
+   { "code": "123456" }
+   → HTTP :7185 ──────→ Detects: not cornerstone
+                        Discovers cornerstone via
+                        topology cache + pond/status
 
-2. HTTP POST :7185/api/v1/pond/join      ← plain HTTP (join is unauthenticated transport)
-   { "code": "123456" }                  Validates TOTP / FIDO2
+2.                      POST /api/v1/pond/join ──→  Validates TOTP / FIDO2
+                        { code, hostname: self }     Issues certificate:
+                                                     cert.pem, key.pem, ca.pem
+                                                     Returns PEM data in response
 
-3. Certmesh issues certificate:
-   - Generates keypair locally (CSR-based when supported)
-   - CA signs with SANs: [hostname, hostname.local]
-   - Returns: cert.pem, key.pem, ca.pem
+3.                      Receives cert material  ←── PondJoinResponse + certs
+                        Writes certs to disk
+                        Emits PondEvent::EnrollmentChanged
 
-4. Stone installs CA in system trust store
-   Moss binds HTTPS on :7187
-   Announces pond=active in mDNS TXT
+4.                      Enrollment listener reacts:
+                        - Configures chirp signing
+                        - Configures chirp verification
+                        - Binds HTTPS on :7183
+                        - Updates mDNS TXT: pond=active
 
-5. All pond members now reachable via HTTPS  ← trust established
+5. ←── 200 OK ──────── Returns join response
+       (no cert PEM)   to Rake (sans cert material)
 ```
 
-The security model is sound: TOTP/FIDO2 proves human authorization (same as ACME/Let's Encrypt). The cert material returned from the keystone is useless without the locally-generated private key.
+When the tended stone IS the cornerstone, steps 1-2 collapse into a local `core.enroll()` call. The enrollment listener still handles HTTPS activation.
+
+The security model is sound: TOTP/FIDO2 proves human authorization (same as ACME/Let's Encrypt). Cert material is transmitted between stones over the private LAN only.
 
 ### Chirp Signing
 
@@ -336,11 +347,11 @@ pub struct MdnsHandle {
 | File | Action |
 |---|---|
 | `src/moss/src/api/v1/pond.rs` | Rewire all handlers from `501 NOT_IMPLEMENTED` to `handle.certmesh()` calls |
-| `src/moss/src/main.rs` | Add conditional HTTPS binding on :7187 when pond is active |
+| `src/moss/src/main.rs` | Add conditional HTTPS binding on :7183 when pond is active |
 | `src/moss/src/bootstrap/router.rs` | Split routes: public (HTTP-only) vs authenticated (HTTPS-only) |
-| `src/moss/src/mdns.rs` | Add `pond=active`, `https_port=7187` to mDNS TXT records |
+| `src/moss/src/mdns.rs` | Add `pond=active`, `https_port=7183` to mDNS TXT records |
 | `src/moss/src/api/v1/pond.rs` | Add `GET /api/v1/pond/ca.pem` endpoint for CA download |
-| `src/common/src/constants/mod.rs` | Add `MOSS_HTTPS` port constant (7187) |
+| `src/common/src/constants/mod.rs` | Add `MOSS_HTTPS` port constant (7183) |
 | `src/common/src/types.rs` | Align `PondConfig` fields with certmesh state |
 | `src/moss/src/infra/listeners/chirp.rs` | Add signature to outbound chirps when pond active |
 | `src/moss/src/infra/listeners/chirp.rs` | Verify signature on inbound chirps when pond active |
@@ -361,23 +372,27 @@ pub struct MdnsHandle {
 | `POST /api/v1/pond/promote` | New | `handle.certmesh().promote(passphrase)` |
 | `GET /api/v1/pond/ca.pem` | New | Serve CA public cert for client trust installation |
 
-**Moss HTTPS binding:**
+**Moss HTTPS binding (event-driven):**
+
+The certmesh module exposes a domain surface on `AppState`:
+- `pond.enrolled()` — is this stone enrolled in a pond?
+- `pond.cornerstone()` — hostname of the CA holder
+- `PondEvent::EnrollmentChanged` — emitted when enrollment state changes
+
+A cornerstone is always enrolled (placing the keystone issues a self-cert).
+
+Handlers call `notify_enrollment_changed()` after mutating state. The boot-time enrollment listener reacts:
 
 ```rust
-// In Moss startup, after Koi initialization
-if let Ok(certmesh) = koi_handle.certmesh() {
-    if let Some(cert_path) = certmesh_cert_path(&stone_name) {
-        let rustls_config = RustlsConfig::from_pem_file(
-            cert_path.join("fullchain.pem"),
-            cert_path.join("key.pem"),
-        ).await?;
-
-        // Spawn HTTPS listener alongside HTTP
-        tokio::spawn(
-            axum_server::bind_rustls(https_addr, rustls_config)
-                .serve(authenticated_router.into_make_service())
-        );
-        tracing::info!(port = MOSS_HTTPS, "HTTPS listener active (pond)");
+// Enrollment-change listener (spawned at boot)
+match event {
+    PondEvent::EnrollmentChanged { enrolled: true, .. } => {
+        activate_pond_security(&state, &console).await;
+        // → chirp signing + verification + HTTPS :7183
+    }
+    PondEvent::EnrollmentChanged { enrolled: false, .. } => {
+        state.https_started.store(false, Ordering::Relaxed);
+        // HTTPS listener shutdown deferred to Phase 3+
     }
 }
 ```
@@ -388,13 +403,13 @@ if let Ok(certmesh) = koi_handle.certmesh() {
 - [x] `garden-rake place keystone` creates a certmesh CA with trust profile wizard
 - [x] `garden-rake pond invite` generates TOTP code / shows QR
 - [x] `garden-rake pond join <code>` on a second stone succeeds over HTTP :7185
-- [ ] Joined stone binds HTTPS on :7187 with a valid certmesh-issued cert
+- [x] Joined stone binds HTTPS on :7183 with a valid certmesh-issued cert
 - [ ] `reqwest` on an enrolled stone validates HTTPS to other enrolled stones
 - [x] `garden-rake pond status` shows real membership from certmesh roster
 - [x] `garden-rake pond untrust <stone>` revokes via certmesh
 - [x] `garden-rake drain pond` destroys CA and clears all certs
-- [ ] Chirps from non-pond stones are rejected when pond is active
-- [ ] Chirps from pond stones are verified and accepted
+- [x] Chirps from non-pond stones are rejected when pond is active
+- [x] Chirps from pond stones are verified and accepted
 - [x] CA unlock prompt after Moss restart
 
 ---

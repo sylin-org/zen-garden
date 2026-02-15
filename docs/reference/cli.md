@@ -510,6 +510,8 @@ garden-rake pond invite --passphrase "my secret"                 # Open enrollme
 garden-rake pond join ABC123                                     # Join pond with TOTP code
 garden-rake pond unlock --passphrase "my secret"                 # Unlock CA after restart
 garden-rake pond promote --passphrase "my secret"                # Promote stone to standby CA
+garden-rake pond rename pond-glacial-heron                       # Rename pond
+garden-rake pond rename                                          # Auto-generate new name
 garden-rake pond remove                                          # Destroy pond (drain)
 garden-rake pond untrust stone-02                                # Revoke a stone's certificate
 ```
@@ -549,6 +551,16 @@ Unlock the CA private key after a Moss restart.
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--passphrase <PASS>` | Yes | CA passphrase |
+
+### `pond rename`
+
+Change the pond's display name.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<name>` | No | New name (`pond-{adj}-{noun}` format). Omit to auto-generate. |
+
+Pond names are decorative identifiers — renaming has no effect on certificates or security. Names follow a water theme (e.g. `pond-moonlit-basin`, `pond-glacial-heron`, `pond-shallow-lotus`).
 
 ### `pond promote`
 

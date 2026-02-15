@@ -4,8 +4,29 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-14
+
+- PondState domain surface: enrolled(), cornerstone(), PondEvent::EnrollmentChanged
+- Event-driven HTTPS activation via enrollment-change listener (replaces per-handler calls)
+- Moss-to-Moss proxy join: non-cornerstone stones forward enrollment to cornerstone
+- Enrolled member detection at boot (cert files on disk, not just CA state)
+- Removed ~130 lines of duplicated activate_pond_security code from pond handlers
+- Consolidated chirp signing/verification + HTTPS binding into single activate_pond_security()
+
 ## 2026-02-16
 
+- Pond naming: auto-generated water-themed names (pond-{adj}-{noun}, 4096 combos)
+- Added PUT /api/v1/pond/name for renaming; name in init/status responses
+- Pond name persisted to pond.json, seeded at boot
+- Reserved-name guard: component names excluded from pond dictionary
+- Added stone/deploy and stone/upgrade to HTTP public lobby router (fixes deploy to pond-enrolled stones)
+- **BREAKING**: Moved MOSS_HTTPS from 7187 to 7183 — avoids bind conflict with companion port range
+- Added COMPANION_PORT_BASE/MAX (7187/7199) to shared constants in garden-common
+- Replaced hardcoded port numbers with garden_common::constants across codebase
+- Phase 2 remaining: HTTPS binding on :7183 with TLS via certmesh certificates
+- Route splitting: configure_public() (HTTP lobby) vs configure() (HTTPS all routes) when pond active
+- Signed chirps: ECDSA P-256 envelope enricher/verifier hooks in p2p transport
+- UdpAnnouncement gains signature + sender_cert fields for signed chirp verification
 - Phase 2: Pond Security via Certmesh — rewired all pond handlers from stubs to live koi-certmesh ops
 - Enabled certmesh in Koi embedded builder (init, status, enroll, unlock, destroy, revoke, promote)
 - Added pond unlock, promote, ca.pem routes; Rake CLI gains unlock/promote/invite --passphrase

@@ -113,7 +113,7 @@ The former `/api/v1/events` endpoint is consolidated into `/api/v1/stone/presenc
 
 **Future features:**
 - Garden topology endpoints (`/api/v1/garden/*`) — present in code but not documented
-- HTTPS listener on :7187 (port defined, binding planned)
+- HTTPS listener on :7183 (active when pond enabled)
 
 #### Known Limitations
 
@@ -322,7 +322,7 @@ When new deprecations occur:
 
 - **0.3.0 (Phase 3):** Advanced features
   - Lantern UI integration (dashboard, topology visualization)
-  - HTTPS listener on :7187 with route splitting (public vs authenticated)
+  - HTTPS listener on :7183 with route splitting (public vs authenticated)
   - Cursor-based polling optimization (delta updates)
   - Lifecycle event broadcasting (moss_online, moss_offline)
   - Client bindings (Python, JavaScript, .NET)

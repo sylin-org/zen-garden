@@ -102,7 +102,7 @@ Bluetooth Pairing          →  Pond Join
 
 **Cornerstone** — Stone that initialized the pond (ran `pond init`). Holds the CA private key and acts as the certificate authority — the trust anchor for the pond.
 
-**mTLS** — All inter-Stone communication uses mutual TLS with ECDSA P-256 certificates issued by the pond CA. When pond is active, Moss binds HTTPS on port 7187.
+**mTLS** — All inter-Stone communication uses mutual TLS with ECDSA P-256 certificates issued by the pond CA. When pond is active, Moss binds HTTPS on port 7183.
 
 **TOTP Codes** — Time-based one-time passwords for Stone admission. 6 digits, 30-second period (SHA1), configurable enrollment window (default 30 minutes).
 

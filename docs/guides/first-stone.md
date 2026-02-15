@@ -360,7 +360,8 @@ ssh stone@blue-stone.local
 sudo garden-rake place keystone
 
 # Enter strong passphrase (20+ characters)
-# Keystone created: /var/lib/zen-garden/keystone.enc
+# ✓ Keystone created
+# ✓ Pond name: pond-shallow-lotus
 
 # Step 2: Invite additional Stones
 sudo garden-rake invite stone-02
@@ -375,6 +376,8 @@ sudo garden-rake join pond
 # Enter code: KP7X9M
 # ✓ Certificate issued (1-hour TTL, auto-renews every 30 min)
 ```
+
+Your pond gets a water-themed name automatically. To change it later: `garden-rake pond rename`.
 
 See [Security Guide](../security/pond-setup.md) for complete Pond setup instructions.
 

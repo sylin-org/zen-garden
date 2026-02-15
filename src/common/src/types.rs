@@ -688,6 +688,15 @@ pub struct UdpAnnouncement {
     pub announcement_type: String,
     /// Typed payload (deserialize based on announcement_type)
     pub data: serde_json::Value,
+    /// Base64-encoded ECDSA signature over the serialized `data` field.
+    /// Present when the sender is enrolled in a pond (Phase 2 signed chirps).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// PEM-encoded sender public key (SPKI format, `BEGIN PUBLIC KEY`).
+    /// Phase 2: bare public key for direct signature verification.
+    /// Phase 4: will add full cert for CA chain validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_cert: Option<String>,
 }
 
 /// Service information for topology entries and chirp payloads

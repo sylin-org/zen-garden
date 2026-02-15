@@ -420,7 +420,53 @@ static DEBOUNCE_OVERRIDES: OnceCell<Mutex<HashMap<String, Duration>>> = OnceCell
 static DEBOUNCE_CHANNELS: OnceCell<Mutex<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>> =
     OnceCell::const_new();
 
+/// Optional envelope enricher for signing outbound announcements.
+///
+/// When registered (e.g., by moss when pond security is active), this hook
+/// is called on every outbound `UdpAnnouncement` just before serialization.
+/// The enricher typically adds `signature` and `sender_cert` fields.
+#[allow(clippy::type_complexity)]
+static ENVELOPE_ENRICHER: OnceLock<Box<dyn Fn(&mut UdpAnnouncement) + Send + Sync>> =
+    OnceLock::new();
+
+/// Optional envelope verifier for inbound announcements.
+///
+/// When registered, this hook is called on every received `UdpAnnouncement`
+/// after deduplication but before dispatch. If it returns `false`, the
+/// announcement is dropped silently (logged at debug level).
+#[allow(clippy::type_complexity)]
+static ENVELOPE_VERIFIER: OnceLock<Box<dyn Fn(&UdpAnnouncement) -> bool + Send + Sync>> =
+    OnceLock::new();
+
 // ===== Public API =====
+
+/// Register an envelope enricher for outbound announcements.
+///
+/// The enricher is called on each `UdpAnnouncement` before broadcast.
+/// Typically used to add ECDSA signatures when pond security is active.
+///
+/// Can only be called once (first-wins). Returns `Err` if already set.
+#[allow(clippy::type_complexity)]
+pub fn set_envelope_enricher(
+    enricher: Box<dyn Fn(&mut UdpAnnouncement) + Send + Sync>,
+) -> Result<(), Box<dyn Fn(&mut UdpAnnouncement) + Send + Sync>> {
+    ENVELOPE_ENRICHER.set(enricher)
+}
+
+/// Register an envelope verifier for inbound announcements.
+///
+/// The verifier is called on each received `UdpAnnouncement` before dispatch.
+/// Return `true` to accept, `false` to drop.
+///
+/// Typically verifies ECDSA signature + cert chain when pond security is active.
+///
+/// Can only be called once (first-wins). Returns `Err` if already set.
+#[allow(clippy::type_complexity)]
+pub fn set_envelope_verifier(
+    verifier: Box<dyn Fn(&UdpAnnouncement) -> bool + Send + Sync>,
+) -> Result<(), Box<dyn Fn(&UdpAnnouncement) -> bool + Send + Sync>> {
+    ENVELOPE_VERIFIER.set(verifier)
+}
 
 /// Subscribe to a specific announcement type (filtered)
 ///
@@ -901,12 +947,19 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
 
     // Build announcement envelope with dedup ID
     let msg_id = generate_guidv7();
-    let announcement = UdpAnnouncement {
+    let mut announcement = UdpAnnouncement {
         msg_id: Some(msg_id.clone()),
         announcement_type: announcement_type.to_string(),
         data: serde_json::from_slice(payload_bytes)
             .context("Failed to deserialize payload for announcement")?,
+        signature: None,
+        sender_cert: None,
     };
+
+    // Apply envelope enricher (e.g., chirp signing when pond is active)
+    if let Some(enricher) = ENVELOPE_ENRICHER.get() {
+        enricher(&mut announcement);
+    }
 
     let data = serde_json::to_vec(&announcement).context("Failed to serialize envelope")?;
 
@@ -1005,6 +1058,18 @@ async fn udp_receiver_loop(
                                 msg_id = %msg_id,
                                 source = ?addr,
                                 "Duplicate message ignored"
+                            );
+                            continue;
+                        }
+                    }
+
+                    // Run envelope verifier (e.g., signature check for pond security)
+                    if let Some(verifier) = ENVELOPE_VERIFIER.get() {
+                        if !verifier(&announcement) {
+                            tracing::debug!(
+                                announcement_type = %announcement.announcement_type,
+                                source = ?addr,
+                                "Announcement rejected by envelope verifier"
                             );
                             continue;
                         }

@@ -17,6 +17,7 @@ pub mod router;
 pub mod run;
 pub mod server;
 pub mod startup;
+pub mod tls;
 
 #[cfg(target_os = "windows")]
 pub use config::ensure_windows_stone_name_config;

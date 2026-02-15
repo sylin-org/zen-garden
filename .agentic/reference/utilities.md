@@ -36,10 +36,12 @@ Existing utilities - don't reinvent these.
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
+| `MOSS_HTTPS` | 7183 | Pond mTLS HTTPS |
 | `DISCOVERY_UDP` | 7184 | mDNS/multicast |
 | `MOSS_HTTP` | 7185 | Stone daemon |
 | `LANTERN_HTTP` | 7186 | Service registry |
-| `COMPANION_BASE_PORT` | 7187 | First companion port |
+| `COMPANION_PORT_BASE` | 7187 | First companion port |
+| `COMPANION_PORT_MAX` | 7199 | Last companion port |
 
 ---
 

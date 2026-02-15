@@ -198,10 +198,11 @@ function Find-AllStones {
                 if ($seenStones.ContainsKey($response.stone_name)) { continue }
                 $seenStones[$response.stone_name] = $true
 
-                $endpoint = $response.stone_endpoint
-                if ($Port -gt 0) {
-                    $endpoint = $endpoint -replace ':\d+$', ":$Port"
-                }
+                # PeerAddress is { ip, port, tls_port? } — build endpoint URL
+                $addr = $response.address
+                $stoneIP = if ($addr.ip) { $addr.ip } else { $remoteEP.Address.ToString() }
+                $stonePort = if ($Port -gt 0) { $Port } elseif ($addr.port) { $addr.port } else { 7185 }
+                $endpoint = "http://${stoneIP}:${stonePort}"
 
                 $stones.Add([PSCustomObject]@{
                     Name = $response.stone_name

@@ -477,21 +477,28 @@ async fn execute_pond_unlock(
 
     match ctx.client.post(&url).json(&payload).send().await {
         Ok(response) if response.status().is_success() => {
+            let body: serde_json::Value = response.json().await.unwrap_or_default();
+            let msg = body
+                .pointer("/data/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Pond unlocked \u{2014} CA key decrypted");
             println!(
-                "{}{} Pond unlocked — CA key decrypted",
+                "{}{} {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
+                ui::status_indicator("ok", ctx.term.supports_color),
+                msg
             );
         }
         Ok(response) => {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body: serde_json::Value = response.json().await.unwrap_or_default();
+            let msg = crate::api::responses::extract_error_message(&body)
+                .unwrap_or_else(|| format!("Unexpected error (HTTP {status})"));
             eprintln!(
-                "{}{} Failed to unlock pond: {} {}",
+                "{}{} {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                status,
-                body
+                msg
             );
         }
         Err(e) => {

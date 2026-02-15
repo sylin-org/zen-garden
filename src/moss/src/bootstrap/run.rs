@@ -337,6 +337,10 @@ pub async fn run(
     // Two cases: (a) cornerstone with CA initialized + unlocked, or
     // (b) enrolled member with cert files from a prior enrollment.
     // Also seeds the PondState domain surface (no event emitted at boot).
+    //
+    // Auto-unlock now happens inside koi-embedded's init_certmesh_core(),
+    // so by this point the CA is already unlocked if the key file exists.
+    // We just read the status and seed the application state.
     let pond_state = crate::domain::PondState::new();
     if let Ok(cm) = koi_handle.certmesh() {
         if let Ok(core) = cm.core() {
@@ -344,54 +348,25 @@ pub async fn run(
             if status.ca_initialized && !status.ca_locked {
                 pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
                 pond_state.seed_enrolled(true);
-                tracing::info!("Pond active — CA initialized and unlocked from previous session");
+                tracing::info!("Pond active — CA initialized and unlocked");
             } else if status.ca_initialized {
-                // CA is locked after reboot — try auto-unlock if key file exists
-                let koi_dir = std::path::PathBuf::from(
-                    garden_common::constants::paths::data_dir(),
-                )
-                .join("koi");
-                if let Some(pp) =
-                    crate::api::v1::pond::read_auto_unlock_key(&koi_dir).await
-                {
-                    match core.unlock(&pp).await {
-                        Ok(()) => {
-                            pond_active
-                                .store(true, std::sync::atomic::Ordering::Relaxed);
-                            pond_state.seed_enrolled(true);
+                // CA is initialized but still locked — no auto-unlock key
+                // existed, or decryption failed.  Report available methods.
+                let slot_table_path = koi_certmesh::ca::slot_table_path();
+                if slot_table_path.exists() {
+                    if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
+                        let methods = table.available_methods();
+                        if methods.contains(&"totp") {
                             tracing::info!(
-                                "Pond auto-unlocked on boot via saved key"
+                                "Pond CA locked — unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
                             );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "Auto-unlock failed — run 'garden-rake pond unlock' manually"
+                        } else if methods.contains(&"fido2") {
+                            tracing::info!(
+                                "Pond CA locked — unlock with security key via pond UI"
                             );
-                        }
-                    }
-                } else {
-                    // No auto-unlock key — report available unlock methods
-                    let slot_table_path = koi_certmesh::ca::slot_table_path();
-                    if slot_table_path.exists() {
-                        if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
-                            let methods = table.available_methods();
-                            if methods.contains(&"totp") {
-                                tracing::info!(
-                                    "Pond CA locked — unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
-                                );
-                            } else if methods.contains(&"fido2") {
-                                tracing::info!(
-                                    "Pond CA locked — unlock with security key via pond UI"
-                                );
-                            } else {
-                                tracing::info!(
-                                    "Pond CA locked — run 'garden-rake pond unlock' with passphrase"
-                                );
-                            }
                         } else {
                             tracing::info!(
-                                "Pond CA exists but is locked — run 'garden-rake pond unlock'"
+                                "Pond CA locked — run 'garden-rake pond unlock' with passphrase"
                             );
                         }
                     } else {
@@ -399,6 +374,10 @@ pub async fn run(
                             "Pond CA exists but is locked — run 'garden-rake pond unlock'"
                         );
                     }
+                } else {
+                    tracing::info!(
+                        "Pond CA exists but is locked — run 'garden-rake pond unlock'"
+                    );
                 }
             }
         }

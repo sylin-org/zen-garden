@@ -221,12 +221,23 @@ fn certmesh_err(e: koi_certmesh::CertmeshError) -> (StatusCode, Json<ApiErrorRes
             "Enrollment request was denied by the operator.",
             None,
         ),
-        _ => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "CERTMESH_ERROR",
-            format!("Certmesh operation failed: {e}"),
+        CertmeshError::NoSlotFound(detail) => error_response(
+            StatusCode::BAD_REQUEST,
+            "NO_SLOT_FOUND",
+            detail.to_string(),
             None,
         ),
+        _ => {
+            // Sanitise: strip internal Rust error chains, log the full detail
+            let full = format!("{e}");
+            tracing::warn!(error = %full, "Certmesh operation failed");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CERTMESH_ERROR",
+                "An internal error occurred. Check server logs for details.",
+                None,
+            )
+        }
     }
 }
 
@@ -435,6 +446,17 @@ pub async fn pond_init_v1(
 
     // Update pond state
     refresh_pond_active(&state).await;
+
+    // ── Auto-unlock: domain-driven decision ─────────────────────────
+    // The trust profile determines whether the passphrase is saved for
+    // automatic unlock on reboot.  This is the single source of truth —
+    // identical to the ceremony path.
+    if let Err(e) = koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(
+        profile,
+        &payload.passphrase,
+    ) {
+        tracing::warn!(error = %e, "Failed to configure auto-unlock (pond will require manual unlock on reboot)");
+    }
 
     // Generate or use provided pond name
     let pond_name = match payload.name {
@@ -961,6 +983,17 @@ pub async fn pond_unlock_v1(
 ) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
 
+    // Check if already unlocked — return idempotent no-op
+    {
+        let status = core.certmesh_status().await;
+        if status.ca_initialized && !status.ca_locked {
+            return Ok(Json(ApiResponse::new(serde_json::json!({
+                "unlocked": true,
+                "message": "Pond is already unlocked."
+            }))));
+        }
+    }
+
     if let Some(ref totp_code) = payload.totp_code {
         // TOTP-based unlock
         core.unlock_with_totp(totp_code)
@@ -1040,9 +1073,7 @@ pub async fn pond_remove_v1(State(state): State<AppState>) -> PondResult<serde_j
     let _ = std::fs::remove_file(&path);
 
     // Clean up auto-unlock key if present
-    let koi_dir =
-        std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi");
-    delete_auto_unlock_key(&koi_dir).await;
+    koi_certmesh::CertmeshCore::delete_auto_unlock_key();
 
     Ok(Json(ApiResponse::new(serde_json::json!({
         "destroyed": true,
@@ -1364,7 +1395,10 @@ async fn execute_pond_init_from_ceremony(
     // Update pond state
     refresh_pond_active(state).await;
 
-    // ── Unlock method: decide post-init key management ──
+    // ── Unlock method: domain-driven decision ───────────────────────
+    // The trust profile determines whether auto-unlock is configured.
+    // Token-based unlock (TOTP/FIDO2) is handled separately below
+    // because it requires ceremony-specific data from the bag.
     let unlock_method = bag
         .get("_unlock_method")
         .and_then(|v| v.as_str())
@@ -1376,32 +1410,12 @@ async fn execute_pond_init_from_ceremony(
 
     match unlock_method {
         "auto" => {
-            // Save passphrase locally for auto-unlock on reboot
-            if !passphrase_for_file.is_empty() {
-                let key_path = std::path::PathBuf::from(
-                    garden_common::constants::paths::data_dir(),
-                )
-                .join("koi")
-                .join("auto-unlock-key");
-                if let Err(e) = write_auto_unlock_key(&key_path, passphrase_for_file).await {
-                    tracing::warn!(error = %e, "Failed to save auto-unlock key (pond will require manual unlock on reboot)");
-                } else {
-                    tracing::info!("Auto-unlock key saved — pond will unlock automatically on reboot");
-                }
-
-                // Also mark auto-unlock in the slot table
-                let slot_table_path = koi_certmesh::ca::slot_table_path();
-                if slot_table_path.exists() {
-                    match koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
-                        Ok(mut table) => {
-                            table.add_auto_unlock();
-                            if let Err(e) = table.save(&slot_table_path) {
-                                tracing::warn!(error = %e, "Failed to update slot table with auto-unlock marker");
-                            }
-                        }
-                        Err(e) => tracing::warn!(error = %e, "Failed to load slot table for auto-unlock marker"),
-                    }
-                }
+            // Delegate to the domain — single source of truth
+            if let Err(e) = koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(
+                profile,
+                passphrase_for_file,
+            ) {
+                tracing::warn!(error = %e, "Failed to configure auto-unlock (pond will require manual unlock on reboot)");
             }
         }
         "token" => {
@@ -1634,43 +1648,8 @@ async fn execute_pond_unlock_from_ceremony(
     Ok(Json(response))
 }
 
-// ============================================================================
-// Auto-unlock key management
-// ============================================================================
-
-/// Write passphrase to an auto-unlock key file with restrictive permissions.
-///
-/// On Unix: `chmod 0600` (owner read/write only).
-/// On Windows: inherits parent directory permissions (acceptable for daemon data dirs).
-async fn write_auto_unlock_key(
-    path: &std::path::Path,
-    passphrase: &str,
-) -> Result<(), std::io::Error> {
-    tokio::fs::write(path, passphrase.as_bytes()).await?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        tokio::fs::set_permissions(path, perms).await?;
-    }
-
-    Ok(())
-}
-
-/// Read the auto-unlock passphrase from disk (if the key file exists).
-pub(crate) async fn read_auto_unlock_key(
-    data_dir: &std::path::Path,
-) -> Option<String> {
-    let key_path = data_dir.join("auto-unlock-key");
-    match tokio::fs::read_to_string(&key_path).await {
-        Ok(pp) if !pp.is_empty() => Some(pp),
-        _ => None,
-    }
-}
-
-/// Delete the auto-unlock key file (idempotent).
-pub(crate) async fn delete_auto_unlock_key(data_dir: &std::path::Path) {
-    let key_path = data_dir.join("auto-unlock-key");
-    let _ = tokio::fs::remove_file(&key_path).await;
-}
+// Auto-unlock key management now lives in koi-certmesh domain:
+//   CertmeshCore::save_auto_unlock_key()
+//   CertmeshCore::delete_auto_unlock_key()
+//   CertmeshCore::try_auto_unlock()
+//   CertmeshCore::configure_auto_unlock_for_profile()

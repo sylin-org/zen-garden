@@ -1,8 +1,9 @@
 ﻿# Pond Ceremony Engine
 
-**Status:** Proposed  
+**Status:** Implementing (Phases 1–3 done)  
 **Priority:** High  
 **Created:** 2026-06-13  
+**Updated:** 2026-02-15  
 **Authors:** Leo Botinelly  
 **Related:** [koi-embedded-integration](koi-embedded-integration.md), [pond-totp-admission](pond-totp-admission.md), [SECURITY-0001](../decisions/SECURITY-0001-pond-tiers.md)
 
@@ -299,10 +300,27 @@ The engine supports multiple ceremony types. Each ceremony type is a set of **ru
 
 | Ceremony | Required keys | Trigger |
 |----------|--------------|---------|
-| **Init** | `profile`, `passphrase`, `entropy`, `auth_mode`, `verification_code` | `garden-rake pond init` |
+| **Init** | `profile`, `entropy`, `passphrase_choice`, `passphrase`, `auth_mode`, `verification_code` | `garden-rake pond init` |
 | **Join** | `join_code`, `verification_code` | `garden-rake pond join <code>` |
 | **Invite** | `passphrase` | `garden-rake pond invite` |
 | **Unlock** | `passphrase` | `garden-rake pond unlock` |
+
+The init ceremony collects entropy first ("Mash your keyboard!"), derives an XKCD-style passphrase suggestion from it, and presents three choices: **Keep** the suggestion, **Mash again** (re-collect entropy), or **Enter my own** (manual `secret_confirm`). This matches the original Koi certmesh create experience.
+
+### Auto-Unlock on Boot
+
+After CA creation, the passphrase can optionally be saved to a local file (`auto-unlock-key` in the koi data directory) so the CA unlocks automatically when Moss restarts. This avoids requiring human intervention after power outages on headless machines.
+
+| Profile | Auto-unlock default | Rationale |
+|---------|--------------------|-----------|
+| JustMe | Yes | Home garden, physical security assumed |
+| MyTeam | Yes | Small group, shared physical environment |
+| MyOrganization | No (locked) | Device theft in threat model |
+| Custom | User selects | `select_one` prompt during ceremony |
+
+**Mechanism:** If `auto-unlock-key` exists in the koi data directory, Moss reads it at boot and unlocks the CA. If the file is absent, the CA stays locked until `pond unlock`. The file contains the raw passphrase with restrictive permissions (0600 / ACL). Deleting the file switches to manual unlock; restoring it switches back. `pond remove` deletes it.
+
+The threat model is honest: if an attacker has root on your Pi, they already have everything. Auto-unlock trades a theoretical protection (encrypted key with passphrase next to it) for real-world usability (garden survives power outages without human intervention).
 
 The rules are free to add derived keys to the bag during evaluation. For example, when `auth_mode=totp` is set, the rules generate a TOTP secret internally and store it in the bag as `_totp_secret` (underscore = internal, not prompted). The QR code message is derived from this internal key.
 
@@ -416,7 +434,7 @@ This renders between the Offerings and Guidance sections. When pond is not activ
 
 ## Implementation Plan
 
-### Phase 1: Engine Core (koi-common + koi-certmesh)
+### Phase 1: Engine Core (koi-common + koi-certmesh) ✅
 
 1. Rewrite `CeremonyHost` with bag-based session model (koi-common)
 2. Define `CeremonyRules` trait with single `evaluate()` method
@@ -425,7 +443,7 @@ This renders between the Offerings and Guidance sections. When pond is not activ
 5. Add QR rendering support (utf8 + png_base64) using existing `qrcode` crate in koi-crypto
 6. Unit tests for full ceremony flow with mock rules
 
-### Phase 2: Moss Integration
+### Phase 2: Moss Integration ✅
 
 1. Add `POST /api/v1/pond/ceremony` handler in `pond.rs`
 2. Wire `CeremonyHost<PondCeremonyRules>` into `AppState`
@@ -433,11 +451,11 @@ This renders between the Offerings and Guidance sections. When pond is not activ
 4. Add pond status data to portrait JSON response
 5. Keep existing `POST /api/v1/pond/init` as deprecated (direct, non-interactive)
 
-### Phase 3: Client Updates
+### Phase 3: Client Updates ✅
 
 1. Update `garden-rake pond init` to use ceremony endpoint with terminal render loop
 2. Add `--non-interactive` flag for CI/automation (sends all data in first call)
-3. Build `pond.html` — ceremony wizard + status dashboard
+3. Build `pond.html` — ceremony wizard + status dashboard (with parseMarkdown renderer)
 4. Update `garden-rake pond invite` to display QR code
 5. Update `garden-rake pond join` to use ceremony for code input + verification
 
@@ -612,9 +630,17 @@ impl CeremonyRules for PondCeremonyRules {
 impl PondCeremonyRules {
     fn eval_init(&self, bag: &mut Map<String, Value>, render: &RenderHints) -> EvalResult {
         // Step through bag keys in priority order:
-        // 1. Need profile? → prompt select_one
-        // 2. Need passphrase? → prompt secret_confirm
-        // 3. Need entropy? → prompt entropy (inject server entropy into bag)
+        // 1. Need profile? → prompt select_one (+ custom sub-prompts)
+        // 1b. Need operator? → prompt text (when approval required)
+        // 2. Need entropy? → prompt entropy ("Mash your keyboard!")
+        //    → combine server + client entropy → derive seed
+        // 3. Passphrase from entropy:
+        //    a. Generate XKCD-style suggestion from seed
+        //    b. Show suggestion + prompt select_one: keep / again / own
+        //    c. "keep" → set passphrase from suggestion
+        //    d. "again" → clear entropy keys, re-evaluate
+        //    e. "own" → prompt secret_confirm
+        // 3b. Need auto_unlock? → set from profile default or custom prompt
         // 4. Need auth_mode? → prompt select_one
         // 5. auth_mode=totp && no _totp_secret? → generate secret, store in bag
         // 6. Need verification_code? → return QR message + code prompt

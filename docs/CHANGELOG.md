@@ -6,6 +6,7 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-16
 
+- Auto-unlock: JustMe/MyTeam profiles save passphrase locally, pond unlocks on reboot
 - Ceremony-driven pond init: Moss hosts CeremonyHost, Rake drives via POST /api/v1/pond/ceremony
 - Added ceremony_render module to Rake (async HTTP ceremony render loop)
 - All pond routes moved to HTTP public lobby (bootstrap/recovery must not depend on HTTPS)

@@ -346,7 +346,35 @@ pub async fn run(
                 pond_state.seed_enrolled(true);
                 tracing::info!("Pond active — CA initialized and unlocked from previous session");
             } else if status.ca_initialized {
-                tracing::info!("Pond CA exists but is locked — run 'garden-rake pond unlock'");
+                // CA is locked after reboot — try auto-unlock if key file exists
+                let koi_dir = std::path::PathBuf::from(
+                    garden_common::constants::paths::data_dir(),
+                )
+                .join("koi");
+                if let Some(pp) =
+                    crate::api::v1::pond::read_auto_unlock_key(&koi_dir).await
+                {
+                    match core.unlock(&pp).await {
+                        Ok(()) => {
+                            pond_active
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                            pond_state.seed_enrolled(true);
+                            tracing::info!(
+                                "Pond auto-unlocked on boot via saved key"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Auto-unlock failed — run 'garden-rake pond unlock' manually"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::info!(
+                        "Pond CA exists but is locked — run 'garden-rake pond unlock'"
+                    );
+                }
             }
         }
     }

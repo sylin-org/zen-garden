@@ -7,7 +7,8 @@
 //! Security model:
 //! - CA (keystone) creation requires a passphrase
 //! - Enrollment uses TOTP codes shared out-of-band
-//! - After initialization, the CA starts locked on reboot; unlock required
+//! - Auto-unlock: JustMe/MyTeam profiles save passphrase to disk and
+//!   unlock automatically on reboot. MyOrganization profiles stay locked.
 //! - All cert lifecycle managed by certmesh (issue, renew, revoke)
 
 use crate::api::responses::ApiResponse;
@@ -992,6 +993,11 @@ pub async fn pond_remove_v1(State(state): State<AppState>) -> PondResult<serde_j
     let path = std::path::PathBuf::from(garden_common::constants::paths::pond_metadata_file());
     let _ = std::fs::remove_file(&path);
 
+    // Clean up auto-unlock key if present
+    let koi_dir =
+        std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi");
+    delete_auto_unlock_key(&koi_dir).await;
+
     Ok(Json(ApiResponse::new(serde_json::json!({
         "destroyed": true,
     }))))
@@ -1298,6 +1304,28 @@ async fn execute_pond_init_from_ceremony(
     // Update pond state
     refresh_pond_active(state).await;
 
+    // Auto-unlock: save passphrase locally if enabled
+    let auto_unlock = bag
+        .get("_auto_unlock")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let passphrase_for_file = bag
+        .get("passphrase")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if auto_unlock && !passphrase_for_file.is_empty() {
+        let key_path = std::path::PathBuf::from(
+            garden_common::constants::paths::data_dir(),
+        )
+        .join("koi")
+        .join("auto-unlock-key");
+        if let Err(e) = write_auto_unlock_key(&key_path, passphrase_for_file).await {
+            tracing::warn!(error = %e, "Failed to save auto-unlock key (pond will require manual unlock on reboot)");
+        } else {
+            tracing::info!("Auto-unlock key saved — pond will unlock automatically on reboot");
+        }
+    }
+
     let pond_name = garden_common::naming::generate_pond_name();
     state.pond.set_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
@@ -1338,4 +1366,45 @@ async fn execute_pond_init_from_ceremony(
     response.result_data = Some(safe_data);
 
     Ok(Json(response))
+}
+
+// ============================================================================
+// Auto-unlock key management
+// ============================================================================
+
+/// Write passphrase to an auto-unlock key file with restrictive permissions.
+///
+/// On Unix: `chmod 0600` (owner read/write only).
+/// On Windows: inherits parent directory permissions (acceptable for daemon data dirs).
+async fn write_auto_unlock_key(
+    path: &std::path::Path,
+    passphrase: &str,
+) -> Result<(), std::io::Error> {
+    tokio::fs::write(path, passphrase.as_bytes()).await?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        tokio::fs::set_permissions(path, perms).await?;
+    }
+
+    Ok(())
+}
+
+/// Read the auto-unlock passphrase from disk (if the key file exists).
+pub(crate) async fn read_auto_unlock_key(
+    data_dir: &std::path::Path,
+) -> Option<String> {
+    let key_path = data_dir.join("auto-unlock-key");
+    match tokio::fs::read_to_string(&key_path).await {
+        Ok(pp) if !pp.is_empty() => Some(pp),
+        _ => None,
+    }
+}
+
+/// Delete the auto-unlock key file (idempotent).
+pub(crate) async fn delete_auto_unlock_key(data_dir: &std::path::Path) {
+    let key_path = data_dir.join("auto-unlock-key");
+    let _ = tokio::fs::remove_file(&key_path).await;
 }

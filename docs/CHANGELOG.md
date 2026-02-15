@@ -4,6 +4,15 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-22
+
+- Envelope encryption: LUKS-style key slots for pond CA (passphrase/TOTP/FIDO2/auto-unlock)
+- Multi-method pond unlock: 3-way ceremony prompt (auto/token/passphrase)
+- TOTP unlock slot: register authenticator during pond init, verify on unlock
+- FIDO2 WebAuthn: security key registration and assertion in pond web UI
+- Boot unlock: inspect slot table, log available unlock methods
+- CLI: `garden-rake pond unlock --totp <code>` for authenticator-based unlock
+
 ## 2026-02-16
 
 - Auto-unlock: JustMe/MyTeam profiles save passphrase locally, pond unlocks on reboot

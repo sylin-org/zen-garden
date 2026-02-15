@@ -551,6 +551,7 @@ pub async fn run(
         pond: pond_state,
         pond_active: pond_active.clone(),
         https_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        stone_client: Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
         ceremony_registry,
         ceremony_journal,
         harvest_store,
@@ -777,6 +778,9 @@ pub async fn run(
                     Ok(crate::domain::DomainEvent::Pond(
                         crate::domain::PondEvent::EnrollmentChanged { enrolled, .. },
                     )) => {
+                        // Reload inter-stone TLS client with fresh cert material
+                        state_for_pond.stone_client.reload_tls();
+
                         if enrolled {
                             activate_pond_security(&state_for_pond, &console_for_pond).await;
                         } else {

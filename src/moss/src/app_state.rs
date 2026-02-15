@@ -16,7 +16,8 @@
 use crate::docker::DockerManager;
 use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{
-    CeremonyJournal, EventBus, HarvestStore, ManifestRegistry, NurturingStore, SseEvent,
+    stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
+    NurturingStore, SseEvent,
 };
 use crate::mdns::MdnsHandle;
 use crate::tasks::NetworkMonitor;
@@ -153,6 +154,11 @@ pub struct AppState {
     /// HTTPS listener started flag — guards against double-binding :7183.
     /// Set true after the first successful HTTPS bind (boot or dynamic).
     pub https_started: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Stone-to-stone HTTP client gateway.
+    /// Automatically upgrades to HTTPS+mTLS when pond certs are available.
+    /// Call `stone_client.reload_tls()` after enrollment changes.
+    pub stone_client: Arc<StoneClient>,
 
     // === Ceremony Infrastructure ===
     /// Active ceremony registry (in-memory state)

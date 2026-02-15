@@ -576,13 +576,8 @@ async fn proxy_enrollment(
     state: &AppState,
     payload: PondJoinRequest,
 ) -> PondResult<PondJoinResponse> {
-    // Discover cornerstone endpoint via topology
-    let cornerstone_endpoint = discover_cornerstone(state).await?;
-
-    let url = format!(
-        "{}/api/v1/pond/join",
-        cornerstone_endpoint.trim_end_matches('/')
-    );
+    // Discover cornerstone address via topology
+    let cornerstone_addr = discover_cornerstone(state).await?;
 
     // Forward the join request with our hostname
     let proxy_payload = serde_json::json!({
@@ -591,26 +586,16 @@ async fn proxy_enrollment(
         "sans": payload.sans,
     });
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "HTTP_CLIENT_ERROR",
-                format!("Failed to create HTTP client: {e}"),
-                None,
-            )
-        })?;
-
     tracing::info!(
-        cornerstone = %cornerstone_endpoint,
+        cornerstone = %cornerstone_addr,
         stone = %state.stone_name,
         "Proxying pond join to cornerstone"
     );
 
-    let resp = client
-        .post(&url)
+    let resp = state
+        .stone_client
+        .post(&cornerstone_addr, "/api/v1/pond/join")
+        .timeout(std::time::Duration::from_secs(15))
         .json(&proxy_payload)
         .send()
         .await
@@ -618,7 +603,7 @@ async fn proxy_enrollment(
             error_response(
                 StatusCode::BAD_GATEWAY,
                 "CORNERSTONE_UNREACHABLE",
-                format!("Failed to reach cornerstone at {url}: {e}"),
+                format!("Failed to reach cornerstone at {cornerstone_addr}: {e}"),
                 None,
             )
         })?;
@@ -709,26 +694,14 @@ async fn proxy_enrollment(
     })))
 }
 
-/// Discover the cornerstone's HTTP endpoint via the topology cache.
+/// Discover the cornerstone's address via the topology cache.
 ///
 /// Queries online peers for `/api/v1/pond/status` to find which stone
-/// holds the CA (role = "primary"). Returns the cornerstone's HTTP endpoint.
+/// holds the CA (role = "primary"). Returns the cornerstone's `PeerAddress`.
 async fn discover_cornerstone(
     state: &AppState,
-) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
+) -> Result<garden_common::PeerAddress, (StatusCode, Json<ApiErrorResponse>)> {
     let cache = state.topology_cache.read().await;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "HTTP_CLIENT_ERROR",
-                format!("Failed to create HTTP client: {e}"),
-                None,
-            )
-        })?;
 
     // Collect online peers, most recently seen first
     let mut candidates: Vec<_> = cache
@@ -749,11 +722,13 @@ async fn discover_cornerstone(
     }
 
     for entry in &candidates {
-        let url = format!(
-            "{}/api/v1/pond/status",
-            entry.address.http_base().trim_end_matches('/')
-        );
-        let resp = match client.get(&url).send().await {
+        let resp = match state
+            .stone_client
+            .get(&entry.address, "/api/v1/pond/status")
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
             Ok(r) if r.status().is_success() => r,
             _ => continue,
         };
@@ -769,7 +744,7 @@ async fn discover_cornerstone(
             .and_then(|c| c.as_str());
 
         if let Some(name) = cornerstone_name {
-            // Found the cornerstone hostname — look up its endpoint
+            // Found the cornerstone hostname — look up its address
             for e in cache.values() {
                 if e.stone_name == name {
                     tracing::info!(
@@ -778,7 +753,7 @@ async fn discover_cornerstone(
                         via = %entry.stone_name,
                         "Cornerstone discovered via peer"
                     );
-                    return Ok(e.address.http_base());
+                    return Ok(e.address.clone());
                 }
             }
             // Cornerstone identified but not in our topology cache

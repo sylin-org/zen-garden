@@ -98,8 +98,10 @@ impl Command for PondCommand {
             }
         }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::POND, self.quiet_mode);
+        // Self-teaching suggestions (suppress in JSON mode)
+        if !ctx.wants_json() {
+            suggestions::print_suggestions(cmd::POND, self.quiet_mode);
+        }
 
         Ok(())
     }
@@ -185,6 +187,12 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
     match ctx.client.get(&url).send().await {
         Ok(response) if response.status().is_success() => {
             if let Ok(body) = response.json::<serde_json::Value>().await {
+                // JSON output mode — emit raw API response
+                if ctx.wants_json() {
+                    println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    return Ok(());
+                }
+
                 if let Some(data) = body.get("data") {
                     let active = data
                         .get("active")
@@ -194,6 +202,10 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
                         .get("locked")
                         .and_then(|l| l.as_bool())
                         .unwrap_or(false);
+                    let name = data
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
                     let profile = data
                         .get("profile")
                         .and_then(|p| p.as_str())
@@ -222,6 +234,9 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
                         );
                     }
 
+                    if !name.is_empty() {
+                        println!("   Name: {}", name);
+                    }
                     if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
                         println!("   Cornerstone: {}", cornerstone);
                     }

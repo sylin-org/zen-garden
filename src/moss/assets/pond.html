@@ -377,7 +377,7 @@
                         <span class="stone-name">${esc(st.name)}</span>
                         <span class="stone-role">${esc(st.role)}</span>
                         <span class="stone-spacer"></span>
-                        <span class="stone-expires">${esc(st.certificate_expires)}</span>
+                        <span class="stone-expires">${formatExpiry(st.certificate_expires)}</span>
                     </div>
                 `).join('');
             } else {
@@ -945,6 +945,20 @@
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
+    }
+
+    function formatExpiry(iso) {
+        if (!iso) return '';
+        try {
+            const d = new Date(iso);
+            const now = new Date();
+            const days = Math.round((d - now) / 86400000);
+            const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            if (days < 0) return esc(dateStr) + ' (expired)';
+            if (days === 0) return esc(dateStr) + ' (today)';
+            if (days === 1) return esc(dateStr) + ' (tomorrow)';
+            return esc(dateStr) + ` (${days}d)`;
+        } catch { return esc(iso); }
     }
 
     // Mini-markdown renderer (shared with portrait.html)

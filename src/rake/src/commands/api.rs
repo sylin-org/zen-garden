@@ -2,24 +2,16 @@
 //!
 //! Queries GET /api/v1/manifest and displays formatted endpoint documentation
 
-use crate::discovery;
 use anyhow::Result;
 use garden_common::api_manifest::ApiManifest;
 
 /// Execute API command - display API reference
 pub async fn execute_api_command(
-    at: Option<String>,
+    endpoint: &str,
     category_filter: Option<String>,
     endpoint_filter: Option<String>,
     examples: bool,
 ) -> Result<()> {
-    // Resolve endpoint
-    let endpoint = if let Some(at) = at {
-        at
-    } else {
-        discovery::discover_moss().await?
-    };
-
     // Fetch manifest
     let url = format!("{}/api/v1/manifest", endpoint.trim_end_matches('/'));
     let client = reqwest::Client::new();

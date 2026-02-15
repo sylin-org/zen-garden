@@ -30,12 +30,39 @@ pub async fn dispatch(
     verbose: u8,
     cache: Option<&dyn CachedStoneOps>,
 ) -> anyhow::Result<()> {
+    dispatch_full(
+        cmd,
+        client,
+        at,
+        quiet_mode,
+        fresh_mode,
+        verbose,
+        cache,
+        garden_rake::context::OutputFormat::default(),
+        None,
+    )
+    .await
+}
+
+/// Dispatch a command with full automation options (output format, field extraction)
+#[allow(clippy::too_many_arguments)]
+pub async fn dispatch_full(
+    cmd: &dyn Command,
+    client: &reqwest::Client,
+    at: Option<String>,
+    quiet_mode: bool,
+    fresh_mode: bool,
+    verbose: u8,
+    cache: Option<&dyn CachedStoneOps>,
+    output_format: garden_rake::context::OutputFormat,
+    field: Option<String>,
+) -> anyhow::Result<()> {
     // Resolve endpoint if command requires it
     let (endpoint, stone_name) = if cmd.requires_endpoint() {
         let ep = resolve_endpoint(client, at, cache).await?;
 
-        // Show stone header if requested
-        if cmd.show_stone_header() {
+        // Show stone header if requested (suppress in JSON mode)
+        if cmd.show_stone_header() && !output_format.is_json() {
             print_stone_header(client, &ep).await;
         }
 
@@ -47,13 +74,15 @@ pub async fn dispatch(
     };
 
     // Build context
-    let ctx = CommandContext::with_endpoint(
+    let ctx = CommandContext::with_automation(
         client.clone(),
-        endpoint.unwrap_or_default(),
+        endpoint,
         stone_name,
         quiet_mode,
         fresh_mode,
         verbose,
+        output_format,
+        field,
     );
 
     // Execute command

@@ -2487,7 +2487,7 @@ async fn async_main() -> anyhow::Result<()> {
                     PondAction::Rename { name } => PondActionType::Rename { name },
                 };
                 let cmd = commands::management::PondCommand::new(action_type, quiet_mode);
-                dispatch::dispatch(
+                dispatch::dispatch_full(
                     &cmd,
                     &client,
                     at,
@@ -2495,6 +2495,8 @@ async fn async_main() -> anyhow::Result<()> {
                     fresh_mode,
                     cli.verbose,
                     Some(&*GLOBAL_CACHE),
+                    output_format.clone(),
+                    field.clone(),
                 )
                 .await?;
             }
@@ -2706,7 +2708,10 @@ async fn async_main() -> anyhow::Result<()> {
                 examples,
                 at,
             } => {
-                commands::api::execute_api_command(at, category, endpoint, examples).await?;
+                let resolved =
+                    dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
+                commands::api::execute_api_command(&resolved, category, endpoint, examples)
+                    .await?;
             }
 
             Commands::Refresh {

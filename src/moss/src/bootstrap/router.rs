@@ -38,6 +38,7 @@ pub fn configure_public(state: AppState) -> Router {
         // ROOT LEVEL - Industry standard endpoints
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
+        .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
         // Stone info (read-only)
@@ -207,6 +208,7 @@ pub fn configure(state: AppState) -> Router {
         // ROOT LEVEL - Industry standard endpoints
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
+        .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/stone/* - THIS stone's local operations

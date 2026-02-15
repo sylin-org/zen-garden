@@ -15,12 +15,16 @@ use crate::{error_response, AppState};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::Html,
     Json,
 };
 use garden_common::api_utils::ApiErrorResponse;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 use tower::ServiceExt;
+
+/// Embedded pond ceremony UI — single-page app served at `/pond`
+const POND_HTML: &str = include_str!("../../../assets/pond.html");
 
 // ============================================================================
 // Request types
@@ -300,6 +304,15 @@ async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone
 // ============================================================================
 // Handlers
 // ============================================================================
+
+/// GET /pond — Serve the embedded pond ceremony web UI
+pub async fn get_pond_page() -> (StatusCode, [(&'static str, &'static str); 1], Html<&'static str>) {
+    (
+        StatusCode::OK,
+        [("content-type", "text/html; charset=utf-8")],
+        Html(POND_HTML),
+    )
+}
 
 /// POST /api/v1/pond/init — Place keystone (create CA)
 ///

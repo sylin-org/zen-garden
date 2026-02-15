@@ -191,6 +191,23 @@ pub struct PortraitHorizon {
     pub stones: Vec<HorizonStone>,
 }
 
+/// Pond status summary for portrait
+#[derive(Debug, Clone, Serialize)]
+pub struct PortraitPond {
+    /// Whether a pond has been initialized on this stone
+    pub active: bool,
+    /// Whether the CA is currently locked
+    pub locked: bool,
+    /// Pond name (if active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Number of enrolled stones
+    pub stone_count: usize,
+    /// Trust profile
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
 /// Complete portrait response
 #[derive(Debug, Clone, Serialize)]
 pub struct PortraitResponse {
@@ -201,6 +218,7 @@ pub struct PortraitResponse {
     /// Candidate devices ready for seed bank preparation (hopeful state)
     pub candidates: Vec<PortraitCandidate>,
     pub companions: Vec<PortraitCompanion>,
+    pub pond: PortraitPond,
     pub horizon: PortraitHorizon,
 }
 
@@ -635,6 +653,21 @@ pub async fn get_portrait_data(
         }
     };
 
+    // === Pond ===
+    let pond = {
+        let active = state.pond_active.load(std::sync::atomic::Ordering::Relaxed);
+        let name = state.pond.name().await;
+        // Stone count from horizon (discovered peers + self if enrolled)
+        let stone_count = if active { horizon.count.max(1) } else { 0 };
+        PortraitPond {
+            active,
+            locked: !active && state.pond.enrolled(),
+            name,
+            stone_count,
+            profile: None, // requires certmesh I/O, omitted for portrait
+        }
+    };
+
     Ok(Json(PortraitResponse {
         identity,
         foundation,
@@ -642,6 +675,7 @@ pub async fn get_portrait_data(
         seed_banks,
         candidates,
         companions,
+        pond,
         horizon,
     }))
 }

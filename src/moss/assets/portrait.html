@@ -442,6 +442,19 @@
             <div class="list" id="companions-list"></div>
         </section>
 
+        <!-- Pond -->
+        <section id="pond-section" aria-labelledby="pond-title">
+            <h2 class="section-title" id="pond-title">Pond</h2>
+            <div class="card" id="pond-card">
+                <div style="display:flex;align-items:center;gap:0.75rem">
+                    <span class="dot" id="pond-dot"></span>
+                    <span id="pond-status" style="font-family:ui-monospace,monospace;font-size:0.8rem"></span>
+                    <span style="flex-grow:1"></span>
+                    <a href="/pond" style="font-family:ui-monospace,monospace;font-size:0.7rem;color:var(--accent-sage);text-decoration:none">manage →</a>
+                </div>
+            </div>
+        </section>
+
         <!-- Activity -->
         <section id="activity-section" class="hidden" aria-labelledby="activity-title">
             <h2 class="section-title" id="activity-title">Activity</h2>
@@ -1214,6 +1227,23 @@
                 primaryAction: actions[0]
             });
         }).join('');
+
+        // Pond
+        const pond = data.pond || {};
+        const pondDot = $('pond-dot');
+        const pondStatus = $('pond-status');
+        if (pond.active) {
+            pondDot.className = 'dot active';
+            const parts = [pond.name || 'Active'];
+            if (pond.stone_count > 0) parts.push(pond.stone_count + ' stone' + (pond.stone_count !== 1 ? 's' : ''));
+            pondStatus.textContent = parts.join(' · ');
+        } else if (pond.locked) {
+            pondDot.className = 'dot locked';
+            pondStatus.textContent = pond.name ? pond.name + ' · Locked' : 'Locked';
+        } else {
+            pondDot.className = 'dot inactive';
+            pondStatus.textContent = 'Not initialized';
+        }
 
         // Horizon
         const horizon = data.horizon || { count: 0, seed_bank_count: 0, stones: [] };

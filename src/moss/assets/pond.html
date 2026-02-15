@@ -1,0 +1,854 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pond</title>
+    <style>
+        :root {
+            --bg-base: #f4f2ee;
+            --stone-900: #1a1a1a;
+            --stone-600: #57534e;
+            --stone-400: #a8a29e;
+            --vellum-white: rgba(255, 255, 255, 0.45);
+            --vellum-border: rgba(255, 255, 255, 0.6);
+            --accent-sage: #84a59d;
+            --accent-clay: #d4a373;
+            --accent-hopeful: #c4b060;
+            --accent-hopeful-glow: rgba(196, 176, 96, 0.2);
+            --accent-muted: #a8a29e;
+            --glass-blur: blur(14px);
+            --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-base: #1a1a1a;
+                --stone-900: #fafaf9;
+                --stone-600: #a8a29e;
+                --stone-400: #78716c;
+                --vellum-white: rgba(40, 40, 40, 0.6);
+                --vellum-border: rgba(255, 255, 255, 0.1);
+                --accent-hopeful: #d4c170;
+                --accent-hopeful-glow: rgba(212, 193, 112, 0.15);
+            }
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-base);
+            background-image:
+                radial-gradient(circle at 20% 20%, rgba(200, 200, 190, 0.3) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(190, 185, 175, 0.3) 0%, transparent 40%);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: var(--stone-900);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 3rem 1.5rem;
+            line-height: 1.5;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-image:
+                    radial-gradient(circle at 20% 20%, rgba(60, 60, 55, 0.5) 0%, transparent 40%),
+                    radial-gradient(circle at 80% 80%, rgba(50, 50, 45, 0.5) 0%, transparent 40%);
+            }
+        }
+
+        .vellum-grain {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 9999; opacity: 0.03;
+        }
+
+        .container {
+            width: 100%; max-width: 640px;
+            display: flex; flex-direction: column; gap: 2.5rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        /* Header */
+        .header {
+            display: flex; justify-content: space-between; align-items: flex-start; gap: 2rem;
+        }
+        .header-identity {
+            display: flex; flex-direction: column; gap: 0.5rem;
+            border-left: 3px solid var(--accent-sage); padding-left: 1.5rem;
+        }
+        .header-role { font-family: ui-monospace, monospace; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; color: var(--stone-600); }
+        .header-title { font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
+        .header-meta { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--stone-600); display: flex; align-items: center; gap: 0.5rem; }
+        .header-back { font-family: ui-monospace, monospace; font-size: 0.75rem; color: var(--accent-sage); text-decoration: none; margin-top: 1.5rem; }
+        .header-back:hover { text-decoration: underline; }
+
+        /* Section */
+        .section-title {
+            font-family: ui-monospace, monospace; font-size: 0.65rem; text-transform: uppercase;
+            letter-spacing: 0.25em; margin-bottom: 1.25rem; color: var(--stone-600);
+            display: flex; align-items: center; gap: 1rem;
+        }
+        .section-title::after { content: ''; flex-grow: 1; height: 1px; background: linear-gradient(90deg, rgba(128,128,128,0.2), transparent); }
+
+        /* Card */
+        .card {
+            background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--vellum-border); border-radius: 3px; padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03), inset 0 0 20px rgba(255,255,255,0.1);
+            transition: var(--transition-soft);
+        }
+
+        /* Status dots */
+        .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+        .dot.active { background: var(--accent-sage); box-shadow: 0 0 8px var(--accent-sage); animation: pulse 2.5s infinite; }
+        .dot.locked { background: var(--accent-clay); box-shadow: 0 0 8px var(--accent-clay); }
+        .dot.inactive { background: var(--accent-muted); box-shadow: none; }
+
+        /* Status panel */
+        .status-summary { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; }
+        .status-label { font-family: ui-monospace, monospace; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .status-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1.25rem; font-size: 0.85rem; }
+        .status-grid dt { color: var(--stone-400); font-family: ui-monospace, monospace; font-size: 0.75rem; text-transform: uppercase; }
+        .status-grid dd { color: var(--stone-600); font-family: ui-monospace, monospace; margin: 0; word-break: break-all; }
+
+        /* Stones list */
+        .stones-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; }
+        .stone-item {
+            display: flex; align-items: center; gap: 0.75rem;
+            padding: 0.6rem 0; border-bottom: 1px solid rgba(128,128,128,0.08);
+            font-size: 0.85rem;
+        }
+        .stone-item:last-child { border-bottom: none; }
+        .stone-name { font-weight: 500; }
+        .stone-role { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); text-transform: uppercase; }
+        .stone-spacer { flex-grow: 1; }
+        .stone-expires { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); }
+
+        /* Action buttons */
+        .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.25rem; }
+        .action-btn {
+            background: transparent; border: 1px solid var(--vellum-border); border-radius: 2px;
+            padding: 0.4rem 0.75rem; min-height: 44px; min-width: 44px;
+            font-size: 0.7rem; cursor: pointer; color: var(--stone-600);
+            text-transform: uppercase; letter-spacing: 0.03em; font-family: ui-monospace, monospace;
+            transition: all 0.2s ease;
+        }
+        .action-btn:hover:not(:disabled) { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .action-btn.primary { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .action-btn.primary:hover { opacity: 0.9; }
+        .action-btn.confirming { border-color: var(--accent-clay); color: var(--accent-clay); }
+        .action-btn.loading { position: relative; color: transparent; pointer-events: none; }
+        .action-btn.loading::after { content: ''; position: absolute; width: 12px; height: 12px; border: 2px solid var(--stone-400); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+        /* Ceremony panel */
+        .ceremony-panel { display: flex; flex-direction: column; gap: 1.25rem; }
+
+        /* Messages */
+        .msg { padding: 1rem 1.25rem; border-radius: 3px; font-size: 0.85rem; line-height: 1.6; }
+        .msg.info { background: rgba(132, 165, 157, 0.08); color: var(--stone-600); border-left: 3px solid var(--accent-sage); }
+        .msg.error { background: rgba(212, 163, 115, 0.1); color: var(--accent-clay); border-left: 3px solid var(--accent-clay); }
+        .msg.summary { background: var(--vellum-white); border: 1px solid var(--vellum-border); }
+        .msg-title { font-weight: 600; font-size: 0.8rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        /* Summary key-value */
+        .summary-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; font-size: 0.8rem; }
+        .summary-grid dt { color: var(--stone-400); font-family: ui-monospace, monospace; }
+        .summary-grid dd { color: var(--stone-900); font-family: ui-monospace, monospace; margin: 0; word-break: break-all; }
+
+        /* QR code */
+        .qr-container { display: flex; flex-direction: column; align-items: center; gap: 1rem; padding: 1.5rem; }
+        .qr-title { font-size: 0.85rem; color: var(--stone-600); text-align: center; }
+        .qr-image { image-rendering: pixelated; max-width: 240px; border-radius: 3px; }
+        .qr-text {
+            font-family: ui-monospace, monospace; font-size: 0.45rem; line-height: 0.55rem;
+            white-space: pre; letter-spacing: 0; background: white; color: black;
+            padding: 0.75rem; border-radius: 3px;
+        }
+        @media (prefers-color-scheme: dark) { .qr-text { background: #fff; color: #000; } }
+
+        /* Prompts */
+        .prompt-group { display: flex; flex-direction: column; gap: 0.5rem; }
+        .prompt-label { font-size: 0.85rem; font-weight: 500; color: var(--stone-900); }
+        .prompt-hint { font-size: 0.75rem; color: var(--stone-400); margin-top: -0.25rem; }
+
+        /* Select */
+        .select-options { display: flex; flex-direction: column; gap: 0.5rem; }
+        .select-option {
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            padding: 0.75rem 1rem; border-radius: 3px; cursor: pointer;
+            border: 1px solid var(--vellum-border); background: var(--vellum-white);
+            transition: all 0.15s ease;
+        }
+        .select-option:hover { border-color: var(--accent-sage); }
+        .select-option.selected { border-color: var(--accent-sage); background: rgba(132, 165, 157, 0.08); }
+        .select-radio {
+            width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--stone-400);
+            flex-shrink: 0; margin-top: 2px; position: relative; transition: all 0.15s;
+        }
+        .select-option.selected .select-radio {
+            border-color: var(--accent-sage);
+        }
+        .select-option.selected .select-radio::after {
+            content: ''; position: absolute; width: 6px; height: 6px; border-radius: 50%;
+            background: var(--accent-sage); top: 50%; left: 50%; transform: translate(-50%, -50%);
+        }
+        .select-body { display: flex; flex-direction: column; gap: 0.15rem; }
+        .select-label { font-size: 0.85rem; font-weight: 500; }
+        .select-desc { font-size: 0.75rem; color: var(--stone-400); }
+
+        /* Text / secret inputs */
+        .prompt-input {
+            width: 100%; padding: 0.6rem 0.8rem; border: 1px solid var(--vellum-border);
+            border-radius: 3px; background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+            font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--stone-900);
+            outline: none; transition: border-color 0.2s;
+        }
+        .prompt-input:focus { border-color: var(--accent-sage); }
+        .prompt-input::placeholder { color: var(--stone-400); }
+
+        /* Entropy area */
+        .entropy-area {
+            width: 100%; min-height: 100px; padding: 0.8rem; border: 1px dashed var(--stone-400);
+            border-radius: 3px; background: var(--vellum-white); font-family: ui-monospace, monospace;
+            font-size: 0.8rem; color: var(--stone-600); resize: none; outline: none;
+            transition: border-color 0.2s;
+        }
+        .entropy-area:focus { border-color: var(--accent-sage); }
+        .entropy-counter { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); text-align: right; margin-top: 0.25rem; }
+
+        /* Error banner */
+        .error-banner {
+            padding: 0.75rem 1rem; background: rgba(212, 163, 115, 0.1);
+            border: 1px solid var(--accent-clay); border-radius: 3px;
+            color: var(--accent-clay); font-size: 0.8rem; font-family: ui-monospace, monospace;
+            display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+        }
+        .error-banner::before { content: '⚠'; }
+        .error-banner:hover { opacity: 0.8; }
+
+        .footer { text-align: center; padding: 1rem; font-size: 0.75rem; color: var(--stone-400); font-family: ui-monospace, monospace; }
+        .footer a { color: var(--stone-600); text-decoration: none; }
+
+        .empty { padding: 2rem; text-align: center; color: var(--stone-600); font-style: italic; font-size: 0.85rem; }
+
+        .hidden { display: none !important; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <svg class="vellum-grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+
+    <main class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-identity">
+                <span class="header-role">Pond</span>
+                <h1 class="header-title" id="pond-title">Pond</h1>
+                <div class="header-meta">
+                    <span class="dot" id="status-dot"></span>
+                    <span id="status-text">Loading...</span>
+                </div>
+            </div>
+            <a class="header-back" href="/">← Portrait</a>
+        </header>
+
+        <!-- Error banner (ceremony or status errors) -->
+        <div class="error-banner hidden" id="error-banner" onclick="this.classList.add('hidden')"></div>
+
+        <!-- Status Panel (when no ceremony is active) -->
+        <section id="status-panel" class="hidden">
+            <h2 class="section-title">Status</h2>
+            <div class="card">
+                <dl class="status-grid" id="status-details"></dl>
+                <div class="stones-list" id="stones-list"></div>
+                <div class="actions" id="status-actions"></div>
+            </div>
+        </section>
+
+        <!-- Inactive Panel (pond not initialized) -->
+        <section id="inactive-panel" class="hidden">
+            <h2 class="section-title">Getting Started</h2>
+            <div class="card">
+                <p class="empty">This stone has no pond. Initialize one to enable trust, encryption, and secure enrollment.</p>
+                <div class="actions" style="justify-content: center; margin-top: 1rem;">
+                    <button class="action-btn primary" onclick="startCeremony('init')">Initialize Pond</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ceremony Panel (active ceremony) -->
+        <section id="ceremony-panel" class="hidden">
+            <h2 class="section-title" id="ceremony-title">Ceremony</h2>
+            <div class="ceremony-panel" id="ceremony-body"></div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem;">
+                <button class="action-btn" id="ceremony-cancel" onclick="cancelCeremony()">Cancel</button>
+                <button class="action-btn primary" id="ceremony-continue" onclick="submitCeremony()">Continue</button>
+            </div>
+        </section>
+
+        <!-- Completion Panel (ceremony just finished) -->
+        <section id="complete-panel" class="hidden">
+            <h2 class="section-title">Complete</h2>
+            <div id="complete-body"></div>
+            <div class="actions" style="justify-content: center; margin-top: 1rem;">
+                <button class="action-btn primary" onclick="returnToStatus()">Done</button>
+            </div>
+        </section>
+
+        <footer class="footer"><a href="/">← portrait</a></footer>
+    </main>
+
+    <script>
+    // ========================================================================
+    // State
+    // ========================================================================
+    let sessionId = null;
+    let currentCeremony = null;
+    let currentPrompts = [];
+    let confirmingAction = null;
+    let confirmTimer = null;
+
+    const $ = id => document.getElementById(id);
+
+    // ========================================================================
+    // Status — load pond state and render dashboard or inactive panel
+    // ========================================================================
+    async function loadStatus() {
+        try {
+            const res = await fetch('/api/v1/pond/status');
+            if (!res.ok) throw new Error(`Status ${res.status}`);
+            const json = await res.json();
+            const s = json.data;
+
+            $('pond-title').textContent = s.name || 'Pond';
+            const dot = $('status-dot');
+
+            if (!s.active && !s.locked) {
+                // Not initialized
+                dot.className = 'dot inactive';
+                $('status-text').textContent = 'Not initialized';
+                showPanel('inactive');
+                return;
+            }
+
+            if (s.locked) {
+                dot.className = 'dot locked';
+                $('status-text').textContent = 'Locked';
+            } else {
+                dot.className = 'dot active';
+                $('status-text').textContent = `Active · ${s.stones.length} stone${s.stones.length !== 1 ? 's' : ''}`;
+            }
+
+            // Render status details
+            const details = $('status-details');
+            details.innerHTML = '';
+            const fields = [
+                ['Cornerstone', s.cornerstone || '—'],
+                ['Profile', s.profile],
+                ['Enrollment', s.enrollment_state],
+            ];
+            if (s.ca_fingerprint) fields.push(['CA Fingerprint', s.ca_fingerprint]);
+            for (const [k, v] of fields) {
+                details.innerHTML += `<dt>${k}</dt><dd>${esc(v)}</dd>`;
+            }
+
+            // Render stones
+            const list = $('stones-list');
+            if (s.stones.length > 0) {
+                list.innerHTML = s.stones.map(st => `
+                    <div class="stone-item">
+                        <span class="dot ${st.status === 'active' ? 'active' : 'inactive'}"></span>
+                        <span class="stone-name">${esc(st.name)}</span>
+                        <span class="stone-role">${esc(st.role)}</span>
+                        <span class="stone-spacer"></span>
+                        <span class="stone-expires">${esc(st.certificate_expires)}</span>
+                    </div>
+                `).join('');
+            } else {
+                list.innerHTML = '';
+            }
+
+            // Status actions
+            const actions = $('status-actions');
+            const btns = [];
+            if (s.locked) {
+                btns.push(`<button class="action-btn primary" onclick="startCeremony('unlock')">Unlock</button>`);
+            } else {
+                btns.push(`<button class="action-btn" onclick="startCeremony('invite')">Invite</button>`);
+            }
+            btns.push(`<button class="action-btn" onclick="confirmAction(this, 'remove', removePond)">Remove</button>`);
+            actions.innerHTML = btns.join('');
+
+            showPanel('status');
+        } catch (e) {
+            console.warn('Status load failed:', e);
+            $('status-text').textContent = 'Unavailable';
+            $('status-dot').className = 'dot inactive';
+            showPanel('inactive');
+        }
+    }
+
+    // ========================================================================
+    // Panel visibility
+    // ========================================================================
+    function showPanel(name) {
+        for (const p of ['status', 'inactive', 'ceremony', 'complete']) {
+            $(p + '-panel').classList.toggle('hidden', p !== name);
+        }
+    }
+
+    // ========================================================================
+    // Ceremony — start, step, render, submit
+    // ========================================================================
+    async function startCeremony(type) {
+        sessionId = null;
+        currentCeremony = type;
+        currentPrompts = [];
+
+        const titleMap = { init: 'Initialize Pond', join: 'Join Pond', invite: 'Invite Stone', unlock: 'Unlock Pond' };
+        $('ceremony-title').textContent = titleMap[type] || 'Ceremony';
+        showPanel('ceremony');
+        $('error-banner').classList.add('hidden');
+
+        await advanceCeremony({});
+    }
+
+    async function advanceCeremony(data) {
+        const btn = $('ceremony-continue');
+        btn.classList.add('loading');
+        btn.disabled = true;
+
+        try {
+            const body = {
+                session_id: sessionId,
+                ceremony: currentCeremony,
+                data: data,
+                render: { qr: 'png_base64' }
+            };
+
+            const res = await fetch('/api/v1/pond/ceremony', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${res.status}`);
+            }
+
+            const response = await res.json();
+            sessionId = response.session_id;
+
+            if (response.error) {
+                $('error-banner').textContent = response.error;
+                $('error-banner').classList.remove('hidden');
+            } else {
+                $('error-banner').classList.add('hidden');
+            }
+
+            if (response.complete) {
+                renderComplete(response);
+                return;
+            }
+
+            renderCeremony(response);
+        } catch (e) {
+            $('error-banner').textContent = e.message;
+            $('error-banner').classList.remove('hidden');
+        } finally {
+            btn.classList.remove('loading');
+            btn.disabled = false;
+        }
+    }
+
+    // ========================================================================
+    // Render ceremony step — messages + prompts
+    // ========================================================================
+    function renderCeremony(response) {
+        const body = $('ceremony-body');
+        body.innerHTML = '';
+        currentPrompts = response.prompts || [];
+
+        // Messages
+        for (const msg of (response.messages || [])) {
+            body.appendChild(renderMessage(msg));
+        }
+
+        // Prompts
+        for (const prompt of currentPrompts) {
+            body.appendChild(renderPrompt(prompt));
+        }
+
+        // Show/hide continue button based on prompts
+        $('ceremony-continue').classList.toggle('hidden', currentPrompts.length === 0);
+    }
+
+    function renderMessage(msg) {
+        const div = document.createElement('div');
+
+        switch (msg.kind) {
+            case 'qr_code': {
+                div.className = 'card qr-container';
+                if (msg.title) {
+                    const title = document.createElement('div');
+                    title.className = 'qr-title';
+                    title.textContent = msg.title;
+                    div.appendChild(title);
+                }
+                if (msg.content.startsWith('data:image/')) {
+                    const img = document.createElement('img');
+                    img.src = msg.content;
+                    img.alt = 'QR Code';
+                    img.className = 'qr-image';
+                    div.appendChild(img);
+                } else {
+                    // UTF-8 block art
+                    const pre = document.createElement('pre');
+                    pre.className = 'qr-text';
+                    pre.textContent = msg.content;
+                    div.appendChild(pre);
+                }
+                break;
+            }
+            case 'summary': {
+                div.className = 'card msg summary';
+                if (msg.title) {
+                    const title = document.createElement('div');
+                    title.className = 'msg-title';
+                    title.textContent = msg.title;
+                    div.appendChild(title);
+                }
+                // Try parsing content as JSON key-value
+                try {
+                    const kvs = JSON.parse(msg.content);
+                    const dl = document.createElement('dl');
+                    dl.className = 'summary-grid';
+                    for (const [k, v] of Object.entries(kvs)) {
+                        dl.innerHTML += `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`;
+                    }
+                    div.appendChild(dl);
+                } catch {
+                    const p = document.createElement('p');
+                    p.textContent = msg.content;
+                    div.appendChild(p);
+                }
+                break;
+            }
+            case 'error': {
+                div.className = 'msg error';
+                if (msg.title) {
+                    const title = document.createElement('div');
+                    title.className = 'msg-title';
+                    title.textContent = msg.title;
+                    div.appendChild(title);
+                }
+                const p = document.createElement('p');
+                p.textContent = msg.content;
+                div.appendChild(p);
+                break;
+            }
+            default: { // info
+                div.className = 'msg info';
+                if (msg.title) {
+                    const title = document.createElement('div');
+                    title.className = 'msg-title';
+                    title.textContent = msg.title;
+                    div.appendChild(title);
+                }
+                const p = document.createElement('p');
+                p.textContent = msg.content;
+                div.appendChild(p);
+                break;
+            }
+        }
+        return div;
+    }
+
+    function renderPrompt(prompt) {
+        const group = document.createElement('div');
+        group.className = 'card prompt-group';
+        group.dataset.key = prompt.key;
+
+        const label = document.createElement('div');
+        label.className = 'prompt-label';
+        label.textContent = prompt.prompt;
+        group.appendChild(label);
+
+        switch (prompt.input_type) {
+            case 'select_one': {
+                const opts = document.createElement('div');
+                opts.className = 'select-options';
+                for (const opt of (prompt.options || [])) {
+                    const el = document.createElement('div');
+                    el.className = 'select-option';
+                    el.dataset.value = opt.value;
+                    el.onclick = () => {
+                        opts.querySelectorAll('.select-option').forEach(o => o.classList.remove('selected'));
+                        el.classList.add('selected');
+                    };
+                    el.innerHTML = `
+                        <div class="select-radio"></div>
+                        <div class="select-body">
+                            <div class="select-label">${esc(opt.label)}</div>
+                            ${opt.description ? `<div class="select-desc">${esc(opt.description)}</div>` : ''}
+                        </div>
+                    `;
+                    opts.appendChild(el);
+                }
+                group.appendChild(opts);
+                break;
+            }
+            case 'secret':
+            case 'secret_confirm': {
+                const input = document.createElement('input');
+                input.type = 'password';
+                input.className = 'prompt-input';
+                input.placeholder = prompt.prompt;
+                input.dataset.role = 'primary';
+                group.appendChild(input);
+
+                if (prompt.input_type === 'secret_confirm') {
+                    const confirm = document.createElement('input');
+                    confirm.type = 'password';
+                    confirm.className = 'prompt-input';
+                    confirm.placeholder = 'Confirm';
+                    confirm.dataset.role = 'confirm';
+                    confirm.style.marginTop = '0.5rem';
+                    group.appendChild(confirm);
+                }
+                break;
+            }
+            case 'code': {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'prompt-input';
+                input.placeholder = prompt.prompt;
+                input.maxLength = 10;
+                input.autocomplete = 'one-time-code';
+                input.inputMode = 'numeric';
+                input.style.textAlign = 'center';
+                input.style.fontSize = '1.5rem';
+                input.style.letterSpacing = '0.25em';
+                group.appendChild(input);
+                break;
+            }
+            case 'entropy': {
+                const area = document.createElement('textarea');
+                area.className = 'entropy-area';
+                area.placeholder = 'Type or paste random characters here for entropy...';
+                area.rows = 4;
+
+                const counter = document.createElement('div');
+                counter.className = 'entropy-counter';
+                counter.textContent = '0 characters';
+                area.oninput = () => {
+                    counter.textContent = `${area.value.length} characters`;
+                };
+                group.appendChild(area);
+                group.appendChild(counter);
+                break;
+            }
+            case 'text':
+            default: {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'prompt-input';
+                input.placeholder = prompt.prompt;
+                group.appendChild(input);
+                break;
+            }
+        }
+        return group;
+    }
+
+    // ========================================================================
+    // Collect prompt answers and submit
+    // ========================================================================
+    function submitCeremony() {
+        const data = {};
+        let valid = true;
+
+        for (const prompt of currentPrompts) {
+            const group = document.querySelector(`.prompt-group[data-key="${prompt.key}"]`);
+            if (!group) continue;
+
+            switch (prompt.input_type) {
+                case 'select_one': {
+                    const selected = group.querySelector('.select-option.selected');
+                    if (selected) {
+                        data[prompt.key] = selected.dataset.value;
+                    } else if (prompt.required) {
+                        valid = false;
+                    }
+                    break;
+                }
+                case 'secret':
+                case 'secret_confirm': {
+                    const primary = group.querySelector('input[data-role="primary"]');
+                    const val = primary ? primary.value : '';
+                    if (prompt.input_type === 'secret_confirm') {
+                        const confirm = group.querySelector('input[data-role="confirm"]');
+                        if (confirm && confirm.value !== val) {
+                            $('error-banner').textContent = 'Passphrases do not match';
+                            $('error-banner').classList.remove('hidden');
+                            return;
+                        }
+                    }
+                    if (val) data[prompt.key] = val;
+                    else if (prompt.required) valid = false;
+                    break;
+                }
+                case 'code': {
+                    const input = group.querySelector('input');
+                    const val = input ? input.value.replace(/\s/g, '') : '';
+                    if (val) data[prompt.key] = val;
+                    else if (prompt.required) valid = false;
+                    break;
+                }
+                case 'entropy': {
+                    const area = group.querySelector('textarea');
+                    const val = area ? area.value : '';
+                    if (val) data[prompt.key] = val;
+                    else if (prompt.required) valid = false;
+                    break;
+                }
+                default: {
+                    const input = group.querySelector('input');
+                    const val = input ? input.value : '';
+                    if (val) data[prompt.key] = val;
+                    else if (prompt.required) valid = false;
+                    break;
+                }
+            }
+        }
+
+        if (!valid) {
+            $('error-banner').textContent = 'Please fill in all required fields';
+            $('error-banner').classList.remove('hidden');
+            return;
+        }
+
+        $('error-banner').classList.add('hidden');
+        advanceCeremony(data);
+    }
+
+    // ========================================================================
+    // Ceremony completion
+    // ========================================================================
+    function renderComplete(response) {
+        const body = $('complete-body');
+        body.innerHTML = '';
+
+        // Render messages
+        for (const msg of (response.messages || [])) {
+            body.appendChild(renderMessage(msg));
+        }
+
+        // Render result_data as summary
+        if (response.result_data && Object.keys(response.result_data).length > 0) {
+            const card = document.createElement('div');
+            card.className = 'card msg summary';
+            const title = document.createElement('div');
+            title.className = 'msg-title';
+            title.textContent = 'Result';
+            card.appendChild(title);
+            const dl = document.createElement('dl');
+            dl.className = 'summary-grid';
+            for (const [k, v] of Object.entries(response.result_data)) {
+                if (!k.startsWith('_')) {
+                    dl.innerHTML += `<dt>${esc(formatKey(k))}</dt><dd>${esc(String(v))}</dd>`;
+                }
+            }
+            card.appendChild(dl);
+            body.appendChild(card);
+        }
+
+        sessionId = null;
+        currentCeremony = null;
+        currentPrompts = [];
+        showPanel('complete');
+    }
+
+    function returnToStatus() {
+        showPanel('inactive'); // temporary while loading
+        loadStatus();
+    }
+
+    // ========================================================================
+    // Cancel ceremony
+    // ========================================================================
+    function cancelCeremony() {
+        sessionId = null;
+        currentCeremony = null;
+        currentPrompts = [];
+        $('error-banner').classList.add('hidden');
+        loadStatus();
+    }
+
+    // ========================================================================
+    // Status actions with two-tap confirmation
+    // ========================================================================
+    function confirmAction(btn, label, fn) {
+        if (confirmingAction === label) {
+            clearTimeout(confirmTimer);
+            confirmingAction = null;
+            btn.classList.remove('confirming');
+            btn.textContent = label;
+            fn();
+            return;
+        }
+        // First tap
+        if (confirmingAction) {
+            // Reset previous
+            document.querySelectorAll('.action-btn.confirming').forEach(b => {
+                b.classList.remove('confirming');
+                b.textContent = b.dataset.originalLabel || b.textContent;
+            });
+        }
+        confirmingAction = label;
+        btn.dataset.originalLabel = btn.textContent;
+        btn.textContent = 'Confirm?';
+        btn.classList.add('confirming');
+        confirmTimer = setTimeout(() => {
+            confirmingAction = null;
+            btn.classList.remove('confirming');
+            btn.textContent = btn.dataset.originalLabel || label;
+        }, 3000);
+    }
+
+    async function removePond() {
+        try {
+            const res = await fetch('/api/v1/pond', { method: 'DELETE' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            loadStatus();
+        } catch (e) {
+            $('error-banner').textContent = `Remove failed: ${e.message}`;
+            $('error-banner').classList.remove('hidden');
+        }
+    }
+
+    // ========================================================================
+    // Helpers
+    // ========================================================================
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function formatKey(k) {
+        return k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    // ========================================================================
+    // Init
+    // ========================================================================
+    loadStatus();
+    </script>
+</body>
+</html>

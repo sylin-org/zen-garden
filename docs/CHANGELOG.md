@@ -10,6 +10,8 @@ All notable changes to Zen Garden will be documented in this file.
 - Added ceremony_render module to Rake (async HTTP ceremony render loop)
 - All pond routes moved to HTTP public lobby (bootstrap/recovery must not depend on HTTPS)
 - Added pond-ceremony-engine proposal documenting constraint-satisfaction design
+- Added /pond web UI SPA: browser-based ceremony wizard + pond status dashboard
+- Added pond status summary to portrait JSON and portrait.html
 
 ## 2026-02-15
 

@@ -24,6 +24,7 @@
 //! - `management/` - tend, reconcile, refresh, pond, place, invite, lift, make
 
 pub mod api;
+pub mod ceremony_render;
 pub mod help;
 pub mod hey;
 

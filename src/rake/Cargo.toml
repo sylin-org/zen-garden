@@ -6,6 +6,7 @@ rust-version = "1.75"
 
 [dependencies]
 garden-common = { path = "../common" }
+koi-common = { workspace = true }
 # Reduced from "full" - CLI only needs: multi-thread runtime, process spawning, file I/O
 tokio = { version = "1.35", features = ["rt-multi-thread", "io-util", "sync", "time", "process", "macros", "fs"] }
 clap = { version = "4.4", features = ["derive"] }

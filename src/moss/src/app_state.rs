@@ -167,6 +167,10 @@ pub struct AppState {
     /// Ceremony journal (persistent state for crash recovery)
     pub ceremony_journal: Arc<CeremonyJournal>,
 
+    /// Pond ceremony host — drives pond init/join/unlock ceremonies
+    /// using the koi-common ceremony protocol.
+    pub pond_ceremony_host: Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
+
     /// Harvest store (backup manifests and archives)
     pub harvest_store: Arc<HarvestStore>,
 

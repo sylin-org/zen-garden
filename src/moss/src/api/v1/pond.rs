@@ -347,6 +347,7 @@ pub async fn pond_init_v1(
         operator: None,
         enrollment_open: None,
         requires_approval: None,
+        totp_secret_hex: None,
     };
 
     let body = serde_json::to_vec(&create_req).map_err(|e| {
@@ -1111,4 +1112,217 @@ pub async fn pond_ca_cert_v1(
         )],
         ca_pem,
     ))
+}
+
+// ============================================================================
+// Ceremony
+// ============================================================================
+
+/// POST /api/v1/pond/ceremony — Step through a pond ceremony
+///
+/// This endpoint drives pond ceremonies (init, join, invite, unlock)
+/// using the koi-common ceremony protocol. Each request either starts
+/// a new ceremony or continues an existing session.
+///
+/// When the "init" ceremony completes, the handler automatically
+/// creates the CA using the collected bag data.
+pub async fn pond_ceremony_v1(
+    State(state): State<AppState>,
+    Json(request): Json<koi_common::ceremony::CeremonyRequest>,
+) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let host = &state.pond_ceremony_host;
+
+    // Pre-fill hostname for TOTP personalization
+    let mut req = request;
+    if req.ceremony.as_deref() == Some("init") && req.session_id.is_none() {
+        req.data
+            .entry("_self_hostname".to_string())
+            .or_insert_with(|| serde_json::json!(state.stone_name));
+    }
+
+    let response = host.step(req).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "CEREMONY_ERROR",
+            format!("{e}"),
+            None,
+        )
+    })?;
+
+    // When an init ceremony completes, execute the CA creation
+    if response.complete && response.error.is_none() {
+        let is_init = response
+            .result_data
+            .as_ref()
+            .map(|d| d.contains_key("_effective_profile") && d.contains_key("passphrase"))
+            .unwrap_or(false);
+        if is_init {
+            return execute_pond_init_from_ceremony(&state, response).await;
+        }
+    }
+
+    Ok(Json(response))
+}
+
+/// Execute pond initialization using data collected by the ceremony,
+/// then return the ceremony response with creation details attached.
+async fn execute_pond_init_from_ceremony(
+    state: &AppState,
+    mut response: koi_common::ceremony::CeremonyResponse,
+) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let bag = response
+        .result_data
+        .as_ref()
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CEREMONY_ERROR",
+                "Init ceremony completed with no result data",
+                None,
+            )
+        })?;
+    let core = get_certmesh_core(state)?;
+
+    let effective_profile = bag
+        .get("_effective_profile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("just_me");
+    let profile = match effective_profile {
+        "just_me" | "JustMe" => koi_certmesh::profiles::TrustProfile::JustMe,
+        "my_team" | "MyTeam" => koi_certmesh::profiles::TrustProfile::MyTeam,
+        "my_organization" | "MyOrganization" => {
+            koi_certmesh::profiles::TrustProfile::MyOrganization
+        }
+        _ => koi_certmesh::profiles::TrustProfile::JustMe,
+    };
+
+    let passphrase = bag
+        .get("passphrase")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let entropy_hex = bag
+        .get("_entropy_seed")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let operator = bag
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let enrollment_open = bag.get("_enrollment_open").and_then(|v| v.as_bool());
+    let requires_approval = bag.get("_requires_approval").and_then(|v| v.as_bool());
+    let totp_secret_hex = bag
+        .get("_totp_secret_hex")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let create_req = koi_certmesh::protocol::CreateCaRequest {
+        passphrase,
+        entropy_hex,
+        profile,
+        operator,
+        enrollment_open,
+        requires_approval,
+        totp_secret_hex,
+    };
+
+    let body = serde_json::to_vec(&create_req).map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZE_ERROR",
+            format!("Failed to build certmesh request: {e}"),
+            None,
+        )
+    })?;
+
+    let http_req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/create")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body))
+        .expect("valid request");
+
+    let http_resp = core
+        .http_routes()
+        .oneshot(http_req)
+        .await
+        .expect("Router is infallible");
+
+    let status_code = http_resp.status();
+    let resp_bytes = axum::body::to_bytes(http_resp.into_body(), 1024 * 1024)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RESPONSE_READ_ERROR",
+                format!("Failed to read certmesh response: {e}"),
+                None,
+            )
+        })?;
+
+    if !status_code.is_success() {
+        let error_text = String::from_utf8_lossy(&resp_bytes);
+        tracing::error!(
+            status = %status_code,
+            body = %error_text,
+            "Certmesh CA creation failed (ceremony)"
+        );
+        response.error = Some(format!("Pond creation failed: {error_text}"));
+        return Ok(Json(response));
+    }
+
+    let create_resp: koi_certmesh::protocol::CreateCaResponse =
+        serde_json::from_slice(&resp_bytes).map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PARSE_ERROR",
+                format!("Failed to parse certmesh response: {e}"),
+                None,
+            )
+        })?;
+
+    // Update pond state
+    refresh_pond_active(state).await;
+
+    let pond_name = garden_common::naming::generate_pond_name();
+    state.pond.set_name(pond_name.clone()).await;
+    let metadata = crate::domain::PondMetadata {
+        name: Some(pond_name.clone()),
+    };
+    if let Err(e) = crate::domain::save_pond_metadata(&metadata) {
+        tracing::warn!(error = %e, "Failed to persist pond metadata");
+    }
+
+    notify_enrollment_changed(state, true, Some(state.stone_name.clone())).await;
+
+    tracing::info!(
+        cornerstone = %state.stone_name,
+        pond_name = %pond_name,
+        profile = ?profile,
+        fingerprint = %create_resp.ca_fingerprint,
+        "Pond initialized via ceremony — keystone placed"
+    );
+
+    // Sanitize result_data — strip secrets, add creation results
+    let mut safe_data = serde_json::Map::new();
+    safe_data.insert(
+        "pond_name".into(),
+        serde_json::json!(pond_name),
+    );
+    safe_data.insert(
+        "ca_fingerprint".into(),
+        serde_json::json!(create_resp.ca_fingerprint),
+    );
+    safe_data.insert(
+        "cornerstone".into(),
+        serde_json::json!(state.stone_name),
+    );
+    safe_data.insert(
+        "profile".into(),
+        serde_json::json!(effective_profile),
+    );
+    response.result_data = Some(safe_data);
+
+    Ok(Json(response))
 }

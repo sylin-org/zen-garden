@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 garden-common = { path = "../common" }
 koi-embedded = { workspace = true }
+koi-common = { workspace = true }
 koi-certmesh = { workspace = true }
 koi-crypto = { workspace = true }
 # Reduced from "full" - server needs: multi-thread runtime, networking, signals, process spawning

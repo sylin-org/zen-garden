@@ -110,57 +110,60 @@ async fn execute_pond_init(
     passphrase: Option<String>,
     profile: Option<String>,
 ) -> anyhow::Result<()> {
-    let pass = passphrase.unwrap_or_else(|| {
-        println!(
-            "{}{} Using default passphrase. Use --passphrase for custom encryption.",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("info", ctx.term.supports_color)
-        );
-        "changeme".to_string()
-    });
+    let ceremony_url = format!(
+        "{}/api/v1/pond/ceremony",
+        endpoint.trim_end_matches('/')
+    );
 
-    let url = format!("{}/api/v1/pond/init", endpoint.trim_end_matches('/'));
-    let mut payload = serde_json::json!({ "passphrase": pass });
-    if let Some(profile) = profile {
-        payload["profile"] = serde_json::json!(profile);
+    // Pre-fill data from CLI flags (same pattern as koi certmesh create)
+    let mut initial_data = serde_json::Map::new();
+    if let Some(p) = profile {
+        initial_data.insert("profile".into(), serde_json::json!(p));
+    }
+    if let Some(pass) = passphrase {
+        initial_data.insert("passphrase".into(), serde_json::json!(pass));
     }
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(data) = body.get("data") {
-                    println!(
-                        "{}{} Pond initialized — keystone placed",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color)
-                    );
-                    if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
-                        println!("   Cornerstone: {}", cornerstone);
-                    }
-                    if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
-                        println!("   CA fingerprint: {}", fp);
-                    }
-                    if let Some(totp_uri) = data.get("totp_uri").and_then(|t| t.as_str()) {
-                        println!("   TOTP URI: {}", totp_uri);
-                        println!("   Add to authenticator app for enrollment authorization.");
-                    }
-                }
-            }
-        }
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            eprintln!(
-                "{}{} Failed to initialize pond: {} {}",
+    // Drive the ceremony — all prompts, messages, and validation
+    // come from the server. This is a dumb render loop.
+    let result = crate::commands::ceremony_render::run_ceremony_http(
+        &ctx.client,
+        &ceremony_url,
+        "init",
+        initial_data,
+    )
+    .await;
+
+    match result {
+        Ok(result_data) => {
+            // The server already created the CA and returned safe result data.
+            // Show a final confirmation with the creation details.
+            let pond_name = result_data
+                .get("pond_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let cornerstone = result_data
+                .get("cornerstone")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let fingerprint = result_data
+                .get("ca_fingerprint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            println!(
+                "\n{}{} Pond initialized — keystone placed",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                status,
-                body
+                ui::status_indicator("ok", ctx.term.supports_color)
             );
+            println!("   Pond:         {}", pond_name);
+            println!("   Cornerstone:  {}", cornerstone);
+            println!("   Fingerprint:  {}", fingerprint);
+            println!();
         }
         Err(e) => {
             eprintln!(
-                "{}{} Request failed: {}",
+                "{}{} {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
                 e

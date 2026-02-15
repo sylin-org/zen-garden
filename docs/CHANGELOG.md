@@ -4,6 +4,18 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-16
+
+- Ceremony-driven pond init: Moss hosts CeremonyHost, Rake drives via POST /api/v1/pond/ceremony
+- Added ceremony_render module to Rake (async HTTP ceremony render loop)
+- All pond routes moved to HTTP public lobby (bootstrap/recovery must not depend on HTTPS)
+- Added pond-ceremony-engine proposal documenting constraint-satisfaction design
+
+## 2026-02-15
+
+- Added ceremony engine: bag-of-kv framework (koi-common) + pond rules (koi-certmesh)
+- Updated pond-ceremony-engine proposal with constraint-satisfaction model
+
 ## 2026-02-15
 
 - **BREAKING**: Replaced `endpoint: String` + `pond_active` + `https_port` with `address: PeerAddress` across TopologyEntry, DiscoveredStone, DiscoveryResponse

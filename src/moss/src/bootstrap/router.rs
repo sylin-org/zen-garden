@@ -146,10 +146,28 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::manifest::get_api_manifest_v1),
         )
         // ══════════════════════════════════════════════════════════════════
-        // Pond lobby - must be accessible for enrollment
+        // Pond management — ALL routes in the HTTP lobby.
+        // Pond operations are the bootstrap/recovery path for the trust
+        // infrastructure itself. They are self-securing at the application
+        // layer (passphrases, TOTP codes), so must always be reachable
+        // over plain HTTP:
+        //   init/join    → no HTTPS exists yet (creating CA or enrolling)
+        //   unlock       → CA is locked after reboot, HTTPS may not work
+        //   invite       → admin may not have CA cert in trust store
+        //   remove/untrust/promote → recovery when HTTPS is broken
         // ══════════════════════════════════════════════════════════════════
         .route("/api/v1/pond/init", post(api::v1::pond::pond_init_v1))
+        .route("/api/v1/pond/ceremony", post(api::v1::pond::pond_ceremony_v1))
+        .route("/api/v1/pond", delete(api::v1::pond::pond_remove_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
+        .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
+        .route("/api/v1/pond/unlock", post(api::v1::pond::pond_unlock_v1))
+        .route("/api/v1/pond/name", put(api::v1::pond::pond_rename_v1))
+        .route("/api/v1/pond/promote", post(api::v1::pond::pond_promote_v1))
+        .route(
+            "/api/v1/pond/stones/{stone_name}",
+            delete(api::v1::pond::pond_untrust_v1),
+        )
         .route("/api/v1/pond/status", get(api::v1::pond::pond_status_v1))
         .route("/api/v1/pond/ca.pem", get(api::v1::pond::pond_ca_cert_v1))
         // ══════════════════════════════════════════════════════════════════
@@ -657,6 +675,7 @@ pub fn configure(state: AppState) -> Router {
         // /api/v1/pond/* - Security & trust management
         // ══════════════════════════════════════════════════════════════════
         .route("/api/v1/pond/init", post(api::v1::pond::pond_init_v1))
+        .route("/api/v1/pond/ceremony", post(api::v1::pond::pond_ceremony_v1))
         .route("/api/v1/pond", delete(api::v1::pond::pond_remove_v1))
         .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))

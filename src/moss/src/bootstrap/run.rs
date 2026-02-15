@@ -554,6 +554,9 @@ pub async fn run(
         stone_client: Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
         ceremony_registry,
         ceremony_journal,
+        pond_ceremony_host: Arc::new(koi_common::ceremony::CeremonyHost::new(
+            koi_certmesh::pond_ceremony::PondCeremonyRules,
+        )),
         harvest_store,
         nurturing_store,
         nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),

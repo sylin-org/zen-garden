@@ -19,6 +19,7 @@ pub mod infra;
 pub mod jobs;
 pub mod manifests;
 pub mod metrics;
+pub mod naming;
 pub mod net;
 pub mod notifications;
 pub mod nourishment;

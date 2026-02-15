@@ -371,9 +371,34 @@ pub async fn run(
                         }
                     }
                 } else {
-                    tracing::info!(
-                        "Pond CA exists but is locked — run 'garden-rake pond unlock'"
-                    );
+                    // No auto-unlock key — report available unlock methods
+                    let slot_table_path = koi_certmesh::ca::slot_table_path();
+                    if slot_table_path.exists() {
+                        if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
+                            let methods = table.available_methods();
+                            if methods.contains(&"totp") {
+                                tracing::info!(
+                                    "Pond CA locked — unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
+                                );
+                            } else if methods.contains(&"fido2") {
+                                tracing::info!(
+                                    "Pond CA locked — unlock with security key via pond UI"
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Pond CA locked — run 'garden-rake pond unlock' with passphrase"
+                                );
+                            }
+                        } else {
+                            tracing::info!(
+                                "Pond CA exists but is locked — run 'garden-rake pond unlock'"
+                            );
+                        }
+                    } else {
+                        tracing::info!(
+                            "Pond CA exists but is locked — run 'garden-rake pond unlock'"
+                        );
+                    }
                 }
             }
         }

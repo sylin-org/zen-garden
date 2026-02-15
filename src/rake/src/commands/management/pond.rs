@@ -32,7 +32,12 @@ pub enum PondActionType {
     /// Join pond with TOTP code
     Join { code: String },
     /// Unlock pond CA after restart
-    Unlock { passphrase: Option<String> },
+    Unlock {
+        /// Passphrase to decrypt the CA key
+        passphrase: Option<String>,
+        /// TOTP code for authenticator-based unlock
+        totp: Option<String>,
+    },
     /// Drain pond (destroy CA)
     Remove,
     /// Revoke a stone from the pond
@@ -76,8 +81,8 @@ impl Command for PondCommand {
             PondActionType::Join { code } => {
                 execute_pond_join(ctx, endpoint, code).await?;
             }
-            PondActionType::Unlock { passphrase } => {
-                execute_pond_unlock(ctx, endpoint, passphrase.clone()).await?;
+            PondActionType::Unlock { passphrase, totp } => {
+                execute_pond_unlock(ctx, endpoint, passphrase.clone(), totp.clone()).await?;
             }
             PondActionType::Remove => {
                 execute_pond_remove(ctx, endpoint).await?;
@@ -452,18 +457,23 @@ async fn execute_pond_unlock(
     ctx: &CommandContext,
     endpoint: &str,
     passphrase: Option<String>,
+    totp: Option<String>,
 ) -> anyhow::Result<()> {
-    let pass = passphrase.unwrap_or_else(|| {
-        println!(
-            "{}{} Using default passphrase for unlock. Use --passphrase to specify.",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("info", ctx.term.supports_color)
-        );
-        "changeme".to_string()
-    });
-
     let url = format!("{}/api/v1/pond/unlock", endpoint.trim_end_matches('/'));
-    let payload = serde_json::json!({ "passphrase": pass });
+
+    let payload = if let Some(code) = totp {
+        serde_json::json!({ "totp_code": code })
+    } else {
+        let pass = passphrase.unwrap_or_else(|| {
+            println!(
+                "{}{} Using default passphrase for unlock. Use --passphrase to specify.",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("info", ctx.term.supports_color)
+            );
+            "changeme".to_string()
+        });
+        serde_json::json!({ "passphrase": pass })
+    };
 
     match ctx.client.post(&url).json(&payload).send().await {
         Ok(response) if response.status().is_success() => {

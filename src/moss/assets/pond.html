@@ -665,6 +665,89 @@
                 group.appendChild(counter);
                 break;
             }
+            case 'fido2': {
+                const btn = document.createElement('button');
+                btn.className = 'action-btn primary';
+                btn.textContent = 'Tap Security Key';
+                btn.style.width = '100%';
+                btn.style.marginTop = '0.5rem';
+
+                const status = document.createElement('div');
+                status.className = 'fido2-status';
+                status.style.marginTop = '0.5rem';
+                status.style.fontSize = '0.9rem';
+
+                const hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.dataset.role = 'fido2-result';
+
+                btn.onclick = async () => {
+                    btn.disabled = true;
+                    btn.textContent = 'Waiting for security key...';
+                    status.textContent = '';
+                    try {
+                        const rpId = window.location.hostname || 'localhost';
+                        const challenge = new Uint8Array(32);
+                        crypto.getRandomValues(challenge);
+
+                        const userId = new Uint8Array(16);
+                        crypto.getRandomValues(userId);
+
+                        const createOptions = {
+                            publicKey: {
+                                rp: { name: 'Zen Garden Pond', id: rpId },
+                                user: {
+                                    id: userId,
+                                    name: 'pond-operator',
+                                    displayName: 'Pond Operator'
+                                },
+                                challenge: challenge,
+                                pubKeyCredParams: [
+                                    { type: 'public-key', alg: -7 },  // ES256
+                                    { type: 'public-key', alg: -257 } // RS256
+                                ],
+                                authenticatorSelection: {
+                                    authenticatorAttachment: 'cross-platform',
+                                    userVerification: 'discouraged',
+                                    residentKey: 'discouraged'
+                                },
+                                attestation: 'none',
+                                timeout: 60000
+                            }
+                        };
+
+                        const cred = await navigator.credentials.create(createOptions);
+                        const attestation = cred.response;
+
+                        // Encode credential data as base64 for the ceremony bag
+                        const credIdB64 = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)));
+                        const pubKeyDer = attestation.getPublicKey ? attestation.getPublicKey() : null;
+                        const pubKeyB64 = pubKeyDer ? btoa(String.fromCharCode(...new Uint8Array(pubKeyDer))) : '';
+
+                        const result = {
+                            credential_id: credIdB64,
+                            public_key: pubKeyB64,
+                            rp_id: rpId
+                        };
+
+                        hidden.value = JSON.stringify(result);
+                        btn.textContent = 'Security Key Registered ✓';
+                        btn.disabled = true;
+                        status.textContent = `Credential registered (ID: ${credIdB64.substring(0, 16)}...)`;
+                        status.style.color = 'var(--primary)';
+                    } catch (err) {
+                        btn.disabled = false;
+                        btn.textContent = 'Tap Security Key';
+                        status.textContent = `Error: ${err.message}`;
+                        status.style.color = 'var(--error)';
+                    }
+                };
+
+                group.appendChild(btn);
+                group.appendChild(status);
+                group.appendChild(hidden);
+                break;
+            }
             case 'text':
             default: {
                 const input = document.createElement('input');
@@ -727,6 +810,17 @@
                     const val = area ? area.value : '';
                     if (val) data[prompt.key] = val;
                     else if (prompt.required) valid = false;
+                    break;
+                }
+                case 'fido2': {
+                    const hidden = group.querySelector('input[data-role="fido2-result"]');
+                    const val = hidden ? hidden.value : '';
+                    if (val) {
+                        try { data[prompt.key] = JSON.parse(val); }
+                        catch (_) { data[prompt.key] = val; }
+                    } else if (prompt.required) {
+                        valid = false;
+                    }
                     break;
                 }
                 default: {

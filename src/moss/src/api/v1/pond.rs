@@ -64,8 +64,16 @@ pub struct PondJoinRequest {
 
 #[derive(Deserialize)]
 pub struct PondUnlockRequest {
-    /// Passphrase to decrypt the CA private key
-    pub passphrase: String,
+    /// Passphrase to decrypt the CA private key (passphrase unlock)
+    #[serde(default)]
+    pub passphrase: Option<String>,
+    /// TOTP code for authenticator-based unlock
+    #[serde(default)]
+    pub totp_code: Option<String>,
+    /// FIDO2 credential ID (base64) for security key unlock.
+    /// The caller must have already verified the WebAuthn assertion.
+    #[serde(default)]
+    pub fido2_credential_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -942,15 +950,53 @@ pub async fn pond_invite_v1(
 ///
 /// After a reboot, the CA private key is locked (encrypted at rest).
 /// This endpoint decrypts the key so certmesh can issue/renew certificates.
+///
+/// Supports three unlock methods (provide exactly one):
+/// - `passphrase`: traditional passphrase-based unlock
+/// - `totp_code`: authenticator app code (requires TOTP unlock slot)
+/// - `fido2_credential_id`: security key (requires FIDO2 unlock slot, assertion pre-verified)
 pub async fn pond_unlock_v1(
     State(state): State<AppState>,
     Json(payload): Json<PondUnlockRequest>,
 ) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
 
-    core.unlock(&payload.passphrase)
-        .await
-        .map_err(certmesh_err)?;
+    if let Some(ref totp_code) = payload.totp_code {
+        // TOTP-based unlock
+        core.unlock_with_totp(totp_code)
+            .await
+            .map_err(certmesh_err)?;
+        tracing::info!("Pond unlocked via TOTP code");
+    } else if let Some(ref credential_id_b64) = payload.fido2_credential_id {
+        // FIDO2-based unlock (assertion already verified by caller)
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let credential_id = b64.decode(credential_id_b64).map_err(|e| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_CREDENTIAL",
+                format!("Invalid base64 credential ID: {e}"),
+                None,
+            )
+        })?;
+        core.unlock_with_fido2(&credential_id)
+            .await
+            .map_err(certmesh_err)?;
+        tracing::info!("Pond unlocked via FIDO2 security key");
+    } else if let Some(ref passphrase) = payload.passphrase {
+        // Passphrase-based unlock (original path)
+        core.unlock(passphrase)
+            .await
+            .map_err(certmesh_err)?;
+        tracing::info!("Pond unlocked via passphrase");
+    } else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "NO_UNLOCK_METHOD",
+            "Provide one of: passphrase, totp_code, or fido2_credential_id",
+            None,
+        ));
+    }
 
     // Re-derive enrolled state (CA is now unlocked → enrolled)
     refresh_pond_active(&state).await;
@@ -1178,6 +1224,20 @@ pub async fn pond_ceremony_v1(
         if is_init {
             return execute_pond_init_from_ceremony(&state, response).await;
         }
+
+        // When an unlock ceremony completes, execute the unlock
+        let is_unlock = response
+            .result_data
+            .as_ref()
+            .map(|d| {
+                d.contains_key("passphrase")
+                    || d.contains_key("_unlock_totp_input")
+                    || d.contains_key("_unlock_fido2_assertion")
+            })
+            .unwrap_or(false);
+        if is_unlock {
+            return execute_pond_unlock_from_ceremony(&state, response).await;
+        }
     }
 
     Ok(Json(response))
@@ -1304,25 +1364,140 @@ async fn execute_pond_init_from_ceremony(
     // Update pond state
     refresh_pond_active(state).await;
 
-    // Auto-unlock: save passphrase locally if enabled
-    let auto_unlock = bag
-        .get("_auto_unlock")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    // ── Unlock method: decide post-init key management ──
+    let unlock_method = bag
+        .get("_unlock_method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let passphrase_for_file = bag
         .get("passphrase")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if auto_unlock && !passphrase_for_file.is_empty() {
-        let key_path = std::path::PathBuf::from(
-            garden_common::constants::paths::data_dir(),
-        )
-        .join("koi")
-        .join("auto-unlock-key");
-        if let Err(e) = write_auto_unlock_key(&key_path, passphrase_for_file).await {
-            tracing::warn!(error = %e, "Failed to save auto-unlock key (pond will require manual unlock on reboot)");
-        } else {
-            tracing::info!("Auto-unlock key saved — pond will unlock automatically on reboot");
+
+    match unlock_method {
+        "auto" => {
+            // Save passphrase locally for auto-unlock on reboot
+            if !passphrase_for_file.is_empty() {
+                let key_path = std::path::PathBuf::from(
+                    garden_common::constants::paths::data_dir(),
+                )
+                .join("koi")
+                .join("auto-unlock-key");
+                if let Err(e) = write_auto_unlock_key(&key_path, passphrase_for_file).await {
+                    tracing::warn!(error = %e, "Failed to save auto-unlock key (pond will require manual unlock on reboot)");
+                } else {
+                    tracing::info!("Auto-unlock key saved — pond will unlock automatically on reboot");
+                }
+
+                // Also mark auto-unlock in the slot table
+                let slot_table_path = koi_certmesh::ca::slot_table_path();
+                if slot_table_path.exists() {
+                    match koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
+                        Ok(mut table) => {
+                            table.add_auto_unlock();
+                            if let Err(e) = table.save(&slot_table_path) {
+                                tracing::warn!(error = %e, "Failed to update slot table with auto-unlock marker");
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e, "Failed to load slot table for auto-unlock marker"),
+                    }
+                }
+            }
+        }
+        "token" => {
+            let token_type = bag
+                .get("unlock_token_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("totp");
+
+            let slot_table_path = koi_certmesh::ca::slot_table_path();
+            if !slot_table_path.exists() {
+                tracing::error!("Slot table not found after CA creation — cannot register unlock token");
+            } else {
+                match koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
+                    Ok(mut table) => {
+                        // Unwrap master key with passphrase to add the new slot
+                        match table.unwrap_with_passphrase(passphrase_for_file) {
+                            Ok(master_key) => {
+                                match token_type {
+                                    "totp" => {
+                                        // Read the unlock TOTP secret from the ceremony bag
+                                        if let Some(secret_hex) =
+                                            bag.get("_unlock_totp_secret").and_then(|v| v.as_str())
+                                        {
+                                            match koi_common::encoding::hex_decode(secret_hex) {
+                                                Ok(secret_bytes) => {
+                                                    match table.add_totp_slot(&master_key, &secret_bytes) {
+                                                        Ok(()) => {
+                                                            if let Err(e) = table.save(&slot_table_path) {
+                                                                tracing::error!(error = %e, "Failed to save slot table after adding TOTP slot");
+                                                            } else {
+                                                                tracing::info!("TOTP unlock slot registered — pond can be unlocked with authenticator code");
+                                                            }
+                                                        }
+                                                        Err(e) => tracing::error!(error = %e, "Failed to add TOTP unlock slot"),
+                                                    }
+                                                }
+                                                Err(e) => tracing::error!(error = %e, "Invalid _unlock_totp_secret hex"),
+                                            }
+                                        } else {
+                                            tracing::error!("Token type is TOTP but _unlock_totp_secret is missing from ceremony bag");
+                                        }
+                                    }
+                                    "fido2" => {
+                                        // Read FIDO2 credential from the ceremony bag
+                                        if let Some(fido2_data) = bag.get("_fido2_registered") {
+                                            let credential_id = fido2_data
+                                                .get("credential_id")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            let public_key = fido2_data
+                                                .get("public_key")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            let rp_id = fido2_data
+                                                .get("rp_id")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("localhost");
+
+                                            if credential_id.is_empty() || public_key.is_empty() {
+                                                tracing::error!("FIDO2 credential data incomplete — skipping slot creation");
+                                            } else {
+                                                use base64::Engine;
+                                                let b64 = base64::engine::general_purpose::STANDARD;
+                                                let cred_bytes = b64.decode(credential_id).unwrap_or_default();
+                                                let pk_bytes = b64.decode(public_key).unwrap_or_default();
+
+                                                match table.add_fido2_slot(&master_key, &cred_bytes, &pk_bytes, rp_id) {
+                                                    Ok(()) => {
+                                                        if let Err(e) = table.save(&slot_table_path) {
+                                                            tracing::error!(error = %e, "Failed to save slot table after adding FIDO2 slot");
+                                                        } else {
+                                                            tracing::info!("FIDO2 unlock slot registered — pond can be unlocked with security key");
+                                                        }
+                                                    }
+                                                    Err(e) => tracing::error!(error = %e, "Failed to add FIDO2 unlock slot"),
+                                                }
+                                            }
+                                        } else {
+                                            tracing::error!("Token type is FIDO2 but _fido2_registered is missing from ceremony bag");
+                                        }
+                                    }
+                                    other => {
+                                        tracing::warn!(token_type = other, "Unknown unlock token type — no slot created");
+                                    }
+                                }
+                            }
+                            Err(e) => tracing::error!(error = %e, "Failed to unwrap master key for token slot creation"),
+                        }
+                    }
+                    Err(e) => tracing::error!(error = %e, "Failed to load slot table for token registration"),
+                }
+            }
+        }
+        // "passphrase" or anything else → no auto-unlock, no token
+        _ => {
+            tracing::info!("Unlock method is '{unlock_method}' — no auto-unlock key or token registered");
         }
     }
 
@@ -1364,6 +1539,97 @@ async fn execute_pond_init_from_ceremony(
         serde_json::json!(effective_profile),
     );
     response.result_data = Some(safe_data);
+
+    Ok(Json(response))
+}
+
+// ============================================================================
+// Ceremony-driven unlock
+// ============================================================================
+
+/// Execute pond unlock using data collected by the unlock ceremony.
+async fn execute_pond_unlock_from_ceremony(
+    state: &AppState,
+    mut response: koi_common::ceremony::CeremonyResponse,
+) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let bag = response
+        .result_data
+        .as_ref()
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CEREMONY_ERROR",
+                "Unlock ceremony completed with no result data",
+                None,
+            )
+        })?;
+    let core = get_certmesh_core(state)?;
+
+    let unlock_result = if let Some(totp_code) = bag.get("_unlock_totp_input").and_then(|v| v.as_str()) {
+        core.unlock_with_totp(totp_code).await
+    } else if let Some(fido2_data) = bag.get("_unlock_fido2_assertion") {
+        // FIDO2 — the ceremony collected assertion data
+        let credential_id = fido2_data
+            .get("credential_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if credential_id.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_CREDENTIAL",
+                "FIDO2 assertion missing credential_id",
+                None,
+            ));
+        }
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let cred_bytes = b64.decode(credential_id).map_err(|e| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_CREDENTIAL",
+                format!("Invalid base64 credential ID: {e}"),
+                None,
+            )
+        })?;
+        core.unlock_with_fido2(&cred_bytes).await
+    } else if let Some(passphrase) = bag.get("passphrase").and_then(|v| v.as_str()) {
+        core.unlock(passphrase).await
+    } else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "NO_UNLOCK_METHOD",
+            "Unlock ceremony completed without any unlock credential",
+            None,
+        ));
+    };
+
+    match unlock_result {
+        Ok(()) => {
+            refresh_pond_active(state).await;
+
+            // Determine cornerstone
+            let cornerstone = {
+                let status = core.certmesh_status().await;
+                status
+                    .members
+                    .iter()
+                    .find(|m| m.role == "primary")
+                    .map(|m| m.hostname.clone())
+            };
+            notify_enrollment_changed(state, true, cornerstone).await;
+
+            tracing::info!("Pond unlocked via ceremony");
+
+            // Sanitize result_data — strip secrets
+            let mut safe_data = serde_json::Map::new();
+            safe_data.insert("unlocked".into(), serde_json::json!(true));
+            response.result_data = Some(safe_data);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Pond unlock failed via ceremony");
+            response.error = Some(format!("Unlock failed: {e}"));
+        }
+    }
 
     Ok(Json(response))
 }

@@ -1116,6 +1116,9 @@ enum PondAction {
         /// Passphrase to decrypt the CA key
         #[arg(long)]
         passphrase: Option<String>,
+        /// TOTP code for authenticator-based unlock
+        #[arg(long)]
+        totp: Option<String>,
     },
     /// Drain pond (destroy CA and all certificates)
     Remove,
@@ -2477,7 +2480,7 @@ async fn async_main() -> anyhow::Result<()> {
                     PondAction::Status => PondActionType::Status,
                     PondAction::Invite { passphrase } => PondActionType::Invite { passphrase },
                     PondAction::Join { code } => PondActionType::Join { code },
-                    PondAction::Unlock { passphrase } => PondActionType::Unlock { passphrase },
+                    PondAction::Unlock { passphrase, totp } => PondActionType::Unlock { passphrase, totp },
                     PondAction::Remove => PondActionType::Remove,
                     PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },
                     PondAction::Promote { passphrase } => PondActionType::Promote { passphrase },

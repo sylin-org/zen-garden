@@ -166,6 +166,89 @@ fn render_response(response: &CeremonyResponse) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Convert a subset of Markdown to ANSI-colored text.
+///
+/// Supported syntax (line-level and inline):
+///   `## heading`   → bold bright-white
+///   `**bold**`     → bold
+///   `*italic*`     → italic / dimmed
+///
+/// Everything else passes through unchanged with the given base style.
+fn md_to_ansi(line: &str, base_style: fn(&str) -> colored::ColoredString) -> String {
+    // ── Line-level: ## heading ──────────────────────────────────
+    if let Some(rest) = line.strip_prefix("## ") {
+        return format!("{}", rest.bold().bright_white());
+    }
+    if let Some(rest) = line.strip_prefix("# ") {
+        return format!("{}", rest.bold().bright_white());
+    }
+
+    // ── Inline spans: **bold** and *italic* ─────────────────────
+    let mut result = String::new();
+    let mut chars = line.chars().peekable();
+    let mut plain_buf = String::new();
+
+    while let Some(ch) = chars.next() {
+        if ch == '*' {
+            if chars.peek() == Some(&'*') {
+                // ** … ** bold span
+                chars.next(); // consume second *
+                // Flush plain buffer
+                if !plain_buf.is_empty() {
+                    result.push_str(&format!("{}", base_style(&plain_buf)));
+                    plain_buf.clear();
+                }
+                let mut span = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '*' && chars.peek() == Some(&'*') {
+                        chars.next(); // consume closing **
+                        closed = true;
+                        break;
+                    }
+                    span.push(c);
+                }
+                if closed {
+                    result.push_str(&format!("{}", span.bold()));
+                } else {
+                    // Unclosed — render as-is
+                    result.push_str(&format!("{}", base_style(&format!("**{span}"))));
+                }
+            } else {
+                // * … * italic span
+                // Flush plain buffer
+                if !plain_buf.is_empty() {
+                    result.push_str(&format!("{}", base_style(&plain_buf)));
+                    plain_buf.clear();
+                }
+                let mut span = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '*' {
+                        closed = true;
+                        break;
+                    }
+                    span.push(c);
+                }
+                if closed {
+                    result.push_str(&format!("{}", span.italic()));
+                } else {
+                    result.push_str(&format!("{}", base_style(&format!("*{span}"))));
+                }
+            }
+        } else {
+            plain_buf.push(ch);
+        }
+    }
+
+    // Flush remaining
+    if !plain_buf.is_empty() {
+        result.push_str(&format!("{}", base_style(&plain_buf)));
+    }
+
+    result
+}
+
 fn render_message(msg: &Message) {
     println!();
     match msg.kind {
@@ -174,12 +257,12 @@ fn render_message(msg: &Message) {
                 // Warning-style info
                 println!("  {}", msg.title.yellow());
                 for line in msg.content.lines() {
-                    println!("  {}", line.yellow());
+                    println!("  {}", md_to_ansi(line, |s| s.yellow()));
                 }
             } else {
                 println!("  {}", msg.title.dimmed());
                 for line in msg.content.lines() {
-                    println!("  {}", line.dimmed());
+                    println!("  {}", md_to_ansi(line, |s| s.dimmed()));
                 }
             }
         }
@@ -410,4 +493,68 @@ fn textwrap_simple(text: &str, width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: strip ANSI escape sequences so we can assert on text content.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::new();
+        let mut in_esc = false;
+        for ch in s.chars() {
+            if in_esc {
+                if ch == 'm' {
+                    in_esc = false;
+                }
+            } else if ch == '\x1b' {
+                in_esc = true;
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn heading_strips_hashes() {
+        let result = md_to_ansi("## oyster-salaried-helping-16", |s| s.dimmed());
+        let text = strip_ansi(&result);
+        assert_eq!(text, "oyster-salaried-helping-16");
+        // Should contain bold escape but not "##"
+        assert!(!result.contains("##"));
+    }
+
+    #[test]
+    fn italic_renders_without_stars() {
+        let result = md_to_ansi(
+            r#"Memorization hint: *"A Oyster at salaried, helping #16"*"#,
+            |s| s.dimmed(),
+        );
+        let text = strip_ansi(&result);
+        assert!(text.contains("\"A Oyster at salaried, helping #16\""));
+        assert!(!text.contains('*'));
+    }
+
+    #[test]
+    fn bold_renders_without_stars() {
+        let result = md_to_ansi("This is **important** text", |s| s.dimmed());
+        let text = strip_ansi(&result);
+        assert_eq!(text, "This is important text");
+    }
+
+    #[test]
+    fn plain_text_unchanged() {
+        let result = md_to_ansi("No markdown here", |s| s.dimmed());
+        let text = strip_ansi(&result);
+        assert_eq!(text, "No markdown here");
+    }
+
+    #[test]
+    fn mixed_inline() {
+        let result = md_to_ansi("Start *italic* middle **bold** end", |s| s.dimmed());
+        let text = strip_ansi(&result);
+        assert_eq!(text, "Start italic middle bold end");
+    }
 }

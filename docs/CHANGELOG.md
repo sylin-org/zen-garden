@@ -4,6 +4,18 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-15
+
+- Fix: `pond status` CLI now shows pond name
+- Fix: `pond status -o json` outputs raw JSON (suppresses header/suggestions)
+- Fix: `garden-rake api` uses tending resolution instead of raw mDNS
+- Fix: pond.html shows human-readable certificate expiry dates
+- Ceremony CLI: render `##` headings and `*italic*`/`**bold**` as ANSI styles
+- Domain: auto-unlock lifecycle moved to CertmeshCore (single source of truth)
+- Fix: JustMe ponds auto-unlock on reboot (pond_init_v1 now saves key)
+- Fix: TOTP/FIDO2 unlock on incompatible pond returns 400 (not 500)
+- Fix: sanitized error messages in pond API responses
+
 ## 2026-02-22
 
 - Envelope encryption: LUKS-style key slots for pond CA (passphrase/TOTP/FIDO2/auto-unlock)

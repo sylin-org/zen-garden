@@ -85,6 +85,20 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/maintenance/history` | Last N sweep reports |
 | POST | `/api/v1/stone/maintenance/sweep` | Trigger immediate sweep |
 
+### Pond (Security / Trust)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/api/v1/pond/init` | Place keystone (create CA) |
+| GET | `/api/v1/pond/status` | Pond status and membership |
+| POST | `/api/v1/pond/join` | Join pond with TOTP code |
+| POST | `/api/v1/pond/invite` | Open enrollment, rotate auth |
+| POST | `/api/v1/pond/unlock` | Unlock CA after restart |
+| DELETE | `/api/v1/pond` | Drain pond (destroy CA) |
+| DELETE | `/api/v1/pond/stones/:name` | Untrust / revoke a stone |
+| POST | `/api/v1/pond/promote` | Promote to standby CA |
+| PUT | `/api/v1/pond/name` | Rename pond (decorative) |
+| GET | `/api/v1/pond/ca.pem` | Download CA public certificate |
+
 ---
 
 ## Garden Endpoints (Orchestrated)

@@ -10,6 +10,10 @@ All notable changes to Zen Garden will be documented in this file.
 - Added `PeerAddress` value object (ip, port, tls_port) with `http_base()`, `http_url()`, `https_base()`, `from_http_url()`
 - Added `StoneClient` infrastructure gateway for centralized inter-stone HTTP with TLS reload
 - Lantern `register_stone()` now takes `&PeerAddress` instead of `&str` endpoint
+- Wired `StoneClient` into AppState; enrollment-change listener reloads TLS client
+- Migrated pond proxy enrollment and cornerstone discovery to StoneClient
+- Added `garden-rake pond rename` CLI command (decorative pond name change)
+- Added Pond API endpoints to agentic reference (api-endpoints.md)
 
 ## 2026-02-14
 

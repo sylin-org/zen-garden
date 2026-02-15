@@ -244,7 +244,7 @@ async fn observe_garden(
                         layout
                             .line(&format!(
                                 "- {} (id: {}, endpoint: {}, health: {})",
-                                stone.stone_name, stone.stone_id, stone.endpoint, stone.health
+                                stone.stone_name, stone.stone_id, stone.address, stone.health
                             ))
                             .level(IndentLevel::Section)
                             .tag("verbose")

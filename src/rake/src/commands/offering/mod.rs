@@ -567,7 +567,7 @@ async fn print_offer_anywhere_recommendations(
     let _ = discovery::discover_all_moss_stream(
         std::time::Duration::from_secs(2),
         |response, _instant| {
-            endpoints.push((response.stone_name.clone(), response.stone_endpoint.clone()));
+            endpoints.push((response.stone_name.clone(), response.address.http_base()));
         },
     );
 
@@ -1052,7 +1052,7 @@ async fn handle_placement_recommendation(
                 api_response
                     .data
                     .into_iter()
-                    .map(|entry| (entry.stone_name.to_lowercase(), entry.endpoint))
+                    .map(|entry| (entry.stone_name.to_lowercase(), entry.address.http_base()))
                     .collect()
             } else {
                 std::collections::HashMap::new()

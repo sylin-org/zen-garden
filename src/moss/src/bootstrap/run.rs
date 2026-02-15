@@ -70,7 +70,10 @@ pub async fn run(
     let self_entry = Arc::new(RwLock::new(crate::domain::TopologyEntry {
         stone_id: stone_id.clone(),
         stone_name: stone_name.clone(),
-        endpoint: String::new(), // Will be set in Phase 3
+        address: garden_common::PeerAddress::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            garden_common::constants::MOSS_HTTP,
+        ), // Will be set in Phase 3
         moss_version: version_string(),
         services: Vec::new(),
         mac: None, // Will be set in Phase 2
@@ -261,21 +264,30 @@ pub async fn run(
         .ok()
         .filter(|h| !h.trim().is_empty());
 
-    let api_endpoint = if let Some(host) = &use_static_host {
-        format!("http://{}:{}", host.trim(), port)
+    let resolved_ip: std::net::IpAddr = if let Some(host) = &use_static_host {
+        host.trim()
+            .parse()
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
     } else {
-        format!("http://{}:{}", network_monitor.get_ip().await, port)
+        network_monitor
+            .get_ip()
+            .await
+            .parse()
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
     };
 
     // Phase 3.5: Update self entry with network configuration
     {
         let mut entry = self_entry.write().await;
-        entry.endpoint = api_endpoint.clone();
+        entry.address = garden_common::PeerAddress::new(resolved_ip, port);
         entry.mac = mac_address.clone();
         entry.health = garden_common::constants::STONE_INITIALIZING.to_string();
         entry.last_seen = chrono::Utc::now();
     }
-    tracing::debug!(endpoint = %api_endpoint, mac = ?mac_address, "Self entry updated (health=initializing)");
+    tracing::debug!(ip = %resolved_ip, port = port, mac = ?mac_address, "Self entry updated (health=initializing)");
+
+    // Derive the plain HTTP endpoint string for legacy consumers
+    let api_endpoint = format!("http://{}:{}", resolved_ip, port);
 
     // Auto-chirp: Network configuration complete
     {
@@ -354,6 +366,19 @@ pub async fn run(
     // Seed pond name from persisted metadata
     let pond_metadata = crate::domain::load_pond_metadata();
     pond_state.seed_name(pond_metadata.name).await;
+
+    // Phase 4.0.1b: Propagate pond state into self topology entry
+    if pond_active.load(std::sync::atomic::Ordering::Relaxed) {
+        let mut entry = self_entry.write().await;
+        entry.address = entry
+            .address
+            .clone()
+            .with_tls(garden_common::constants::MOSS_HTTPS);
+        tracing::debug!(
+            "Self entry updated with TLS port {}",
+            garden_common::constants::MOSS_HTTPS
+        );
+    }
 
     // Phase 4.0.2–4.0.3: Chirp signing + verification
     // Deferred to Phase 18 boot (activate_pond_security) and the
@@ -653,8 +678,8 @@ pub async fn run(
             .self_entry
             .read()
             .await
-            .endpoint
-            .clone();
+            .address
+            .http_base();
         match companion_scan_state
             .companion_registry
             .scan_and_autostart(&endpoint)
@@ -813,7 +838,7 @@ pub async fn run(
                         tracing::debug!(
                             stone_id = ?discovered.stone_id,
                             stone_name = %discovered.stone_name,
-                            endpoint = %discovered.endpoint,
+                            address = %discovered.address,
                             mac = ?discovered.mac,
                             "mDNS: Neighbor stone discovered and cached"
                         );
@@ -822,7 +847,7 @@ pub async fn run(
                             let entry = crate::domain::TopologyEntry {
                                 stone_id: sid,
                                 stone_name: discovered.stone_name,
-                                endpoint: discovered.endpoint,
+                                address: discovered.address,
                                 moss_version: discovered
                                     .version
                                     .unwrap_or_else(|| "unknown".to_string()),
@@ -902,16 +927,16 @@ pub async fn run(
                     let entry = crate::domain::TopologyEntry {
                         stone_id: peer_id,
                         stone_name: peer.stone_name,
-                        endpoint: peer.stone_endpoint,
+                        address: peer.address,
                         moss_version: peer.moss_version,
-                        services: vec![], // Discovery response doesn't include services yet
-                        mac: None,        // Will be populated by later chirps
+                        services: vec![],
+                        mac: None,
                         health: garden_common::constants::STONE_INITIALIZING.to_string(),
                         capabilities: None,
                         status: garden_common::StoneStatus::Online,
                         discovered_at: chrono::Utc::now(),
                         last_seen: chrono::Utc::now(),
-                        tags: vec![], // Will be populated by later chirps
+                        tags: vec![],
                     };
                     crate::domain::topology::upsert_from_chirp_dirty(
                         &state.topology_cache,
@@ -1029,7 +1054,7 @@ pub async fn run(
 
     // Populate storage_cache with local seed banks (cross-platform)
     // This makes storage_cache the unified view for both local and remote storage
-    let endpoint = state.self_entry.read().await.endpoint.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
     if let Err(e) = crate::infra::storage::update_local_storage_cache(
         &state.storage_cache,
         &state.stone_id,

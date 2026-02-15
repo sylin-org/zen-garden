@@ -522,7 +522,7 @@ pub async fn release_bank_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let endpoint = state.self_entry.read().await.endpoint.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
             &storage_cache,
@@ -624,7 +624,7 @@ pub async fn rename_bank_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let endpoint = state.self_entry.read().await.endpoint.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
             &storage_cache,
@@ -1627,7 +1627,7 @@ pub async fn set_visibility_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let endpoint = state.self_entry.read().await.endpoint.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
             &storage_cache,
@@ -1760,7 +1760,7 @@ pub async fn release_all_seed_banks_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let endpoint = state.self_entry.read().await.endpoint.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
             &storage_cache,

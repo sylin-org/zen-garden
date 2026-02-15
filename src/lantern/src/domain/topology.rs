@@ -142,7 +142,7 @@ impl GardenTopology {
             .map(|entry| LanternStoneState {
                 stone_id: Some(entry.stone_id.clone()),
                 name: entry.stone_name.clone(),
-                endpoint: entry.endpoint.clone(),
+                endpoint: entry.address.http_base(),
                 status: match entry.status {
                     StoneStatus::Online => "online",
                     StoneStatus::Offline => "offline",

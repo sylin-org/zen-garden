@@ -751,7 +751,7 @@ async fn discover_cornerstone(
     for entry in &candidates {
         let url = format!(
             "{}/api/v1/pond/status",
-            entry.endpoint.trim_end_matches('/')
+            entry.address.http_base().trim_end_matches('/')
         );
         let resp = match client.get(&url).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -774,11 +774,11 @@ async fn discover_cornerstone(
                 if e.stone_name == name {
                     tracing::info!(
                         cornerstone = %name,
-                        endpoint = %e.endpoint,
+                        endpoint = %e.address,
                         via = %entry.stone_name,
                         "Cornerstone discovered via peer"
                     );
-                    return Ok(e.endpoint.clone());
+                    return Ok(e.address.http_base());
                 }
             }
             // Cornerstone identified but not in our topology cache

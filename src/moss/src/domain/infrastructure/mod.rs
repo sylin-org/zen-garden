@@ -164,7 +164,7 @@ impl InfrastructureHandlerRegistry {
                     if handler.matches(&service.offering, &service.category, &tags) {
                         instances.push(OfferingInstance {
                             stone_name: stone.stone_name.clone(),
-                            stone_endpoint: stone.endpoint.clone(),
+                            stone_endpoint: stone.address.http_base(),
                             offering: service.offering.clone(),
                             category: service.category.clone(),
                             tags,

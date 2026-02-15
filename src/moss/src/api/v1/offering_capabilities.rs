@@ -1043,15 +1043,16 @@ pub async fn mirror_offering_capabilities_v1(
 async fn resolve_stone_endpoint(state: &AppState, stone_name: &str) -> Option<String> {
     if stone_name.eq_ignore_ascii_case(&state.stone_name) {
         let entry = state.self_entry.read().await;
-        if entry.endpoint.is_empty() {
+        let base = entry.address.http_base();
+        if base.contains("0.0.0.0") {
             Some(format!("http://127.0.0.1:{}", state.api_port))
         } else {
-            Some(entry.endpoint.clone())
+            Some(base)
         }
     } else {
         topology::get_stone_by_name(&state.topology_cache, stone_name)
             .await
-            .map(|entry| entry.endpoint)
+            .map(|entry| entry.address.http_base())
     }
 }
 

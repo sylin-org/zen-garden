@@ -337,7 +337,7 @@ impl AppState {
         }
 
         if broadcast_beacon {
-            let endpoint = self.self_entry.read().await.endpoint.clone();
+            let endpoint = self.self_entry.read().await.address.http_base();
             if endpoint.trim().is_empty() {
                 return;
             }
@@ -570,7 +570,15 @@ impl AppState {
         // Update self_entry with new endpoint and MAC
         {
             let mut entry = self.self_entry.write().await;
-            entry.endpoint = new_endpoint;
+            let old_tls_port = entry.address.tls_port;
+            let new_ip: std::net::IpAddr = new_ip
+                .parse()
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            let mut new_addr = garden_common::PeerAddress::new(new_ip, self.api_port);
+            if let Some(tp) = old_tls_port {
+                new_addr = new_addr.with_tls(tp);
+            }
+            entry.address = new_addr;
             entry.mac = new_mac.clone();
             entry.last_seen = chrono::Utc::now();
         }

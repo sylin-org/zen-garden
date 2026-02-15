@@ -94,24 +94,22 @@ impl LiveGarden {
             while let Some((payload, addr)) = response_rx.recv().await {
                 if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(payload) {
                     // Deduplicate by endpoint
-                    if !seen_endpoints.contains(&response.stone_endpoint) {
-                        seen_endpoints.insert(response.stone_endpoint.clone());
+                    let ep = response.address.http_base();
+                    if !seen_endpoints.contains(&ep) {
+                        seen_endpoints.insert(ep.clone());
 
                         let response_time = start.elapsed().as_millis() as u64;
                         timings.push((response.stone_name.clone(), response_time));
 
                         tracing::info!(
                             stone = %response.stone_name,
-                            endpoint = %response.stone_endpoint,
+                            endpoint = %ep,
                             from = ?addr,
                             response_time_ms = response_time,
                             "Discovered stone"
                         );
 
-                        stones.push(Stone::new(
-                            response.stone_name.clone(),
-                            response.stone_endpoint.clone(),
-                        ));
+                        stones.push(Stone::new(response.stone_name.clone(), ep));
                     }
                 }
             }

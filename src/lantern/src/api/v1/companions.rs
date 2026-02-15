@@ -21,7 +21,7 @@ pub async fn get_companions(
         });
 
         match found {
-            Some((_, entry)) => entry.endpoint.clone(),
+            Some((_, entry)) => entry.address.http_base(),
             None => {
                 return Err(error_response(
                     StatusCode::NOT_FOUND,

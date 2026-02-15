@@ -41,6 +41,7 @@ pub mod persistence;
 pub mod process;
 pub mod secrets;
 pub mod service;
+pub mod stone_client;
 pub mod storage;
 pub mod task_store;
 pub mod tools;

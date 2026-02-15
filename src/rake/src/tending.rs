@@ -193,7 +193,7 @@ impl StoneCandidate {
     pub fn from_discovery(response: &garden_common::DiscoveryResponse) -> Self {
         Self {
             stone_name: response.stone_name.clone(),
-            endpoint: response.stone_endpoint.clone(),
+            endpoint: response.address.http_base(),
             is_tended: false,
         }
     }
@@ -374,7 +374,7 @@ where
         .into_iter()
         .filter(|r| {
             exclude_endpoint
-                .map(|exclude| r.stone_endpoint != exclude)
+                .map(|exclude| r.address.http_base() != exclude)
                 .unwrap_or(true)
         })
         .map(|r| StoneCandidate::from_discovery(&r))
@@ -449,7 +449,7 @@ pub async fn discover_alternative_stone(
         .filter(|r| {
             current_endpoint
                 .as_ref()
-                .map(|curr| &r.stone_endpoint != curr)
+                .map(|curr| r.address.http_base() != *curr)
                 .unwrap_or(true)
         })
         .collect();

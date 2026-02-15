@@ -111,7 +111,7 @@ fn build_stone_view(
     StoneView {
         stone_id: entry.stone_id.clone(),
         stone_name: entry.stone_name.clone(),
-        endpoint: entry.endpoint.clone(),
+        endpoint: entry.address.http_base(),
         moss_version: entry.moss_version.clone(),
         health: entry.health.clone(),
         status: format!("{:?}", entry.status).to_lowercase(),

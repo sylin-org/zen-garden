@@ -128,7 +128,7 @@ pub async fn check_garden(
     let tasks: Vec<_> = entries
         .iter()
         .map(|entry| {
-            let endpoint = entry.endpoint.clone();
+            let endpoint = entry.address.http_base();
             let stone_name = entry.stone_name.clone();
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -220,7 +220,7 @@ pub async fn execute_garden(
         .iter()
         .map(|entry| {
             let client = client.clone();
-            let endpoint = entry.endpoint.clone();
+            let endpoint = entry.address.http_base();
             let stone_name = entry.stone_name.clone();
 
             tokio::spawn(async move {

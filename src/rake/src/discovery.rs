@@ -52,19 +52,18 @@ async fn discover_lantern_async() -> Option<String> {
     tracing::debug!(request_id = %request_id, "Sent Lantern discovery broadcast (via p2p)");
 
     // Wait for Lantern response (2 second timeout)
-    let response = tokio::time::timeout(
-        Duration::from_secs(2),
-        async {
-            while let Some((payload, addr)) = response_rx.recv().await {
-                if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(payload) {
-                    // Lantern responses have "lantern" in the discover field or specific port
-                    tracing::info!(?addr, endpoint = %response.stone_endpoint, "Discovered Lantern registry");
-                    return Some(response.stone_endpoint);
-                }
+    let response = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some((payload, addr)) = response_rx.recv().await {
+            if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(payload) {
+                // Lantern responses have "lantern" in the discover field or specific port
+                tracing::info!(?addr, endpoint = %response.address, "Discovered Lantern registry");
+                return Some(response.address.http_base());
             }
-            None
         }
-    ).await.ok()??;
+        None
+    })
+    .await
+    .ok()??;
 
     Some(response)
 }
@@ -106,8 +105,8 @@ pub async fn discover_moss() -> Result<String> {
         async {
             if let Some((payload, addr)) = response_rx.recv().await {
                 let response: DiscoveryResponse = serde_json::from_value(payload)?;
-                tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.stone_endpoint, %request_id, "Discovered Moss");
-                Ok::<String, anyhow::Error>(response.stone_endpoint)
+                tracing::info!(?addr, stone = %response.stone_name, endpoint = %response.address, %request_id, "Discovered Moss");
+                Ok::<String, anyhow::Error>(response.address.http_base())
             } else {
                 anyhow::bail!("P2P channel closed")
             }
@@ -171,8 +170,8 @@ where
         while let Some((payload, addr)) = response_rx.recv().await {
             if let Ok(response) = serde_json::from_value::<DiscoveryResponse>(payload) {
                 // Only process unique endpoints
-                if !discovered_endpoints.contains(&response.stone_endpoint) {
-                    discovered_endpoints.insert(response.stone_endpoint.clone());
+                if !discovered_endpoints.contains(&response.address.http_base()) {
+                    discovered_endpoints.insert(response.address.http_base());
                     let discovery_instant = Instant::now();
 
                     tracing::info!(
@@ -289,7 +288,7 @@ pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
                     stones.push(DiscoveryResponse {
                         stone_id,
                         stone_name,
-                        stone_endpoint: endpoint,
+                        address: garden_common::PeerAddress::from_http_url(&endpoint),
                         moss_version: String::new(),
                         lantern_endpoint: None,
                     });
@@ -390,7 +389,7 @@ where
                             DiscoveryResponse {
                                 stone_id,
                                 stone_name,
-                                stone_endpoint: endpoint.clone(),
+                                address: garden_common::PeerAddress::from_http_url(&endpoint),
                                 moss_version: String::new(),
                                 lantern_endpoint: None,
                             },
@@ -453,8 +452,9 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
                 let mut results = mdns_results.lock().unwrap();
                 let mut seen = mdns_seen.lock().unwrap();
                 for response in stones {
-                    if !seen.contains(&response.stone_endpoint) {
-                        seen.insert(response.stone_endpoint.clone());
+                    let ep = response.address.http_base();
+                    if !seen.contains(&ep) {
+                        seen.insert(ep);
                         results.push(response);
                     }
                 }
@@ -467,8 +467,9 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
         let _ = discover_all_moss_stream_async(timeout, |response, _instant| {
             let mut results = udp_results.lock().unwrap();
             let mut seen = udp_seen.lock().unwrap();
-            if !seen.contains(&response.stone_endpoint) {
-                seen.insert(response.stone_endpoint.clone());
+            let ep = response.address.http_base();
+            if !seen.contains(&ep) {
+                seen.insert(ep);
                 results.push(response);
             }
         })
@@ -484,8 +485,8 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
         let _ = discover_all_moss_stream_async(timeout, |response, _instant| {
             let mut results = results.lock().unwrap();
             let mut seen = seen_endpoints.lock().unwrap();
-            if !seen.contains(&response.stone_endpoint) {
-                seen.insert(response.stone_endpoint.clone());
+            if !seen.contains(&response.address.http_base()) {
+                seen.insert(response.address.http_base());
                 results.push(response);
             }
         })
@@ -531,8 +532,9 @@ where
         let mdns_handle = std::thread::spawn(move || {
             let _ = discover_moss_mdns_stream(mdns_timeout, |response, instant| {
                 let mut seen = mdns_seen.lock().unwrap();
-                if !seen.contains(&response.stone_endpoint) {
-                    seen.insert(response.stone_endpoint.clone());
+                let ep = response.address.http_base();
+                if !seen.contains(&ep) {
+                    seen.insert(ep);
                     drop(seen); // Release lock before callback
 
                     let mut cb = mdns_callback.lock().unwrap();
@@ -550,8 +552,9 @@ where
         let udp_count = total_count.clone();
         let _ = discover_all_moss_stream(timeout, |response, instant| {
             let mut seen = udp_seen.lock().unwrap();
-            if !seen.contains(&response.stone_endpoint) {
-                seen.insert(response.stone_endpoint.clone());
+            let ep = response.address.http_base();
+            if !seen.contains(&ep) {
+                seen.insert(ep);
                 drop(seen); // Release lock before callback
 
                 let mut cb = udp_callback.lock().unwrap();
@@ -571,8 +574,8 @@ where
     {
         let _ = discover_all_moss_stream(timeout, |response, instant| {
             let mut seen = seen_endpoints.lock().unwrap();
-            if !seen.contains(&response.stone_endpoint) {
-                seen.insert(response.stone_endpoint.clone());
+            if !seen.contains(&response.address.http_base()) {
+                seen.insert(response.address.http_base());
                 drop(seen);
 
                 let mut cb = callback.lock().unwrap();

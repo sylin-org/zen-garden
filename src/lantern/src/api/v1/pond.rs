@@ -50,7 +50,7 @@ pub async fn get_pond(State(state): State<AppState>) -> Json<Value> {
             PondMember {
                 stone_id: entry.stone_id.clone(),
                 stone_name: entry.stone_name.clone(),
-                endpoint: entry.endpoint.clone(),
+                endpoint: entry.address.http_base(),
                 health: entry.health.clone(),
                 status: format!("{:?}", entry.status).to_lowercase(),
                 mac: entry.mac.clone(),

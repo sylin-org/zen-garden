@@ -185,8 +185,8 @@ pub async fn start_discovery_listener(
                         let local_tools_cache = tools_cache.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
-                                let current = local_entry.read().await.endpoint.clone();
-                                if current.trim().is_empty() {
+                                let current = local_entry.read().await.address.http_base();
+                                if current.contains("0.0.0.0") {
                                     local_endpoint
                                 } else {
                                     current
@@ -704,7 +704,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                 );
 
                 // Update storage cache since mounts changed
-                let endpoint = state_persistence.self_entry.read().await.endpoint.clone();
+                let endpoint = state_persistence.self_entry.read().await.address.http_base();
                 if let Err(e) = crate::infra::storage::update_and_broadcast(
                     &state_persistence.storage_cache,
                     &state_persistence.stone_id,
@@ -785,7 +785,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
                     }
 
                     // Update storage cache and broadcast if we have storage
-                    let endpoint = state_hotplug.self_entry.read().await.endpoint.clone();
+                    let endpoint = state_hotplug.self_entry.read().await.address.http_base();
                     if let Err(e) = crate::infra::storage::update_and_broadcast(
                         &state_hotplug.storage_cache,
                         &state_hotplug.stone_id,
@@ -847,7 +847,7 @@ fn start_seedbank_hotplug_detection_basic(state: AppState) {
                     }
 
                     // Update storage cache and broadcast if we have storage
-                    let endpoint = state.self_entry.read().await.endpoint.clone();
+                    let endpoint = state.self_entry.read().await.address.http_base();
                     if let Err(e) = crate::infra::storage::update_and_broadcast(
                         &state.storage_cache,
                         &state.stone_id,

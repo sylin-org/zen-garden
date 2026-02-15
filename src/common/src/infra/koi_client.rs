@@ -34,6 +34,8 @@ pub fn is_lan_routable(ip: &str) -> bool {
     false
 }
 
+use crate::PeerAddress;
+
 /// A stone discovered via mDNS.
 ///
 /// This is the canonical discovery result type used by all consumers.
@@ -42,7 +44,8 @@ pub fn is_lan_routable(ip: &str) -> bool {
 pub struct DiscoveredStone {
     pub stone_id: Option<String>,
     pub stone_name: String,
-    pub endpoint: String,
+    /// Network address of the discovered stone.
+    pub address: PeerAddress,
     pub mac: Option<String>,
     pub version: Option<String>,
     pub health: Option<String>,

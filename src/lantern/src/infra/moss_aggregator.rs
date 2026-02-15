@@ -35,7 +35,7 @@ pub async fn run_aggregation(
             topo.stones
                 .iter()
                 .filter(|(_, entry)| entry.status == garden_common::StoneStatus::Online)
-                .map(|(key, entry)| (key.clone(), entry.endpoint.clone()))
+                .map(|(key, entry)| (key.clone(), entry.address.http_base()))
                 .collect()
         };
 

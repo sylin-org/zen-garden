@@ -5,6 +5,7 @@ use crate::constants::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod peer_address;
 pub mod topology;
 
 // ============================================================================
@@ -654,7 +655,8 @@ pub struct DiscoveryResponse {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub stone_id: Option<String>,
     pub stone_name: String,
-    pub stone_endpoint: String,
+    /// Network address of the responding stone.
+    pub address: crate::PeerAddress,
     pub moss_version: String,
     pub lantern_endpoint: Option<String>,
 }
@@ -788,42 +790,8 @@ impl std::fmt::Display for StoneStatus {
     }
 }
 
-/// Topology entry representing a stone in the garden
-///
-/// Used for:
-/// - Self topology entry (this stone's current state)
-/// - Peer topology cache (discovered stones)
-/// - Chirp wire format (UDP broadcast payload)
-///
-/// Health progresses: starting → initializing → thriving/degraded
-///
-/// **Services**: Full ServiceInfo (richer than ChirpServiceInfo)
-/// - Enables detailed service state across all use cases
-/// - UDP chirps will be larger (~3-4x) but provide complete info
-/// - Optional fields skipped during serialization to reduce payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopologyEntry {
-    pub stone_id: String,
-    pub stone_name: String,
-    pub endpoint: String,
-    pub moss_version: String,
-    /// Services running on this stone (lightweight topology representation)
-    pub services: Vec<TopologyServiceEntry>,
-    /// MAC address for Wake-on-LAN support
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub mac: Option<String>,
-    /// Health status: "starting", "initializing", "thriving", "degraded"
-    pub health: String,
-    /// Hardware capabilities (available after detection)
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub capabilities: Option<HardwareCapabilities>,
-    /// Current connectivity status
-    pub status: StoneStatus,
-    /// When this stone was first discovered
-    pub discovered_at: chrono::DateTime<chrono::Utc>,
-    /// When this stone was last seen (chirp received)
-    pub last_seen: chrono::DateTime<chrono::Utc>,
-}
+// TopologyEntry is defined in types::topology and re-exported from lib.rs.
+// Do not duplicate it here — see types/topology.rs for the canonical definition.
 
 /// Stone goodbye payload - sent when stone is shutting down gracefully
 ///
@@ -1736,7 +1704,7 @@ mod tests {
         let resp = DiscoveryResponse {
             stone_id: Some("01234567-89ab-cdef-0123-456789abcdef".into()),
             stone_name: "stone-01".into(),
-            stone_endpoint: "http://localhost:3001".into(),
+            address: crate::PeerAddress::new("127.0.0.1".parse().unwrap(), 3001),
             moss_version: "0.1.0".into(),
             lantern_endpoint: None,
         };

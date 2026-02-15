@@ -19,7 +19,7 @@ pub async fn post_register(
             &mut topology,
             req.stone_id.as_deref(),
             &req.stone_name,
-            &req.endpoint,
+            &garden_common::PeerAddress::from_http_url(&req.endpoint),
             req.services,
         )
     };

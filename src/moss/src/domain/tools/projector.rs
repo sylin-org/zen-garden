@@ -7,7 +7,7 @@ use garden_common::tools::{build_tool_fqid, ToolConnection, ToolProjection, Tool
 use std::collections::{BTreeMap, BTreeSet};
 
 pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
-    let endpoint = state.self_entry.read().await.endpoint.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await.clone();
     let local_storage = {
         let cache = state.storage_cache.read().await;

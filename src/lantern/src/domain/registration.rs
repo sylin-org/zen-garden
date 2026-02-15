@@ -6,7 +6,7 @@
 
 use chrono::{Duration, Utc};
 use garden_common::types::topology::TopologyEntry;
-use garden_common::{RegisterServiceInfo, StoneStatus, TopologyServiceEntry};
+use garden_common::{PeerAddress, RegisterServiceInfo, StoneStatus, TopologyServiceEntry};
 
 use super::topology::GardenTopology;
 use crate::domain::events::RegistrationEvent;
@@ -23,7 +23,7 @@ pub fn register_stone(
     topology: &mut GardenTopology,
     stone_id: Option<&str>,
     stone_name: &str,
-    endpoint: &str,
+    address: &PeerAddress,
     services: Vec<RegisterServiceInfo>,
 ) -> RegistrationEvent {
     let now = Utc::now();
@@ -46,7 +46,7 @@ pub fn register_stone(
         // Update existing stone
         entry.last_seen = now;
         entry.status = StoneStatus::Online;
-        entry.endpoint = endpoint.to_string();
+        entry.address = address.clone();
 
         if entry.stone_name != stone_name {
             tracing::info!(
@@ -64,7 +64,7 @@ pub fn register_stone(
         let entry = TopologyEntry {
             stone_id: stone_id.unwrap_or(&cache_key).to_string(),
             stone_name: stone_name.to_string(),
-            endpoint: endpoint.to_string(),
+            address: address.clone(),
             moss_version: String::new(),
             services: topo_services,
             mac: None,
@@ -82,7 +82,11 @@ pub fn register_stone(
     topology.last_updated = now;
 
     if is_new {
-        RegistrationEvent::stone_registered(stone_id.map(|s| s.to_string()), stone_name, endpoint)
+        RegistrationEvent::stone_registered(
+            stone_id.map(|s| s.to_string()),
+            stone_name,
+            address.http_base(),
+        )
     } else {
         RegistrationEvent::stone_heartbeat(stone_name)
     }

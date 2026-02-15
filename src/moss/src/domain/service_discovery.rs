@@ -513,7 +513,7 @@ async fn find_services_in_topology_cache(
 
             let conn = connection::resolve_connection(
                 &stone.stone_name,
-                &stone.endpoint,
+                &stone.address.http_base(),
                 port,
                 &protocol,
                 uri_template.as_deref(),
@@ -529,7 +529,7 @@ async fn find_services_in_topology_cache(
                 stone: StoneRef {
                     id: stone.stone_id.clone(),
                     name: stone.stone_name.clone(),
-                    endpoint: stone.endpoint.clone(),
+                    endpoint: stone.address.http_base(),
                 },
                 connection: conn,
                 sub_capabilities: vec![], // Remote services don't include sub_capabilities in chirps
@@ -580,8 +580,14 @@ async fn find_remote_services(
             let criteria = criteria.clone();
             let state_clone = state.clone();
             tokio::spawn(async move {
-                fetch_remote_services(&stone.endpoint, &criteria, &stone, timeout, &state_clone)
-                    .await
+                fetch_remote_services(
+                    &stone.address.http_base(),
+                    &criteria,
+                    &stone,
+                    timeout,
+                    &state_clone,
+                )
+                .await
             })
         })
         .collect();
@@ -656,7 +662,7 @@ async fn fetch_remote_services(
 
         let conn = connection::resolve_connection(
             &stone.stone_name,
-            &stone.endpoint,
+            &stone.address.http_base(),
             service.ports.native,
             &protocol,
             uri_template.as_deref(),
@@ -672,7 +678,7 @@ async fn fetch_remote_services(
             stone: StoneRef {
                 id: stone.stone_id.clone(),
                 name: stone.stone_name.clone(),
-                endpoint: stone.endpoint.clone(),
+                endpoint: stone.address.http_base(),
             },
             connection: conn,
             sub_capabilities: service.sub_capabilities,

@@ -600,7 +600,7 @@ pub async fn get_portrait_data(
 
                 HorizonStone {
                     name: entry.stone_name.clone(),
-                    endpoint: entry.endpoint.clone(),
+                    endpoint: entry.address.http_base(),
                     status: entry.status.to_string(),
                     health: entry.health.clone(),
                     color: derive_stone_color(&entry.stone_id),

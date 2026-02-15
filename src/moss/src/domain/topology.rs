@@ -77,7 +77,7 @@ pub async fn upsert_from_chirp(cache: &TopologyCache, mut chirped_entry: Topolog
     if let Some(entry) = map.get_mut(&chirped_entry.stone_id) {
         // Update existing entry - stone is back online
         entry.stone_name = chirped_entry.stone_name;
-        entry.endpoint = chirped_entry.endpoint;
+        entry.address = chirped_entry.address.clone();
         entry.moss_version = chirped_entry.moss_version;
         entry.services = chirped_entry.services;
         entry.health = chirped_entry.health;
@@ -401,10 +401,12 @@ mod tests {
         endpoint: &str,
         version: &str,
     ) -> TopologyEntry {
+        // Parse endpoint string like "http://192.168.1.10:7123" → PeerAddress
+        let addr = parse_endpoint_to_peer_address(endpoint);
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
-            endpoint: endpoint.to_string(),
+            address: addr,
             moss_version: version.to_string(),
             services: vec![],
             mac: None,
@@ -417,6 +419,20 @@ mod tests {
         }
     }
 
+    /// Parse a test endpoint string like "http://192.168.1.10:7123" into a PeerAddress
+    fn parse_endpoint_to_peer_address(endpoint: &str) -> garden_common::PeerAddress {
+        let stripped = endpoint
+            .trim_start_matches("http://")
+            .trim_start_matches("https://");
+        let (ip_str, port_str) = stripped.rsplit_once(':').unwrap_or((stripped, "7185"));
+        garden_common::PeerAddress::new(
+            ip_str
+                .parse()
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            port_str.parse().unwrap_or(7185),
+        )
+    }
+
     /// Helper to create a TopologyEntry with MAC for testing
     fn make_entry_with_mac(
         stone_id: &str,
@@ -425,10 +441,11 @@ mod tests {
         version: &str,
         mac: Option<&str>,
     ) -> TopologyEntry {
+        let addr = parse_endpoint_to_peer_address(endpoint);
         TopologyEntry {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
-            endpoint: endpoint.to_string(),
+            address: addr,
             moss_version: version.to_string(),
             services: vec![],
             mac: mac.map(|s| s.to_string()),
@@ -469,7 +486,7 @@ mod tests {
         upsert_from_chirp(&cache, entry2).await;
 
         let stone = get_stone_by_id(&cache, "stone-123").await.unwrap();
-        assert_eq!(stone.endpoint, "http://192.168.1.99:7123");
+        assert_eq!(stone.address.http_base(), "http://192.168.1.99:7123");
         assert_eq!(stone.moss_version, "0.1.1");
         assert_eq!(count_stones(&cache).await, 1); // Still only one entry
     }

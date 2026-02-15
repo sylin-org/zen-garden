@@ -23,7 +23,7 @@ async fn resolve_stone_endpoint(
     });
 
     match found {
-        Some((_, entry)) => Ok(entry.endpoint.clone()),
+        Some((_, entry)) => Ok(entry.address.http_base()),
         None => Err(error_response(
             StatusCode::NOT_FOUND,
             "STONE_NOT_FOUND",

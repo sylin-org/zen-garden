@@ -113,7 +113,7 @@ async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
     p2p::send_announcement(announcement_types::STONE_CHIRP, entry).await?;
 
     tracing::trace!(
-        endpoint = %entry.endpoint,
+        address = %entry.address,
         services = entry.services.len(),
         health = %entry.health,
         "UDP chirp broadcast sent"
@@ -163,7 +163,7 @@ mod tests {
         let entry1 = TopologyEntry {
             stone_id: "test-id".to_string(),
             stone_name: "test".to_string(),
-            endpoint: "http://localhost:7185".to_string(),
+            address: garden_common::PeerAddress::new("127.0.0.1".parse().unwrap(), 7185),
             moss_version: "0.1.0".to_string(),
             services: vec![],
             mac: None,
@@ -188,7 +188,7 @@ mod tests {
         let mut entry = TopologyEntry {
             stone_id: "test-id".to_string(),
             stone_name: "test".to_string(),
-            endpoint: "http://localhost:7185".to_string(),
+            address: garden_common::PeerAddress::new("127.0.0.1".parse().unwrap(), 7185),
             moss_version: "0.1.0".to_string(),
             services: vec![],
             mac: None,
@@ -213,7 +213,7 @@ mod tests {
         let mut entry = TopologyEntry {
             stone_id: "test-id".to_string(),
             stone_name: "test".to_string(),
-            endpoint: "http://localhost:7185".to_string(),
+            address: garden_common::PeerAddress::new("127.0.0.1".parse().unwrap(), 7185),
             moss_version: "0.1.0".to_string(),
             services: vec![],
             mac: None,

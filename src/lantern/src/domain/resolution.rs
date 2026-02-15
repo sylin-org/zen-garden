@@ -20,7 +20,7 @@ pub fn resolve_service(topology: &GardenTopology, service_type: &str) -> Option<
             if svc.offering == service_type && svc.status == SERVICE_RUNNING {
                 return Some(ResolveResponse {
                     stone_name: entry.stone_name.clone(),
-                    endpoint: entry.endpoint.clone(),
+                    endpoint: entry.address.http_base(),
                     service: ResolveServiceInfo {
                         name: svc.name.clone(),
                         service_type: svc.offering.clone(),

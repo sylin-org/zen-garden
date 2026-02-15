@@ -4,6 +4,13 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+## 2026-02-15
+
+- **BREAKING**: Replaced `endpoint: String` + `pond_active` + `https_port` with `address: PeerAddress` across TopologyEntry, DiscoveredStone, DiscoveryResponse
+- Added `PeerAddress` value object (ip, port, tls_port) with `http_base()`, `http_url()`, `https_base()`, `from_http_url()`
+- Added `StoneClient` infrastructure gateway for centralized inter-stone HTTP with TLS reload
+- Lantern `register_stone()` now takes `&PeerAddress` instead of `&str` endpoint
+
 ## 2026-02-14
 
 - PondState domain surface: enrolled(), cornerstone(), PondEvent::EnrollmentChanged

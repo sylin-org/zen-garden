@@ -91,7 +91,7 @@ fn topology_entry_to_stone_info_with_metrics(
 ) -> StoneInfo {
     StoneInfo {
         name: entry.stone_name.clone(),
-        endpoint: entry.endpoint.clone(),
+        endpoint: entry.address.http_base(),
         health: entry.health.clone(),
         services_count: entry.services.len() as u32,
         cpu_usage,

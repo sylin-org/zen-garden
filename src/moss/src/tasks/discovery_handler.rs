@@ -48,7 +48,7 @@ pub async fn start_discovery_handler(self_entry: Arc<RwLock<TopologyEntry>>) -> 
                 let response = garden_common::DiscoveryResponse {
                     stone_id: Some(entry.stone_id.clone()),
                     stone_name: entry.stone_name.clone(),
-                    stone_endpoint: entry.endpoint.clone(),
+                    address: entry.address.clone(),
                     moss_version: entry.moss_version.clone(),
                     lantern_endpoint: None,
                 };

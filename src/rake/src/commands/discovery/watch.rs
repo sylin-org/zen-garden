@@ -108,7 +108,7 @@ async fn resolve_stone_endpoint(
     }
 
     for response in endpoints {
-        let ep = &response.stone_endpoint;
+        let ep = response.address.http_base();
         let caps_url = format!("{}/api/v1/stone/capabilities", ep.trim_end_matches('/'));
         if let Ok(resp) = client.get(&caps_url).send().await {
             if let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await

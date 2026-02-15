@@ -99,7 +99,8 @@ async fn resolve_stone_name_to_endpoint(
 
     // Check each discovered stone's name AND id (case-insensitive)
     for response in discovered_responses {
-        let endpoint = response.stone_endpoint.trim_end_matches('/').to_string();
+        let endpoint = response.address.http_base();
+        let endpoint = endpoint.trim_end_matches('/').to_string();
         let caps_url = format!("{}/api/v1/stone/capabilities", endpoint);
         if let Ok(resp) = client
             .get(&caps_url)

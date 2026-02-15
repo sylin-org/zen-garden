@@ -109,7 +109,7 @@ pub async fn recommend_placement(
 
     // 3. Fetch metrics AND offerings from peers in parallel (with timeout)
     let timeout = Duration::from_secs(3);
-    let endpoints: Vec<String> = peer_stones.iter().map(|s| s.endpoint.clone()).collect();
+    let endpoints: Vec<String> = peer_stones.iter().map(|s| s.address.http_base()).collect();
 
     let metrics_results = metrics_collection::fetch_metrics_batch(endpoints.clone(), timeout).await;
     let offerings_results = fetch_offerings_batch(endpoints, timeout).await;
@@ -343,7 +343,7 @@ async fn score_remote_stone(
 ) -> Result<PlacementRecommendation> {
     // Get remote service count (with timeout)
     let service_count =
-        services::fetch_remote_service_count(&stone.endpoint, Duration::from_secs(2))
+        services::fetch_remote_service_count(&stone.address.http_base(), Duration::from_secs(2))
             .await
             .unwrap_or(0);
 

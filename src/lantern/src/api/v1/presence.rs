@@ -26,7 +26,7 @@ pub async fn get_presence_stream(
                 serde_json::json!({
                     "stone_id": entry.stone_id,
                     "stone_name": entry.stone_name,
-                    "endpoint": entry.endpoint,
+                    "endpoint": entry.address.http_base(),
                     "health": entry.health,
                     "status": format!("{:?}", entry.status).to_lowercase(),
                     "services_count": entry.services.len(),

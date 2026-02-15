@@ -154,7 +154,7 @@ async fn execute_companion_command_local(
 
         // Get moss endpoint for Companion to connect to
         let self_entry = state.self_entry.read().await;
-        let moss_endpoint = self_entry.endpoint.clone();
+        let moss_endpoint = self_entry.address.http_base();
         drop(self_entry);
 
         if let Err(e) = state
@@ -309,7 +309,7 @@ async fn broadcast_to_topology(
             let client = client.clone();
             let url = format!(
                 "{}/api/v1/stone/companions/{}/command",
-                stone.endpoint.trim_end_matches('/'),
+                stone.address.http_base().trim_end_matches('/'),
                 companion_id
             );
             let request = request.clone();
@@ -365,7 +365,7 @@ pub async fn start_companion(
 ) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Build this Moss's endpoint for the Companion to connect to
     let self_entry = state.self_entry.read().await;
-    let moss_endpoint = self_entry.endpoint.clone();
+    let moss_endpoint = self_entry.address.http_base();
     drop(self_entry);
 
     // Enable the Companion (mark for auto-start on boot)

@@ -72,6 +72,8 @@ fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option<Dis
         return None;
     }
 
+    let ip_addr: std::net::IpAddr = ip.parse().ok()?;
+
     let port = record.port.unwrap_or(7185);
     let txt = &record.txt;
 
@@ -80,10 +82,20 @@ fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option<Dis
         .cloned()
         .unwrap_or_else(|| record.name.clone());
 
+    let pond_active = txt.get("pond").map(|v| v == "active").unwrap_or(false);
+    let https_port = txt.get("https_port").and_then(|v| v.parse::<u16>().ok());
+
+    let mut address = garden_common::PeerAddress::new(ip_addr, port);
+    if pond_active {
+        if let Some(tp) = https_port {
+            address = address.with_tls(tp);
+        }
+    }
+
     Some(DiscoveredStone {
         stone_id: txt.get("stone_id").cloned(),
         stone_name,
-        endpoint: format!("http://{}:{}", ip, port),
+        address,
         mac: txt.get("mac").cloned(),
         version: txt.get("version").cloned(),
         health: txt.get("health").cloned(),
@@ -99,14 +111,14 @@ async fn upsert_discovered_stone(state: &AppState, stone: &DiscoveredStone) {
             &mut topology,
             stone.stone_id.as_deref(),
             &stone.stone_name,
-            &stone.endpoint,
+            &stone.address,
             vec![], // mDNS doesn't provide services - enrichment task fills those in
         )
     };
 
     tracing::info!(
         stone_name = %stone.stone_name,
-        endpoint = %stone.endpoint,
+        address = %stone.address,
         event_type = %event.event_type(),
         "mDNS discovery: stone registered in topology"
     );

@@ -44,7 +44,7 @@ pub async fn presence_command(
                 if responses.is_empty() {
                     anyhow::bail!("No stones discovered. Use --at to specify endpoint or run 'garden-rake tend'.");
                 }
-                responses[0].stone_endpoint.clone()
+                responses[0].address.http_base()
             }
         }
     };

@@ -41,6 +41,7 @@ pub use cli_colors::{AnsiColor, CliFormatter, ColorSupport};
 pub use client::{GardenApiResponse, GardenHttpClient};
 pub use jobs::*;
 pub use responses::*;
+pub use types::peer_address::PeerAddress;
 pub use types::topology::TopologyEntry;
 pub use types::*;
 pub use utils::*;

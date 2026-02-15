@@ -245,7 +245,7 @@ pub async fn start_mdns_lurk_listener(
 
                         tracing::info!(
                             stone_name = %discovered.stone_name,
-                            endpoint = %discovered.endpoint,
+                            address = %discovered.address,
                             "mDNS lurk-listener: Discovered neighbor stone"
                         );
 
@@ -321,10 +321,20 @@ pub fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option
         .cloned()
         .unwrap_or_else(|| record.name.clone());
 
+    let pond_active = txt.get("pond").map(|v| v == "active").unwrap_or(false);
+    let https_port = txt.get("https_port").and_then(|v| v.parse::<u16>().ok());
+
+    let mut address = garden_common::PeerAddress::new(ip.parse().ok()?, port);
+    if pond_active {
+        if let Some(tp) = https_port {
+            address = address.with_tls(tp);
+        }
+    }
+
     Some(DiscoveredStone {
         stone_id: txt.get("stone_id").cloned(),
         stone_name,
-        endpoint: format!("http://{}:{}", ip, port),
+        address,
         mac: txt.get("mac").cloned(),
         version: txt.get("version").cloned(),
         health: txt.get("health").cloned(),

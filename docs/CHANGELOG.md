@@ -4,8 +4,26 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-09
 
+- MOSS-0004: Phased cooperative shutdown — CancellationToken threaded through all background tasks
+- SSE streams (presence, logs, tools) break on shutdown token for clean HTTP drain
+- systemd Type=notify with sd_notify READY/WATCHDOG/STOPPING integration
+- All interval-loop tasks (topology, storage, announcer, health, scheduler, metrics, presence monitors) exit cooperatively on SIGTERM
+
+## 2026-02-16
+
+- **BREAKING**: Removed `shutdown_tx` (Arc<Notify>) — CancellationToken is now the single shutdown source of truth
+- Fixed crash loop: drain deadline timer started at boot instead of after shutdown signal
+- Signal handler: one spawned task watches SIGTERM/SIGINT → cancels token, everything cascades
+- Deploy/admin shutdown endpoints now call `shutdown_token.cancel()` instead of `notify_waiters()`
+- Companion shutdown: SIGTERM all companions immediately on Moss shutdown, SIGKILL survivors before exit
+
 ## 2026-02-15
 
+- Fixed update stuck: shutdown used notify_one() which only wakes one of HTTP/HTTPS servers
+- Unified graceful shutdown: admin/deploy shutdown now fires goodbye callback properly
+- Deadline shutdown: 8s drain deadline + 15s hard watchdog guarantees process exit
+- Linux update progress: TTY1 console now shows update stages (receive → verify → stage → restart)
+- Update helper TTY output: moss-update-helper.sh writes progress to /dev/tty1 during install
 - Rake client enrollment: `garden-rake pond enroll` for mTLS on non-Moss machines
 - New endpoint: `POST /api/v1/pond/enroll-client` for client certificate issuance
 - Health: `/health` response includes optional `pond` field when stone is enrolled

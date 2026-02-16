@@ -70,6 +70,11 @@ canonical: true
   - **Rationale**: Mirror NetworkMonitor pattern for Docker daemon availability tracking
   - **Impact**: Graceful degradation when Docker unavailable, automatic recovery on reconnect
 
+- **[MOSS-0004](MOSS-0004-phased-cooperative-shutdown.md)**: Phased Cooperative Shutdown
+  - **Status**: Accepted (2026-02-09)
+  - **Rationale**: CancellationToken + sd_notify + cooperative task exit prevent stuck updates
+  - **Impact**: Background tasks exit cleanly on SIGTERM, SSE streams drain, systemd Type=notify
+
 ### Offerings (Services)
 - **[OFFER-0001](OFFER-0001-taxonomy.md)**: Offering Taxonomy
   - **Status**: Accepted

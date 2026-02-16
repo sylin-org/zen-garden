@@ -1042,7 +1042,7 @@ async fn udp_receiver_loop(
     broadcast_tx: broadcast::Sender<InternalUdpEvent>,
     socket: UdpSocket,
 ) -> Result<()> {
-    let mut buf = [0u8; 4096];
+    let mut buf = vec![0u8; 65535]; // Max UDP datagram size — avoids WSAEMSGSIZE (10040) on Windows
     let mut dedup_cache = DedupCache::new();
 
     tracing::info!("P2P transport receiver started");

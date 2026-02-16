@@ -1,11 +1,11 @@
 ﻿# Pond Ceremony Engine
 
-**Status:** Implementing (Phases 1–3 done)  
-**Priority:** High  
-**Created:** 2026-06-13  
-**Updated:** 2026-02-15  
-**Authors:** Leo Botinelly  
-**Related:** [koi-embedded-integration](koi-embedded-integration.md), [pond-totp-admission](pond-totp-admission.md), [SECURITY-0001](../decisions/SECURITY-0001-pond-tiers.md)
+**Status:** Implemented (Phases 1–5 complete)
+**Priority:** High
+**Created:** 2025-06-13
+**Updated:** 2026-02-15
+**Authors:** Leo Botinelly
+**Related:** [koi-embedded-integration](koi-embedded-integration.md), [pond-totp-admission](pond-totp-admission.md), [rake-client-enrollment](rake-client-enrollment.md), [SECURITY-0001](../decisions/SECURITY-0001-pond-tiers.md)
 
 ---
 
@@ -423,16 +423,17 @@ FIDO2 requires a browser — available only through the `/pond` web UI, not Rake
 
 For MyOrganization deployments wanting defense-in-depth, the TOTP `shared_secret` (or FIDO2 `public_key` + `encrypted_slot_kek`) can be escrowed to a peer stone instead of stored locally. This eliminates the disk-theft weakness of TOTP and no-PRF FIDO2 slots by ensuring the verification secret and the unlock material are on different machines. Requires ≥2 stones in the pond. See peer-escrow protocol design (TBD).
 
-#### Prerequisites and phasing
+#### Implementation status
 
-| Prerequisite | Phase |
-|-------------|-------|
-| Envelope encryption in koi-certmesh (master key + slot table) | Phase 5 |
-| TOTP unlock slot creation + unlock ceremony | Phase 5 |
-| FIDO2 WebAuthn registration in `/pond` web UI | Phase 5 |
-| FIDO2-PRF support (if key supports it) | Phase 5 |
-| Migration from passphrase-direct to envelope model | Phase 5 |
-| Peer escrow protocol | Phase 6 |
+| Component | Phase | Status |
+|-----------|-------|--------|
+| Envelope encryption in koi-crypto (master key + slot table) | Phase 5 | ✅ `unlock_slots.rs` |
+| TOTP unlock slot creation + unlock ceremony | Phase 5 | ✅ `SlotTable::add_totp_slot()` |
+| FIDO2 WebAuthn registration in `/pond` web UI | Phase 5 | ✅ `SlotTable::add_fido2_slot()` |
+| FIDO2-PRF support (if key supports it) | Phase 5 | ✅ PRF path in `unwrap_with_fido2()` |
+| Migration from passphrase-direct to envelope model | Phase 5 | ✅ `CertmeshCore` uses `SlotTable` |
+| Peer escrow protocol | Phase 6 | Pending |
+| Client enrollment (non-Moss Rake) | Phase 7 | Proposed — see [rake-client-enrollment](rake-client-enrollment.md) |
 
 The rules are free to add derived keys to the bag during evaluation. For example, when `auth_mode=totp` is set, the rules generate a TOTP secret internally and store it in the bag as `_totp_secret` (underscore = internal, not prompted). The QR code message is derived from this internal key.
 
@@ -571,40 +572,64 @@ This renders between the Offerings and Guidance sections. When pond is not activ
 4. Update `garden-rake pond invite` to display QR code
 5. Update `garden-rake pond join` to use ceremony for code input + verification
 
-### Phase 4: Extended Ceremonies
+### Phase 4: Extended Ceremonies ✅
 
-1. Add invite ceremony rules
-2. Add join ceremony rules
-3. Add unlock ceremony rules
+1. Add invite ceremony rules (`eval_invite` in `pond_ceremony.rs:863-886`)
+2. Add join ceremony rules (`eval_join` in `pond_ceremony.rs:826-859`)
+3. Add unlock ceremony rules (`eval_unlock` in `pond_ceremony.rs:890-1004`)
 4. Portrait pond status section
+
+**Note:** Join, invite, and unlock rules were implemented during Phase 1 rather than deferred. The unlock ceremony reads the slot table at evaluation time to determine available methods (passphrase, TOTP, FIDO2) and presents them as a `select_one` prompt when multiple methods exist.
+
+### Phase 5: Envelope Encryption and Token Unlock ✅
+
+1. Envelope encryption in koi-crypto (`unlock_slots.rs`) — master key + `SlotTable`
+2. TOTP unlock slot creation + unlock ceremony
+3. FIDO2 unlock slot creation (WebAuthn registration via `/pond` web UI)
+4. FIDO2-PRF support (if key supports it)
+5. Migration from passphrase-direct to envelope model
+6. Unlock ceremony integration in Moss `pond.rs` (passphrase, TOTP, FIDO2 dispatch in `execute_pond_unlock_from_ceremony`)
+7. Init ceremony token registration sub-flow (TOTP slot: lines 1437-1459, FIDO2 slot: lines 1461-1496 in `pond.rs`)
+
+### Phase 6: Peer Escrow
+
+1. Peer escrow protocol for TOTP `shared_secret` / FIDO2 credentials
+2. Requires ≥2 stones in the pond
+
+### Phase 7: Client Enrollment
+
+1. Non-Moss Rake client enrollment via mDNS cornerstone discovery
+2. Dedicated `POST /api/v1/pond/enroll-client` endpoint
+3. Certificate installation in Moss-compatible directory
+4. System trust store installation via `koi-truststore`
+5. See [rake-client-enrollment](rake-client-enrollment.md) for full proposal
 
 ---
 
-## Pre-Existing Fix: Router Routing
+## Router Fix (Applied)
 
-During testing, `pond unlock` returned 404 because the `unlock` route was only in `configure()` (HTTPS), not `configure_public()` (HTTP). When pond is active, HTTPS may not work (CA is locked — that's WHY unlock is needed). This is a chicken-and-egg deadlock.
+During early testing, `pond unlock` returned 404 because the `unlock` route was only in `configure()` (HTTPS), not `configure_public()` (HTTP). When pond is active, HTTPS may not work (CA is locked — that's WHY unlock is needed). This is a chicken-and-egg deadlock.
 
-**Fix applied:** All 10 pond routes moved to `configure_public()` with the following rationale:
+**Resolution:** All 12 pond routes are now in `configure_public()` (`router.rs:160-173`), including the ceremony endpoint. The rationale:
 
 > Pond operations are the bootstrap/recovery path for the trust infrastructure itself.
 > They are self-securing at the application layer (passphrases, TOTP codes), so must
 > always be reachable over plain HTTP.
 
-This fix is committed alongside this proposal. The ceremony endpoint (`POST /api/v1/pond/ceremony`) will also be added to `configure_public()`.
-
 ---
 
-## Rust Type Sketches
+## Rust Types (Actual Implementation)
 
 ### Generic Framework (koi-common)
 
 ```rust
-// koi-common/src/ceremony.rs
+// koi-common/src/ceremony.rs — 1310 lines
 
 /// The generic ceremony host — owns sessions, handles TTL, dispatches to rules.
 pub struct CeremonyHost<R: CeremonyRules> {
     sessions: Mutex<HashMap<Uuid, Session>>,
     rules: R,
+    ttl: Duration,  // default 5 min
 }
 
 /// A single ceremony session — just a bag + metadata.
@@ -618,8 +643,11 @@ pub struct Session {
     pub complete: bool,
 }
 
-/// The trait that domain logic implements. One function. Pure-ish.
-pub trait CeremonyRules: Send + Sync + 'static {
+/// The trait that domain logic implements.
+pub trait CeremonyRules: Send + Sync {
+    /// Validate ceremony type before creating a session.
+    fn validate_ceremony_type(&self, ceremony: &str) -> Result<(), String>;
+
     /// Evaluate the bag, return what to show / ask / do next.
     fn evaluate(
         &self,
@@ -632,8 +660,8 @@ pub trait CeremonyRules: Send + Sync + 'static {
 /// Input from the client.
 pub struct CeremonyRequest {
     pub session_id: Option<Uuid>,
-    pub ceremony: Option<String>,          // required on first call
-    pub data: Map<String, Value>,          // key-value pairs to merge into bag
+    pub ceremony: Option<String>,
+    pub data: Map<String, Value>,
     pub render: Option<RenderHints>,
 }
 
@@ -644,16 +672,23 @@ pub struct CeremonyResponse {
     pub messages: Vec<Message>,
     pub complete: bool,
     pub error: Option<String>,
+    pub result_data: Option<Map<String, Value>>,  // final bag on completion
 }
 
 /// What the rules return.
 pub enum EvalResult {
-    /// Ceremony needs more data. Return prompts and optional messages.
+    /// Ceremony needs more data.
     NeedInput {
         prompts: Vec<Prompt>,
         messages: Vec<Message>,
     },
-    /// Bag is complete and consistent. Ceremony is done.
+    /// Validation failed — re-prompt with error context.
+    ValidationError {
+        prompts: Vec<Prompt>,
+        messages: Vec<Message>,
+        error: String,
+    },
+    /// Bag is complete and consistent.
     Complete {
         messages: Vec<Message>,
     },
@@ -661,12 +696,12 @@ pub enum EvalResult {
     Fatal(String),
 }
 
-/// A single data request — tells the client exactly one thing to collect.
+/// A single data request.
 pub struct Prompt {
     pub key: String,
     pub prompt: String,
     pub input_type: InputType,
-    pub options: Vec<SelectOption>,        // only for select_one / select_many
+    pub options: Vec<SelectOption>,
     pub required: bool,
 }
 
@@ -687,11 +722,10 @@ pub enum InputType {
     Fido2,
 }
 
-/// An informational display item — not an input.
 pub struct Message {
     pub kind: MessageKind,
     pub title: String,
-    pub content: String,                   // text, base64 image, JSON summary, etc.
+    pub content: String,
 }
 
 pub enum MessageKind {
@@ -701,7 +735,6 @@ pub enum MessageKind {
     Error,
 }
 
-/// Client rendering preferences.
 pub struct RenderHints {
     pub qr: QrFormat,
 }
@@ -716,13 +749,21 @@ pub enum QrFormat {
 ### Domain Logic (koi-certmesh)
 
 ```rust
-// koi-certmesh/src/pond_ceremony.rs
+// koi-certmesh/src/pond_ceremony.rs — 1417 lines
 
-pub struct PondCeremonyRules {
-    certmesh: Arc<CertmeshState>,
-}
+/// Stateless rule evaluator. All state lives in the session bag.
+/// The host (and the HTTP handler above it) hold the CertmeshCore
+/// needed to execute the terminal action.
+pub struct PondCeremonyRules;
 
 impl CeremonyRules for PondCeremonyRules {
+    fn validate_ceremony_type(&self, ceremony: &str) -> Result<(), String> {
+        match ceremony {
+            "init" | "join" | "invite" | "unlock" => Ok(()),
+            other => Err(format!("unknown pond ceremony: {other}")),
+        }
+    }
+
     fn evaluate(
         &self,
         ceremony_type: &str,
@@ -730,44 +771,19 @@ impl CeremonyRules for PondCeremonyRules {
         render: &RenderHints,
     ) -> EvalResult {
         match ceremony_type {
-            "init"   => self.eval_init(bag, render),
-            "join"   => self.eval_join(bag, render),
-            "invite" => self.eval_invite(bag, render),
-            "unlock" => self.eval_unlock(bag, render),
-            other    => EvalResult::Fatal(format!("Unknown ceremony: {other}")),
+            "init"   => eval_init(bag, render),
+            "join"   => eval_join(bag, render),
+            "invite" => eval_invite(bag, render),
+            "unlock" => eval_unlock(bag, render),
+            _        => EvalResult::Fatal(format!("unknown ceremony")),
         }
     }
 }
 
-impl PondCeremonyRules {
-    fn eval_init(&self, bag: &mut Map<String, Value>, render: &RenderHints) -> EvalResult {
-        // Step through bag keys in priority order:
-        // 1. Need profile? → prompt select_one (+ custom sub-prompts)
-        // 1b. Need operator? → prompt text (when approval required)
-        // 2. Need entropy? → prompt entropy ("Mash your keyboard!")
-        //    → combine server + client entropy → derive seed
-        // 3. Passphrase from entropy:
-        //    a. Generate XKCD-style suggestion from seed
-        //    b. Show suggestion + prompt select_one: keep / again / own
-        //    c. "keep" → set passphrase from suggestion
-        //    d. "again" → clear entropy keys, re-evaluate
-        //    e. "own" → prompt secret_confirm
-        // 3b. Unlock method? → select_one: auto / token / passphrase
-        //     (standard profiles set default; custom profiles prompt)
-        // 4. Need auth_mode? → prompt select_one
-        // 5. auth_mode=totp && no _totp_secret? → generate secret, store in bag
-        // 6. Need verification_code? → return QR message + code prompt
-        // 7. Token registration (if unlock_method == "token"):
-        //    7a. Token type? → select_one: totp / fido2
-        //    7b. TOTP: generate unlock shared_secret, QR, verify code, create slot
-        //    7c. FIDO2: WebAuthn challenge, tap key, create slot (PRF if available)
-        // 8. All present → execute init, return Complete with summary
-        //
-        // At each step, validate existing data, return prompts for all
-        // missing data that can be collected in parallel.
-        todo!()
-    }
-}
+// eval_init: 740 lines of constraint-satisfaction logic
+// eval_join: 33 lines (join_code → verification_code → complete)
+// eval_invite: 23 lines (passphrase → complete)
+// eval_unlock: 114 lines (reads SlotTable, offers select_one if multiple methods)
 ```
 
 ---
@@ -792,7 +808,7 @@ impl PondCeremonyRules {
 
 ## Open Questions
 
-1. **Back navigation:** Should the engine support going back to a previous stage? Adds complexity but improves UX. Recommendation: yes, via `"action": "back"` in `stage_response`.
-2. **Ceremony cancellation:** Should there be an explicit cancel? Or just let the session expire? Recommendation: explicit `"action": "cancel"` that cleans up immediately.
-3. **Rate limiting:** Ceremony creation should be rate-limited (1 active session per engine). `SecretVerification` attempts should be limited (5 per session).
-4. **Audit logging:** Should ceremony attempts (including failures) be recorded in the certmesh audit log? Recommendation: yes.
+1. **Back navigation:** Resolved — not needed. The constraint-satisfaction model inherently supports re-collection: when a value is invalid or contradictory, the rules remove the offending key from the bag and re-prompt. The "Mash again" flow (`pond_ceremony.rs:386-394`) demonstrates this — it clears entropy-related keys and re-evaluates. No explicit "back" action is required because there is no stage cursor to move backward through.
+2. **Ceremony cancellation:** Resolved — session TTL handles this. Sessions expire after 5 minutes of inactivity (`ceremony.rs:67`). `sweep_expired()` cleans up on a background timer. No explicit cancel action was implemented; clients simply stop sending requests. This is acceptable given the short TTL and in-memory storage.
+3. **Rate limiting:** Partially resolved. The ceremony rules themselves do not rate-limit TOTP verification retries — a bad code just re-prompts (`pond_ceremony.rs:589-606`). However, the operational enrollment layer enforces rate limiting: `RateLimiter` in `koi-crypto/src/totp.rs:19-260` locks out after 3 consecutive failures for 5 minutes. The ceremony's verification step is checking that the user set up their authenticator correctly (UX), while the enrollment endpoint gates actual certificate issuance (security). This split is intentional.
+4. **Audit logging:** Resolved. The ceremony rules are pure functions with no side effects — they generate no audit entries. Audit logging lives in the certmesh operational layer (`koi-certmesh/src/audit.rs`): append-only timestamped entries for `member_joined`, `scope_violation`, `enrollment_closed`, `auth_rotated`, `backup_created/restored`, etc. The operator name collected during the init ceremony (bag key `operator`) flows through to the `approved_by` field in audit entries.

@@ -28,6 +28,7 @@ use garden_common::storage::SeedBankInfo;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 /// Start topology maintenance task (TOPO-0002: with persistence)
 ///
@@ -38,13 +39,20 @@ pub fn start_topology_maintenance(
     topology_cache: TopologyCache,
     topology_dirty: TopologyDirtyFlag,
     self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+    token: CancellationToken,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         interval.tick().await; // Skip first immediate tick
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = token.cancelled() => {
+                    tracing::debug!("Topology maintenance shutting down (MOSS-0004)");
+                    break;
+                }
+            }
             let (marked, evicted) = crate::domain::topology::maintain_and_persist(
                 &topology_cache,
                 &topology_dirty,
@@ -69,13 +77,20 @@ pub fn start_topology_maintenance(
 pub fn start_storage_maintenance(
     storage_cache: crate::domain::storage_cache::StorageCache,
     topology_cache: TopologyCache,
+    token: CancellationToken,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
         interval.tick().await; // Skip first immediate tick
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = token.cancelled() => {
+                    tracing::debug!("Storage maintenance shutting down (MOSS-0004)");
+                    break;
+                }
+            }
             let pruned =
                 crate::domain::storage_cache::prune_stale(&storage_cache, &topology_cache).await;
             if pruned > 0 {
@@ -108,6 +123,7 @@ pub async fn start_discovery_listener(
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
+    token: CancellationToken,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
     tokio::spawn(async move {
@@ -134,6 +150,11 @@ pub async fn start_discovery_listener(
         ));
 
         while let Some((announcement_type, payload, from_addr)) = all_events.recv().await {
+            // MOSS-0004: check shutdown token each iteration
+            if token.is_cancelled() {
+                tracing::debug!("Discovery listener shutting down (MOSS-0004)");
+                break;
+            }
             match announcement_type.as_str() {
                 garden_common::infra::communications::announcement_types::STONE_CHIRP => {
                     let chirp: garden_common::TopologyEntry = match serde_json::from_value(payload)
@@ -445,9 +466,9 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
 }
 
 /// Start health monitoring task
-pub fn start_health_monitor(state: AppState) {
+pub fn start_health_monitor(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
-        health_monitor_task(state).await;
+        health_monitor_task(state, token).await;
     });
 }
 
@@ -455,14 +476,26 @@ pub fn start_health_monitor(state: AppState) {
 ///
 /// Runs all domain sweepers sequentially every hour (5 min delay after boot).
 /// Persists results to disk for API consumption.
-pub fn start_maintenance_sweep(state: AppState) {
+pub fn start_maintenance_sweep(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
-        // Wait 5 minutes after boot before first sweep
-        tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+        // Wait 5 minutes after boot before first sweep (or exit early on shutdown)
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {}
+            _ = token.cancelled() => {
+                tracing::debug!("Maintenance sweep cancelled during startup delay (MOSS-0004)");
+                return;
+            }
+        }
 
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = token.cancelled() => {
+                    tracing::debug!("Maintenance sweep shutting down (MOSS-0004)");
+                    break;
+                }
+            }
 
             let run = crate::domain::maintenance::run_sweep(&state).await;
             tracing::info!(
@@ -480,9 +513,9 @@ pub fn start_maintenance_sweep(state: AppState) {
 }
 
 /// Start auto-adoption task if enabled
-pub fn start_auto_adoption(state: AppState, config: infra::MossConfig, console: &ConsolePrinter) {
+pub fn start_auto_adoption(state: AppState, config: infra::MossConfig, console: &ConsolePrinter, token: CancellationToken) {
     let adoption_config = config.adoption();
-    start_auto_adoption_with_config(state, adoption_config, console);
+    start_auto_adoption_with_config(state, adoption_config, console, token);
 }
 
 /// Start auto-adoption task with explicit AdoptionConfig
@@ -493,6 +526,7 @@ pub fn start_auto_adoption_with_config(
     state: AppState,
     adoption_config: infra::AdoptionConfig,
     console: &ConsolePrinter,
+    token: CancellationToken,
 ) {
     if adoption_config.is_enabled() {
         tracing::info!("Auto-adoption enabled, starting adoption background task");
@@ -503,7 +537,7 @@ pub fn start_auto_adoption_with_config(
         ));
 
         tokio::spawn(async move {
-            auto_adoption_task(state, adoption_config).await;
+            auto_adoption_task(state, adoption_config, token).await;
         });
     } else {
         tracing::info!("Auto-adoption disabled (deployment profile or configuration)");
@@ -521,6 +555,7 @@ pub fn start_auto_adoption_with_config(
 /// that triggers immediate re-registration when the network IP changes.
 ///
 /// Console parameter is optional - pass None if console isn't available yet.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_lantern_registration(
     stone_id: &str,
     stone_name: &str,
@@ -529,6 +564,7 @@ pub async fn start_lantern_registration(
     use_static_host: bool,
     network_monitor: &NetworkMonitor,
     console: Option<&ConsolePrinter>,
+    token: CancellationToken,
 ) {
     let lantern_endpoint = match std::env::var(garden_common::ENV_LANTERN_ENDPOINT) {
         Ok(ep) => {
@@ -557,7 +593,7 @@ pub async fn start_lantern_registration(
 
     tokio::spawn(async move {
         if let Err(e) =
-            lantern_registration_loop(reg_stone_id, reg_stone_name, reg_endpoint, lantern_url).await
+            lantern_registration_loop(reg_stone_id, reg_stone_name, reg_endpoint, lantern_url, token).await
         {
             tracing::error!(error = ?e, "Lantern registration loop failed");
         }
@@ -673,7 +709,7 @@ pub async fn start_lantern_registration(
 ///
 /// Both tasks share a MountTracker to maintain state about expected mounts.
 #[cfg(target_os = "linux")]
-pub fn start_seedbank_resilient_mount_system(state: AppState) {
+pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
     use crate::infra::storage::{create_mount_tracker, SeedBankRegistry};
 
     // Create shared mount tracker
@@ -683,6 +719,8 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
 
     let state_persistence = state.clone();
     let state_hotplug = state;
+    let token_persistence = token.child_token();
+    let token_hotplug = token.child_token();
 
     // Task 1: Mount persistence verification (every 5 seconds)
     tokio::spawn(async move {
@@ -692,7 +730,13 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
         tracing::info!("Seed bank mount persistence task started (5s interval)");
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = token_persistence.cancelled() => {
+                    tracing::debug!("Seed bank mount persistence shutting down (MOSS-0004)");
+                    break;
+                }
+            }
 
             // Verify and recover any mounts that disappeared
             let recovered = SeedBankRegistry::verify_and_recover_mounts(&tracker_persistence).await;
@@ -753,7 +797,13 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
         tracing::info!("Seed bank hot-plug detection task started (10s interval)");
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = token_hotplug.cancelled() => {
+                    tracing::debug!("Seed bank hot-plug detection shutting down (MOSS-0004)");
+                    break;
+                }
+            }
 
             // Scan triggers auto-mount for any new zen-seed devices
             // Use the tracker so new mounts are monitored for persistence
@@ -822,19 +872,25 @@ pub fn start_seedbank_resilient_mount_system(state: AppState) {
 ///
 /// On non-Linux platforms, just runs the basic scan without mount tracking.
 #[cfg(not(target_os = "linux"))]
-pub fn start_seedbank_resilient_mount_system(state: AppState) {
-    start_seedbank_hotplug_detection_basic(state);
+pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
+    start_seedbank_hotplug_detection_basic(state, token);
 }
 
 /// Basic hot-plug detection without mount tracking (used on non-Linux)
 #[cfg(not(target_os = "linux"))]
-fn start_seedbank_hotplug_detection_basic(state: AppState) {
+fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         interval.tick().await; // Skip first immediate tick
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = token.cancelled() => {
+                    tracing::debug!("Seed bank hot-plug detection shutting down (MOSS-0004)");
+                    break;
+                }
+            }
 
             // Scan triggers auto-mount for any new zen-seed devices
             match crate::infra::storage::SeedBankRegistry::scan().await {
@@ -890,6 +946,7 @@ pub async fn start_all_background_tasks(
     api_endpoint: &str,
     capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
     config: Option<infra::MossConfig>,
+    token: CancellationToken,
 ) {
     let console = state.console.clone();
 
@@ -898,13 +955,18 @@ pub async fn start_all_background_tasks(
         state.topology_cache.clone(),
         state.topology_dirty.clone(),
         state.self_entry.clone(),
+        token.child_token(),
     );
 
     // Start storage cache maintenance (STORAGE-0003: prune stale entries)
-    start_storage_maintenance(state.storage_cache.clone(), state.topology_cache.clone());
+    start_storage_maintenance(
+        state.storage_cache.clone(),
+        state.topology_cache.clone(),
+        token.child_token(),
+    );
 
     // Start resilient seed bank mount system (STORAGE-0004: mount persistence + hot-plug)
-    start_seedbank_resilient_mount_system(state.clone());
+    start_seedbank_resilient_mount_system(state.clone(), token.child_token());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(
@@ -920,6 +982,7 @@ pub async fn start_all_background_tasks(
         console.clone(),
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
+        token.child_token(),
     )
     .await;
 
@@ -940,18 +1003,18 @@ pub async fn start_all_background_tasks(
     // Manifests already loaded via ManifestRegistry at startup
 
     // Start health monitoring
-    start_health_monitor(state.clone());
+    start_health_monitor(state.clone(), token.child_token());
 
     // Start scheduled task scheduler
-    start_task_scheduler(state.clone());
+    start_task_scheduler(state.clone(), token.child_token());
     tracing::info!("Started scheduled task scheduler");
 
     // Start caretaking sweep (hourly maintenance)
-    start_maintenance_sweep(state.clone());
+    start_maintenance_sweep(state.clone(), token.child_token());
 
     // Start auto-adoption if configured
     if let Some(cfg) = config {
-        start_auto_adoption(state.clone(), cfg, &console);
+        start_auto_adoption(state.clone(), cfg, &console, token.child_token());
     } else {
         // No config - log that auto-adoption is disabled
         tracing::info!("No config provided, auto-adoption uses internal defaults");

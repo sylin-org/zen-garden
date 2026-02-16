@@ -4,6 +4,7 @@
 //! Extracted from main.rs for cleaner separation of concerns.
 
 use axum::Router;
+use crate::infra::CompanionRegistry;
 use garden_common::console::{
     try_boot_banner, try_shutdown_banner, BootBannerInfo, ConsoleEvent, ConsolePrinter,
     EventCategory, EventStatus, ShutdownBannerInfo,
@@ -14,18 +15,27 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 
 /// Server configuration
 pub struct ServerConfig {
     pub port: u16,
-    pub graceful_shutdown_timeout_secs: u64,
+    /// Maximum time to wait for the server to drain active connections (e.g., SSE streams)
+    /// after the graceful shutdown signal fires. If exceeded, the server is dropped and
+    /// the process proceeds to exit. Prevents indefinite hangs from long-lived connections.
+    pub drain_deadline_secs: u64,
+    /// Hard deadline after shutdown signal: if the process hasn't exited by then,
+    /// force-exit with process::exit(). This is the last-resort safety net — catches
+    /// any combination of stalled drains, blocking tasks, or OS threads.
+    pub hard_deadline_secs: u64,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             port: garden_common::constants::MOSS_HTTP,
-            graceful_shutdown_timeout_secs: 5,
+            drain_deadline_secs: 8,
+            hard_deadline_secs: 15,
         }
     }
 }
@@ -104,23 +114,26 @@ pub type ShutdownCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> 
 
 /// Run the HTTP server with graceful shutdown support
 ///
-/// This function handles:
-/// - Server startup logging
-/// - Graceful shutdown on SIGTERM/SIGINT/Ctrl+C
-/// - Admin-initiated shutdown via notify channel
-/// - In-flight request draining
-/// - Goodbye announcement via shutdown_callback (if provided)
+/// Shutdown flow (MOSS-0004):
+/// 1. SIGTERM/SIGINT arrives → signal handler cancels `shutdown_token`
+/// 2. Token cancellation cascades to: server (graceful_shutdown), SSE streams,
+///    all background tasks, watchdog, drain deadline
+/// 3. Server drains in-flight requests (8s deadline)
+/// 4. Goodbye announcement, sd_notify STOPPING, process::exit(0)
+///
+/// Admin/deploy shutdowns call `shutdown_token.cancel()` directly — same cascade.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     listener: TcpListener,
     app: Router,
     api_endpoint: &str,
     console: Arc<ConsolePrinter>,
-    shutdown_notify: Arc<tokio::sync::Notify>,
+    shutdown_token: CancellationToken,
     config: ServerConfig,
     shutdown_callback: Option<ShutdownCallback>,
     boot_banner: Option<BootBannerInfo>,
     shutdown_banner: Option<ShutdownBannerInfo>,
+    companion_registry: Option<Arc<CompanionRegistry>>,
 ) -> anyhow::Result<()> {
     let addr = listener.local_addr()?;
 
@@ -141,57 +154,137 @@ pub async fn run(
     // Print boot banner to TTY1 (Linux only)
     try_boot_banner(boot_banner.as_ref());
 
-    // Create server with graceful shutdown
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-        shutdown_signal().await;
-        tracing::info!("Shutdown signal received, initiating graceful shutdown");
+    // MOSS-0004: Notify systemd that we're ready (Type=notify)
+    #[cfg(target_os = "linux")]
+    {
+        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
+        tracing::debug!("sd_notify: READY=1");
+    }
 
-        // Send goodbye announcement if callback provided
-        if let Some(callback) = shutdown_callback {
-            tracing::info!("Sending goodbye announcement before shutdown");
-            callback().await;
-        }
+    // MOSS-0004: Start systemd watchdog ping task (WatchdogSec=60)
+    // Ping every 25s — well within the 60s watchdog window.
+    #[cfg(target_os = "linux")]
+    {
+        let watchdog_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(25));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
+                    }
+                    _ = watchdog_token.cancelled() => break,
+                }
+            }
+        });
+    }
+
+    // ── Shutdown orchestration (MOSS-0004) ────────────────────────────
+    // ONE task handles OS signals → cancels the token. Everything cascades.
+    // Deploy/admin handlers cancel the same token directly from their API handlers.
+    let signal_token = shutdown_token.clone();
+    let hard_deadline_secs = config.hard_deadline_secs;
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        tracing::info!("OS shutdown signal received, cancelling shutdown token");
+        signal_token.cancel();
     });
+
+    // Hard-deadline watchdog: starts counting only after token cancellation.
+    // If the process is still alive after hard_deadline_secs, force-exit.
+    let watchdog_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        watchdog_token.cancelled().await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(hard_deadline_secs)).await;
+        tracing::error!(
+            deadline_secs = hard_deadline_secs,
+            "Shutdown deadline exceeded — forcing process exit"
+        );
+        std::process::exit(1);
+    });
+
+    // SIGTERM all companions immediately when shutdown is triggered.
+    // Companions are not critical — giving them early notice lets them clean up
+    // while the HTTP server is still draining its own connections.
+    if let Some(ref registry) = companion_registry {
+        let companion_term_registry = Arc::clone(registry);
+        let companion_term_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            companion_term_token.cancelled().await;
+            tracing::info!("Shutdown triggered — sending SIGTERM to all Companions");
+            companion_term_registry.sigterm_all().await;
+        });
+    }
+
+    // Server stops accepting connections when the token is cancelled
+    let server_token = shutdown_token.clone();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async move { server_token.cancelled().await });
 
     // Clone console for shutdown events
     let shutdown_console = console.clone();
 
-    // Run server with shutdown coordination
-    tokio::select! {
+    // Drain with a deadline. The timer starts only AFTER the token is cancelled.
+    // Without this gate, the timer races against the server's entire lifetime
+    // and kills the process N seconds after startup.
+    let drain_token = shutdown_token.clone();
+    let drain_deadline = tokio::time::Duration::from_secs(config.drain_deadline_secs);
+    let drained_cleanly = tokio::select! {
         result = server => {
-            if let Err(e) = result {
+            if let Err(ref e) = result {
                 tracing::error!(error = ?e, "Server error");
-                return Err(e.into());
+                return Err(anyhow::anyhow!("Server error: {}", e));
             }
+            true
         }
-        _ = shutdown_notify.notified() => {
-            tracing::info!("Admin shutdown requested");
+        _ = async {
+            drain_token.cancelled().await;
+            tokio::time::sleep(drain_deadline).await;
+        } => {
+            tracing::warn!(
+                deadline_secs = config.drain_deadline_secs,
+                "Server drain deadline exceeded — dropping server (SSE/long-lived connections will be severed)"
+            );
+            false
+        }
+    };
 
-            shutdown_console.emit(ConsoleEvent::new(
-                EventCategory::System,
-                EventStatus::Shutting,
-                "Admin requested".to_string()
-            ));
-        }
+    if drained_cleanly {
+        tracing::info!("All connections drained cleanly");
     }
 
-    // Allow in-flight requests to complete
-    tracing::info!(
-        "Waiting up to {}s for in-flight requests to complete",
-        config.graceful_shutdown_timeout_secs
-    );
+    // Send goodbye announcement after drain (non-blocking — hard watchdog is ticking)
+    if let Some(callback) = shutdown_callback {
+        tracing::info!("Sending goodbye announcement before shutdown");
+        callback().await;
+    }
 
-    console.emit(ConsoleEvent::new(
+    shutdown_console.emit(ConsoleEvent::new(
         EventCategory::System,
-        EventStatus::Draining,
-        "In-flight requests".to_string(),
+        EventStatus::Shutting,
+        "Shutting down".to_string(),
     ));
-    tokio::time::sleep(tokio::time::Duration::from_secs(
-        config.graceful_shutdown_timeout_secs,
-    ))
-    .await;
+
+    // SIGKILL any companion processes that survived the SIGTERM grace period.
+    // Without this, orphaned companions keep the systemd CGroup alive and
+    // delay the unit transition to `inactive`, blocking restarts/updates.
+    if let Some(ref registry) = companion_registry {
+        registry.kill_all_survivors().await;
+    }
+
+    // Brief pause for any final async cleanup before the runtime drops
+    // and aborts all remaining spawned tasks
+    tracing::info!("Final cleanup before exit");
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     tracing::info!("Moss daemon shutdown complete");
+
+    // MOSS-0004: Notify systemd we're stopping (completes the lifecycle)
+    #[cfg(target_os = "linux")]
+    {
+        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
+        tracing::debug!("sd_notify: STOPPING=1");
+    }
 
     // Print shutdown banner to TTY1 (Linux only)
     try_shutdown_banner(shutdown_banner.as_ref());
@@ -202,17 +295,17 @@ pub async fn run(
         "Shutdown complete".to_string(),
     ));
 
-    // Windows-only: Force exit to ensure ports are released
-    // On Windows, SSE connections and background tasks can keep the tokio runtime alive
-    // even after the server has stopped. This prevents the self-update flow from completing
-    // because the temp updater waits for the old process to exit.
-    // On Linux, we let the process exit naturally so systemd can properly detect the exit.
-    #[cfg(target_os = "windows")]
-    {
-        tracing::info!("Windows: forcing process exit to release ports");
-        std::process::exit(0);
-    }
+    // Force exit on all platforms. Without this, background tasks (41+ tokio::spawn
+    // fire-and-forget tasks, OS threads like udev, SSE connections) can keep the
+    // process alive indefinitely. The hard-deadline watchdog above is a safety net,
+    // but this explicit exit ensures clean termination in the normal path too.
+    //
+    // On Windows: releases ports so the temp updater can rebind
+    // On Linux: ensures systemd sees the exit immediately for Restart=always
+    tracing::info!("Forcing process exit to ensure clean termination");
+    std::process::exit(0);
 
-    #[cfg(not(target_os = "windows"))]
+    // Unreachable, but satisfies the return type for the compiler
+    #[allow(unreachable_code)]
     Ok(())
 }

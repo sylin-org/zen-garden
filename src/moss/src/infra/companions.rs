@@ -828,6 +828,39 @@ impl CompanionRegistry {
         Ok(())
     }
 
+    /// SIGTERM all running Companions immediately (non-blocking, no waiting)
+    ///
+    /// Sends SIGTERM to every companion process so they begin graceful shutdown.
+    /// Does NOT wait for them to exit — call `kill_all_survivors()` later for cleanup.
+    /// Used at the start of Moss shutdown to give companions a head start on cleanup.
+    pub async fn sigterm_all(&self) {
+        let companions = self.companions.read().await;
+        for (id, c) in companions.iter() {
+            if let Some(pid) = c.pid {
+                if is_process_alive(pid) {
+                    info!(companion = %id, pid = pid, "Sending SIGTERM to Companion");
+                    sigterm_process_by_pid(pid);
+                }
+            }
+        }
+    }
+
+    /// SIGKILL all companion processes that are still alive
+    ///
+    /// Called just before Moss exits to ensure no orphaned companions keep
+    /// the systemd CGroup alive and delay the unit transition to `inactive`.
+    pub async fn kill_all_survivors(&self) {
+        let companions = self.companions.read().await;
+        for (id, c) in companions.iter() {
+            if let Some(pid) = c.pid {
+                if is_process_alive(pid) {
+                    warn!(companion = %id, pid = pid, "Companion still alive after drain, sending SIGKILL");
+                    kill_process_by_pid(pid);
+                }
+            }
+        }
+    }
+
     /// Stop all running Companions
     ///
     /// Used during package deployment to ensure clean upgrade.
@@ -897,7 +930,7 @@ fn is_process_alive(pid: u32) -> bool {
     }
 }
 
-/// Kill a process by PID
+/// Kill a process by PID (SIGKILL)
 fn kill_process_by_pid(pid: u32) {
     #[cfg(windows)]
     {
@@ -912,6 +945,26 @@ fn kill_process_by_pid(pid: u32) {
         use std::process::Command as StdCommand;
         let _ = StdCommand::new("kill")
             .args(["-9", &pid.to_string()])
+            .output();
+    }
+}
+
+/// Send SIGTERM to a process by PID (graceful shutdown request)
+fn sigterm_process_by_pid(pid: u32) {
+    #[cfg(windows)]
+    {
+        // Windows has no SIGTERM — use taskkill without /F for graceful
+        use std::process::Command as StdCommand;
+        let _ = StdCommand::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .output();
+    }
+
+    #[cfg(unix)]
+    {
+        use std::process::Command as StdCommand;
+        let _ = StdCommand::new("kill")
+            .args(["-15", &pid.to_string()])
             .output();
     }
 }

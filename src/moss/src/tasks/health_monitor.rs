@@ -14,38 +14,32 @@ use garden_common::{
     NotificationTag, OfferingStatus, ServiceHealthStatus, NOTIF_SOURCE_OFFERINGS_DEGRADED,
 };
 use std::sync::atomic::Ordering;
+use tokio_util::sync::CancellationToken;
 
 /// Background health monitoring loop
 ///
 /// This task should be spawned with tokio::spawn() at daemon startup.
 /// It runs indefinitely, polling Docker every 30 seconds.
-///
-/// # Non-Blocking
-/// This function never returns - it's designed to run in the background
-/// for the entire daemon lifetime. Spawn it and forget it.
+/// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 ///
 /// # What It Does
 /// 1. Polls all registered services for status/health
 /// 2. Updates registry when status/health changes
 /// 3. Fetches container resource metrics (CPU, memory)
 /// 4. Discovers unregistered zen-offering containers
-/// 5. Adopts discoveredcontainers if they match templates (self-heal)
+/// 5. Adopts discovered containers if they match templates (self-heal)
 /// 6. Persists registry changes to disk
-///
-/// # Example
-/// ```rust,ignore
-/// // At daemon startup
-/// let state_clone = state.clone();
-/// tokio::spawn(async move {
-///     health_monitor_task(state_clone).await;
-/// });
-/// // Task runs forever in background
-/// ```
-pub async fn health_monitor_task(state: AppState) {
+pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = token.cancelled() => {
+                tracing::debug!("Health monitor shutting down (MOSS-0004)");
+                break;
+            }
+        }
 
         // Reap any terminated Companion processes to prevent zombies
         let reaped = state.companion_registry.reap_terminated().await;

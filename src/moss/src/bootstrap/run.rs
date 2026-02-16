@@ -60,6 +60,10 @@ pub async fn run(
     let stone_name = config.stone_name.clone();
     let port = config.port;
 
+    // MOSS-0004: Create shutdown token early so all phases can receive child tokens.
+    // The token is cancelled in server.rs when SIGTERM/Ctrl-C is received.
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+
     // Phase 0: Load or generate stone_id (persistent GUID v7)
     // This must happen early as many components need it
     let stone_id = infra::load_or_generate_stone_id().await;
@@ -215,6 +219,7 @@ pub async fn run(
         console_printer.clone(),
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
+        shutdown_token.child_token(),
     )
     .await;
     tracing::info!("UDP listener started (infrastructure handlers wired)");
@@ -368,9 +373,7 @@ pub async fn run(
                                 "Pond CA locked — unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
                             );
                         } else if methods.contains(&"fido2") {
-                            tracing::info!(
-                                "Pond CA locked — unlock with security key via pond UI"
-                            );
+                            tracing::info!("Pond CA locked — unlock with security key via pond UI");
                         } else {
                             tracing::info!(
                                 "Pond CA locked — run 'garden-rake pond unlock' with passphrase"
@@ -382,9 +385,7 @@ pub async fn run(
                         );
                     }
                 } else {
-                    tracing::info!(
-                        "Pond CA exists but is locked — run 'garden-rake pond unlock'"
-                    );
+                    tracing::info!("Pond CA exists but is locked — run 'garden-rake pond unlock'");
                 }
             }
         }
@@ -471,6 +472,7 @@ pub async fn run(
         use_static_host.is_some(),
         &network_monitor,
         Some(&console_printer),
+        shutdown_token.child_token(),
     )
     .await;
 
@@ -492,10 +494,7 @@ pub async fn run(
     .await;
     tracing::debug!("Docker monitor started (5s retry, 30s poll)");
 
-    // Phase 8: Create channels
-    let shutdown_tx = Arc::new(tokio::sync::Notify::new());
-
-    // Phase 8.5: Create domain event bus and SSE channels
+    // Phase 8: Create domain event bus and SSE channels
     let event_bus = infra::EventBus::new();
     let (sse_tx, _) = tokio::sync::broadcast::channel::<infra::SseEvent>(256);
     tracing::debug!("Domain event bus and SSE channels initialized");
@@ -572,7 +571,7 @@ pub async fn run(
         jobs: Arc::new(RwLock::new(HashMap::new())),
         sse_tx: sse_tx.clone(),
         event_bus: event_bus.clone(),
-        shutdown_tx: shutdown_tx.clone(),
+        shutdown_token: shutdown_token.clone(),
         start_time: std::time::Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
@@ -708,8 +707,9 @@ pub async fn run(
     // System metrics collector (feeds presence protocol and health monitors)
     tracing::info!("Starting system metrics collector");
     let metrics_collector_state = state.clone();
+    let metrics_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        crate::tasks::run_metrics_collector(metrics_collector_state).await;
+        crate::tasks::run_metrics_collector(metrics_collector_state, metrics_token).await;
     });
 
     // Companion registry scan and auto-start (discover and start Companions)
@@ -740,14 +740,20 @@ pub async fn run(
     // Presence monitoring (PRESENCE-0001)
     tracing::info!("Starting presence load monitor");
     let load_monitor_state = state.clone();
+    let load_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        crate::tasks::presence_monitor::run_load_monitor_task(load_monitor_state).await;
+        crate::tasks::presence_monitor::run_load_monitor_task(load_monitor_state, load_token).await;
     });
 
     tracing::info!("Starting presence health monitor");
     let health_monitor_state = state.clone();
+    let health_presence_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        crate::tasks::presence_monitor::run_health_monitor_task(health_monitor_state).await;
+        crate::tasks::presence_monitor::run_health_monitor_task(
+            health_monitor_state,
+            health_presence_token,
+        )
+        .await;
     });
 
     // Phase 11.1: IP change handler (resolution announcements)
@@ -1005,7 +1011,7 @@ pub async fn run(
     }
 
     // Phase 14: Start periodic announcer (30s background task)
-    crate::tasks::start_periodic_announcer(state.clone());
+    crate::tasks::start_periodic_announcer(state.clone(), shutdown_token.child_token());
 
     // Phase 15: Subscribe to domain events for immediate announcements
     // Note: ChirpListener already handles topology announcements via EventBus
@@ -1037,15 +1043,16 @@ pub async fn run(
     start_preinstall_handler(&state).await;
 
     // Phase 17: Health monitoring and auto-adoption
-    start_health_monitor(state.clone());
+    start_health_monitor(state.clone(), shutdown_token.child_token());
     if let Some(cfg) = config.file_config.clone() {
-        start_auto_adoption(state.clone(), cfg, &console_printer);
+        start_auto_adoption(state.clone(), cfg, &console_printer, shutdown_token.child_token());
     } else {
         // No config file - use default adoption config (profile-aware)
         start_auto_adoption_with_config(
             state.clone(),
             infra::AdoptionConfig::default(),
             &console_printer,
+            shutdown_token.child_token(),
         );
     }
 
@@ -1085,17 +1092,22 @@ pub async fn run(
         state.topology_cache.clone(),
         state.topology_dirty.clone(),
         state.self_entry.clone(),
+        shutdown_token.child_token(),
     );
 
     // Seed bank resilience + storage cache hygiene
     // Ensures hot-plugged prepared devices are auto-mounted and cache stays fresh.
     #[cfg(target_os = "linux")]
     {
-        crate::tasks::coordinator::start_seedbank_resilient_mount_system(state.clone());
+        crate::tasks::coordinator::start_seedbank_resilient_mount_system(
+            state.clone(),
+            shutdown_token.child_token(),
+        );
     }
     crate::tasks::start_storage_maintenance(
         state.storage_cache.clone(),
         state.topology_cache.clone(),
+        shutdown_token.child_token(),
     );
 
     // Populate storage_cache with local seed banks (cross-platform)
@@ -1195,11 +1207,12 @@ pub async fn run(
         app,
         &api_endpoint,
         console_printer,
-        shutdown_tx,
+        shutdown_token,
         ServerConfig::default(),
         Some(shutdown_callback),
         boot_banner,
         shutdown_banner,
+        Some(state.companion_registry.clone()),
     )
     .await
 }
@@ -1670,7 +1683,7 @@ async fn activate_pond_security(
             &state.stone_name,
             router::configure(state.clone()),
             console,
-            state.shutdown_tx.clone(),
+            state.shutdown_token.clone(),
         )
         .await;
 

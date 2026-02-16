@@ -27,6 +27,7 @@ pub async fn lantern_registration_loop(
     stone_name: String,
     endpoint: String,
     lantern_endpoint: String,
+    token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     use garden_common::RegisterRequest;
     use reqwest::Client;
@@ -67,6 +68,12 @@ pub async fn lantern_registration_loop(
         }
 
         // Sleep for 45 seconds before next heartbeat
-        tokio::time::sleep(tokio::time::Duration::from_secs(45)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(45)) => {}
+            _ = token.cancelled() => {
+                tracing::info!("Lantern registration loop shutting down (cancellation requested)");
+                return Ok(());
+            }
+        }
     }
 }

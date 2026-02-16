@@ -199,7 +199,12 @@ pub async fn run_scheduler_iteration(state: &AppState) -> Result<usize> {
 ///
 /// Runs indefinitely, checking for due tasks at the configured interval.
 /// Should be spawned with tokio::spawn().
-pub async fn task_scheduler_loop(state: AppState, config: TaskSchedulerConfig) {
+/// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
+pub async fn task_scheduler_loop(
+    state: AppState,
+    config: TaskSchedulerConfig,
+    token: tokio_util::sync::CancellationToken,
+) {
     tracing::info!(
         check_interval_secs = config.check_interval.as_secs(),
         "Starting task scheduler"
@@ -216,7 +221,13 @@ pub async fn task_scheduler_loop(state: AppState, config: TaskSchedulerConfig) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = token.cancelled() => {
+                tracing::debug!("Task scheduler shutting down (MOSS-0004)");
+                break;
+            }
+        }
 
         if let Err(e) = run_scheduler_iteration(&state).await {
             tracing::error!(error = ?e, "Task scheduler iteration failed");
@@ -225,8 +236,15 @@ pub async fn task_scheduler_loop(state: AppState, config: TaskSchedulerConfig) {
 }
 
 /// Start the task scheduler in the background
-pub fn start_task_scheduler(state: AppState) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(task_scheduler_loop(state, TaskSchedulerConfig::default()))
+pub fn start_task_scheduler(
+    state: AppState,
+    token: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(task_scheduler_loop(
+        state,
+        TaskSchedulerConfig::default(),
+        token,
+    ))
 }
 
 /// Backfill missing scheduled tasks for existing offerings

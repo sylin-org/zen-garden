@@ -92,13 +92,29 @@ pub async fn get_recent_logs(
 pub async fn stream_logs(
     State(state): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    // MOSS-0004: child token for cooperative shutdown
+    let token = state.shutdown_token.child_token();
     let rx = state.log_tx.subscribe();
-    let broadcast_stream = BroadcastStream::new(rx);
-
-    let stream = broadcast_stream.filter_map(|result| match result {
-        Ok(line) => Some(Ok(Event::default().data(line))),
-        Err(_) => None, // Skip lagged messages
+    let inner = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(line) => Some(Event::default().data(line)),
+        Err(_) => None,
     });
+
+    // MOSS-0004: Cancellation-aware wrapper — ends stream on shutdown
+    let stream = async_stream::stream! {
+        tokio::pin!(inner);
+        loop {
+            tokio::select! {
+                item = inner.next() => {
+                    match item {
+                        Some(event) => yield Ok::<Event, Infallible>(event),
+                        None => break,
+                    }
+                }
+                _ = token.cancelled() => break,
+            }
+        }
+    };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }

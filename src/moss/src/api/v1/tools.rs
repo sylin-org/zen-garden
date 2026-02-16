@@ -71,6 +71,8 @@ pub async fn stream_garden_tools_v1(
     let filter = parse_query(&query)?;
     let mut resume_cursor = query.since.unwrap_or(0);
 
+    // MOSS-0004: child token for cooperative shutdown
+    let token = state.shutdown_token.child_token();
     let rx = state.tools_tx.subscribe();
 
     let (snapshot_cursor, snapshot_tools, replay) = {
@@ -142,10 +144,25 @@ pub async fn stream_garden_tools_v1(
             )
         });
 
-    let stream = stream::select(
+    // MOSS-0004: Wrap in cancellation-aware stream — ends on shutdown
+    let inner = stream::select(
         snapshot_stream.chain(replay_stream).chain(live_stream),
         heartbeat_stream,
     );
+    let stream = async_stream::stream! {
+        tokio::pin!(inner);
+        loop {
+            tokio::select! {
+                item = inner.next() => {
+                    match item {
+                        Some(event) => yield event,
+                        None => break,
+                    }
+                }
+                _ = token.cancelled() => break,
+            }
+        }
+    };
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

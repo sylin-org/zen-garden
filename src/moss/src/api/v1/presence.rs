@@ -54,6 +54,9 @@ pub async fn stream_stone_presence(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     tracing::info!("Presence client connected");
 
+    // MOSS-0004: child token for cooperative shutdown
+    let token = state.shutdown_token.child_token();
+
     // Parse event filter from query params
     let filter = if let Some(cats) = query.categories {
         let categories = cats.split(',').map(|s| s.trim().to_string()).collect();
@@ -69,8 +72,8 @@ pub async fn stream_stone_presence(
     // Subscribe to SSE events (unified channel from SseListener)
     let rx = state.sse_tx.subscribe();
 
-    // Create stream: snapshot first, then filtered events
-    let stream = futures_util::stream::once(async move {
+    // Create the inner event stream: snapshot first, then filtered live events
+    let inner = futures_util::stream::once(async move {
         Event::default()
             .event(event_types::PRESENCE_SNAPSHOT)
             .data(snapshot_json)
@@ -86,8 +89,28 @@ pub async fn stream_stone_presence(
                 }
             }
         }),
-    )
-    .map(Ok);
+    );
+
+    // MOSS-0004: Wrap in cancellation-aware stream. When the shutdown token
+    // is cancelled, the stream ends — unblocking axum's graceful drain
+    // instead of hanging indefinitely on persistent SSE connections.
+    let stream = async_stream::stream! {
+        tokio::pin!(inner);
+        loop {
+            tokio::select! {
+                item = inner.next() => {
+                    match item {
+                        Some(event) => yield Ok::<Event, Infallible>(event),
+                        None => break,
+                    }
+                }
+                _ = token.cancelled() => {
+                    tracing::debug!("Presence stream: shutdown token cancelled");
+                    break;
+                }
+            }
+        }
+    };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }

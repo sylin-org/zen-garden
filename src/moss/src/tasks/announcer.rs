@@ -13,6 +13,7 @@
 use crate::AppState;
 use std::sync::atomic::Ordering;
 use tokio::time::{interval, Duration};
+use tokio_util::sync::CancellationToken;
 
 /// Start periodic announcement task
 ///
@@ -21,8 +22,8 @@ use tokio::time::{interval, Duration};
 /// liveness (peers mark offline after 45s silence).
 /// Skips announcements only if network is not ready (no valid LAN IP).
 ///
-/// Runs for process lifetime.
-pub fn start_periodic_announcer(state: AppState) {
+/// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
+pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(30));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -31,7 +32,13 @@ pub fn start_periodic_announcer(state: AppState) {
         ticker.tick().await;
 
         loop {
-            ticker.tick().await;
+            tokio::select! {
+                _ = ticker.tick() => {}
+                _ = token.cancelled() => {
+                    tracing::debug!("Periodic announcer shutting down (MOSS-0004)");
+                    break;
+                }
+            }
 
             // Check network readiness - skip if not ready
             if !state.subsystems.network.ready.load(Ordering::Relaxed) {

@@ -114,7 +114,7 @@ pub async fn try_start_https(
     stone_name: &str,
     app: Router,
     console: &ConsolePrinter,
-    shutdown_notify: Arc<tokio::sync::Notify>,
+    shutdown_token: tokio_util::sync::CancellationToken,
 ) -> Option<tokio::task::JoinHandle<()>> {
     // Locate certmesh certificate files
     let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
@@ -180,19 +180,26 @@ pub async fn try_start_https(
 
     // Spawn HTTPS server task alongside HTTP
     let handle = tokio::spawn(async move {
-        let server = axum::serve(tls_listener, app).with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = shutdown_notify.notified() => {
-                    tracing::info!("HTTPS server: admin shutdown requested");
-                }
-                _ = garden_common::infra::platform::shutdown_signal() => {
-                    tracing::info!("HTTPS server: OS shutdown signal");
-                }
-            }
-        });
+        let server_token = shutdown_token.clone();
+        let drain_token = shutdown_token.clone();
 
-        if let Err(e) = server.await {
-            tracing::error!(error = ?e, "HTTPS server error");
+        let server = axum::serve(tls_listener, app)
+            .with_graceful_shutdown(async move { server_token.cancelled().await });
+
+        // Drain with a deadline — starts counting only after token cancellation.
+        tokio::select! {
+            result = server => {
+                if let Err(e) = result {
+                    tracing::error!(error = ?e, "HTTPS server error");
+                }
+                tracing::info!("HTTPS server: drained cleanly");
+            }
+            _ = async {
+                drain_token.cancelled().await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
+            } => {
+                tracing::warn!("HTTPS server: drain deadline exceeded, dropping connections");
+            }
         }
     });
 

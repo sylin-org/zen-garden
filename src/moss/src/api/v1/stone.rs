@@ -246,9 +246,10 @@ pub async fn upgrade_stone_v1(
     if payload.component == MOSS_BINARY {
         tracing::info!("Moss binary staged, initiating graceful shutdown for upgrade");
 
-        // Signal graceful shutdown - systemd will restart us (Restart=always)
-        // and ExecStartPre will run moss-update-helper.sh to copy the staged binary
-        _state.shutdown_tx.notify_one();
+        // MOSS-0004: Cancel the shutdown token — cascades to all servers,
+        // background tasks, and SSE streams. systemd will restart us
+        // (Restart=always) and ExecStartPre copies the staged binary.
+        _state.shutdown_token.cancel();
 
         (
             StatusCode::ACCEPTED,
@@ -291,6 +292,14 @@ pub async fn deploy_stone_v1(
     body: Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!(size = body.len(), "🎁 A gift arrives from the garden!");
+
+    use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
+
+    state.console.emit(ConsoleEvent::new(
+        EventCategory::Ops,
+        EventStatus::Active,
+        format!("Package received ({} bytes)", body.len()),
+    ));
 
     // Get expected hash from header
     let expected_hash = match headers.get("x-package-sha256") {
@@ -340,6 +349,12 @@ pub async fn deploy_stone_v1(
     }
 
     tracing::info!(hash = %actual_hash, size = body.len(), "Package checksum verified");
+
+    state.console.emit(ConsoleEvent::new(
+        EventCategory::Ops,
+        EventStatus::Staged,
+        format!("Checksum verified ({}...)", &actual_hash[..12]),
+    ));
 
     // Extract and validate package
     let staging_base = garden_common::constants::paths::staging_dir();
@@ -610,6 +625,12 @@ pub async fn deploy_stone_v1(
     if contains_moss {
         tracing::info!("Package contains garden-moss, initiating upgrade sequence");
 
+        state.console.emit(ConsoleEvent::new(
+            EventCategory::Ops,
+            EventStatus::RestartTriggered,
+            "Update staged, restarting for upgrade".to_string(),
+        ));
+
         // Show update banner on TTY (Linux) for visual feedback
         garden_common::console::try_update_banner(Some(
             &garden_common::console::UpdateBannerInfo {
@@ -713,13 +734,13 @@ pub async fn deploy_stone_v1(
             }
 
             // Shutdown will be triggered after updater spawns
-            state.shutdown_tx.notify_one();
+            state.shutdown_token.cancel();
         }
 
         #[cfg(not(target_os = "windows"))]
         {
             // Linux: systemd ExecStartPre handles binary installation
-            state.shutdown_tx.notify_one();
+            state.shutdown_token.cancel();
         }
 
         (

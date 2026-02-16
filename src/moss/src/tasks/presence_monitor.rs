@@ -11,11 +11,18 @@ use crate::AppState;
 /// Run load monitoring task (every 5s)
 ///
 /// Emits StoneEvent::LoadUpdated via EventBus for presence stream.
-pub async fn run_load_monitor_task(state: AppState) {
+/// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
+pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(5));
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = token.cancelled() => {
+                tracing::debug!("Presence load monitor shutting down (MOSS-0004)");
+                break;
+            }
+        }
 
         // Get real system metrics from shared cache
         let (cpu_percent, memory_percent) = {
@@ -36,12 +43,19 @@ pub async fn run_load_monitor_task(state: AppState) {
 /// Run health monitor task (every 30s)
 ///
 /// Computes stone health from metrics and emits StoneEvent::HealthChanged when status changes.
-pub async fn run_health_monitor_task(state: AppState) {
+/// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
+pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(30));
     let mut last_health = "thriving".to_string();
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = token.cancelled() => {
+                tracing::debug!("Presence health monitor shutting down (MOSS-0004)");
+                break;
+            }
+        }
 
         // Get real metrics from shared cache
         let (cpu, memory) = {

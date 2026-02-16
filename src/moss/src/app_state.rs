@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 /// Job execution status
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -94,8 +95,11 @@ pub struct AppState {
     /// Domain event bus (unified event dispatch for offerings, storage, stone events)
     pub event_bus: EventBus,
 
-    /// Shutdown coordination channel
-    pub shutdown_tx: Arc<tokio::sync::Notify>,
+    /// Cooperative shutdown token (MOSS-0004: phased shutdown)
+    /// Cancel this to signal all background tasks, SSE streams, and servers to stop.
+    /// This is the SINGLE source of truth for shutdown. OS signals, deploy handlers,
+    /// and admin API all cancel this token; everything cascades from there.
+    pub shutdown_token: CancellationToken,
 
     /// Daemon start time (for uptime calculation)
     pub start_time: Instant,
@@ -169,7 +173,8 @@ pub struct AppState {
 
     /// Pond ceremony host — drives pond init/join/unlock ceremonies
     /// using the koi-common ceremony protocol.
-    pub pond_ceremony_host: Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
+    pub pond_ceremony_host:
+        Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
 
     /// Harvest store (backup manifests and archives)
     pub harvest_store: Arc<HarvestStore>,

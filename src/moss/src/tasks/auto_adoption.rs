@@ -16,6 +16,7 @@ use crate::infra::config::AdoptionConfig;
 use crate::AppState;
 use garden_common::{OfferingMode, ServiceHealthStatus};
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// Background auto-adoption loop
 ///
@@ -51,7 +52,7 @@ use std::time::Instant;
 /// });
 /// // Task runs forever in background
 /// ```
-pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
+pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
     let orchestrator = DetectionOrchestrator::new(state.docker.clone());
     let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
@@ -74,7 +75,18 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig) {
 
         // First scan runs immediately (no sleep), subsequent scans wait
         if scan_count > 0 {
-            tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)) => {}
+                _ = token.cancelled() => {
+                    tracing::info!("Auto-adoption task shutting down (cancellation requested)");
+                    return;
+                }
+            }
+        }
+        // Check cancellation before starting a potentially long scan
+        if token.is_cancelled() {
+            tracing::info!("Auto-adoption task shutting down (cancellation requested)");
+            return;
         }
         scan_count = scan_count.saturating_add(1);
 

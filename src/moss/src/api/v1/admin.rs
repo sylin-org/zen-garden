@@ -38,7 +38,7 @@ use crate::AppState;
 /// - 200 OK: Shutdown initiated successfully
 pub async fn moss_shutdown(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!("Admin moss shutdown requested");
-    state.shutdown_tx.notify_one();
+    state.shutdown_token.cancel();
 
     (
         StatusCode::OK,

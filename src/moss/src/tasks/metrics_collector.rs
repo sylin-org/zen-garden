@@ -35,7 +35,8 @@ use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 ///
 /// **Rationale:** Single collector task prevents redundant sysinfo refreshes.
 /// Multiple consumers (presence SSE, load monitor, health checks) read from cache.
-pub async fn run_metrics_collector(state: AppState) {
+/// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
+pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::CancellationToken) {
     let mut fast_interval = interval(metrics_fast_interval());
     let mut disk_interval = interval(metrics_disk_interval());
 
@@ -205,6 +206,11 @@ pub async fn run_metrics_collector(state: AppState) {
                         }
                     }
                 }
+            }
+
+            _ = token.cancelled() => {
+                tracing::debug!("Metrics collector shutting down (MOSS-0004)");
+                break;
             }
         }
     }

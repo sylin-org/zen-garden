@@ -2508,7 +2508,9 @@ async fn async_main() -> anyhow::Result<()> {
                     PondAction::Join { code } => PondActionType::Join { code },
                     PondAction::Enroll => PondActionType::Enroll,
                     PondAction::Trust => PondActionType::Trust,
-                    PondAction::Unlock { passphrase, totp } => PondActionType::Unlock { passphrase, totp },
+                    PondAction::Unlock { passphrase, totp } => {
+                        PondActionType::Unlock { passphrase, totp }
+                    }
                     PondAction::Remove => PondActionType::Remove,
                     PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },
                     PondAction::Promote { passphrase } => PondActionType::Promote { passphrase },
@@ -2523,7 +2525,7 @@ async fn async_main() -> anyhow::Result<()> {
                     fresh_mode,
                     cli.verbose,
                     Some(&*GLOBAL_CACHE),
-                    output_format.clone(),
+                    output_format,
                     field.clone(),
                 )
                 .await?;
@@ -2738,8 +2740,7 @@ async fn async_main() -> anyhow::Result<()> {
             } => {
                 let resolved =
                     dispatch::resolve_endpoint(&client, at, Some(&*GLOBAL_CACHE)).await?;
-                commands::api::execute_api_command(&resolved, category, endpoint, examples)
-                    .await?;
+                commands::api::execute_api_command(&resolved, category, endpoint, examples).await?;
             }
 
             Commands::Refresh {

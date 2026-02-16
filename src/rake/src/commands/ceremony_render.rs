@@ -1,4 +1,4 @@
-﻿//! Async HTTP ceremony render loop for garden-rake.
+//! Async HTTP ceremony render loop for garden-rake.
 //!
 //! This is the zen-garden equivalent of koi's `ceremony_cli` module.
 //! It drives a ceremony hosted on Moss via HTTP POST and renders the
@@ -110,11 +110,7 @@ pub async fn run_ceremony_http(
 
     loop {
         // POST to Moss ceremony endpoint
-        let http_resp = client
-            .post(ceremony_url)
-            .json(&request)
-            .send()
-            .await?;
+        let http_resp = client.post(ceremony_url).json(&request).send().await?;
 
         if !http_resp.status().is_success() {
             let status = http_resp.status();
@@ -193,7 +189,7 @@ fn md_to_ansi(line: &str, base_style: fn(&str) -> colored::ColoredString) -> Str
             if chars.peek() == Some(&'*') {
                 // ** … ** bold span
                 chars.next(); // consume second *
-                // Flush plain buffer
+                              // Flush plain buffer
                 if !plain_buf.is_empty() {
                     result.push_str(&format!("{}", base_style(&plain_buf)));
                     plain_buf.clear();
@@ -223,7 +219,7 @@ fn md_to_ansi(line: &str, base_style: fn(&str) -> colored::ColoredString) -> Str
                 }
                 let mut span = String::new();
                 let mut closed = false;
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == '*' {
                         closed = true;
                         break;

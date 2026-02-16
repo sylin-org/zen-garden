@@ -178,10 +178,7 @@ impl Drop for MdnsHandle {
 /// The registration allows unenrolled Rake clients to discover the cornerstone
 /// without any HTTP calls — solving the chicken-and-egg problem where
 /// `/api/v1/pond/status` may be behind HTTPS.
-pub async fn register_certmesh_service(
-    koi_handle: &std::sync::Arc<KoiHandle>,
-    http_port: u16,
-) {
+pub async fn register_certmesh_service(koi_handle: &std::sync::Arc<KoiHandle>, http_port: u16) {
     // Only the cornerstone (primary CA) should announce
     let announcement = match koi_handle.certmesh() {
         Ok(handle) => match handle.core() {

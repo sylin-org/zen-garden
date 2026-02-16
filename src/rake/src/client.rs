@@ -45,11 +45,7 @@ pub async fn resolve_target_endpoint(
     // If it's a host/IP without a port, default to moss's HTTP port.
     // When enrolled, try HTTPS first.
     if trimmed.contains('.') {
-        let http_endpoint = format!(
-            "http://{}:{}",
-            trimmed,
-            garden_common::constants::MOSS_HTTP
-        );
+        let http_endpoint = format!("http://{}:{}", trimmed, garden_common::constants::MOSS_HTTP);
 
         // If enrolled, try HTTPS endpoint first
         if is_enrolled() {

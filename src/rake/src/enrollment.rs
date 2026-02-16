@@ -1,4 +1,4 @@
-﻿//! Client enrollment — certificate storage and mTLS configuration
+//! Client enrollment — certificate storage and mTLS configuration
 //!
 //! Handles writing enrollment certificates to disk and loading them
 //! for future mTLS connections. Certificate paths match Moss's expected
@@ -48,24 +48,18 @@ pub fn write_enrollment_certs(
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create cert directory: {}", dir.display()))?;
 
-    std::fs::write(dir.join("cert.pem"), service_cert)
-        .context("Failed to write cert.pem")?;
+    std::fs::write(dir.join("cert.pem"), service_cert).context("Failed to write cert.pem")?;
 
-    std::fs::write(dir.join("key.pem"), service_key)
-        .context("Failed to write key.pem")?;
+    std::fs::write(dir.join("key.pem"), service_key).context("Failed to write key.pem")?;
 
     // Restrict key.pem permissions on Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            dir.join("key.pem"),
-            std::fs::Permissions::from_mode(0o600),
-        )?;
+        std::fs::set_permissions(dir.join("key.pem"), std::fs::Permissions::from_mode(0o600))?;
     }
 
-    std::fs::write(dir.join("ca.pem"), ca_cert)
-        .context("Failed to write ca.pem")?;
+    std::fs::write(dir.join("ca.pem"), ca_cert).context("Failed to write ca.pem")?;
 
     // fullchain = service cert + CA cert
     let fullchain = format!("{}\n{}", service_cert.trim(), ca_cert.trim());

@@ -453,8 +453,8 @@ pub fn discover_certmesh_ca(timeout: Duration) -> Result<Option<CornerstoneInfo>
     use mdns_sd::{ServiceDaemon, ServiceEvent};
     use std::time::Instant;
 
-    let mdns = ServiceDaemon::new()
-        .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
+    let mdns =
+        ServiceDaemon::new().map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
 
     let receiver = mdns
         .browse(garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL)
@@ -503,9 +503,7 @@ pub fn discover_certmesh_ca(timeout: Duration) -> Result<Option<CornerstoneInfo>
                         "Discovered certmesh CA cornerstone via mDNS"
                     );
 
-                    let _ = mdns.stop_browse(
-                        garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL,
-                    );
+                    let _ = mdns.stop_browse(garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL);
 
                     return Ok(Some(CornerstoneInfo {
                         endpoint,

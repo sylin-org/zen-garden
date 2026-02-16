@@ -14,8 +14,8 @@
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
-use crate::suggestions;
 use crate::enrollment;
+use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -151,10 +151,7 @@ async fn execute_pond_init(
     passphrase: Option<String>,
     profile: Option<String>,
 ) -> anyhow::Result<()> {
-    let ceremony_url = format!(
-        "{}/api/v1/pond/ceremony",
-        endpoint.trim_end_matches('/')
-    );
+    let ceremony_url = format!("{}/api/v1/pond/ceremony", endpoint.trim_end_matches('/'));
 
     // Pre-fill data from CLI flags (same pattern as koi certmesh create)
     let mut initial_data = serde_json::Map::new();
@@ -223,7 +220,10 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
             if let Ok(body) = response.json::<serde_json::Value>().await {
                 // JSON output mode — emit raw API response
                 if ctx.wants_json() {
-                    println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&body).unwrap_or_default()
+                    );
                     return Ok(());
                 }
 
@@ -236,10 +236,7 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
                         .get("locked")
                         .and_then(|l| l.as_bool())
                         .unwrap_or(false);
-                    let name = data
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("");
+                    let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let profile = data
                         .get("profile")
                         .and_then(|p| p.as_str())
@@ -486,10 +483,7 @@ async fn execute_pond_enroll(ctx: &CommandContext) -> anyhow::Result<()> {
     }
 
     // 3. Discover cornerstone via mDNS
-    println!(
-        "{}Discovering cornerstone via mDNS...",
-        indent
-    );
+    println!("{}Discovering cornerstone via mDNS...", indent);
 
     let cornerstone = crate::discovery::discover_certmesh_ca(Duration::from_secs(5))?;
 
@@ -517,7 +511,10 @@ async fn execute_pond_enroll(ctx: &CommandContext) -> anyhow::Result<()> {
 
     // 4. Prompt for TOTP code
     let code = if cornerstone.auth_method == "totp" {
-        print!("{}Enter the 6-digit code from your authenticator app: ", indent);
+        print!(
+            "{}Enter the 6-digit code from your authenticator app: ",
+            indent
+        );
         use std::io::Write;
         std::io::stdout().flush()?;
         let mut code = String::new();
@@ -616,11 +613,7 @@ async fn execute_pond_enroll(ctx: &CommandContext) -> anyhow::Result<()> {
                 service_cert,
                 service_key,
             )?;
-            println!(
-                "{}Certificates written to {}",
-                indent,
-                certs_dir.display()
-            );
+            println!("{}Certificates written to {}", indent, certs_dir.display());
 
             // 6b. Install CA in system trust store (only if admin)
             if is_admin {
@@ -635,10 +628,7 @@ async fn execute_pond_enroll(ctx: &CommandContext) -> anyhow::Result<()> {
                             ui::status_indicator("warning", ctx.term.supports_color),
                             e
                         );
-                        eprintln!(
-                            "{}Browsers may not trust pond HTTPS connections.",
-                            indent
-                        );
+                        eprintln!("{}Browsers may not trust pond HTTPS connections.", indent);
                     }
                 }
             } else {

@@ -4,6 +4,7 @@
 **Date:** 2026-02-16  
 **Authors:** Leo Botinelly, Claude  
 **Supersedes:** Federation/Process/Consistency sections of same-offering-orchestration.md  
+**Depends On:** KOI-0001 (Embedded HTTP & UDP Bridging) — Phase 0 prerequisite  
 **Related:** OFFER-0003 (FQN), OFFER-0004 (Placement), Koi Embedded Integration, Lantern Registry, Sub-Capabilities Proposal, Nurturing Proposal
 
 ---
@@ -712,6 +713,19 @@ Lantern's web UI visualizes replica topology, election history, and sync status 
 ---
 
 ## Implementation Phases
+
+### Phase 0: Koi Infrastructure (prerequisite — see KOI-0001)
+
+**Effort:** ~1 week (in Koi repo + Moss wiring)  
+**Spec:** [KOI-0001: Embedded HTTP & UDP Bridging](KOI-0001-phase0-prerequisite.md) (full proposal in `koi` repo)
+
+Before any orchestration logic, containerized offerings need a path to interact with the host network. This phase activates three capabilities:
+
+- **0a:** koi-embedded HTTP self-hosting — activate the dead `http_enabled` config. When true, `start()` spawns an axum listener on `:5641` serving the same API as standalone Koi. Domain routes already exist in each crate; this wires them together (~150 lines).
+- **0b:** koi-udp crate — new Koi domain crate bridging host UDP sockets into HTTP/SSE. Containerized orchestrators subscribe to Garden mesh traffic (`stone_chirp`, `tools_beacon` on port 7184) via `GET /v1/udp/recv/{id}`. Also enables outbound sends (WoL, SSDP, etc.).
+- **0c:** Moss container wiring — `extra_hosts` for `host.docker.internal`, env var injection (`KOI_ENDPOINT`, `GARDEN_STONE_ENDPOINT`, `GARDEN_OFFERING_NAME`), enable `dns_enabled(true)` and `http(true)` in Koi builder.
+
+After this phase, any containerized offering can `curl http://host.docker.internal:5641/v1/dns/add` or subscribe to mesh UDP — no `network_mode: host` required.
 
 ### Phase 1: Shared Types, State Machine & Election (Foundation)
 

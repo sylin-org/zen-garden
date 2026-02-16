@@ -3,7 +3,7 @@
 **Status:** Draft  
 **Date:** 2026-02-16  
 **Authors:** Leo Botinelly, Claude  
-**Depends On:** ORCH-0001 (Offering Orchestration), Sub-Capabilities Proposal, Tools API  
+**Depends On:** ORCH-0001 (Offering Orchestration), KOI-0001 (Embedded HTTP & UDP Bridging), Sub-Capabilities Proposal, Tools API  
 **Policy Trigger:** `garden-rake policy ollama routed`
 
 ---
@@ -473,6 +473,22 @@ All standard Ollama API endpoints, proxied transparently with routing logic appl
 ---
 
 ## Implementation Phases
+
+### Phase 0: Koi Infrastructure (KOI-0001 prerequisite)
+
+**Effort:** ~1 week (shared with ORCH-0001 Phase 0)
+
+The containerized router cannot discover peers, register DNS names, or participate in the UDP mesh without Koi bridging. This phase is defined in KOI-0001 and shared with ORCH-0001:
+
+- **Phase 0a** — `koi-embedded` HTTP self-hosting on `:5641` (activate dead `http_enabled`, spawn listener in `start()`)
+- **Phase 0b** — `koi-udp` crate (bind/send/recv-SSE for UDP datagrams over HTTP)
+- **Phase 0c** — Moss container wiring (`extra_hosts`, `KOI_HTTP_URL` env var, DNS resolver injection)
+
+The router specifically needs:
+- `/v1/udp/bind` + `/v1/udp/recv` SSE — to listen for ORCH election messages and Stone chirps from inside the container
+- `/v1/udp/send` — to emit election candidates and results
+- `/v1/dns/entries` — to register `ollama.lan` DNS takeover when becoming active router
+- `/v1/mdns/register` — to advertise the router instance on the local network
 
 ### Phase 1: Discovery & Binning
 

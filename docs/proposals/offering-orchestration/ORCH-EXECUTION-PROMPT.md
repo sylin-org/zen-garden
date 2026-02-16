@@ -7,8 +7,9 @@ You are implementing the Zen Garden offering orchestration system as defined in 
 - **ORCH-0001**: Offering Orchestration & Autonomous Resilience (core system)
 - **ORCH-0002**: AI Capability Router (Ollama)
 - **ORCH-0003**: Database Choreographer (MongoDB)
+- **KOI-0001**: Embedded HTTP & UDP Bridging (Phase 0 prerequisite)
 
-Read all three specs thoroughly before beginning any implementation work. **This prompt implements ORCH-0001 only.**
+Read all three ORCH specs and KOI-0001 thoroughly before beginning any implementation work. **This prompt implements ORCH-0001 only.** KOI-0001 Phase 0 must be completed before ORCH-0001 Phase 1.
 
 ## Project Overview
 
@@ -48,6 +49,9 @@ The codebase already has key systems that this work extends. Read and understand
 | **Offering mode data** | `src/common/src/types.rs` | `OfferingModeData { Managed(ManagedData), Adopted(AdoptedData), Borrowed(BorrowedData) }` |
 | **State provider** | `src/moss/src/tasks/state_provider.rs` | `MossStateProvider` — election criteria provider |
 | **Koi handle** | `src/moss/src/app_state.rs` | `koi_handle: Arc<koi_embedded::KoiHandle>` — `.mdns()`, `.dns()`. DNS NOT yet used in Moss |
+| **Koi HTTP surface** | `koi-embedded` (after KOI-0001 Phase 0a) | Self-hosted on `:5641`. Domain routes: `/v1/mdns/*`, `/v1/dns/*`, `/v1/certmesh/*`, `/v1/health/*`, `/v1/proxy/*` |
+| **Koi UDP bridge** | `koi-udp` crate (after KOI-0001 Phase 0b) | `/v1/udp/bind`, `/v1/udp/send`, `/v1/udp/recv` (SSE), `/v1/udp/unbind` — containers access UDP mesh via HTTP |
+| **Container wiring** | `src/moss/src/tasks/job_executors.rs` (after KOI-0001 Phase 0c) | `extra_hosts: ["host.docker.internal:<moss-ip>"]`, env: `KOI_HTTP_URL`, `GARDEN_STONE_ID`, `GARDEN_UDP_PORT` |
 | **Tending** | `src/rake/src/tending.rs` | `TendingState`, `read_tending()`, `execute_on_stone()` |
 | **Bootstrap** | `src/moss/src/bootstrap/run.rs` | Where `ElectionService` is spawned (~L558–636), separate from coordinator |
 | **Garden API** | `src/moss/src/api/v1/garden.rs` | `get_garden_v1`, `get_stone_v1`, `get_topology_v1` |
@@ -59,6 +63,8 @@ The codebase already has key systems that this work extends. Read and understand
 - No chirp message enum — the system uses string announcement type constants with different payload structs
 - No `observe` command in Rake — needs to be created
 - No DNS registration code in Moss — `.dns()` handle exists but has never been called; research `koi_embedded::DnsHandle` API first
+- No `koi-udp` crate — created in KOI-0001 Phase 0b; until then, containers cannot send/receive UDP
+- No container network wiring — containers have no `extra_hosts`, no injected env vars; created in KOI-0001 Phase 0c
 - No `replicable` field on offering manifests
 - No orchestration fields on `ToolProjection` or `TopologyServiceEntry`
 - No `RoleChanged` variant on `OfferingEvent`
@@ -862,3 +868,5 @@ Lantern receives election messages (`ELECTION_REQUEST`, `ELECTION_CANDIDATE`, `E
 - Do NOT scatter DNS/presence/chirp calls at each role transition. Emit `OfferingEvent::RoleChanged` once; event bus subscribers handle the rest.
 - Do NOT import infra from domain modules. Use traits for abstraction boundaries.
 - Do NOT use `f64::INFINITY` for pinned scores. Use `1001_i16`.
+- Do NOT implement Koi HTTP self-hosting or koi-udp here. That work is KOI-0001 (Phase 0). Assume it exists when you reach Phase 1.
+- Do NOT wire container networking (extra_hosts, env vars, DNS) in ORCH-0001. That is KOI-0001 Phase 0c.

@@ -11,6 +11,9 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-16
 
+- KOI-0001: Embedded HTTP & UDP Bridging proposal — Phase 0 prerequisite for ORCH suite
+- ORCH-0001/0002 updated with KOI-0001 Phase 0 dependency chain
+- ORCH-EXECUTION-PROMPT updated with Koi HTTP/UDP structures and Phase 0 guard rails
 - **BREAKING**: Removed `shutdown_tx` (Arc<Notify>) — CancellationToken is now the single shutdown source of truth
 - Fixed crash loop: drain deadline timer started at boot instead of after shutdown signal
 - Fixed UDP recv buffer too small (4 KB → 64 KB) — eliminates WSAEMSGSIZE errors on Windows

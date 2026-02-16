@@ -91,6 +91,17 @@ pub struct PondPromoteRequest {
     pub passphrase: String,
 }
 
+#[derive(Deserialize)]
+pub struct ClientEnrollRequest {
+    /// Client machine's hostname
+    pub hostname: String,
+    /// TOTP code from authenticator app
+    pub code: String,
+    /// Additional SANs for the certificate (e.g. IPs, .local aliases)
+    #[serde(default)]
+    pub sans: Vec<String>,
+}
+
 // ============================================================================
 // Response types
 // ============================================================================
@@ -134,6 +145,22 @@ pub struct PondJoinResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub service_key: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ClientEnrollResponse {
+    /// PEM-encoded CA public certificate (for trust store + ca.pem)
+    pub ca_cert: String,
+    /// PEM-encoded service certificate (for mTLS client identity)
+    pub service_cert: String,
+    /// PEM-encoded private key (for mTLS client identity)
+    pub service_key: String,
+    /// CA certificate fingerprint for verification
+    pub ca_fingerprint: String,
+    /// Enrolled hostname (echoed back)
+    pub hostname: String,
+    /// Certificate expiry (ISO 8601)
+    pub cert_expires: String,
 }
 
 #[derive(Serialize)]
@@ -318,6 +345,15 @@ async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone
         if ip != "127.0.0.1" && !ip.is_empty() {
             let _ = mdns.reregister(&ip, mac.as_deref()).await;
         }
+    }
+
+    // Register certmesh CA service on mDNS if this is the cornerstone
+    if enrolled {
+        crate::mdns::register_certmesh_service(
+            &state.koi_handle,
+            garden_common::constants::MOSS_HTTP,
+        )
+        .await;
     }
 }
 
@@ -1653,3 +1689,88 @@ async fn execute_pond_unlock_from_ceremony(
 //   CertmeshCore::delete_auto_unlock_key()
 //   CertmeshCore::try_auto_unlock()
 //   CertmeshCore::configure_auto_unlock_for_profile()
+
+// ============================================================================
+// Client Enrollment
+// ============================================================================
+
+/// POST /api/v1/pond/enroll-client — Client enrollment (no stone state mutation)
+///
+/// Issues a certificate for a non-Moss client (Rake on a workstation).
+/// Only works on the cornerstone (the stone with the active CA).
+/// Auth-gated by TOTP code in the request body.
+///
+/// Unlike `/api/v1/pond/join`, this does NOT trigger `notify_enrollment_changed()`,
+/// start HTTPS, or emit `PondEvent`. It calls `CertmeshCore::enroll()` directly —
+/// same crypto, same auth verification, but without stone lifecycle side effects.
+pub async fn pond_enroll_client_v1(
+    State(state): State<AppState>,
+    Json(payload): Json<ClientEnrollRequest>,
+) -> PondResult<ClientEnrollResponse> {
+    // Only the cornerstone can issue certificates
+    let is_cornerstone = if let Ok(handle) = state.koi_handle.certmesh() {
+        if let Ok(core) = handle.core() {
+            core.certmesh_status().await.ca_initialized
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !is_cornerstone {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            "NOT_CORNERSTONE",
+            "This stone is not the CA. Discover the cornerstone via _certmesh._tcp mDNS.",
+            None,
+        ));
+    }
+
+    let core = get_certmesh_core(&state)?;
+
+    let join_req = koi_certmesh::protocol::JoinRequest {
+        hostname: payload.hostname.clone(),
+        auth: koi_crypto::auth::AuthResponse::Totp {
+            code: payload.code,
+        },
+        sans: payload.sans,
+    };
+
+    let join_resp = core.enroll(&join_req).await.map_err(certmesh_err)?;
+
+    // Update the member's role to Client in the roster
+    if let Ok(handle) = state.koi_handle.certmesh() {
+        if let Ok(core) = handle.core() {
+            let _ = core
+                .set_member_role(&payload.hostname, koi_certmesh::roster::MemberRole::Client)
+                .await;
+        }
+    }
+
+    // Determine cert expiry from roster
+    let cert_expires = {
+        let status = core.certmesh_status().await;
+        status
+            .members
+            .iter()
+            .find(|m| m.hostname == payload.hostname)
+            .map(|m| m.cert_expires.clone())
+            .unwrap_or_default()
+    };
+
+    tracing::info!(
+        hostname = %payload.hostname,
+        fingerprint = %join_resp.ca_fingerprint,
+        "Client enrolled in pond"
+    );
+
+    Ok(Json(ApiResponse::new(ClientEnrollResponse {
+        ca_cert: join_resp.ca_cert,
+        service_cert: join_resp.service_cert,
+        service_key: join_resp.service_key,
+        ca_fingerprint: join_resp.ca_fingerprint,
+        hostname: join_resp.hostname,
+        cert_expires,
+    })))
+}

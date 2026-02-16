@@ -349,6 +349,13 @@ pub async fn run(
                 pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
                 pond_state.seed_enrolled(true);
                 tracing::info!("Pond active — CA initialized and unlocked");
+
+                // Register _certmesh._tcp mDNS so Rake clients can discover us
+                crate::mdns::register_certmesh_service(
+                    &koi_handle,
+                    garden_common::constants::MOSS_HTTP,
+                )
+                .await;
             } else if status.ca_initialized {
                 // CA is initialized but still locked — no auto-unlock key
                 // existed, or decryption failed.  Report available methods.

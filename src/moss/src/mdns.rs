@@ -165,6 +165,73 @@ impl Drop for MdnsHandle {
     }
 }
 
+// ============================================================================
+// Certmesh CA mDNS Registration
+// ============================================================================
+
+/// Register the certmesh CA service (`_certmesh._tcp`) on mDNS.
+///
+/// Only registers when this stone is an unlocked cornerstone (primary CA).
+/// Called from `notify_enrollment_changed()` and at boot when the CA is
+/// already initialized and unlocked.
+///
+/// The registration allows unenrolled Rake clients to discover the cornerstone
+/// without any HTTP calls — solving the chicken-and-egg problem where
+/// `/api/v1/pond/status` may be behind HTTPS.
+pub async fn register_certmesh_service(
+    koi_handle: &std::sync::Arc<KoiHandle>,
+    http_port: u16,
+) {
+    // Only the cornerstone (primary CA) should announce
+    let announcement = match koi_handle.certmesh() {
+        Ok(handle) => match handle.core() {
+            Ok(core) => core.ca_announcement(http_port).await,
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+
+    let Some(ca_info) = announcement else {
+        tracing::debug!("Not registering _certmesh._tcp: not an unlocked cornerstone");
+        return;
+    };
+
+    let mdns = match koi_handle.mdns() {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = ?e, "mDNS not available for certmesh registration");
+            return;
+        }
+    };
+
+    let (ip, _mac) = garden_common::infra::network::get_local_ip_and_mac();
+    if ip == "127.0.0.1" || ip.is_empty() {
+        tracing::debug!("Certmesh mDNS registration deferred - no valid IP");
+        return;
+    }
+
+    match mdns.register(koi_embedded::RegisterPayload {
+        name: ca_info.name.clone(),
+        service_type: garden_common::constants::CERTMESH_SERVICE_TYPE.to_string(),
+        port: ca_info.port,
+        ip: Some(ip.clone()),
+        lease_secs: None,
+        txt: ca_info.txt,
+    }) {
+        Ok(_) => {
+            tracing::info!(
+                name = %ca_info.name,
+                ip = %ip,
+                port = ca_info.port,
+                "Certmesh CA service registered on mDNS (_certmesh._tcp)"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to register certmesh CA mDNS service");
+        }
+    }
+}
+
 /// Create mDNS handle, optionally registering immediately
 ///
 /// If `current_ip` is a loopback address, the handle is created but

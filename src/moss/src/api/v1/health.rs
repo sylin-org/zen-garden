@@ -78,6 +78,16 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
         )
     };
 
+    // Pond name — zero-cost check (AtomicBool) + async name read only when active
+    let pond = if state
+        .pond_active
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        state.pond.name().await
+    } else {
+        None
+    };
+
     (
         http_status,
         Json(DaemonHealthStatus {
@@ -87,6 +97,7 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
             components,
             os,
             architecture,
+            pond,
             docker_available: docker_ok,
             disk_space_ok: disk_ok,
             memory_ok,

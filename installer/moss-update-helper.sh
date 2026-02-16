@@ -25,6 +25,12 @@ log() {
     echo "[moss-update-helper] $1"
 }
 
+# Write progress to TTY1 for physical console visibility
+# Falls back silently if /dev/tty1 is not available
+tty_log() {
+    echo "[update] $1" > /dev/tty1 2>/dev/null || true
+}
+
 ensure_staging_dirs() {
     if [[ ! -d "$STAGING_DIR" ]]; then
         mkdir -p "$STAGING_DIR"
@@ -54,6 +60,7 @@ deploy_bin() {
     local count
     count=$(find "$src_dir" -type f | wc -l)
     log "Deployed bin/ ($count files) → /usr/local/bin/"
+    tty_log "  ✓ Binaries installed ($count files)"
 }
 
 # Deploy scripts/ → filesystem paths (traversal)
@@ -106,6 +113,7 @@ deploy_scripts() {
     local count
     count=$(find "$src_dir" -type f | wc -l)
     log "Deployed scripts/ ($count files)"
+    tty_log "  ✓ Scripts deployed ($count files)"
 }
 
 # Apply garden configuration (timezone, NTP)
@@ -141,6 +149,7 @@ process_validated_upgrade() {
     fi
 
     log "Found validated upgrade in: $VALIDATED_DIR"
+    tty_log "Installing update..."
 
     # Deploy bin/ → /usr/local/bin/
     deploy_bin "$VALIDATED_DIR/bin"
@@ -154,6 +163,7 @@ process_validated_upgrade() {
     # Cleanup validated staging
     rm -rf "$VALIDATED_DIR"
     log "Upgrade complete"
+    tty_log "  ✓ Update complete, starting new version..."
 }
 
 main() {

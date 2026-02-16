@@ -262,9 +262,12 @@ Wants=network-online.target
 Wants=docker.service
 
 [Service]
-Type=simple
+Type=notify
 User=root
 Group=root
+NotifyAccess=main
+WatchdogSec=60
+TimeoutStopSec=20
 ExecStartPre=/usr/local/bin/moss-update-helper.sh
 ExecStart=/usr/local/bin/garden-moss
 Restart=always

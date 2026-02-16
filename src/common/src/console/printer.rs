@@ -198,6 +198,18 @@ impl ConsolePrinter {
             );
         }
 
+        // Ops update events (deploy/update visibility on TTY1)
+        if matches!(event.category, EventCategory::Ops) {
+            return matches!(
+                event.status,
+                EventStatus::Active
+                    | EventStatus::Staged
+                    | EventStatus::RestartTriggered
+                    | EventStatus::RestartError
+                    | EventStatus::ShutdownDone
+            );
+        }
+
         // Docker connection (critical for understanding service readiness)
         if matches!(event.category, EventCategory::Docker)
             && matches!(event.status, EventStatus::Connected)

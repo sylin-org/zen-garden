@@ -105,12 +105,15 @@ fn calculate_state_hash(entry: &TopologyEntry) -> u64 {
 /// Send UDP broadcast announcement with current state
 ///
 /// Uses the `UdpAnnouncement` envelope format with `stone_chirp` type.
-/// Broadcasts the TopologyEntry directly - chirp IS the topology entry.
+/// Broadcasts a lightweight version of TopologyEntry with dead-weight fields
+/// stripped to reduce UDP payload size (COMM-0005).
 ///
 /// **REFACTORED (COMM-0001 Phase 2)**: Now uses p2p transport singleton instead of creating own socket.
 async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
+    let chirp_entry = entry.stripped_for_chirp();
+
     // Use p2p transport singleton (no socket creation)
-    p2p::send_announcement(announcement_types::STONE_CHIRP, entry).await?;
+    p2p::send_announcement(announcement_types::STONE_CHIRP, &chirp_entry).await?;
 
     tracing::trace!(
         address = %entry.address,

@@ -45,3 +45,34 @@ pub struct TopologyEntry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 }
+
+impl TopologyEntry {
+    /// Produce a lightweight clone suitable for UDP chirp broadcast.
+    ///
+    /// Strips fields that the receiver never reads or always overwrites:
+    /// - `cpu.features` (35–46% of chirp, never consumed from peers)
+    /// - `cpu.threads`, `swap_mb`, `runtime.docker_version` (never consumed)
+    /// - `capabilities.stone_id/stone_name` (redundant with top-level)
+    /// - `capabilities.detection_status` (never consumed from peers)
+    ///
+    /// See: COMM-0005 for field-by-field audit and traffic measurements.
+    pub fn stripped_for_chirp(&self) -> Self {
+        let mut entry = self.clone();
+        if let Some(ref mut caps) = entry.capabilities {
+            // Remove redundant identity (already in top-level TopologyEntry)
+            caps.stone_id = None;
+            caps.stone_name = String::new();
+            // Strip detection_status to default (never read from peers)
+            caps.detection_status = super::DetectionStatus::Complete;
+            // Strip heavy/unused hardware sub-fields
+            caps.hardware.cpu.features = None;
+            caps.hardware.cpu.threads = None;
+            caps.hardware.swap_mb = None;
+            // Strip unused runtime sub-fields
+            if let Some(ref mut rt) = caps.runtime {
+                rt.docker_version = None;
+            }
+        }
+        entry
+    }
+}

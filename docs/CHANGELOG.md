@@ -13,6 +13,8 @@ All notable changes to Zen Garden will be documented in this file.
 
 - **BREAKING**: Removed `shutdown_tx` (Arc<Notify>) — CancellationToken is now the single shutdown source of truth
 - Fixed crash loop: drain deadline timer started at boot instead of after shutdown signal
+- Fixed UDP recv buffer too small (4 KB → 64 KB) — eliminates WSAEMSGSIZE errors on Windows
+- COMM-0005: Chirp payload hygiene — strip cpu.features and dead-weight fields (~50% size reduction)
 - Signal handler: one spawned task watches SIGTERM/SIGINT → cancels token, everything cascades
 - Deploy/admin shutdown endpoints now call `shutdown_token.cancel()` instead of `notify_waiters()`
 - Companion shutdown: SIGTERM all companions immediately on Moss shutdown, SIGKILL survivors before exit

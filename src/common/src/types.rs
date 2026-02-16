@@ -328,6 +328,10 @@ pub struct DaemonHealthStatus {
     // Platform information for deployment tools
     pub os: String,           // Operating system (e.g., "windows", "linux", "macos")
     pub architecture: String, // CPU architecture (e.g., "x86_64", "aarch64")
+    /// Pond name when this stone is enrolled in a pond (absent = no pond)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub pond: Option<String>,
     // Legacy fields for backward compatibility
     #[serde(skip_serializing)]
     pub docker_available: bool,

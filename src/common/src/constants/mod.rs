@@ -26,6 +26,12 @@ pub const MDNS_SERVICE_TYPE: &str = "_moss._tcp";
 /// mDNS service type for native mdns-sd (fully qualified with `.local.`)
 pub const MDNS_SERVICE_TYPE_LOCAL: &str = "_moss._tcp.local.";
 
+/// mDNS service type for certmesh CA discovery (no trailing `.local.`)
+pub const CERTMESH_SERVICE_TYPE: &str = "_certmesh._tcp";
+
+/// mDNS service type for certmesh CA discovery (fully qualified with `.local.`)
+pub const CERTMESH_SERVICE_TYPE_LOCAL: &str = "_certmesh._tcp.local.";
+
 // ============================================================================
 // Network Ports
 // ============================================================================

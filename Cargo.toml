@@ -38,6 +38,7 @@ koi-embedded = { path = "../koi/crates/koi-embedded" }
 koi-certmesh = { path = "../koi/crates/koi-certmesh" }
 koi-common = { path = "../koi/crates/koi-common" }
 koi-crypto = { path = "../koi/crates/koi-crypto" }
+koi-truststore = { path = "../koi/crates/koi-truststore" }
 # Minimal tokio features - each crate adds what it needs
 tokio = { version = "1.35", features = ["sync", "time", "macros"] }
 tracing = "0.1"

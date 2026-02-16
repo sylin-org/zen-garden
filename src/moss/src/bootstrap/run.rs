@@ -318,11 +318,15 @@ pub async fn run(
         let koi = koi_embedded::Builder::new()
             .data_dir(koi_data_dir)
             .service_mode(koi_embedded::ServiceMode::EmbeddedOnly)
+            .http(true)
+            .http_port(garden_common::constants::KOI_HTTP)
             .mdns(true)
-            .dns_enabled(false)
+            .dns_enabled(true)
+            .dns_auto_start(true)
             .health(false)
             .certmesh(true)
             .proxy(false)
+            .udp(true)
             .events(|event| {
                 tracing::debug!(?event, "koi event");
             })
@@ -334,7 +338,7 @@ pub async fn run(
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start Koi embedded: {}", e))?;
 
-        tracing::info!("Koi embedded started (mDNS + certmesh active)");
+        tracing::info!("Koi embedded started (mDNS + certmesh + HTTP + DNS + UDP active)");
         Arc::new(handle)
     };
 

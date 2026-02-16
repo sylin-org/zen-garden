@@ -487,9 +487,27 @@ impl DockerManager {
         let topo_container = garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR;
         binds.push(format!("{}:{}", topo_host, topo_container));
 
+        // KOI-0001: Resolve host LAN IP for container→host networking.
+        // Containers use this to reach Koi HTTP and Stone endpoints on the host.
+        let host_ip = garden_common::infra::network::get_local_ip();
+
+        // KOI-0001: Auto-inject container networking env vars.
+        // Every managed container gets these so it can reach host services.
+        let mut full_env = env;
+        full_env.push(format!("KOI_ENDPOINT=http://{}:{}", host_ip, garden_common::constants::KOI_HTTP));
+        full_env.push(format!("GARDEN_STONE_ENDPOINT=http://{}:{}", host_ip, garden_common::constants::MOSS_HTTP));
+        full_env.push(format!("GARDEN_OFFERING_NAME={}", name));
+
+        // KOI-0001: Configure extra_hosts so containers can resolve the host by name,
+        // and point container DNS at the host's Koi DNS server.
+        let extra_hosts = vec![format!("host.docker.internal:{}", host_ip)];
+        let dns_servers = vec![host_ip.clone()];
+
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
             binds: Some(binds),
+            extra_hosts: Some(extra_hosts),
+            dns: Some(dns_servers),
             restart_policy: Some(bollard::models::RestartPolicy {
                 name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                 maximum_retry_count: None,
@@ -499,7 +517,7 @@ impl DockerManager {
 
         let config = Config {
             image: Some(image),
-            env: Some(env.iter().map(|s| s.as_str()).collect()),
+            env: Some(full_env.iter().map(|s| s.as_str()).collect()),
             host_config: Some(host_config),
             ..Default::default()
         };

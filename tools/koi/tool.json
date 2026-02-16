@@ -5,8 +5,8 @@
   "license": "MIT",
   "binary": "koi",
   "platforms": ["windows"],
-  "retired": true,
-  "retiredReason": "Replaced by koi-embedded (in-process mDNS, no sidecar needed)",
+  "retired": false,
+  "retiredReason": null,
   "service": {
     "name": "koi",
     "displayName": "Koi mDNS Service",

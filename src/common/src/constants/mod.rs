@@ -47,6 +47,11 @@ pub const DISCOVERY_UDP: u16 = 7184;
 /// HTTP port for Moss API (default)
 pub const MOSS_HTTP: u16 = 7185;
 
+/// HTTP port for Koi embedded API (mDNS, DNS, certmesh, UDP bridging)
+///
+/// "KOI" on a phone keypad = 5-6-4 → 564x.  Port 5641 chosen.
+pub const KOI_HTTP: u16 = 5641;
+
 /// HTTP port for Lantern API
 pub const LANTERN_HTTP: u16 = 7186;
 

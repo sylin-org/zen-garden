@@ -13,6 +13,10 @@ All notable changes to Zen Garden will be documented in this file.
 
 - KOI-0001: Embedded HTTP & UDP Bridging proposal — Phase 0 prerequisite for ORCH suite
 - ORCH-0001/0002 updated with KOI-0001 Phase 0 dependency chain
+- KOI-0001 Phase 0c: Container networking — extra_hosts, DNS config, env var injection in Docker
+- Koi builder flags: HTTP(:5641), DNS, UDP enabled at Moss boot
+- Added KOI_HTTP port constant (5641)
+- tool.json: Koi standalone un-retired
 - ORCH-EXECUTION-PROMPT updated with Koi HTTP/UDP structures and Phase 0 guard rails
 - **BREAKING**: Removed `shutdown_tx` (Arc<Notify>) — CancellationToken is now the single shutdown source of truth
 - Fixed crash loop: drain deadline timer started at boot instead of after shutdown signal

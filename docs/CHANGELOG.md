@@ -6,6 +6,13 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-15
 
+- Rake client enrollment: `garden-rake pond enroll` for mTLS on non-Moss machines
+- New endpoint: `POST /api/v1/pond/enroll-client` for client certificate issuance
+- Health: `/health` response includes optional `pond` field when stone is enrolled
+- mDNS: cornerstone registers `_certmesh._tcp` for zero-config CA discovery
+- Roster: `MemberRole::Client` variant distinguishes workstations from stones
+- Rake: HTTP client auto-configures mTLS when enrollment certs are present
+- Rake: endpoint resolution prefers HTTPS:7183 when enrolled in a pond
 - Fix: `pond status` CLI now shows pond name
 - Fix: `pond status -o json` outputs raw JSON (suppresses header/suggestions)
 - Fix: `garden-rake api` uses tending resolution instead of raw mDNS

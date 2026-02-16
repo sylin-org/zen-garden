@@ -19,6 +19,9 @@ pub struct CachedStoneInfo {
 /// - Full URL: `http://<host>:7185` / `https://...`
 /// - Host-ish: `<host>:7185`, `<host>.local`, `<ip>:7185`
 /// - Stone name: `stone-01` (resolved via `.local` probe, then Lantern fallback)
+///
+/// When the local machine is enrolled in a pond (has mTLS certs), prefers
+/// `https://<host>:7183` for connections. Falls back to HTTP if HTTPS fails.
 pub async fn resolve_target_endpoint(
     client: &reqwest::Client,
     target: &str,
@@ -40,17 +43,40 @@ pub async fn resolve_target_endpoint(
     }
 
     // If it's a host/IP without a port, default to moss's HTTP port.
-    // Examples: "10.0.0.5" -> http://10.0.0.5:7185, "stone-01.local" -> http://stone-01.local:7185
+    // When enrolled, try HTTPS first.
     if trimmed.contains('.') {
-        return Ok(format!(
+        let http_endpoint = format!(
             "http://{}:{}",
             trimmed,
             garden_common::constants::MOSS_HTTP
-        ));
+        );
+
+        // If enrolled, try HTTPS endpoint first
+        if is_enrolled() {
+            let https_endpoint = format!(
+                "https://{}:{}",
+                trimmed,
+                garden_common::constants::MOSS_HTTPS
+            );
+            if probe_moss_health(client, &https_endpoint).await {
+                return Ok(https_endpoint);
+            }
+        }
+
+        return Ok(http_endpoint);
     }
 
     // Otherwise treat as a bare stone name.
     resolve_stone_name_to_endpoint(client, trimmed, cache).await
+}
+
+/// Check if this machine has pond enrollment certs (quick filesystem check).
+fn is_enrolled() -> bool {
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_default();
+    crate::enrollment::is_enrolled(&hostname)
 }
 
 async fn resolve_stone_name_to_endpoint(
@@ -78,6 +104,19 @@ async fn resolve_stone_name_to_endpoint(
 
     // 2) Try mDNS-style hostname: stone-01.local:7185 (use lowercase for mDNS)
     let mdns_host = format!("{}.local", requested_lower);
+
+    // If enrolled, try HTTPS first
+    if is_enrolled() {
+        let https_endpoint = format!(
+            "https://{}:{}",
+            mdns_host,
+            garden_common::constants::MOSS_HTTPS
+        );
+        if probe_moss_health(client, &https_endpoint).await {
+            return Ok(https_endpoint);
+        }
+    }
+
     let mdns_endpoint = format!(
         "http://{}:{}",
         mdns_host,

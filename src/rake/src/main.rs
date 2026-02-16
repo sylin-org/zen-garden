@@ -6,6 +6,7 @@ use garden_common::ui::rendering as ui;
 use garden_rake::command_manifest;
 use garden_rake::commands;
 use garden_rake::commands::Command;
+use garden_rake::enrollment;
 
 #[cfg(test)]
 mod discovery_tests;
@@ -1111,6 +1112,10 @@ enum PondAction {
         /// TOTP code from authenticator app
         code: String,
     },
+    /// Enroll this client machine in a pond (discover cornerstone, authenticate, install certs)
+    Enroll,
+    /// Install pond CA certificate into the OS trust store (requires admin/root)
+    Trust,
     /// Unlock pond CA after restart
     Unlock {
         /// Passphrase to decrypt the CA key
@@ -1669,6 +1674,27 @@ async fn async_main() -> anyhow::Result<()> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("X-Quiet", "true".parse().unwrap());
         client_builder = client_builder.default_headers(headers);
+    }
+
+    // Configure mTLS if this machine is enrolled in a pond
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if let Some((ca_cert_pem, client_cert_pem, client_key_pem)) =
+        enrollment::load_tls_materials(&hostname)
+    {
+        // Add CA cert as trusted root
+        if let Ok(ca_cert) = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()) {
+            client_builder = client_builder.add_root_certificate(ca_cert);
+        }
+        // Add client identity for mTLS
+        let identity_pem = format!("{}\n{}", client_cert_pem, client_key_pem);
+        if let Ok(identity) = reqwest::Identity::from_pem(identity_pem.as_bytes()) {
+            client_builder = client_builder.identity(identity);
+        }
+        tracing::debug!(hostname = %hostname, "mTLS configured from pond enrollment certs");
     }
 
     let client = client_builder.build()?;
@@ -2480,6 +2506,8 @@ async fn async_main() -> anyhow::Result<()> {
                     PondAction::Status => PondActionType::Status,
                     PondAction::Invite { passphrase } => PondActionType::Invite { passphrase },
                     PondAction::Join { code } => PondActionType::Join { code },
+                    PondAction::Enroll => PondActionType::Enroll,
+                    PondAction::Trust => PondActionType::Trust,
                     PondAction::Unlock { passphrase, totp } => PondActionType::Unlock { passphrase, totp },
                     PondAction::Remove => PondActionType::Remove,
                     PondAction::Untrust { stone_name } => PondActionType::Untrust { stone_name },

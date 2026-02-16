@@ -425,6 +425,107 @@ where
     Ok(0)
 }
 
+// ============================================================================
+// Certmesh CA Discovery
+// ============================================================================
+
+/// Information about a discovered certmesh cornerstone (CA)
+#[derive(Debug, Clone)]
+pub struct CornerstoneInfo {
+    /// HTTP endpoint for enrollment (e.g. "http://192.168.1.10:7185")
+    pub endpoint: String,
+    /// CA certificate fingerprint
+    pub fingerprint: String,
+    /// Authentication method required for enrollment (e.g. "totp")
+    pub auth_method: String,
+    /// mDNS service name (e.g. "koi-ca-stone-crystal-forest")
+    pub name: String,
+}
+
+/// Discover the certmesh CA cornerstone via mDNS browse of `_certmesh._tcp.local.`
+///
+/// Works on all platforms — unlike `_moss._tcp` browse which was Linux-only,
+/// `_certmesh._tcp` browse is enabled on Windows too because the cornerstone
+/// (always Linux) announces the service, and `mdns-sd` can browse on Windows.
+///
+/// Returns `None` if no cornerstone is found within the timeout.
+pub fn discover_certmesh_ca(timeout: Duration) -> Result<Option<CornerstoneInfo>> {
+    use mdns_sd::{ServiceDaemon, ServiceEvent};
+    use std::time::Instant;
+
+    let mdns = ServiceDaemon::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
+
+    let receiver = mdns
+        .browse(garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL)
+        .map_err(|e| anyhow::anyhow!("Failed to browse certmesh mDNS: {}", e))?;
+
+    tracing::debug!(
+        service_type = garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL,
+        "Browsing for certmesh CA cornerstone"
+    );
+
+    let start = Instant::now();
+
+    while start.elapsed() < timeout {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(ServiceEvent::ServiceResolved(info)) => {
+                let name = info
+                    .get_fullname()
+                    .split('.')
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                // Extract TXT properties
+                let fingerprint = info
+                    .get_properties()
+                    .iter()
+                    .find(|p| p.key() == "fingerprint")
+                    .map(|p| p.val_str().to_string())
+                    .unwrap_or_default();
+
+                let auth_method = info
+                    .get_properties()
+                    .iter()
+                    .find(|p| p.key() == "auth")
+                    .map(|p| p.val_str().to_string())
+                    .unwrap_or_else(|| "totp".to_string());
+
+                if let Some(ip) = info.get_addresses().iter().next() {
+                    let endpoint = format!("http://{}:{}", ip, info.get_port());
+
+                    tracing::info!(
+                        name = %name,
+                        endpoint = %endpoint,
+                        fingerprint = %fingerprint,
+                        auth = %auth_method,
+                        "Discovered certmesh CA cornerstone via mDNS"
+                    );
+
+                    let _ = mdns.stop_browse(
+                        garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL,
+                    );
+
+                    return Ok(Some(CornerstoneInfo {
+                        endpoint,
+                        fingerprint,
+                        auth_method,
+                        name,
+                    }));
+                }
+            }
+            Ok(_) => {}
+            Err(flume::RecvTimeoutError::Timeout) => {}
+            Err(_) => break,
+        }
+    }
+
+    let _ = mdns.stop_browse(garden_common::constants::CERTMESH_SERVICE_TYPE_LOCAL);
+    tracing::debug!("No certmesh CA found within timeout");
+    Ok(None)
+}
+
 /// Platform-aware discovery that uses the best method for the current OS
 ///
 /// - Linux: Runs mDNS AND UDP broadcast in parallel, merges results

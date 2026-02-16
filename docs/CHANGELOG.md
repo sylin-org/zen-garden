@@ -18,6 +18,7 @@ All notable changes to Zen Garden will be documented in this file.
 - Signal handler: one spawned task watches SIGTERM/SIGINT → cancels token, everything cascades
 - Deploy/admin shutdown endpoints now call `shutdown_token.cancel()` instead of `notify_waiters()`
 - Companion shutdown: SIGTERM all companions immediately on Moss shutdown, SIGKILL survivors before exit
+- ORCH-0001/0002/0003: Offering orchestration proposal suite (fitness elections, AI router, DB choreographer)
 
 ## 2026-02-15
 

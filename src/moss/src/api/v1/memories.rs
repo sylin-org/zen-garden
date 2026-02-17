@@ -21,7 +21,7 @@ use garden_common::constants::headers::{
     HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME, HEADER_SEED_BANK,
 };
 use garden_common::constants::paths;
-use garden_common::storage::{MemoriesOfferingManifest, DEFAULT_SEED_BANK_NAME};
+use garden_common::storage::{MemoriesOfferingManifest, DEFAULT_PUBLIC_SEED_BANK_NAME};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
@@ -309,7 +309,7 @@ pub async fn list_memories(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = resolve_seed_bank_route(&state, &selected)
         .await
@@ -321,9 +321,10 @@ pub async fn list_memories(
             seed_bank_id,
             seed_bank_name,
         } => {
+            let store = crate::infra::storage::SeedBankStore::new_public(&mount_path);
             let index = match state
                 .nurturing_store
-                .list_remote_snapshots(&mount_path, &seed_bank_id)
+                .list_remote_snapshots(&store, &seed_bank_id)
                 .await
             {
                 Ok(index) => {
@@ -360,7 +361,7 @@ pub async fn list_memories(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query_params = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query_params.push(("seed-bank".to_string(), selected));
             }
             let response = proxy_memories_request(
@@ -411,7 +412,7 @@ pub async fn list_offering_snapshots(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = resolve_seed_bank_route(&state, &selected)
         .await
@@ -423,9 +424,10 @@ pub async fn list_offering_snapshots(
             seed_bank_id,
             seed_bank_name,
         } => {
+            let store = crate::infra::storage::SeedBankStore::new_public(&mount_path);
             let index = match state
                 .nurturing_store
-                .list_remote_snapshots(&mount_path, &seed_bank_id)
+                .list_remote_snapshots(&store, &seed_bank_id)
                 .await
             {
                 Ok(index) => index,
@@ -470,7 +472,7 @@ pub async fn list_offering_snapshots(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query_params = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query_params.push(("seed-bank".to_string(), selected));
             }
             let response = proxy_memories_request(
@@ -521,7 +523,7 @@ pub async fn get_offering_manifest(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = resolve_seed_bank_route(&state, &selected)
         .await
@@ -588,7 +590,7 @@ pub async fn get_offering_manifest(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query_params = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query_params.push(("seed-bank".to_string(), selected));
             }
             let response = proxy_memories_request(
@@ -646,7 +648,7 @@ pub async fn download_snapshot(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -699,7 +701,7 @@ pub async fn download_snapshot(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query_params = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query_params.push(("seed-bank".to_string(), selected));
             }
             proxy_memories_request(

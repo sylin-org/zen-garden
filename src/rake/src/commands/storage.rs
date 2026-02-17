@@ -16,7 +16,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
-use garden_common::storage::{PrepareSeedBankRequest, SeedBankInfo};
+use garden_common::storage::{PrepareSeedBankRequest, SeedBankInfo, SeedBankRole, SeedBankSummary};
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -33,6 +33,29 @@ pub struct CandidateDevice {
     pub state: String,
     pub eligible: bool,
     pub ineligible_reason: Option<String>,
+}
+
+/// Storage overview response from GET /api/v1/stone/storage
+#[derive(Debug, Deserialize)]
+pub struct StorageOverview {
+    pub bank_count: usize,
+    pub garden_banks: Vec<GardenBankInfo>,
+}
+
+/// Garden-wide bank info from overview
+#[derive(Debug, Deserialize)]
+pub struct GardenBankInfo {
+    pub id: String,
+    pub name: String,
+    pub stone_name: String,
+    pub is_local: bool,
+    pub capacity_bytes: u64,
+    #[serde(default)]
+    pub role: SeedBankRole,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,16 +79,14 @@ pub struct ReleaseResponse {
 pub struct PrepareSeedBankCommand {
     /// Device path (e.g., /dev/sdb, auto for auto-select)
     pub device: Option<String>,
-    /// Seed bank name (optional)
+    /// Seed bank name (optional — default depends on pond/encryption context)
     pub name: Option<String>,
     /// Generate random name
     pub random_name: bool,
     /// Filesystem preference
     pub filesystem: String,
-    /// Logical group for replicated seed banks
-    pub group: Option<String>,
-    /// Replica number within a group
-    pub replica_id: Option<u32>,
+    /// Whether to encrypt content (pond-scoped, STORAGE-0006)
+    pub encrypted: bool,
     /// Quiet mode
     pub quiet: bool,
 }
@@ -76,16 +97,14 @@ impl PrepareSeedBankCommand {
         name: Option<String>,
         random_name: bool,
         filesystem: Option<String>,
-        group: Option<String>,
-        replica_id: Option<u32>,
+        encrypted: bool,
     ) -> Self {
         Self {
             device,
             name,
             random_name,
             filesystem: filesystem.unwrap_or_else(|| "btrfs".to_string()),
-            group,
-            replica_id,
+            encrypted,
             quiet: false,
         }
     }
@@ -207,14 +226,13 @@ impl Command for PrepareSeedBankCommand {
         }
 
         // Build request
-        let request = PrepareSeedBankRequest {
-            device: device.clone(),
-            name: self.name.clone(),
-            random_name: self.random_name,
-            filesystem: self.filesystem.clone(),
-            group: self.group.clone(),
-            replica_id: self.replica_id,
-        };
+        let request = PrepareSeedBankRequest::new(
+            device.clone(),
+            self.name.clone(),
+            self.random_name,
+            self.filesystem.clone(),
+            self.encrypted,
+        );
 
         // Submit preparation request
         let url = format!(
@@ -289,34 +307,24 @@ impl Command for ReleaseSeedBankCommand {
             .endpoint
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for release command"))?;
+        let base = endpoint.trim_end_matches('/');
 
-        let url = if self.name == "all" {
-            format!(
-                "{}/api/v1/stone/storage/release-all",
-                endpoint.trim_end_matches('/')
-            )
-        } else {
-            format!(
-                "{}/api/v1/stone/storage/{}/release",
-                endpoint.trim_end_matches('/'),
-                self.name
-            )
-        };
-
-        let response = ctx
-            .client
-            .post(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Release failed ({}): {}", status, text);
-        }
-
+        // "all" → bulk release
         if self.name == "all" {
+            let url = format!("{}/api/v1/stone/storage/release-all", base);
+            let response = ctx
+                .client
+                .post(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Release failed ({}): {}", status, text);
+            }
+
             let results: Vec<ReleaseResponse> = response
                 .json::<ApiResponse<Vec<ReleaseResponse>>>()
                 .await
@@ -344,22 +352,40 @@ impl Command for ReleaseSeedBankCommand {
                 "\n{} You may now safely remove the devices.",
                 ui::status_indicator("info", ctx.term.supports_color)
             );
-        } else {
-            let result: ReleaseResponse = response
-                .json::<ApiResponse<ReleaseResponse>>()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-                .data;
+            return Ok(());
+        }
 
-            if result.released {
-                println!(
-                    "\n{} {} - You may now safely remove the device.",
-                    ui::status_indicator("success", ctx.term.supports_color),
-                    result.message
-                );
-            } else {
-                anyhow::bail!("Release failed: {}", result.message);
-            }
+        // Single release — resolve name to bank ID with disambiguation
+        let bank_id = resolve_bank_id_by_name(ctx, base, &self.name).await?;
+
+        let url = format!("{}/api/v1/stone/storage/bank/{}/release", base, bank_id);
+        let response = ctx
+            .client
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Release failed ({}): {}", status, text);
+        }
+
+        let result: ReleaseResponse = response
+            .json::<ApiResponse<ReleaseResponse>>()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+            .data;
+
+        if result.released {
+            println!(
+                "\n{} {} - You may now safely remove the device.",
+                ui::status_indicator("success", ctx.term.supports_color),
+                result.message
+            );
+        } else {
+            anyhow::bail!("Release failed: {}", result.message);
         }
 
         Ok(())
@@ -404,7 +430,7 @@ impl Command for ShowSeedBanksCommand {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for seed-banks command"))?;
 
-        // Fetch seed banks from the new bank API
+        // Fetch local seed banks
         let banks_url = format!(
             "{}/api/v1/stone/storage/bank",
             endpoint.trim_end_matches('/')
@@ -428,7 +454,18 @@ impl Command for ShowSeedBanksCommand {
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
             .data;
 
-        // Fetch candidates if on Linux (optional, don't fail if unavailable)
+        // Fetch garden-wide overview (includes roles from beacons)
+        let overview_url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
+        let garden_banks: Vec<GardenBankInfo> = match ctx.client.get(&overview_url).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<ApiResponse<StorageOverview>>()
+                .await
+                .map(|r| r.data.garden_banks)
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+
+        // Fetch candidates if on Linux
         let candidates: Vec<CandidateDevice> = {
             let cand_url = format!(
                 "{}/api/v1/stone/storage/candidates",
@@ -443,13 +480,58 @@ impl Command for ShowSeedBanksCommand {
             }
         };
 
-        // Display seed banks
-        if seed_banks.is_empty() {
+        // Display seed banks — grouped by logical name with garden-wide view
+        if seed_banks.is_empty() && garden_banks.is_empty() {
             println!(
                 "\n{} No seed banks configured.",
                 ui::status_indicator("info", ctx.term.supports_color)
             );
+        } else if !garden_banks.is_empty() {
+            // Group by logical name for garden-wide view
+            let mut by_name: std::collections::BTreeMap<String, Vec<&GardenBankInfo>> =
+                std::collections::BTreeMap::new();
+            for gb in &garden_banks {
+                by_name.entry(gb.name.clone()).or_default().push(gb);
+            }
+
+            println!("\n{}", ui::section_header("SEED BANKS", &ctx.term));
+            for (name, replicas) in &by_name {
+                let replica_count = replicas.len();
+                let primary = replicas.iter().find(|r| r.role == SeedBankRole::Primary);
+                let _primary_stone = primary.map(|p| p.stone_name.as_str()).unwrap_or("unknown");
+                let is_encrypted = replicas.iter().any(|r| r.encrypted);
+                let is_pinned = replicas.iter().any(|r| r.pinned);
+
+                let enc_label = if is_encrypted { " [encrypted]" } else { "" };
+                let pin_label = if is_pinned { " ★ pinned" } else { "" };
+
+                println!(
+                    "\n  {} {}  ({} replica{}){}{}",
+                    ui::status_indicator("success", ctx.term.supports_color),
+                    name,
+                    replica_count,
+                    if replica_count == 1 { "" } else { "s" },
+                    enc_label,
+                    pin_label,
+                );
+
+                for r in replicas {
+                    let summary = SeedBankSummary {
+                        short_id: SeedBankInfo::short_id(&r.id),
+                        name: r.name.clone(),
+                        capacity_gb: r.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                        device: None,
+                        stone_name: Some(r.stone_name.clone()),
+                        role: r.role,
+                        pinned: r.pinned,
+                        encrypted: r.encrypted,
+                        online: true,
+                    };
+                    println!("  {}", summary.format_line());
+                }
+            }
         } else {
+            // Fallback: only local banks (no garden view)
             println!("\n{}", ui::section_header("SEED BANKS", &ctx.term));
             for sb in &seed_banks {
                 let status = if sb.online {
@@ -458,13 +540,15 @@ impl Command for ShowSeedBanksCommand {
                     ui::status_indicator("warn", ctx.term.supports_color)
                 };
                 let visibility = format!("{:?}", sb.visibility).to_lowercase();
+                let enc = if sb.encrypted { " [encrypted]" } else { "" };
                 println!(
-                    "  {} {} ({}) - {} - {}",
+                    "  {} {} ({}) - {} - {}{}",
                     status,
                     sb.name,
                     visibility,
                     format_bytes(sb.capacity_bytes),
-                    if sb.online { "mounted" } else { "offline" }
+                    if sb.online { "mounted" } else { "offline" },
+                    enc,
                 );
             }
         }
@@ -485,7 +569,10 @@ impl Command for ShowSeedBanksCommand {
             }
         }
 
-        if seed_banks.is_empty() && candidates.iter().all(|c| !c.eligible) {
+        if seed_banks.is_empty()
+            && garden_banks.is_empty()
+            && candidates.iter().all(|c| !c.eligible)
+        {
             println!("\nTip: Insert a USB drive to see available devices");
         }
 
@@ -498,6 +585,142 @@ impl Command for ShowSeedBanksCommand {
 
     fn name(&self) -> &'static str {
         "seed-banks"
+    }
+}
+
+// ============================================================================
+// Pin / Unpin Seed Bank Commands (STORAGE-0006 Phase 5)
+// ============================================================================
+
+/// Response from pin/unpin API
+#[derive(Debug, Deserialize)]
+pub struct PinSeedBankResponse {
+    pub name: String,
+    pub pinned: bool,
+    pub message: String,
+}
+
+/// Pin the Primary role for a seed bank
+pub struct PinSeedBankCommand {
+    pub name: String,
+}
+
+impl PinSeedBankCommand {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+#[async_trait]
+impl Command for PinSeedBankCommand {
+    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+        use garden_common::ui::rendering as ui;
+
+        let endpoint = ctx
+            .endpoint
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Endpoint required for pin command"))?;
+
+        let url = format!(
+            "{}/api/v1/stone/storage/bank/pin",
+            endpoint.trim_end_matches('/')
+        );
+
+        let body = serde_json::json!({ "name": self.name });
+
+        let response = ctx
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to pin: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Pin failed ({}): {}", status, text);
+        }
+
+        let result: PinSeedBankResponse = response
+            .json::<ApiResponse<PinSeedBankResponse>>()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+            .data;
+
+        println!(
+            "\n{} {}",
+            ui::status_indicator("success", ctx.term.supports_color),
+            result.message
+        );
+
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "pin"
+    }
+}
+
+/// Unpin the Primary role for a seed bank
+pub struct UnpinSeedBankCommand {
+    pub name: String,
+}
+
+impl UnpinSeedBankCommand {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+#[async_trait]
+impl Command for UnpinSeedBankCommand {
+    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+        use garden_common::ui::rendering as ui;
+
+        let endpoint = ctx
+            .endpoint
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Endpoint required for unpin command"))?;
+
+        let url = format!(
+            "{}/api/v1/stone/storage/bank/unpin",
+            endpoint.trim_end_matches('/')
+        );
+
+        let body = serde_json::json!({ "name": self.name });
+
+        let response = ctx
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to unpin: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Unpin failed ({}): {}", status, text);
+        }
+
+        let result: PinSeedBankResponse = response
+            .json::<ApiResponse<PinSeedBankResponse>>()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+            .data;
+
+        println!(
+            "\n{} {}",
+            ui::status_indicator("success", ctx.term.supports_color),
+            result.message
+        );
+
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "unpin"
     }
 }
 
@@ -1158,5 +1381,78 @@ impl Command for StoreHeadCommand {
 
     fn name(&self) -> &'static str {
         "store-head"
+    }
+}
+
+// ============================================================================
+// Shared Helpers
+// ============================================================================
+
+/// Resolve a user-supplied seed bank name to its GUIDv7 id on the target stone.
+///
+/// If a stone has multiple same-name replicas (e.g. two USB drives both
+/// carrying "zen-garden"), this shows a numbered disambiguation picker.
+async fn resolve_bank_id_by_name(
+    ctx: &CommandContext,
+    base: &str,
+    name: &str,
+) -> Result<String, anyhow::Error> {
+    let url = format!("{}/api/v1/stone/storage/bank", base);
+    let resp = ctx
+        .client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to list seed banks: {}", e))?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Failed to list seed banks ({})", resp.status());
+    }
+
+    let all: Vec<SeedBankInfo> = resp
+        .json::<ApiResponse<Vec<SeedBankInfo>>>()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to parse bank list: {}", e))?
+        .data;
+
+    let matches: Vec<&SeedBankInfo> = all.iter().filter(|b| b.name == name).collect();
+
+    match matches.len() {
+        0 => anyhow::bail!("No seed bank named '{}' found on this stone", name),
+        1 => Ok(matches[0].id.clone()),
+        _ => {
+            // Disambiguation picker
+            println!("\nMultiple replicas of '{}' found on this stone:\n", name);
+            for (i, bank) in matches.iter().enumerate() {
+                let short = SeedBankInfo::short_id(&bank.id);
+                let cap = bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0;
+                let online = if bank.online { "" } else { "  (offline)" };
+                println!(
+                    "  [{}] {}  {:.0}GB  {}{}",
+                    i + 1,
+                    short,
+                    cap,
+                    bank.device,
+                    online,
+                );
+            }
+
+            print!("\nSelect replica [1-{}]: ", matches.len());
+            use std::io::Write;
+            std::io::stdout().flush()?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let choice: usize = input
+                .trim()
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
+
+            if choice < 1 || choice > matches.len() {
+                anyhow::bail!("Selection out of range");
+            }
+
+            Ok(matches[choice - 1].id.clone())
+        }
     }
 }

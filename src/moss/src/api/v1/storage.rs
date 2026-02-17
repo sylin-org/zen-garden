@@ -28,16 +28,43 @@ use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::constants::paths;
 use garden_common::storage::{
     DeviceState, PrepareSeedBankRequest, RenameSeedBankRequest, SeedBankInfo, SetVisibilityRequest,
-    StorageDetectedInfo, DEFAULT_SEED_BANK_NAME,
+    StorageDetectedInfo, DEFAULT_PRIVATE_SEED_BANK_NAME, DEFAULT_PUBLIC_SEED_BANK_NAME,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
-use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry};
+use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry, SeedBankStore};
 use crate::infra::SseEvent;
 use crate::{error_response, AppState};
 use garden_common::presence::event_types;
+
+// ============================================================================
+// Prepare-job guard
+// ============================================================================
+
+/// Tracks devices currently undergoing preparation.
+///
+/// Prevents concurrent `prepare_seed_bank_v1` calls from racing on the same
+/// physical device (e.g., double-click, retry while still formatting).
+static PREPARING_DEVICES: std::sync::OnceLock<
+    tokio::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::OnceLock::new();
+
+fn preparing_devices() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
+    PREPARING_DEVICES.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// RAII guard that removes a device from `PREPARING_DEVICES` on drop.
+struct PrepareGuard {
+    device: String,
+}
+
+impl Drop for PrepareGuard {
+    fn drop(&mut self) {
+        preparing_devices().blocking_lock().remove(&self.device);
+    }
+}
 
 // ============================================================================
 // Response Types
@@ -59,7 +86,7 @@ pub struct StorageOverview {
 }
 
 /// Info about a remote seed bank in the garden
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GardenBankInfo {
     /// Unique seed bank ID
     pub id: String,
@@ -81,6 +108,15 @@ pub struct GardenBankInfo {
     pub capacity_bytes: u64,
     /// Used space in bytes
     pub used_bytes: u64,
+    /// Runtime role (STORAGE-0006)
+    #[serde(default)]
+    pub role: garden_common::storage::SeedBankRole,
+    /// Whether the Primary role is pinned (STORAGE-0006 Phase 5)
+    #[serde(default)]
+    pub pinned: bool,
+    /// Whether content is encrypted (STORAGE-0006)
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 /// Info about a storage type
@@ -225,11 +261,25 @@ pub async fn storage_overview_v1(
 
     // Get garden-wide view from storage_cache
     let storage_cache = state.storage_cache.read().await;
+    let local_roles = state.seed_bank_roles.read().await;
+    let local_pins = state.seed_bank_pins.read().await;
     let mut garden_banks = Vec::new();
 
     for beacon in storage_cache.all_beacons() {
         let is_local = beacon.stone_id == state.stone_id;
         for sb in &beacon.seed_banks {
+            // For local banks, overlay the authoritative runtime roles/pins
+            // which may have been updated by orchestration since the last beacon.
+            let role = if is_local {
+                local_roles.get(&sb.name).copied().unwrap_or(sb.role)
+            } else {
+                sb.role
+            };
+            let pinned = if is_local {
+                local_pins.contains_key(&sb.name)
+            } else {
+                sb.pin_id.is_some()
+            };
             garden_banks.push(GardenBankInfo {
                 id: sb.id.clone(),
                 name: sb.name.clone(),
@@ -241,6 +291,9 @@ pub async fn storage_overview_v1(
                 health: sb.health.clone(),
                 capacity_bytes: sb.capacity_bytes,
                 used_bytes: sb.used_bytes,
+                role,
+                pinned,
+                encrypted: sb.encrypted,
             });
         }
     }
@@ -492,6 +545,16 @@ pub async fn release_bank_v1(
         )
     })?;
 
+    // STORAGE-0006: Remove from MountTracker BEFORE unmount to prevent
+    // persistence task re-mounting the device we're releasing.
+    #[cfg(target_os = "linux")]
+    {
+        let mut tracker = state.mount_tracker.write().await;
+        if tracker.remove(&_bank.mount_path).is_some() {
+            debug!(mount_path = %_bank.mount_path, "Removed from mount tracker before release");
+        }
+    }
+
     #[cfg(target_os = "linux")]
     unmount_device(&_bank.mount_path).await.map_err(|e| {
         err(
@@ -522,6 +585,8 @@ pub async fn release_bank_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
+    let roles = state.seed_bank_roles.read().await.clone();
+    let pins = state.seed_bank_pins.read().await.clone();
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -529,6 +594,8 @@ pub async fn release_bank_v1(
             &stone_id,
             &stone_name,
             &endpoint,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -581,14 +648,7 @@ pub async fn rename_bank_v1(
         ));
     }
 
-    // Check if new name already exists
-    if registry.exists(&request.new_name) {
-        return Err(err(
-            StatusCode::CONFLICT,
-            "NAME_EXISTS",
-            &format!("Bank '{}' already exists", request.new_name),
-        ));
-    }
+    // Renaming into an existing name is allowed — joins a replica group (STORAGE-0006)
 
     // Update manifest on device
     update_manifest_name(&bank.mount_path, &request.new_name)
@@ -610,7 +670,7 @@ pub async fn rename_bank_v1(
         )
     })?;
 
-    let updated = registry.get(&request.new_name).ok_or_else(|| {
+    let updated = registry.find_by_id(&id).ok_or_else(|| {
         err(
             StatusCode::NOT_FOUND,
             "BANK_NOT_FOUND",
@@ -618,12 +678,15 @@ pub async fn rename_bank_v1(
         )
     })?;
 
-    info!(old_id = %id, new_id = %request.new_name, "Bank renamed");
+    info!(id = %id, old_name = %bank.name, new_name = %request.new_name, "Bank renamed");
 
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
+    let nudge = state.orchestration_nudge.clone();
+    let roles = state.seed_bank_roles.read().await.clone();
+    let pins = state.seed_bank_pins.read().await.clone();
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -631,6 +694,8 @@ pub async fn rename_bank_v1(
             &stone_id,
             &stone_name,
             &endpoint,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -638,6 +703,8 @@ pub async fn rename_bank_v1(
         } else {
             tools_state.refresh_local_tools_projection().await;
         }
+        // Nudge orchestration so role resolution happens immediately
+        nudge.notify_one();
     });
 
     Ok(Json(ApiResponse::new(updated.clone())))
@@ -837,7 +904,7 @@ async fn handle_bucket_listing(store: &ObjectStore, params: &ListQueryParams) ->
 
 /// Create or update an object in a bank
 pub async fn put_object_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((id, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
@@ -862,7 +929,11 @@ pub async fn put_object_v1(
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    let store = ObjectStore::new(&bank.mount_path);
+    // Build a notifying store so changelog ticks reach the SSE doorbell
+    // and the replication task.
+    let inner = SeedBankStore::new_public(&bank.mount_path)
+        .with_notifications(bank.name.clone(), state.storage_tick_tx.clone());
+    let store = ObjectStore::with_store(inner);
 
     // Path format: bucket/key (bucket required for object access)
     let (bucket, key) = parse_object_path(&path);
@@ -921,7 +992,7 @@ pub async fn put_object_v1(
 
 /// Delete an object from a bank
 pub async fn delete_object_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((id, path)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
     let registry = SeedBankRegistry::scan().await.map_err(|e| {
@@ -944,7 +1015,11 @@ pub async fn delete_object_v1(
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    let store = ObjectStore::new(&bank.mount_path);
+    // Build a notifying store so changelog ticks reach the SSE doorbell
+    // and the replication task.
+    let inner = SeedBankStore::new_public(&bank.mount_path)
+        .with_notifications(bank.name.clone(), state.storage_tick_tx.clone());
+    let store = ObjectStore::with_store(inner);
 
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
@@ -1163,6 +1238,21 @@ pub async fn prepare_seed_bank_v1(
     State(state): State<AppState>,
     Json(request): Json<PrepareSeedBankRequest>,
 ) -> Result<(StatusCode, Json<PrepareAcceptedResponse>), (StatusCode, Json<ApiErrorResponse>)> {
+    // ── Prepare-job guard: reject if device is already being prepared ────
+    {
+        let preparing = preparing_devices().lock().await;
+        if preparing.contains(&request.device) {
+            return Err(err(
+                StatusCode::CONFLICT,
+                "DEVICE_BUSY",
+                &format!(
+                    "Device {} is already being prepared — wait for it to finish",
+                    request.device
+                ),
+            ));
+        }
+    }
+
     // Validate device exists and is eligible
     let device_info = analyze_device(&request.device).map_err(|e| {
         err(
@@ -1185,19 +1275,23 @@ pub async fn prepare_seed_bank_v1(
         return Err(err(StatusCode::BAD_REQUEST, error_code, &reason));
     }
 
-    // Determine seed bank name
+    // Determine seed bank name (STORAGE-0006 Phase 5d)
     // - random_name: true → generate seed-{adj}-{noun}
     // - name provided → use it
-    // - neither → default to the unnamed seed bank pool
+    // - neither → "private-seed-bank" if encrypted, "public-seed-bank" otherwise
     let name = if request.random_name {
         generate_seed_bank_name()
     } else if let Some(ref n) = request.name {
         n.clone()
+    } else if request.encrypted {
+        DEFAULT_PRIVATE_SEED_BANK_NAME.to_string()
     } else {
-        DEFAULT_SEED_BANK_NAME.to_string()
+        DEFAULT_PUBLIC_SEED_BANK_NAME.to_string()
     };
 
-    // Check for name collision (live scan)
+    // STORAGE-0006: Allow same-name devices — they're replicas, not collisions.
+    // Name collision was overly protective. If you prepare two devices with the
+    // same name, role assignment makes the second one Dormant automatically.
     let registry = SeedBankRegistry::scan().await.map_err(|e| {
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1207,37 +1301,43 @@ pub async fn prepare_seed_bank_v1(
     })?;
 
     if registry.exists(&name) {
-        return Err(err(
-            StatusCode::CONFLICT,
-            "NAME_COLLISION",
-            &format!("Seed bank '{}' already exists", name),
-        ));
+        info!(name = %name, "Same-name seed bank exists — new device will be a replica (STORAGE-0006)");
     }
 
     let job_id = garden_common::utils::ids::generate_guidv7();
     info!(device = %request.device, name = %name, job_id = %job_id, "Accepted seed bank preparation request");
+
+    // ── Acquire prepare-job guard ────────────────────────────────────────
+    {
+        let mut preparing = preparing_devices().lock().await;
+        preparing.insert(request.device.clone());
+    }
 
     // Spawn async job for preparation
     let job_id_clone = job_id.clone();
     let name_clone = name.clone();
     let device = request.device.clone();
     let filesystem = request.filesystem.clone();
-    let group = request.group.clone();
-    let replica_id = request.replica_id;
+    let encrypted = request.encrypted;
     let stone_name = state.stone_name.clone();
     let stone_id = state.stone_id.clone();
     let api_port = state.api_port;
     let sse_tx = state.sse_tx.clone();
     let tools_state = state.clone();
+    let guard_device = request.device.clone();
 
     tokio::spawn(async move {
+        // RAII guard — removes device from PREPARING_DEVICES when task finishes
+        let _guard = PrepareGuard {
+            device: guard_device,
+        };
+
         match run_prepare_job(
             &job_id_clone,
             &device,
             &name_clone,
             &filesystem,
-            group.as_deref(),
-            replica_id,
+            encrypted,
             &stone_name,
             sse_tx.clone(),
         )
@@ -1246,11 +1346,15 @@ pub async fn prepare_seed_bank_v1(
             Ok(()) => {
                 // STORAGE-0003: Update local cache + broadcast on successful preparation
                 let endpoint = format!("http://{}:{}", stone_name, api_port);
+                let roles = tools_state.seed_bank_roles.read().await.clone();
+                let pins = tools_state.seed_bank_pins.read().await.clone();
                 if let Err(e) = crate::infra::storage::update_and_broadcast(
                     &tools_state.storage_cache,
                     &stone_id,
                     &stone_name,
                     &endpoint,
+                    Some(&roles),
+                    Some(&pins),
                 )
                 .await
                 {
@@ -1300,8 +1404,7 @@ async fn run_prepare_job(
     device: &str,
     name: &str,
     filesystem: &str,
-    group: Option<&str>,
-    replica_id: Option<u32>,
+    encrypted: bool,
     stone_name: &str,
     sse_tx: tokio::sync::broadcast::Sender<SseEvent>,
 ) -> anyhow::Result<()> {
@@ -1309,7 +1412,10 @@ async fn run_prepare_job(
     use chrono::Utc;
     use garden_common::storage::{SeedBankManifest, SeedBankVisibility};
 
-    info!(job_id, device, name, group = ?group, replica_id = ?replica_id, "Starting seed bank preparation");
+    info!(
+        job_id,
+        device, name, encrypted, "Starting seed bank preparation"
+    );
     emit_progress(&sse_tx, job_id, name, "analyzing", "Analyzing device...");
 
     // Determine actual filesystem
@@ -1322,20 +1428,8 @@ async fn run_prepare_job(
         "ext4"
     };
 
-    // Create manifest first to derive mount path
-    let manifest = if let Some(grp) = group {
-        let rid = replica_id.unwrap_or(1);
-        SeedBankManifest::new_replica(
-            name,
-            grp,
-            rid,
-            stone_name,
-            actual_fs,
-            SeedBankVisibility::Open,
-        )
-    } else {
-        SeedBankManifest::new(name, stone_name, actual_fs, SeedBankVisibility::Open)
-    };
+    // Create manifest — all seed banks use the same constructor (STORAGE-0006)
+    let manifest = SeedBankManifest::new(name, stone_name, actual_fs, SeedBankVisibility::Open);
 
     // Derive mount path from manifest (supports groups and replicas)
     let data_dir = garden_common::constants::paths::data_dir();
@@ -1627,6 +1721,8 @@ pub async fn set_visibility_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
+    let roles = state.seed_bank_roles.read().await.clone();
+    let pins = state.seed_bank_pins.read().await.clone();
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -1634,6 +1730,8 @@ pub async fn set_visibility_v1(
             &stone_id,
             &stone_name,
             &endpoint,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1658,10 +1756,7 @@ async fn update_manifest_visibility(
     let mut manifest: garden_common::storage::SeedBankManifest =
         serde_json::from_str(&content).context("Failed to parse manifest")?;
     manifest.visibility = visibility;
-    tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
-        .await
-        .context("Failed to write manifest")?;
-    Ok(())
+    write_manifest_atomic(&manifest_path, &manifest).await
 }
 
 async fn update_manifest_name(mount_path: &str, new_name: &str) -> anyhow::Result<()> {
@@ -1673,9 +1768,31 @@ async fn update_manifest_name(mount_path: &str, new_name: &str) -> anyhow::Resul
     let mut manifest: garden_common::storage::SeedBankManifest =
         serde_json::from_str(&content).context("Failed to parse manifest")?;
     manifest.name = new_name.to_string();
-    tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
+    write_manifest_atomic(&manifest_path, &manifest).await
+}
+
+/// Atomic manifest write: serialize to tmp file, then rename over original.
+/// Crash-safe — on power loss, either old or new content survives, never partial.
+async fn write_manifest_atomic(
+    manifest_path: &std::path::Path,
+    manifest: &garden_common::storage::SeedBankManifest,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let tmp_path = manifest_path.with_extension("json.tmp");
+    let json = serde_json::to_string_pretty(manifest).context("Failed to serialize manifest")?;
+    tokio::fs::write(&tmp_path, &json)
         .await
-        .context("Failed to write manifest")?;
+        .context("Failed to write manifest temp file")?;
+
+    // Windows doesn't support atomic rename over existing file
+    #[cfg(windows)]
+    if manifest_path.exists() {
+        let _ = tokio::fs::remove_file(manifest_path).await;
+    }
+
+    tokio::fs::rename(&tmp_path, manifest_path)
+        .await
+        .context("Failed to rename manifest temp file")?;
     Ok(())
 }
 
@@ -1716,6 +1833,16 @@ pub async fn release_all_seed_banks_v1(
     let mut results = Vec::new();
 
     for bank in registry.list() {
+        // STORAGE-0006: Remove from MountTracker BEFORE unmount to prevent
+        // persistence task re-mounting the device we're releasing.
+        #[cfg(target_os = "linux")]
+        {
+            let mut tracker = state.mount_tracker.write().await;
+            if tracker.remove(&bank.mount_path).is_some() {
+                debug!(mount_path = %bank.mount_path, "Removed from mount tracker before release-all");
+            }
+        }
+
         #[cfg(target_os = "linux")]
         {
             match unmount_device(&bank.mount_path).await {
@@ -1760,6 +1887,8 @@ pub async fn release_all_seed_banks_v1(
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
+    let roles = state.seed_bank_roles.read().await.clone();
+    let pins = state.seed_bank_pins.read().await.clone();
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -1767,6 +1896,8 @@ pub async fn release_all_seed_banks_v1(
             &stone_id,
             &stone_name,
             &endpoint,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1778,4 +1909,335 @@ pub async fn release_all_seed_banks_v1(
 
     info!(count = results.len(), "All seed banks released");
     Ok((StatusCode::OK, Json(results)))
+}
+
+// ============================================================================
+// Replication Endpoints (STORAGE-0006 Phase 4)
+// ============================================================================
+
+/// Query parameters for the changes pull endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ChangesQuery {
+    /// Cursor (GUIDv7) to resume from. If absent, returns all changelog entries.
+    pub since: Option<String>,
+}
+
+// ============================================================================
+// Pin / Unpin (STORAGE-0006 Phase 5)
+// ============================================================================
+
+/// Request body for pin/unpin operations.
+#[derive(Debug, Deserialize)]
+pub struct PinSeedBankRequest {
+    /// Logical seed bank name
+    pub name: String,
+}
+
+/// Response for pin/unpin operations.
+#[derive(Debug, Serialize)]
+pub struct PinSeedBankResponse {
+    pub name: String,
+    pub pinned: bool,
+    pub message: String,
+}
+
+/// POST /api/v1/stone/storage/bank/pin
+///
+/// Pin the Primary role for a logical seed bank. Any stone holding a replica
+/// can pin — this claims Primary with a GUIDv7-based pin_id. Last-pin-wins:
+/// a newer pin_id (higher GUIDv7) overrides an older one garden-wide.
+/// The pin is propagated via beacons so all stones resolve the winner.
+pub async fn pin_bank_v1(
+    State(state): State<AppState>,
+    Json(request): Json<PinSeedBankRequest>,
+) -> Result<Json<ApiResponse<PinSeedBankResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "EMPTY_NAME",
+            "Seed bank name is required",
+        ));
+    }
+
+    // Verify the seed bank exists locally
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let has_bank = registry.list().iter().any(|b| b.name == name);
+    if !has_bank {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("No seed bank named '{}' on this stone", name),
+        ));
+    }
+
+    // Generate a GUIDv7 pin_id (time-sortable — last-pin-wins)
+    let pin_id = uuid::Uuid::now_v7().to_string();
+
+    // Persist pin to disk so it survives restarts
+    if let Some(bank) = registry.list().iter().find(|b| b.name == name) {
+        let store =
+            crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
+        if let Err(e) = store.write_pin(&pin_id).await {
+            warn!(name = %name, error = %e, "Failed to persist pin to disk");
+        }
+    }
+
+    // Set the pin and force role to Primary
+    {
+        let mut pins = state.seed_bank_pins.write().await;
+        pins.insert(name.clone(), pin_id.clone());
+    }
+    {
+        let mut roles = state.seed_bank_roles.write().await;
+        roles.insert(
+            name.clone(),
+            garden_common::storage::SeedBankRole::Primary,
+        );
+    }
+
+    info!(name = %name, pin_id = %pin_id, "Seed bank pinned — claiming Primary");
+
+    // Re-broadcast beacon so other stones see the pin
+    let storage_cache = state.storage_cache.clone();
+    let stone_id = state.stone_id.clone();
+    let stone_name = state.stone_name.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
+    let roles = state.seed_bank_roles.read().await.clone();
+    let pins = state.seed_bank_pins.read().await.clone();
+    let nudge = state.orchestration_nudge.clone();
+    tokio::spawn(async move {
+        let _ = crate::infra::storage::update_and_broadcast(
+            &storage_cache,
+            &stone_id,
+            &stone_name,
+            &endpoint,
+            Some(&roles),
+            Some(&pins),
+        )
+        .await;
+        nudge.notify_one();
+    });
+
+    Ok(Json(ApiResponse::new(PinSeedBankResponse {
+        name: name.clone(),
+        pinned: true,
+        message: format!(
+            "Primary role for '{}' pinned to this stone (pin_id: {})",
+            name, pin_id
+        ),
+    })))
+}
+
+/// POST /api/v1/stone/storage/bank/unpin
+///
+/// Remove the Primary role pin for a logical seed bank. Returns to normal
+/// first-online-wins orchestration.
+pub async fn unpin_bank_v1(
+    State(state): State<AppState>,
+    Json(request): Json<PinSeedBankRequest>,
+) -> Result<Json<ApiResponse<PinSeedBankResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "EMPTY_NAME",
+            "Seed bank name is required",
+        ));
+    }
+
+    // Remove the pin (no-op if not set)
+    let was_pinned = {
+        let mut pins = state.seed_bank_pins.write().await;
+        pins.remove(&name)
+    };
+
+    if let Some(old_pin_id) = &was_pinned {
+        info!(name = %name, pin_id = %old_pin_id, "Seed bank Primary role unpinned");
+
+        // Remove persisted pin from disk
+        if let Ok(registry) = SeedBankRegistry::scan().await {
+            if let Some(bank) = registry.list().iter().find(|b| b.name == name) {
+                let store =
+                    crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
+                if let Err(e) = store.delete_pin().await {
+                    warn!(name = %name, error = %e, "Failed to delete pin file from disk");
+                }
+            }
+        }
+    } else {
+        debug!(name = %name, "Seed bank was not pinned — no-op");
+    }
+
+    // Re-broadcast beacon
+    let storage_cache = state.storage_cache.clone();
+    let stone_id = state.stone_id.clone();
+    let stone_name = state.stone_name.clone();
+    let endpoint = state.self_entry.read().await.address.http_base();
+    let roles = state.seed_bank_roles.read().await.clone();
+    let pins = state.seed_bank_pins.read().await.clone();
+    let nudge = state.orchestration_nudge.clone();
+    tokio::spawn(async move {
+        let _ = crate::infra::storage::update_and_broadcast(
+            &storage_cache,
+            &stone_id,
+            &stone_name,
+            &endpoint,
+            Some(&roles),
+            Some(&pins),
+        )
+        .await;
+        nudge.notify_one();
+    });
+
+    Ok(Json(ApiResponse::new(PinSeedBankResponse {
+        name: name.clone(),
+        pinned: false,
+        message: format!("Primary role for '{}' is now unpinned", name),
+    })))
+}
+
+// ============================================================================
+// Replication Changelog (STORAGE-0006 Phase 4)
+// ============================================================================
+
+/// GET /api/v1/stone/storage/bank/{id}/changes?since={cursor}
+///
+/// Pull changelog entries from a Primary seed bank.
+/// Dormant replicas call this on remote Primaries to fetch mutations.
+///
+/// Returns `ChangesResponse { cursor, changes }`.
+pub async fn bank_changes_v1(
+    State(_state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<ChangesQuery>,
+) -> Result<
+    Json<ApiResponse<garden_common::storage::ChangesResponse>>,
+    (StatusCode, Json<ApiErrorResponse>),
+> {
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCAN_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    let bank = registry.get_by_id(&id).ok_or_else(|| {
+        err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", id),
+        )
+    })?;
+
+    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+        return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
+    }
+
+    let store = crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
+    let resp = store
+        .changes_since(params.since.as_deref())
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHANGELOG_READ_FAILED",
+                &e.to_string(),
+            )
+        })?;
+
+    debug!(
+        bank_id = %id,
+        cursor = %resp.cursor,
+        entries = resp.changes.len(),
+        "Served changelog changes"
+    );
+
+    Ok(Json(ApiResponse::new(resp)))
+}
+
+/// Query parameters for the storage SSE stream.
+#[derive(Debug, Deserialize)]
+pub struct StorageStreamQuery {
+    /// Seed bank name to filter ticks for. If absent, all ticks are forwarded.
+    #[serde(rename = "seed-bank")]
+    pub seed_bank: Option<String>,
+}
+
+/// GET /api/v1/stone/storage/stream?seed-bank={name}
+///
+/// SSE "doorbell" for storage mutations on this stone.
+/// Emits lightweight `storage.tick` events when the changelog advances.
+/// Dormant replicas subscribe to this on the Primary stone.
+///
+/// Each event is ~100 bytes — the actual data is fetched via the
+/// `/bank/{id}/changes` pull endpoint.
+pub async fn stream_storage_v1(
+    Query(query): Query<StorageStreamQuery>,
+    State(state): State<AppState>,
+) -> axum::response::sse::Sse<
+    impl futures_util::stream::Stream<
+        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+    >,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use std::convert::Infallible;
+    use tokio_stream::StreamExt;
+
+    let token = state.shutdown_token.child_token();
+    let rx = state.storage_agg_tx.subscribe();
+    let filter_name = query.seed_bank.clone();
+
+    info!(
+        seed_bank = ?filter_name,
+        "Storage stream client connected"
+    );
+
+    let inner = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
+        let filter_name = filter_name.clone();
+        match result {
+            Ok(tick) => {
+                // If a filter is set, only emit ticks for that seed bank
+                if let Some(ref name) = filter_name {
+                    if tick.seed_bank != *name {
+                        return None;
+                    }
+                }
+                let json = serde_json::to_string(&tick).unwrap_or_default();
+                Some(Event::default().event("storage.tick").data(json))
+            }
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                warn!(lagged = n, "Storage stream client lagged");
+                None
+            }
+        }
+    });
+
+    let stream = async_stream::stream! {
+        tokio::pin!(inner);
+        loop {
+            tokio::select! {
+                item = inner.next() => {
+                    match item {
+                        Some(event) => yield Ok::<Event, Infallible>(event),
+                        None => break,
+                    }
+                }
+                _ = token.cancelled() => {
+                    tracing::debug!("Storage stream: shutdown token cancelled");
+                    break;
+                }
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }

@@ -68,7 +68,7 @@ export interface SeedBank {
   used_bytes: number;
   visibility: string;
   online: boolean;
-  pool_id: string | null;
+  encrypted: boolean;
 }
 
 export interface Companion {
@@ -120,7 +120,7 @@ export interface SeedBankView {
   used_bytes: number;
   visibility: string;
   online: boolean;
-  pool_id: string | null;
+  encrypted: boolean;
 }
 
 /** Activity event from GET /api/v1/garden/activity */

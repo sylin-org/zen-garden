@@ -65,8 +65,9 @@ pub struct EnrichedSeedBank {
     pub used_bytes: u64,
     pub visibility: String,
     pub online: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pool_id: Option<String>,
+    /// Whether this seed bank's content is encrypted (STORAGE-0006)
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 /// Companion data for dashboard display

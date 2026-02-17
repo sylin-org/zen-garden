@@ -93,6 +93,13 @@ impl TestRegistry {
         self.register(crate::tests::storage::gateway_roundtrip_test());
         self.register(crate::tests::storage::memories_index_test());
 
+        // Storage STORAGE-0006 tests (orchestration, replication, pin)
+        self.register(crate::tests::storage::roles_test());
+        self.register(crate::tests::storage::portrait_enrichment_test());
+        self.register(crate::tests::storage::pin_roundtrip_test());
+        self.register(crate::tests::storage::replication_test());
+        self.register(crate::tests::storage::role_consistency_test());
+
         // Nurturing tests (A/B backup slots, sub-capabilities, seed bank integration)
         self.register(crate::tests::nurturing::index_test());
         self.register(crate::tests::nurturing::offering_slots_test());

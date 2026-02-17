@@ -422,11 +422,13 @@ pub async fn replicate_to_seed_bank(
         &state.stone_name,
     );
 
+    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+
     let result = state
         .nurturing_store
         .replicate_to_seed_bank(
             &offering_id,
-            &seed_bank.mount_path,
+            &store,
             &seed_bank.id,
             &seed_bank.name,
             &state.stone_id,
@@ -466,9 +468,11 @@ pub async fn list_remote_snapshots(
         )
     })?;
 
+    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+
     let index = state
         .nurturing_store
-        .list_remote_snapshots(&seed_bank.mount_path, &seed_bank.id)
+        .list_remote_snapshots(&store, &seed_bank.id)
         .await
         .map_err(|e| {
             crate::infra::error_response(
@@ -542,11 +546,12 @@ pub async fn restore_from_seed_bank(
     }
 
     // Restore from seed bank
+    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
     let manifest = state
         .nurturing_store
         .restore_from_seed_bank(
             &state.docker,
-            &seed_bank.mount_path,
+            &store,
             &seed_bank.id,
             &offering_id,
             request.harvest_id.as_deref(),

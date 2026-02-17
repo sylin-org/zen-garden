@@ -40,7 +40,7 @@ use crate::infra::storage::{ObjectStore, SeedBankRegistry};
 use crate::AppState;
 use garden_common::constants::headers::HEADER_SEED_BANK;
 use garden_common::constants::paths;
-use garden_common::storage::DEFAULT_SEED_BANK_NAME;
+use garden_common::storage::{SeedBankRole, DEFAULT_PUBLIC_SEED_BANK_NAME};
 
 // ============================================================================
 // Constants
@@ -185,6 +185,71 @@ async fn resolve_seed_bank_route(
     ))
 }
 
+/// Resolve route for write operations (PUT / DELETE).
+///
+/// Checks seed bank roles (STORAGE-0006): if the local bank is Dormant,
+/// routes to the remote Primary stone instead.
+async fn resolve_seed_bank_write_route(
+    state: &AppState,
+    name: &str,
+) -> Result<SeedBankRoute, (StatusCode, String)> {
+    let registry = SeedBankRegistry::scan().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to scan seed banks: {}", e),
+        )
+    })?;
+
+    if let Some(bank) = registry.get(name) {
+        if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+            return Err((StatusCode::CONFLICT, msg));
+        }
+
+        let roles = state.seed_bank_roles.read().await;
+        let role = roles.get(name).copied().unwrap_or(SeedBankRole::Primary);
+        drop(roles);
+
+        if role == SeedBankRole::Primary {
+            return Ok(SeedBankRoute::Local {
+                mount_path: bank.mount_path.clone(),
+            });
+        }
+
+        debug!(
+            seed_bank = %name,
+            "Local seed bank is dormant, routing write to remote primary"
+        );
+    }
+
+    // Search beacons for Primary (or any) remote
+    let cache = state.storage_cache.read().await;
+    if let Some((stone_id, _sb)) = cache.find_primary_by_name(name) {
+        if let Some(endpoint) = cache.get_endpoint(stone_id) {
+            return Ok(SeedBankRoute::Remote {
+                endpoint: endpoint.to_string(),
+            });
+        }
+    }
+
+    for beacon in cache.all_beacons() {
+        if beacon.stone_id == state.stone_id {
+            continue;
+        }
+        for sb in &beacon.seed_banks {
+            if sb.name == name {
+                return Ok(SeedBankRoute::Remote {
+                    endpoint: beacon.endpoint.clone(),
+                });
+            }
+        }
+    }
+
+    Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("Seed bank '{}' not available for writes", name),
+    ))
+}
+
 /// Build XML error response
 fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
     let body = format!(
@@ -297,9 +362,10 @@ pub async fn put_object(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    // Writes route to Primary replica (STORAGE-0006)
+    let route = match resolve_seed_bank_write_route(&state, &selected).await {
         Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
@@ -333,7 +399,7 @@ pub async fn put_object(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -377,7 +443,7 @@ pub async fn get_object(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -416,7 +482,7 @@ pub async fn get_object(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -459,7 +525,7 @@ pub async fn head_object(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -493,7 +559,7 @@ pub async fn head_object(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -530,9 +596,10 @@ pub async fn delete_object(
     }
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    // Deletes route to Primary replica (STORAGE-0006)
+    let route = match resolve_seed_bank_write_route(&state, &selected).await {
         Ok(route) => route,
         Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
     };
@@ -560,7 +627,7 @@ pub async fn delete_object(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -587,7 +654,7 @@ pub async fn list_buckets(
     headers: HeaderMap,
 ) -> Response {
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -619,7 +686,7 @@ pub async fn list_buckets(
         }
         SeedBankRoute::Remote { endpoint } => {
             let mut query = Vec::new();
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -675,7 +742,7 @@ pub async fn list_objects(
     };
 
     let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_SEED_BANK_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
 
     let route = match resolve_seed_bank_route(&state, &selected).await {
         Ok(route) => route,
@@ -737,7 +804,7 @@ pub async fn list_objects(
                 query_params.push(("marker".to_string(), marker.clone()));
             }
             query_params.push(("max-keys".to_string(), max_keys.to_string()));
-            if selected != DEFAULT_SEED_BANK_NAME {
+            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
                 query_params.push(("seed-bank".to_string(), selected));
             }
 

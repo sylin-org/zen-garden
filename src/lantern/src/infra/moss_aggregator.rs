@@ -145,10 +145,10 @@ async fn fetch_portrait(client: &MossClient, endpoint: &str) -> anyhow::Result<S
                         .unwrap_or("open")
                         .to_string(),
                     online: b.get("online").and_then(|v| v.as_bool()).unwrap_or(true),
-                    pool_id: b
-                        .get("pool_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
+                    encrypted: b
+                        .get("encrypted")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                 })
             })
             .collect();

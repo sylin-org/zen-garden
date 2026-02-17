@@ -227,6 +227,38 @@ pub struct AppState {
 
     /// Subsystem readiness state
     pub subsystems: SubSystems,
+
+    /// Mount tracker for seed bank mount persistence (STORAGE-0006)
+    /// Shared with coordinator (persistence + hotplug tasks) and release handler.
+    /// Prevents the fight-loop where persistence re-mounts a just-released device.
+    #[cfg(target_os = "linux")]
+    pub mount_tracker: crate::infra::storage::MountTracker,
+
+    /// Seed bank roles — runtime Primary/Dormant assignment per FQN (STORAGE-0006)
+    /// Updated by the seed bank orchestration task, read by beacon builder.
+    /// Key: seed bank name (FQN), Value: assigned SeedBankRole.
+    pub seed_bank_roles: Arc<RwLock<HashMap<String, garden_common::storage::SeedBankRole>>>,
+
+    /// Pinned seed bank names → pin_id GUIDv7 (STORAGE-0006 Phase 5)
+    /// A pin claims Primary role for the named seed bank. The GUIDv7 pin_id
+    /// establishes ordering: higher pin_id wins in a conflict (last-pin-wins).
+    /// Updated by the pin/unpin API, read by orchestration + beacon builder.
+    pub seed_bank_pins: Arc<RwLock<HashMap<String, String>>>,
+
+    /// Storage replication tick channel — **raw** (STORAGE-0006 Phase 4)
+    /// Primary seed-bank stores emit `StorageTick` on every write/delete.
+    /// Internal only — consumed by the aggregator task, not by downstream consumers.
+    pub storage_tick_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+
+    /// Storage tick channel — **aggregated** (STORAGE-0006 Phase 4f)
+    /// Per-seed-bank quantized ticks (2 s quiet / 10 s deadline cap).
+    /// Subscribers: SSE `/api/v1/stone/storage/stream`, replication task.
+    pub storage_agg_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+
+    /// Orchestration nudge — wakes the seed-bank orchestration loop immediately.
+    /// Fired when a storage beacon arrives, or after rename/pin/unpin, so role
+    /// resolution doesn't have to wait for the next 3-second tick.
+    pub orchestration_nudge: Arc<tokio::sync::Notify>,
 }
 
 // ============================================================================

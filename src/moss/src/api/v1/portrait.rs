@@ -15,6 +15,8 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use garden_common::storage::SeedBankRole;
+
 use crate::app_state::AppState;
 use crate::cli;
 use crate::domain::topology;
@@ -121,11 +123,16 @@ pub struct PortraitCompanion {
 /// Seed bank entry
 #[derive(Debug, Clone, Serialize)]
 pub struct PortraitSeedBank {
+    pub id: String,
+    pub short_id: String,
     pub name: String,
     pub used_gb: f32,
     pub capacity_gb: f32,
     pub filesystem: String,
     pub visibility: String,
+    pub role: SeedBankRole,
+    pub pinned: bool,
+    pub encrypted: bool,
     pub roaming: bool,
     pub online: bool,
 }
@@ -537,20 +544,39 @@ pub async fn get_portrait_data(
     // NOTE: Read from cache - populated by storage_monitor on events + periodic refresh
     let seed_banks = {
         let cached = state.seed_bank_cache.read().await;
+        let roles = state.seed_bank_roles.read().await;
+        let pins = state.seed_bank_pins.read().await;
         cached
             .iter()
-            .map(|bank| PortraitSeedBank {
-                name: bank.name.clone(),
-                used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                filesystem: if bank.btrfs {
-                    "btrfs".into()
+            .map(|bank| {
+                let role = roles
+                    .get(&bank.name)
+                    .cloned()
+                    .unwrap_or(SeedBankRole::Dormant);
+                let pinned = pins.contains_key(&bank.name);
+                let short_id = if bank.id.len() >= 8 {
+                    bank.id[..8].to_string()
                 } else {
-                    "ext4".into()
-                },
-                visibility: bank.visibility.to_string(),
-                roaming: bank.roaming,
-                online: bank.online,
+                    bank.id.clone()
+                };
+                PortraitSeedBank {
+                    id: bank.id.clone(),
+                    short_id,
+                    name: bank.name.clone(),
+                    used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                    capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                    filesystem: if bank.btrfs {
+                        "btrfs".into()
+                    } else {
+                        "ext4".into()
+                    },
+                    visibility: bank.visibility.to_string(),
+                    role,
+                    pinned,
+                    encrypted: bank.encrypted,
+                    roaming: bank.roaming,
+                    online: bank.online,
+                }
             })
             .collect()
     };

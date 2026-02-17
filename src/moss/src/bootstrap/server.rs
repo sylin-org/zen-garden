@@ -3,8 +3,8 @@
 //! Handles server binding, graceful shutdown, and error handling.
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use axum::Router;
 use crate::infra::CompanionRegistry;
+use axum::Router;
 use garden_common::console::{
     try_boot_banner, try_shutdown_banner, BootBannerInfo, ConsoleEvent, ConsolePrinter,
     EventCategory, EventStatus, ShutdownBannerInfo,

@@ -205,6 +205,35 @@ pub async fn run(
             Box::new(crate::domain::DockerRegistryHandler::new()),
         ]));
 
+    // Create orchestration nudge early — shared between discovery listener and AppState
+    let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
+
+    // Create seed bank roles/pins early — shared between discovery listener and AppState
+    let seed_bank_roles: Arc<RwLock<HashMap<String, garden_common::storage::SeedBankRole>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+    let seed_bank_pins: Arc<RwLock<HashMap<String, String>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Load persisted pins from seed bank mounts
+    if let Ok(registry) = crate::infra::storage::SeedBankRegistry::scan().await {
+        let mut loaded_pins = HashMap::new();
+        for bank in registry.list() {
+            let store =
+                crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
+            if let Some(pin_id) = store.read_pin().await {
+                tracing::info!(
+                    name = %bank.name,
+                    pin_id = %pin_id,
+                    "Loaded persisted pin from seed bank"
+                );
+                loaded_pins.insert(bank.name.clone(), pin_id);
+            }
+        }
+        if !loaded_pins.is_empty() {
+            *seed_bank_pins.write().await = loaded_pins;
+        }
+    }
+
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
         stone_id.clone(),
@@ -219,6 +248,9 @@ pub async fn run(
         console_printer.clone(),
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
+        orchestration_nudge.clone(),
+        seed_bank_roles.clone(),
+        seed_bank_pins.clone(),
         shutdown_token.child_token(),
     )
     .await;
@@ -616,6 +648,25 @@ pub async fn run(
         log_tx: log_tx.clone(),
         // Subsystem readiness (network_ready managed by NetworkMonitor)
         subsystems: subsystems.clone(),
+        // Mount tracker — shared with coordinator + release handler (STORAGE-0006)
+        #[cfg(target_os = "linux")]
+        mount_tracker: crate::infra::storage::create_mount_tracker(),
+        // Seed bank roles — Primary/Dormant per FQN (STORAGE-0006)
+        seed_bank_roles: seed_bank_roles.clone(),
+        // Pinned seed bank names (STORAGE-0006 Phase 5)
+        seed_bank_pins: seed_bank_pins.clone(),
+        // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
+        storage_tick_tx: {
+            let (tx, _) = tokio::sync::broadcast::channel(64);
+            tx
+        },
+        // Storage tick channel — aggregated (STORAGE-0006 Phase 4f)
+        storage_agg_tx: {
+            let (tx, _) = tokio::sync::broadcast::channel(64);
+            tx
+        },
+        // Orchestration nudge — immediate role re-evaluation trigger
+        orchestration_nudge: orchestration_nudge.clone(),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -1061,7 +1112,12 @@ pub async fn run(
     // Phase 17: Health monitoring and auto-adoption
     start_health_monitor(state.clone(), shutdown_token.child_token());
     if let Some(cfg) = config.file_config.clone() {
-        start_auto_adoption(state.clone(), cfg, &console_printer, shutdown_token.child_token());
+        start_auto_adoption(
+            state.clone(),
+            cfg,
+            &console_printer,
+            shutdown_token.child_token(),
+        );
     } else {
         // No config file - use default adoption config (profile-aware)
         start_auto_adoption_with_config(
@@ -1134,6 +1190,8 @@ pub async fn run(
         &state.stone_id,
         &state.stone_name,
         &endpoint,
+        None,
+        None,
     )
     .await
     {
@@ -1157,8 +1215,7 @@ pub async fn run(
         let orch_token = shutdown_token.child_token();
         tokio::spawn(async move {
             if let Err(e) = crate::tasks::offering_orchestration::offering_orchestration_task(
-                orch_state,
-                orch_token,
+                orch_state, orch_token,
             )
             .await
             {
@@ -1166,6 +1223,56 @@ pub async fn run(
             }
         });
         tracing::info!("Offering orchestration task started (ORCH-0001)");
+    }
+
+    // Phase 17.8: Seed bank orchestration (STORAGE-0006)
+    // Assigns Primary/Dormant roles for replicated seed banks.
+    {
+        let sb_state = state.clone();
+        let sb_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            if let Err(e) = crate::tasks::seed_bank_orchestration::seed_bank_orchestration_task(
+                sb_state, sb_token,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, "Seed bank orchestration task failed");
+            }
+        });
+        tracing::info!("Seed bank orchestration task started (STORAGE-0006)");
+    }
+
+    // Phase 17.9: Seed bank storage tick aggregator (STORAGE-0006 Phase 4f)
+    // Quantizes raw per-write ticks into per-seed-bank aggregated ticks
+    // (2s quiet threshold / 10s deadline cap).
+    {
+        let raw_rx = state.storage_tick_tx.subscribe();
+        let agg_tx = state.storage_agg_tx.clone();
+        let agg_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            crate::tasks::storage_tick_aggregator::storage_tick_aggregator_task(
+                raw_rx, agg_tx, agg_token,
+            )
+            .await;
+        });
+        tracing::info!("Storage tick aggregator task started (STORAGE-0006)");
+    }
+
+    // Phase 17.9b: Seed bank replication (STORAGE-0006 Phase 4e)
+    // Syncs Dormant seed banks from their Primaries.
+    {
+        let repl_state = state.clone();
+        let repl_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            if let Err(e) = crate::tasks::seed_bank_replication::seed_bank_replication_task(
+                repl_state, repl_token,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, "Seed bank replication task failed");
+            }
+        });
+        tracing::info!("Seed bank replication task started (STORAGE-0006)");
     }
 
     // Initialize tools projection from restored offerings + local seed-banks.

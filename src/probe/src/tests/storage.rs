@@ -960,3 +960,836 @@ async fn test_memories_index(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
 
     Ok(bag)
 }
+
+// ============================================================================
+// STORAGE-0006: Orchestration integration tests
+// ============================================================================
+
+// ============================================================================
+// storage.roles - Verify orchestration assigns exactly one Primary per name
+// ============================================================================
+
+pub fn roles_test() -> TestDef {
+    TestDef {
+        id: "storage.roles",
+        name: "Role Assignment",
+        description: "Verify orchestration assigns exactly one Primary per seed bank name",
+        category: "storage",
+        tags: &["storage", "orchestration", "storage-0006"],
+        run: |garden, bag| Box::pin(test_roles(garden, bag)),
+    }
+}
+
+async fn test_roles(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    // Collect all garden_banks from each stone's storage overview
+    let mut banks_by_name: std::collections::HashMap<String, Vec<(String, String, bool)>> =
+        std::collections::HashMap::new();
+
+    for stone in &garden.stones {
+        let start = Instant::now();
+        let result = stone.get_json("/api/v1/stone/storage").await;
+        let duration = start.elapsed();
+
+        match result {
+            Ok(resp) => {
+                let garden_banks = resp
+                    .get("data")
+                    .and_then(|d| d.get("garden_banks"))
+                    .and_then(|g| g.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                for bank in &garden_banks {
+                    let name = bank
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let role = bank
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let pinned = bank
+                        .get("pinned")
+                        .and_then(|p| p.as_bool())
+                        .unwrap_or(false);
+
+                    if !name.is_empty() {
+                        banks_by_name.entry(name).or_default().push((
+                            stone.name.clone(),
+                            role,
+                            pinned,
+                        ));
+                    }
+                }
+
+                bag.record_step(
+                    format!("overview_{}", stone.name),
+                    format!(
+                        "{}: {} garden_banks visible",
+                        stone.name,
+                        garden_banks.len()
+                    ),
+                    duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "garden_banks": garden_banks.len(),
+                    })),
+                );
+            }
+            Err(e) => {
+                bag.record_step(
+                    format!("overview_{}", stone.name),
+                    format!("{} overview failed", stone.name),
+                    duration.as_millis() as u64,
+                    StepResult::failed(e.to_string()),
+                );
+            }
+        }
+    }
+
+    if banks_by_name.is_empty() {
+        bag.record_step(
+            "roles_check",
+            "No seed banks in garden — nothing to verify",
+            0,
+            StepResult::skipped("No seed banks"),
+        );
+        return Ok(bag);
+    }
+
+    // For each seed bank name, verify exactly one Primary
+    let mut all_ok = true;
+    for (name, replicas) in &banks_by_name {
+        let primaries: Vec<_> = replicas
+            .iter()
+            .filter(|(_, role, _)| role == "primary")
+            .collect();
+        let primary_count = primaries.len();
+
+        if primary_count == 1 {
+            let (stone, _, pinned) = &primaries[0];
+            bag.record_step(
+                format!("role_{}", name),
+                format!(
+                    "'{}': Primary on {} (pinned={}), {} total replicas",
+                    name,
+                    stone,
+                    pinned,
+                    replicas.len()
+                ),
+                0,
+                StepResult::ok_with(serde_json::json!({
+                    "name": name,
+                    "primary_stone": stone,
+                    "pinned": pinned,
+                    "replica_count": replicas.len(),
+                })),
+            );
+        } else {
+            all_ok = false;
+            bag.record_step(
+                format!("role_{}", name),
+                format!(
+                    "'{}': {} primaries (expected 1) — {:?}",
+                    name, primary_count, primaries
+                ),
+                0,
+                StepResult::failed(format!(
+                    "Expected exactly 1 Primary for '{}', found {}",
+                    name, primary_count
+                )),
+            );
+        }
+    }
+
+    bag.record_step(
+        "roles_summary",
+        format!(
+            "{} seed bank names checked, {}",
+            banks_by_name.len(),
+            if all_ok {
+                "all have exactly 1 Primary"
+            } else {
+                "INVARIANT VIOLATED"
+            }
+        ),
+        0,
+        if all_ok {
+            StepResult::ok()
+        } else {
+            StepResult::failed("Primary-uniqueness invariant violated")
+        },
+    );
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.portrait - Verify portrait includes enriched seed bank fields
+// ============================================================================
+
+pub fn portrait_enrichment_test() -> TestDef {
+    TestDef {
+        id: "storage.portrait",
+        name: "Portrait Enrichment",
+        description: "Verify portrait includes role, pinned, encrypted fields on seed banks",
+        category: "storage",
+        tags: &["storage", "portrait", "storage-0006"],
+        run: |garden, bag| Box::pin(test_portrait_enrichment(garden, bag)),
+    }
+}
+
+async fn test_portrait_enrichment(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    for stone in &garden.stones {
+        let start = Instant::now();
+        let result = stone.get_json("/api/v1/portrait").await;
+        let duration = start.elapsed();
+
+        match result {
+            Ok(resp) => {
+                let seed_banks = resp
+                    .get("data")
+                    .and_then(|d| d.get("seed_banks"))
+                    .and_then(|s| s.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                if seed_banks.is_empty() {
+                    bag.record_step(
+                        format!("portrait_{}", stone.name),
+                        format!("{}: no seed banks in portrait", stone.name),
+                        duration.as_millis() as u64,
+                        StepResult::skipped("No seed banks on this stone"),
+                    );
+                    continue;
+                }
+
+                let mut all_enriched = true;
+                let mut issues = Vec::new();
+
+                for bank in &seed_banks {
+                    let name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+
+                    // Check STORAGE-0006 enrichment fields
+                    let has_id = bank.get("id").and_then(|v| v.as_str()).is_some();
+                    let has_short_id = bank.get("short_id").and_then(|v| v.as_str()).is_some();
+                    let has_role = bank.get("role").and_then(|v| v.as_str()).is_some();
+                    let has_pinned = bank.get("pinned").is_some();
+                    let has_encrypted = bank.get("encrypted").is_some();
+
+                    if !has_id {
+                        all_enriched = false;
+                        issues.push(format!("{}: missing 'id'", name));
+                    }
+                    if !has_short_id {
+                        all_enriched = false;
+                        issues.push(format!("{}: missing 'short_id'", name));
+                    }
+                    if !has_role {
+                        all_enriched = false;
+                        issues.push(format!("{}: missing 'role'", name));
+                    }
+                    if !has_pinned {
+                        all_enriched = false;
+                        issues.push(format!("{}: missing 'pinned'", name));
+                    }
+                    if !has_encrypted {
+                        all_enriched = false;
+                        issues.push(format!("{}: missing 'encrypted'", name));
+                    }
+                }
+
+                if all_enriched {
+                    bag.record_step(
+                        format!("portrait_{}", stone.name),
+                        format!(
+                            "{}: {} seed banks with full STORAGE-0006 enrichment",
+                            stone.name,
+                            seed_banks.len()
+                        ),
+                        duration.as_millis() as u64,
+                        StepResult::ok_with(serde_json::json!({
+                            "seed_banks": seed_banks.len(),
+                            "fields_checked": ["id", "short_id", "role", "pinned", "encrypted"],
+                        })),
+                    );
+                } else {
+                    bag.record_step(
+                        format!("portrait_{}", stone.name),
+                        format!("{}: portrait enrichment incomplete", stone.name),
+                        duration.as_millis() as u64,
+                        StepResult::failed(format!("Missing fields: {}", issues.join("; "))),
+                    );
+                }
+            }
+            Err(e) => {
+                bag.record_step(
+                    format!("portrait_{}", stone.name),
+                    format!("{} portrait fetch failed", stone.name),
+                    duration.as_millis() as u64,
+                    StepResult::failed(e.to_string()),
+                );
+            }
+        }
+    }
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.pin_roundtrip - Pin, verify, unpin roundtrip
+// ============================================================================
+
+pub fn pin_roundtrip_test() -> TestDef {
+    TestDef {
+        id: "storage.pin_roundtrip",
+        name: "Pin/Unpin Roundtrip",
+        description: "Pin a Primary seed bank, verify pinned flag, then unpin",
+        category: "storage",
+        tags: &["storage", "pin", "storage-0006"],
+        run: |garden, bag| Box::pin(test_pin_roundtrip(garden, bag)),
+    }
+}
+
+async fn test_pin_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    // Find a stone with a Primary seed bank
+    let mut target: Option<(crate::garden::Stone, String)> = None;
+
+    for stone in &garden.stones {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/storage").await {
+            let garden_banks = resp
+                .get("data")
+                .and_then(|d| d.get("garden_banks"))
+                .and_then(|g| g.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for bank in &garden_banks {
+                let is_local = bank
+                    .get("is_local")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let role = bank.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                let already_pinned = bank
+                    .get("pinned")
+                    .and_then(|p| p.as_bool())
+                    .unwrap_or(false);
+                let name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("");
+
+                if is_local && role == "primary" && !already_pinned && !name.is_empty() {
+                    target = Some((stone.clone(), name.to_string()));
+                    break;
+                }
+            }
+            if target.is_some() {
+                break;
+            }
+        }
+    }
+
+    let (stone, bank_name) = match target {
+        Some(t) => t,
+        None => {
+            bag.record_step(
+                "pin_roundtrip",
+                "No unpinned local Primary seed bank found",
+                0,
+                StepResult::skipped("No eligible bank for pin test"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    bag.record_step(
+        "pin_target",
+        format!("Target: '{}' on {}", bank_name, stone.name),
+        0,
+        StepResult::ok(),
+    );
+
+    // Step 1: PIN
+    let pin_body = serde_json::json!({ "name": bank_name });
+    let pin_start = Instant::now();
+    let pin_result = stone
+        .post_json("/api/v1/stone/storage/bank/pin", &pin_body)
+        .await;
+    let pin_duration = pin_start.elapsed();
+
+    match &pin_result {
+        Ok(resp) => {
+            let pinned = resp
+                .get("data")
+                .and_then(|d| d.get("pinned"))
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false);
+
+            if pinned {
+                bag.record_step(
+                    "pin",
+                    format!("PIN '{}' succeeded", bank_name),
+                    pin_duration.as_millis() as u64,
+                    StepResult::ok(),
+                );
+            } else {
+                bag.record_step(
+                    "pin",
+                    format!("PIN '{}' — response.pinned=false", bank_name),
+                    pin_duration.as_millis() as u64,
+                    StepResult::failed("pinned=false in response"),
+                );
+                return Ok(bag);
+            }
+        }
+        Err(e) => {
+            bag.record_step(
+                "pin",
+                format!("PIN '{}' failed", bank_name),
+                pin_duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+            return Ok(bag);
+        }
+    }
+
+    // Step 2: Verify pinned flag in storage overview
+    let verify_start = Instant::now();
+    let verify_result = stone.get_json("/api/v1/stone/storage").await;
+    let verify_duration = verify_start.elapsed();
+
+    let is_pinned = verify_result
+        .as_ref()
+        .ok()
+        .and_then(|resp| {
+            resp.get("data")
+                .and_then(|d| d.get("garden_banks"))
+                .and_then(|g| g.as_array())
+        })
+        .and_then(|banks| {
+            banks.iter().find(|b| {
+                b.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| n == bank_name)
+                    .unwrap_or(false)
+                    && b.get("is_local").and_then(|v| v.as_bool()).unwrap_or(false)
+            })
+        })
+        .and_then(|b| b.get("pinned").and_then(|p| p.as_bool()))
+        .unwrap_or(false);
+
+    if is_pinned {
+        bag.record_step(
+            "verify_pinned",
+            format!("Verified '{}' shows pinned=true in overview", bank_name),
+            verify_duration.as_millis() as u64,
+            StepResult::ok(),
+        );
+    } else {
+        bag.record_step(
+            "verify_pinned",
+            format!("'{}' not showing pinned=true in overview", bank_name),
+            verify_duration.as_millis() as u64,
+            StepResult::failed("Pin not reflected in storage overview"),
+        );
+    }
+
+    // Step 3: UNPIN (always — cleanup)
+    let unpin_body = serde_json::json!({ "name": bank_name });
+    let unpin_start = Instant::now();
+    let unpin_result = stone
+        .post_json("/api/v1/stone/storage/bank/unpin", &unpin_body)
+        .await;
+    let unpin_duration = unpin_start.elapsed();
+
+    match &unpin_result {
+        Ok(resp) => {
+            let pinned = resp
+                .get("data")
+                .and_then(|d| d.get("pinned"))
+                .and_then(|p| p.as_bool())
+                .unwrap_or(true);
+
+            bag.record_step(
+                "unpin",
+                format!("UNPIN '{}' — pinned={}", bank_name, pinned),
+                unpin_duration.as_millis() as u64,
+                if !pinned {
+                    StepResult::ok()
+                } else {
+                    StepResult::failed("pinned still true after unpin")
+                },
+            );
+        }
+        Err(e) => {
+            bag.record_step(
+                "unpin",
+                format!("UNPIN '{}' failed", bank_name),
+                unpin_duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+        }
+    }
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.replication - Verify changelog/changes endpoint returns valid cursors
+// ============================================================================
+
+pub fn replication_test() -> TestDef {
+    TestDef {
+        id: "storage.replication",
+        name: "Replication Changes",
+        description: "Write an object and verify the changelog returns a valid cursor",
+        category: "storage",
+        tags: &["storage", "replication", "storage-0006"],
+        run: |garden, bag| Box::pin(test_replication(garden, bag)),
+    }
+}
+
+async fn test_replication(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    let selected = match select_seed_bank(&garden).await {
+        Some(s) => s,
+        None => {
+            bag.record_step(
+                "replication",
+                "No seed banks available",
+                0,
+                StepResult::skipped("No seed banks in garden"),
+            );
+            return Ok(bag);
+        }
+    };
+
+    let stone = selected.stone;
+    let bank_id = &selected.id;
+
+    // Step 1: GET /changes with no cursor (initial sync)
+    let changes_path = format!("/api/v1/stone/storage/bank/{}/changes", bank_id);
+    let start = Instant::now();
+    let result = stone.get_json(&changes_path).await;
+    let duration = start.elapsed();
+
+    let initial_cursor = match &result {
+        Ok(resp) => {
+            let cursor = resp
+                .get("data")
+                .and_then(|d| d.get("cursor"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            let changes = resp
+                .get("data")
+                .and_then(|d| d.get("changes"))
+                .and_then(|c| c.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let full_sync = resp
+                .get("data")
+                .and_then(|d| d.get("full_sync_required"))
+                .and_then(|f| f.as_bool())
+                .unwrap_or(false);
+
+            bag.record_step(
+                "initial_changes",
+                format!(
+                    "Initial: {} changes, cursor={}, full_sync={}",
+                    changes,
+                    if cursor.is_empty() { "none" } else { &cursor },
+                    full_sync
+                ),
+                duration.as_millis() as u64,
+                StepResult::ok_with(serde_json::json!({
+                    "changes": changes,
+                    "cursor": cursor,
+                    "full_sync_required": full_sync,
+                })),
+            );
+
+            cursor
+        }
+        Err(e) => {
+            bag.record_step(
+                "initial_changes",
+                format!("GET changes failed: {}", e),
+                duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+            return Ok(bag);
+        }
+    };
+
+    // Step 2: Write a probe object to generate a changelog entry
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f");
+    let probe_key = format!("{}/repl-probe-{}.txt", PROBE_BUCKET, timestamp);
+    let put_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, probe_key);
+    let put_start = Instant::now();
+    let put_result = stone
+        .put_bytes(&put_path, "text/plain", b"probe-replication-test".to_vec())
+        .await;
+    let put_duration = put_start.elapsed();
+
+    if let Err(e) = &put_result {
+        bag.record_step(
+            "write_probe",
+            format!("PUT probe object failed: {}", e),
+            put_duration.as_millis() as u64,
+            StepResult::failed(e.to_string()),
+        );
+        return Ok(bag);
+    }
+    bag.record_step(
+        "write_probe",
+        format!("PUT probe object {}", probe_key),
+        put_duration.as_millis() as u64,
+        StepResult::ok(),
+    );
+
+    // Step 3: GET /changes?since=<initial_cursor> — should see the new entry
+    let since_path = if initial_cursor.is_empty() {
+        changes_path.clone()
+    } else {
+        format!("{}?since={}", changes_path, initial_cursor)
+    };
+    let since_start = Instant::now();
+    let since_result = stone.get_json(&since_path).await;
+    let since_duration = since_start.elapsed();
+
+    match &since_result {
+        Ok(resp) => {
+            let cursor = resp
+                .get("data")
+                .and_then(|d| d.get("cursor"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            let changes = resp
+                .get("data")
+                .and_then(|d| d.get("changes"))
+                .and_then(|c| c.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let full_sync = resp
+                .get("data")
+                .and_then(|d| d.get("full_sync_required"))
+                .and_then(|f| f.as_bool())
+                .unwrap_or(false);
+
+            // Should see at least 1 new change (the PUT we just did)
+            let has_our_change = changes.iter().any(|c| {
+                c.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(|p| p == probe_key)
+                    .unwrap_or(false)
+            });
+
+            let cursor_advanced = !cursor.is_empty()
+                && (initial_cursor.is_empty() || cursor > initial_cursor.as_str());
+
+            if has_our_change && cursor_advanced && !full_sync {
+                bag.record_step(
+                    "since_changes",
+                    format!(
+                        "Since cursor: {} changes, new cursor={}, probe object found",
+                        changes.len(),
+                        cursor
+                    ),
+                    since_duration.as_millis() as u64,
+                    StepResult::ok_with(serde_json::json!({
+                        "changes": changes.len(),
+                        "cursor": cursor,
+                        "probe_key_found": true,
+                    })),
+                );
+            } else {
+                let mut reasons = Vec::new();
+                if !has_our_change {
+                    reasons.push("probe object not in changes");
+                }
+                if !cursor_advanced {
+                    reasons.push("cursor did not advance");
+                }
+                if full_sync {
+                    reasons.push("unexpected full_sync_required=true");
+                }
+                bag.record_step(
+                    "since_changes",
+                    format!("Changes endpoint issues: {}", reasons.join(", ")),
+                    since_duration.as_millis() as u64,
+                    StepResult::failed(reasons.join("; ")),
+                );
+            }
+        }
+        Err(e) => {
+            bag.record_step(
+                "since_changes",
+                format!("GET changes?since= failed: {}", e),
+                since_duration.as_millis() as u64,
+                StepResult::failed(e.to_string()),
+            );
+        }
+    }
+
+    // Cleanup: delete the probe object
+    let del_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, probe_key);
+    let _ = stone.delete_status_code(&del_path).await;
+
+    Ok(bag)
+}
+
+// ============================================================================
+// storage.role_consistency - Verify all stones agree on role assignments
+// ============================================================================
+
+pub fn role_consistency_test() -> TestDef {
+    TestDef {
+        id: "storage.role_consistency",
+        name: "Role Consistency",
+        description: "Verify all stones report the same Primary for each seed bank name",
+        category: "storage",
+        tags: &["storage", "orchestration", "consistency", "storage-0006"],
+        run: |garden, bag| Box::pin(test_role_consistency(garden, bag)),
+    }
+}
+
+async fn test_role_consistency(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
+    if garden.stones.len() < 2 {
+        bag.record_step(
+            "role_consistency",
+            "Single-stone garden — consistency check not applicable",
+            0,
+            StepResult::skipped("Need 2+ stones"),
+        );
+        return Ok(bag);
+    }
+
+    // Collect garden_banks from each stone
+    let mut views: Vec<(String, Vec<(String, String)>)> = Vec::new(); // (stone_name, [(bank_name, role)])
+
+    for stone in &garden.stones {
+        let start = Instant::now();
+        let result = stone.get_json("/api/v1/stone/storage").await;
+        let duration = start.elapsed();
+
+        match result {
+            Ok(resp) => {
+                let banks: Vec<(String, String)> = resp
+                    .get("data")
+                    .and_then(|d| d.get("garden_banks"))
+                    .and_then(|g| g.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|b| {
+                                let name = b.get("name").and_then(|n| n.as_str())?.to_string();
+                                let role = b.get("role").and_then(|r| r.as_str())?.to_string();
+                                Some((name, role))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                bag.record_step(
+                    format!("view_{}", stone.name),
+                    format!("{}: sees {} banks", stone.name, banks.len()),
+                    duration.as_millis() as u64,
+                    StepResult::ok(),
+                );
+                views.push((stone.name.clone(), banks));
+            }
+            Err(e) => {
+                bag.record_step(
+                    format!("view_{}", stone.name),
+                    format!("{}: overview failed", stone.name),
+                    duration.as_millis() as u64,
+                    StepResult::failed(e.to_string()),
+                );
+            }
+        }
+    }
+
+    if views.len() < 2 {
+        bag.record_step(
+            "role_consistency",
+            "Could not get overview from 2+ stones",
+            0,
+            StepResult::failed("Insufficient data"),
+        );
+        return Ok(bag);
+    }
+
+    // Build primary map per stone: name → role reported by that stone
+    // Then compare across stones
+    let mut inconsistencies = Vec::new();
+
+    // Collect all bank names
+    let all_names: std::collections::HashSet<String> = views
+        .iter()
+        .flat_map(|(_, banks)| banks.iter().map(|(name, _)| name.clone()))
+        .collect();
+
+    for name in &all_names {
+        let mut primaries_seen: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for (stone_name, banks) in &views {
+            for (bank_name, role) in banks {
+                if bank_name == name && role == "primary" {
+                    // Find which stone_id owns this primary
+                    primaries_seen.insert(stone_name.clone());
+                }
+            }
+        }
+
+        // All stones should agree on the same set of primaries
+        // (Each stone should see the same bank as Primary)
+        if primaries_seen.len() > 1 {
+            // Not necessarily an error — each stone reports what IT sees
+            // But for strong consistency, all stones should agree
+            // This is a soft check: just record it
+        }
+    }
+
+    // Stronger check: compare stone A's view vs stone B's view
+    let reference = &views[0];
+    let mut all_consistent = true;
+
+    for (stone_name, banks) in views.iter().skip(1) {
+        let ref_map: std::collections::HashMap<_, _> = reference.1.iter().cloned().collect();
+        let this_map: std::collections::HashMap<_, _> = banks.iter().cloned().collect();
+
+        for name in &all_names {
+            let ref_role = ref_map.get(name.as_str()).map(|s| s.as_str());
+            let this_role = this_map.get(name.as_str()).map(|s| s.as_str());
+
+            if ref_role != this_role {
+                all_consistent = false;
+                inconsistencies.push(format!(
+                    "'{}': {} says {:?}, {} says {:?}",
+                    name, reference.0, ref_role, stone_name, this_role
+                ));
+            }
+        }
+    }
+
+    if all_consistent {
+        bag.record_step(
+            "consistency_check",
+            format!(
+                "All {} stones agree on roles for {} seed bank names",
+                views.len(),
+                all_names.len()
+            ),
+            0,
+            StepResult::ok(),
+        );
+    } else {
+        bag.record_step(
+            "consistency_check",
+            format!("{} inconsistencies found", inconsistencies.len()),
+            0,
+            StepResult::failed(inconsistencies.join("; ")),
+        );
+    }
+
+    Ok(bag)
+}

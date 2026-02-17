@@ -670,13 +670,9 @@ enum Commands {
         #[arg(long)]
         fs: Option<String>,
 
-        /// Logical group for replicated seed banks (e.g., "primary", "offsite")
+        /// Encrypt seed bank content (pond-scoped, STORAGE-0006)
         #[arg(long)]
-        group: Option<String>,
-
-        /// Replica number within a group (1, 2, ...). Auto-assigned if not specified.
-        #[arg(long)]
-        replica: Option<u32>,
+        encrypted: bool,
 
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
@@ -709,6 +705,47 @@ enum Commands {
         garden-rake seed-banks --at stone-01        # On specific stone"
     )]
     SeedBanks {
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
+    /// Pin the Primary role for a seed bank
+    #[command(
+        long_about = "Pin the Primary role for a seed bank. The current Primary holder\n\
+        keeps the role and orchestration will not reassign it, even if a higher\n\
+        stone_id comes online.\n\n\
+        Examples:\n  \
+        garden-rake pin seed-bank zen-garden         # Pin by name\n  \
+        garden-rake pin seed-bank                    # Auto-select if only one"
+    )]
+    Pin {
+        /// Target: 'seed-bank'
+        target: String,
+
+        /// Seed bank name (auto-selected if only one exists)
+        name: Option<String>,
+
+        /// Moss endpoint (omit to auto-discover)
+        #[arg(long)]
+        at: Option<String>,
+    },
+
+    /// Unpin the Primary role for a seed bank
+    #[command(
+        long_about = "Remove the Primary role pin for a seed bank. Returns to normal\n\
+        first-online-wins orchestration.\n\n\
+        Examples:\n  \
+        garden-rake unpin seed-bank zen-garden       # Unpin by name\n  \
+        garden-rake unpin seed-bank                  # Auto-select if only one"
+    )]
+    Unpin {
+        /// Target: 'seed-bank'
+        target: String,
+
+        /// Seed bank name (auto-selected if only one exists)
+        name: Option<String>,
+
         /// Moss endpoint (omit to auto-discover)
         #[arg(long)]
         at: Option<String>,
@@ -1521,6 +1558,132 @@ fn normalize_zen_to_clap(
     Ok(args)
 }
 
+// ============================================================================
+// Pin/Unpin name resolution (STORAGE-0006 Phase 5)
+// ============================================================================
+
+/// Resolve seed bank name for pin/unpin: auto-select if only one exists,
+/// otherwise prompt the user.
+async fn resolve_seed_bank_name_for_pin(
+    client: &reqwest::Client,
+    at: Option<&str>,
+    name: &Option<String>,
+    _quiet_mode: bool,
+    _fresh_mode: bool,
+    _verbose: u8,
+) -> anyhow::Result<String> {
+    // If name is explicitly provided, use it
+    if let Some(n) = name {
+        return Ok(n.clone());
+    }
+
+    // Discover endpoint to query available seed banks
+    let endpoint = if let Some(ep) = at {
+        ep.to_string()
+    } else {
+        let cache = &*GLOBAL_CACHE;
+        dispatch::resolve_endpoint(client, None, Some(cache)).await?
+    };
+
+    // Fetch garden-wide overview
+    let url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch storage overview: {}", e))?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Failed to fetch storage overview");
+    }
+
+    let overview: commands::storage::StorageOverview = resp
+        .json::<garden_common::api_utils::ApiResponse<commands::storage::StorageOverview>>()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to parse storage overview: {}", e))?
+        .data;
+
+    // Collect unique logical names
+    let mut names: Vec<String> = overview
+        .garden_banks
+        .iter()
+        .map(|b| b.name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+
+    if names.is_empty() {
+        anyhow::bail!("No seed banks found in the garden");
+    }
+
+    if names.len() == 1 {
+        // Auto-select
+        return Ok(names.into_iter().next().unwrap());
+    }
+
+    // Multiple names — show grouped picker
+    use garden_common::storage::{SeedBankInfo, SeedBankSummary};
+
+    println!("\nSelect a seed bank:\n");
+
+    let mut by_name: std::collections::BTreeMap<&str, Vec<&commands::storage::GardenBankInfo>> =
+        std::collections::BTreeMap::new();
+    for gb in &overview.garden_banks {
+        by_name.entry(&gb.name).or_default().push(gb);
+    }
+
+    let entries: Vec<(&str, &Vec<&commands::storage::GardenBankInfo>)> =
+        by_name.iter().map(|(k, v)| (*k, v)).collect();
+
+    for (logical_name, replicas) in entries.iter() {
+        println!("  {}", logical_name);
+        for r in *replicas {
+            let summary = SeedBankSummary {
+                short_id: SeedBankInfo::short_id(&r.id),
+                name: r.name.clone(),
+                capacity_gb: r.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                device: None,
+                stone_name: Some(r.stone_name.clone()),
+                role: r.role,
+                pinned: r.pinned,
+                encrypted: r.encrypted,
+                online: true,
+            };
+            println!("  {}", summary.format_line());
+        }
+        println!();
+    }
+
+    // Build numbered choices
+    let choice_line: String = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| format!("[{}] {}", i + 1, name))
+        .collect::<Vec<_>>()
+        .join("  ");
+    print!("> {}  : ", choice_line);
+    std::io::Write::flush(&mut std::io::stdout())?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    // Accept number or name
+    if let Ok(idx) = input.parse::<usize>() {
+        if idx >= 1 && idx <= entries.len() {
+            return Ok(entries[idx - 1].0.to_string());
+        }
+        anyhow::bail!("Invalid selection: {}", idx);
+    }
+
+    // Check if input matches a name
+    if entries.iter().any(|(n, _)| *n == input) {
+        return Ok(input.to_string());
+    }
+
+    anyhow::bail!("Unknown seed bank: {}", input);
+}
+
 // Windows debug builds need larger stack for async/clap combination
 #[cfg(all(windows, debug_assertions))]
 fn main() -> anyhow::Result<()> {
@@ -2263,15 +2426,14 @@ async fn async_main() -> anyhow::Result<()> {
                 name,
                 random,
                 fs,
-                group,
-                replica,
+                encrypted,
                 at,
             } => {
                 if target != "seed-bank" {
-                    anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>] [--group <name>] [--replica <id>]");
+                    anyhow::bail!("Usage: garden-rake prepare seed-bank [<device>] [--name <name>] [--random] [--fs <btrfs|ext4>] [--encrypted]");
                 }
                 let cmd = commands::storage::PrepareSeedBankCommand::new(
-                    device, name, random, fs, group, replica,
+                    device, name, random, fs, encrypted,
                 );
                 dispatch::dispatch(
                     &cmd,
@@ -2301,6 +2463,58 @@ async fn async_main() -> anyhow::Result<()> {
 
             Commands::SeedBanks { at } => {
                 let cmd = commands::storage::ShowSeedBanksCommand::new();
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Pin { target, name, at } => {
+                if target != "seed-bank" {
+                    anyhow::bail!("Usage: garden-rake pin seed-bank [<name>]");
+                }
+                let resolved_name = resolve_seed_bank_name_for_pin(
+                    &client,
+                    at.as_deref(),
+                    &name,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                )
+                .await?;
+                let cmd = commands::storage::PinSeedBankCommand::new(resolved_name);
+                dispatch::dispatch(
+                    &cmd,
+                    &client,
+                    at,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                    Some(&*GLOBAL_CACHE),
+                )
+                .await?;
+            }
+
+            Commands::Unpin { target, name, at } => {
+                if target != "seed-bank" {
+                    anyhow::bail!("Usage: garden-rake unpin seed-bank [<name>]");
+                }
+                let resolved_name = resolve_seed_bank_name_for_pin(
+                    &client,
+                    at.as_deref(),
+                    &name,
+                    quiet_mode,
+                    fresh_mode,
+                    cli.verbose,
+                )
+                .await?;
+                let cmd = commands::storage::UnpinSeedBankCommand::new(resolved_name);
                 dispatch::dispatch(
                     &cmd,
                     &client,

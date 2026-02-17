@@ -440,6 +440,15 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/storage/release-all",
             post(api::v1::storage::release_all_seed_banks_v1),
         )
+        // Pin / Unpin (STORAGE-0006 Phase 5)
+        .route(
+            "/api/v1/stone/storage/bank/pin",
+            post(api::v1::storage::pin_bank_v1),
+        )
+        .route(
+            "/api/v1/stone/storage/bank/unpin",
+            post(api::v1::storage::unpin_bank_v1),
+        )
         .route(
             "/api/v1/stone/storage/bank",
             get(api::v1::storage::list_banks_v1),
@@ -464,6 +473,11 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/storage/bank/{id}/release",
             post(api::v1::storage::release_bank_v1),
         )
+        // Replication changelog (STORAGE-0006 Phase 4) — must precede {*path} catch-all
+        .route(
+            "/api/v1/stone/storage/bank/{id}/changes",
+            get(api::v1::storage::bank_changes_v1),
+        )
         .route(
             "/api/v1/stone/storage/bank/{id}/{*path}",
             get(api::v1::storage::get_object_v1),
@@ -479,6 +493,11 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/storage/bank/{id}/{*path}",
             head(api::v1::storage::head_object_v1),
+        )
+        // Storage replication SSE stream (STORAGE-0006 Phase 4)
+        .route(
+            "/api/v1/stone/storage/stream",
+            get(api::v1::storage::stream_storage_v1),
         )
         // Stone presence (PRESENCE-0001)
         .route(

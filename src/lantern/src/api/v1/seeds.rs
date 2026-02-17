@@ -18,8 +18,8 @@ struct SeedBankView {
     used_bytes: u64,
     visibility: String,
     online: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pool_id: Option<String>,
+    #[serde(default)]
+    encrypted: bool,
 }
 
 /// GET /api/v1/garden/seeds — seed banks aggregated across all stones
@@ -40,7 +40,7 @@ pub async fn get_seeds(State(state): State<AppState>) -> Json<Value> {
                     used_bytes: bank.used_bytes,
                     visibility: bank.visibility.clone(),
                     online: bank.online,
-                    pool_id: bank.pool_id.clone(),
+                    encrypted: bank.encrypted,
                 });
             }
         }

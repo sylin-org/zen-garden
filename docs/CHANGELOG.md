@@ -2,6 +2,43 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-18
+
+- Pin redesign: GUIDv7 pin_id with last-pin-wins semantics — any replica holder can claim Primary
+- Pin redesign: auto-unpin when losing to a newer remote pin_id
+- Pin persistence: pin_id survives restarts via `.zen-garden/pin.json` on mount
+- Storage resilience: timed subprocess utility (30s mount, 10s query) prevents hung device commands
+- Storage resilience: per-device mount recovery isolation — write lock released during I/O
+- Storage resilience: circuit breaker with exponential backoff after 5 failures, abandon at 50
+- Storage resilience: prepare-job guard prevents concurrent preparation of the same device
+- All 25 Command::new call sites in registry.rs/device.rs wrapped with timed execution
+
+## 2026-02-17
+
+- STORAGE-0006 Phase 3: Write-to-primary routing in nurturing scheduler, storage gateway, and S3 gateway
+- StorageCache: find_primary_by_name (prefers Primary role, falls back) and find_all_by_name
+- NurturingScheduler: select_targets filters out Dormant replicas, only writes to Primary
+- Gateway PUT/DELETE handlers route to remote Primary when local bank is Dormant
+- STORAGE-0006 Phase 4: Cursor-based replication — changelog, squash, SSE doorbell, pull endpoint, replication task
+- SeedBankStore: append-only changelog (.zen-garden/changelog.jsonl) with GUIDv7 cursors
+- changes_since() squashes per-path entries to net-effect (C→M→D = omit, M→M→M = single M)
+- ChangesResponse.full_sync_required flag for stale-cursor detection after compaction
+- GET /api/v1/stone/storage/bank/{id}/changes — changelog pull endpoint
+- GET /api/v1/stone/storage/stream — SSE doorbell for storage mutations (StorageTick)
+- AppState.storage_tick_tx broadcast channel for storage replication notifications
+- Seed bank replication background task syncs Dormant banks from Primary via changelog pull
+- Periodic changelog compaction (7-day retention window) in orchestration task
+- STORAGE-0006 Phase 5: CLI updates — pin/unpin, release disambiguation, show enhancement, default naming
+- Pin/unpin API endpoints (POST /bank/pin, /bank/unpin) lock Primary role to a seed bank name
+- Orchestration respects pinned state: locally pinned Primary never yields, remote pinned wins
+- Rake: `pin seed-bank` / `unpin seed-bank` commands with grouped picker UX (● Primary, ★ pinned)
+- Rake: `show seed-banks` garden-wide grouped view with replica count, role, encryption state
+- Release command: name→id disambiguation picker when multiple same-name replicas on one stone
+- Release command: fixed URL path to use /bank/{id}/release (was broken)
+- PortraitSeedBank enriched with id, short_id, role, pinned, encrypted fields
+- **BREAKING**: Default seed bank name changed from `seed-bank-zen-garden` to `public-seed-bank` / `private-seed-bank`
+- Removed legacy DEFAULT_SEED_BANK_NAME constant — replaced with DEFAULT_PUBLIC/PRIVATE_SEED_BANK_NAME
+
 ## 2026-02-09
 
 - MOSS-0004: Phased cooperative shutdown — CancellationToken threaded through all background tasks

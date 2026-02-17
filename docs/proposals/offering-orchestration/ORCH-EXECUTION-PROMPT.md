@@ -512,56 +512,7 @@ tokio::spawn(async move {
 
 ---
 
-### Phase 4: DNS Publication via Koi
-
-**Goal:** Primary registers DNS, non-primaries don't.
-
-**IMPORTANT:** The `koi_embedded::DnsHandle` API has not been used in Moss before. Read the `koi_embedded` source to verify `DnsEntry` fields and method signatures. Code below is illustrative.
-
-**Files to modify:**
-- `src/moss/src/tasks/offering_orchestration.rs` — DNS on role change
-- Existing offering lifecycle code (where offerings are started/stopped)
-
-**Steps:**
-
-1. **On `transition_role(Primary)`** — register DNS:
-
-```rust
-if let Ok(dns) = state.koi_handle.dns() {
-    let dns_name = format!("{}.lan", offering_name_to_dns(fqn));
-    dns.add_entry(DnsEntry {
-        name: dns_name,
-        ip: state.stone_ip.to_string(),
-        ttl: None,
-    })?;
-}
-```
-
-2. **On `transition_role(Dormant)` or `transition_role(Degraded)` from Primary** — remove DNS:
-
-```rust
-if let Ok(dns) = state.koi_handle.dns() {
-    dns.remove_entry(&format!("{}.lan", offering_name_to_dns(fqn)))?;
-}
-```
-
-3. **FQN to DNS name conversion:**
-
-```rust
-fn offering_name_to_dns(fqn: &str) -> String {
-    fqn.replace(':', "-")   // "mongodb:analytics" → "mongodb-analytics"
-}
-```
-
-4. **Idempotency.** Re-registration on restart is fine. Don't error on duplicate entries.
-
-5. **Integration with role transitions.** DNS registration/removal is a side-effect of `transition_role()`, not scattered across callsites.
-
-**Checkpoint:** Deploy on Stone A → `offering.lan` resolves to A. Deploy on B → B dormant, DNS on A. Stop A → election → B promotes → DNS moves to B.
-
----
-
-### Phase 5: Pull-Based Sync
+### Phase 4: Pull-Based Sync
 
 **Goal:** Dormant replicas sync from primaries.
 
@@ -580,7 +531,7 @@ pub struct OrchestrationState {
     pub primary_stone_id: Option<String>,
     pub pinned: bool,
     pub pin_timestamp: Option<String>,
-    // Added in Phase 5:
+    // Added in Phase 4:
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_cursor: Option<String>,        // ISO timestamp or sequence
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -630,7 +581,7 @@ Consider defining a `Syncable` trait dispatched by mode for clean separation, bu
 
 ---
 
-### Phase 6: Pinning & Lifecycle Edge Cases
+### Phase 5: Pinning & Lifecycle Edge Cases
 
 **Goal:** Pin/unpin commands, graceful Primary removal, last-copy seed-bank archival.
 
@@ -674,13 +625,62 @@ garden-rake unpin <offering>           # Remove pin from tended stone
    - If a seed-bank offering is discovered in the garden's tools cache:
      - Return a response indicating last-copy status and seed-bank availability
      - Rake prompts: *"This is the last instance of `mongodb`. Archive to seed-bank before removal? [Y/n]"*
-     - If yes → Moss snapshots the offering's volume/capabilities to the seed-bank (using the same sync mechanism as Phase 5 in reverse), via the job system. Wait for job completion, then remove.
+     - If yes → Moss snapshots the offering's volume/capabilities to the seed-bank (using the same sync mechanism as Phase 4 in reverse), via the job system. Wait for job completion, then remove.
      - If no → remove immediately
    - If no seed-bank exists: remove immediately (warn that data is permanently lost)
 
    The API endpoint returns metadata; the interactive prompt lives in Rake. Moss never blocks on user input.
 
 **Checkpoint:** Pin offering, stop Stone, verify failover, restart, verify reclaim. Remove Primary gracefully, verify new Primary before removal completes. Remove last instance with seed-bank archival prompt.
+
+---
+
+### Phase 6: DNS Publication via Koi
+
+**Goal:** Primary registers DNS, non-primaries don't.
+
+**IMPORTANT:** The `koi_embedded::DnsHandle` API has not been used in Moss before. Read the `koi_embedded` source to verify `DnsEntry` fields and method signatures. Code below is illustrative.
+
+**Files to modify:**
+- `src/moss/src/tasks/offering_orchestration.rs` — DNS on role change
+- Existing offering lifecycle code (where offerings are started/stopped)
+
+**Steps:**
+
+1. **On `transition_role(Primary)`** — register DNS:
+
+```rust
+if let Ok(dns) = state.koi_handle.dns() {
+    let dns_name = format!("{}.lan", offering_name_to_dns(fqn));
+    dns.add_entry(DnsEntry {
+        name: dns_name,
+        ip: state.stone_ip.to_string(),
+        ttl: None,
+    })?;
+}
+```
+
+2. **On `transition_role(Dormant)` or `transition_role(Degraded)` from Primary** — remove DNS:
+
+```rust
+if let Ok(dns) = state.koi_handle.dns() {
+    dns.remove_entry(&format!("{}.lan", offering_name_to_dns(fqn)))?;
+}
+```
+
+3. **FQN to DNS name conversion:**
+
+```rust
+fn offering_name_to_dns(fqn: &str) -> String {
+    fqn.replace(':', "-")   // "mongodb:analytics" → "mongodb-analytics"
+}
+```
+
+4. **Idempotency.** Re-registration on restart is fine. Don't error on duplicate entries.
+
+5. **Integration with role transitions.** DNS registration/removal is a side-effect of `transition_role()`, not scattered across callsites.
+
+**Checkpoint:** Deploy on Stone A → `offering.lan` resolves to A. Deploy on B → B dormant, DNS on A. Stop A → election → B promotes → DNS moves to B.
 
 ---
 

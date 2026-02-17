@@ -75,6 +75,12 @@ canonical: true
   - **Rationale**: CancellationToken + sd_notify + cooperative task exit prevent stuck updates
   - **Impact**: Background tasks exit cleanly on SIGTERM, SSE streams drain, systemd Type=notify
 
+### Orchestration
+- **[ORCH-0001](ORCH-0001-replant-ceremony.md)**: Replant Ceremony — Offering State Transfer Between Stones
+  - **Status**: Proposed (2026-02-16)
+  - **Rationale**: Cross-stone state transfer via harvest/collect/plant phases, reusing ceremony + harvest infrastructure
+  - **Impact**: Replicas sync from primaries, seed-bank fallback, `garden-rake replant` CLI
+
 ### Offerings (Services)
 - **[OFFER-0001](OFFER-0001-taxonomy.md)**: Offering Taxonomy
   - **Status**: Accepted
@@ -98,6 +104,12 @@ canonical: true
   - **Status**: Accepted
   - **Rationale**: Tending command for resolution cache management
   - **Impact**: Performance optimization, stale endpoint cleanup
+
+### Storage (Seed Banks)
+- **[STORAGE-0006](STORAGE-0006-seed-bank-replication.md)**: Seed Bank Replication, Roles, and Pond Encryption
+  - **Status**: Proposed (2026-02-16)
+  - **Rationale**: Primary/dormant roles for seed banks, ChaCha20-Poly1305 encryption for pond-scoped data-at-rest, GUIDv7 last-pin-wins, clone for export, default naming
+  - **Impact**: Seed bank redundancy, geographic distribution, encrypted storage, foundation for Replant ceremony. Simplifies data model (removes group/replica_id).
 
 ### Tools
 - **[TOOLS-0001](TOOLS-0001-garden-tools-domain.md)**: Unified Garden Tools Domain

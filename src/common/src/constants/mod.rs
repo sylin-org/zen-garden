@@ -3,6 +3,7 @@
 
 pub mod headers;
 pub mod limits;
+pub mod orchestration;
 pub mod paths;
 pub mod timeouts;
 
@@ -360,6 +361,9 @@ pub const EVENT_RENAMED: &str = "renamed";
 
 /// Offering health status changed
 pub const EVENT_HEALTH_CHANGED: &str = "health_changed";
+
+/// Offering orchestration role changed (ORCH-0001)
+pub const EVENT_ROLE_CHANGED: &str = "role_changed";
 
 // ============================================================================
 // UDP Announcement Types

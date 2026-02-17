@@ -1,6 +1,7 @@
 //! State provider for election criteria evaluation
 
 use crate::app_state::AppState;
+use crate::domain::fitness;
 use crate::version_string;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -62,5 +63,88 @@ pub struct PlaceholderStateProvider;
 impl super::election_service::StateProvider for PlaceholderStateProvider {
     fn get_state(&self) -> HashMap<String, Value> {
         HashMap::new() // No criteria matching during bootstrap
+    }
+}
+
+// ============================================================================
+// Fitness Provider (ORCH-0001)
+// ============================================================================
+
+/// Fitness provider that computes scores from live AppState.
+///
+/// Injected into `ElectionService` after bootstrap so the election protocol
+/// can ask "how fit is this stone for offering X?" without knowing the answer
+/// algorithm. SoC between election protocol (infra) and fitness scoring (domain).
+///
+/// Relies on the **existing per-stone compatibility evaluation** stored in
+/// the compiled offerings index — no manifest constraint duplication.
+pub struct MossFitnessProvider {
+    state: Arc<AppState>,
+}
+
+impl MossFitnessProvider {
+    pub fn new(state: Arc<AppState>) -> Self {
+        Self { state }
+    }
+}
+
+impl super::election_service::FitnessProvider for MossFitnessProvider {
+    fn compute_fitness(
+        &self,
+        offering_fqn: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<(i16, Option<String>)>> + Send + '_>>
+    {
+        let fqn = offering_fqn.to_string();
+        Box::pin(async move {
+            // Find the running offering by FQN
+            let offering = self.state.find_offering(&fqn).await?;
+
+            // Look up the per-stone compatibility evaluation from the
+            // compiled offerings index. This was already evaluated against
+            // THIS stone's capabilities when the index was built.
+            let compatibility = {
+                let idx_guard = self.state.offerings_index.read().await;
+                idx_guard
+                    .as_ref()
+                    .and_then(|idx| {
+                        idx.offerings
+                            .iter()
+                            .find(|o| o.name == offering.offering)
+                            .map(|o| o.compatibility.clone())
+                    })
+            };
+
+            let compat = compatibility.unwrap_or_else(|| {
+                // Index not built yet or offering not in manifest — assume pass
+                crate::domain::compatibility::CompiledCompatibility {
+                    decision: garden_common::COMPAT_PASS.to_string(),
+                    reason: None,
+                    original_image: None,
+                    fallback_image: None,
+                    suggestion: None,
+                }
+            });
+
+            // Collect normalised metrics for resource scoring
+            let metrics = crate::domain::metrics_collection::get_local_metrics().ok();
+
+            let offering_count = self.state.offerings.read().await.len();
+
+            // Compute fitness score (domain logic)
+            let score = fitness::compute_fitness_score(
+                &offering,
+                &compat,
+                metrics.as_ref(),
+                offering_count,
+            )?;
+
+            // Extract pin_timestamp if pinned
+            let pin_ts = offering
+                .orchestration
+                .as_ref()
+                .and_then(|o| o.pin_timestamp.clone());
+
+            Some((score, pin_ts))
+        })
     }
 }

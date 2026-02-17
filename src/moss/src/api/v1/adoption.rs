@@ -245,6 +245,7 @@ pub async fn adopt_offering_v1(
         }),
         registered_at: chrono::Utc::now(),
         updated_at: None,
+        orchestration: None,
     };
 
     // Add to registry and persist
@@ -451,6 +452,7 @@ pub async fn borrow_service_v1(
         }),
         registered_at: chrono::Utc::now(),
         updated_at: None,
+        orchestration: None,
     };
 
     // Add to registry and persist

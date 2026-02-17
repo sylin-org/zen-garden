@@ -111,17 +111,14 @@ Execute the following phases IN ORDER. Each phase must compile with zero errors 
 
 ```rust
 /// Orchestration role for multi-instance coordination
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum OfferingRole {
+    Joining,
+    #[default]
     Primary,
     Dormant,
-    Joining,
     Degraded,
-}
-
-impl Default for OfferingRole {
-    fn default() -> Self { OfferingRole::Primary }
 }
 
 /// Orchestration state persisted on each offering instance.
@@ -165,8 +162,8 @@ Update `TopologyServiceEntry::from_service_info()` to populate `role` from the o
 
 ```rust
 /// Whether this offering supports replication. Default: true.
-#[serde(default = "default_true")]
-pub replicable: Option<bool>,
+#[serde(default = "default_replicable")]
+pub replicable: bool,
 
 /// Hardware/capability constraints for election eligibility.
 /// Evaluated at election time against the stone's capabilities.
@@ -227,7 +224,7 @@ pub enum ElectionType {
     CeremonyCoordinator,
     ReplicaTarget,
     BackupSource,
-    OfferingPrimary,        // NEW — elect primary for a replicated offering
+    OfferingPrimary(String), // NEW — carries offering FQN (e.g. "weaviate:dev")
     Custom(String),
 }
 ```
@@ -487,7 +484,7 @@ Because `RoleChanged` flows through the event bus, the chirp listener automatica
 
 4. **First-deploy-is-primary.** Hook into the offering deployment path. After `install_service_task()` sets status to `Running` (in `job_executors.rs`), check the topology cache for another Stone running the same offering FQN. If none → set role to `Primary`. If found → set role to `Joining`. The FQN is constructed from the offering's `name` field (see `tool_fqid` pattern in `src/moss/src/domain/tools/projector.rs`).
 
-5. **Primary heartbeat monitoring.** For Dormant offerings, the orchestration task watches the topology cache (populated from chirps) for the primary's `TopologyServiceEntry`. If the primary's chirp hasn't been seen for `FITNESS_HARD_CAP_MS * 2` (6 seconds), call `state.election_service.start_election()` with `ElectionType::OfferingPrimary` and `ScoreMechanism::Fitness`.
+5. **Primary heartbeat monitoring.** For Dormant offerings, the orchestration task watches the topology cache (populated from chirps) for the primary's `TopologyServiceEntry`. If the primary's chirp hasn't been seen for `FITNESS_HARD_CAP_MS * 2` (6 seconds), call `state.election_service.start_election()` with `ElectionType::OfferingPrimary(fqn.clone())` and `ScoreMechanism::Fitness`.
 
 No custom heartbeat tracking needed — the existing chirp pipeline IS the heartbeat. The topology cache already tracks last-seen timestamps.
 

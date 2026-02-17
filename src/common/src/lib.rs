@@ -60,7 +60,7 @@ pub use constants::{
 // Re-export offering lifecycle event constants
 pub use constants::{
     EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
-    EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
+    EVENT_ROLE_CHANGED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
 };
 
 // Re-export announcement type constants

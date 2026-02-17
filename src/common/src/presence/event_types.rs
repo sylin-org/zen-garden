@@ -64,3 +64,15 @@ pub const STORAGE_SYNC_STARTED: &str = "storage.sync_started";
 pub const STORAGE_SYNC_COMPLETED: &str = "storage.sync_completed";
 /// Storage beacon received from another stone (STORAGE-0003)
 pub const STORAGE_BEACON_RECEIVED: &str = "storage.beacon.received";
+
+// Orchestration events (ORCH-0001)
+/// Offering election started for primary selection
+pub const OFFERING_ELECTION_STARTED: &str = "offering.election.started";
+/// Offering promoted to primary role
+pub const OFFERING_ROLE_PROMOTED: &str = "offering.role.promoted";
+/// Offering demoted from primary role
+pub const OFFERING_ROLE_DEMOTED: &str = "offering.role.demoted";
+/// Offering sync completed (dormant replica pull)
+pub const OFFERING_SYNC_COMPLETED: &str = "offering.sync.completed";
+/// Offering health degraded (consecutive failures)
+pub const OFFERING_HEALTH_DEGRADED: &str = "offering.health.degraded";

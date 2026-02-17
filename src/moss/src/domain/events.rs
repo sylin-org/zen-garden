@@ -10,8 +10,8 @@
 
 use chrono::{DateTime, Utc};
 use garden_common::{
-    presence::event_types, EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED,
-    EVENT_RENAMED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
+    presence::event_types, OfferingRole, EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED,
+    EVENT_REMOVED, EVENT_RENAMED, EVENT_ROLE_CHANGED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
 };
 use serde::{Deserialize, Serialize};
 
@@ -572,6 +572,17 @@ pub enum OfferingEvent {
         status: String,
         timestamp: DateTime<Utc>,
     },
+
+    /// Offering orchestration role changed (ORCH-0001).
+    /// Emitted once; downstream listeners (chirp, presence, tools) react automatically.
+    RoleChanged {
+        offering_id: String,
+        name: String,
+        stone_id: String,
+        old_role: OfferingRole,
+        new_role: OfferingRole,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl OfferingEvent {
@@ -586,6 +597,7 @@ impl OfferingEvent {
             Self::Updated { offering_id, .. } => offering_id,
             Self::Renamed { offering_id, .. } => offering_id,
             Self::HealthChanged { offering_id, .. } => offering_id,
+            Self::RoleChanged { offering_id, .. } => offering_id,
         }
     }
 
@@ -600,6 +612,7 @@ impl OfferingEvent {
             Self::Updated { name, .. } => name,
             Self::Renamed { new_name, .. } => new_name,
             Self::HealthChanged { name, .. } => name,
+            Self::RoleChanged { name, .. } => name,
         }
     }
 
@@ -614,6 +627,7 @@ impl OfferingEvent {
             Self::Updated { stone_id, .. } => stone_id,
             Self::Renamed { stone_id, .. } => stone_id,
             Self::HealthChanged { stone_id, .. } => stone_id,
+            Self::RoleChanged { stone_id, .. } => stone_id,
         }
     }
 
@@ -628,6 +642,7 @@ impl OfferingEvent {
             Self::Updated { .. } => EVENT_UPDATED,
             Self::Renamed { .. } => EVENT_RENAMED,
             Self::HealthChanged { .. } => EVENT_HEALTH_CHANGED,
+            Self::RoleChanged { .. } => EVENT_ROLE_CHANGED,
         }
     }
 
@@ -641,6 +656,8 @@ impl OfferingEvent {
             Self::Renamed { .. } => true,
             Self::Updated { .. } => true,
             Self::HealthChanged { .. } => true,
+            // Role changes affect topology (role field on TopologyServiceEntry)
+            Self::RoleChanged { .. } => true,
             // Start/stop don't change topology (service exists but state changes)
             Self::Started { .. } => false,
             Self::Stopped { .. } => false,
@@ -686,6 +703,14 @@ impl OfferingEvent {
             }
             Self::HealthChanged { name, status, .. } => {
                 format!("Service {} health: {}", name, status)
+            }
+            Self::RoleChanged {
+                name,
+                old_role,
+                new_role,
+                ..
+            } => {
+                format!("Service {} role: {} → {}", name, old_role, new_role)
             }
         }
     }
@@ -803,6 +828,23 @@ impl OfferingEvent {
             name: name.into(),
             stone_id: stone_id.into(),
             status: status.into(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn role_changed(
+        offering_id: impl Into<String>,
+        name: impl Into<String>,
+        stone_id: impl Into<String>,
+        old_role: OfferingRole,
+        new_role: OfferingRole,
+    ) -> Self {
+        Self::RoleChanged {
+            offering_id: offering_id.into(),
+            name: name.into(),
+            stone_id: stone_id.into(),
+            old_role,
+            new_role,
             timestamp: Utc::now(),
         }
     }

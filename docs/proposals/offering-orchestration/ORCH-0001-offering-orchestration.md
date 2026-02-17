@@ -736,7 +736,7 @@ After this phase, any containerized offering can `curl http://host.docker.intern
 - Add `replicable` and typed `OrchestrationConstraints` to offering manifests
 - Add `OfferingEvent::RoleChanged` variant to event bus (drives chirps, presence, tools projection automatically)
 - Extend existing `ElectionService` with `ScoreMechanism::Fitness` mode (opaque `i16` scoring, 1s quiet / 3s hard cap)
-- Add `OfferingPrimary` to `ElectionType`, `score: Option<i16>` and `pin_timestamp` to `ElectionCandidate`
+- Add `OfferingPrimary(String)` to `ElectionType` (carries offering FQN), `score: Option<i16>` and `pin_timestamp` to `ElectionCandidate`
 - Implement the four-state lifecycle (Joining, Dormant, Primary, Degraded)
 - First-deploy-is-primary logic
 - Cold start: election with zero opponents

@@ -39,6 +39,7 @@ pub fn register_stone(
             offering: svc.service_type,
             category: String::new(),
             status: svc.status,
+            role: None,
         })
         .collect();
 

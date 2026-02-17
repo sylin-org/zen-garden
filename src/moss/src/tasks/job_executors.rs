@@ -800,6 +800,7 @@ pub async fn install_service_task(
                 }),
                 registered_at: chrono::Utc::now(),
                 updated_at: None,
+                orchestration: None,
             };
             offerings.push(unified);
             new_id
@@ -1060,6 +1061,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             }),
             registered_at: chrono::Utc::now(),
             updated_at: None,
+            orchestration: None,
         };
 
         {

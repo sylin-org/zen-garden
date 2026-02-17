@@ -566,6 +566,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     compatibility: None,
                     guidance: None,
                     connection: file.connection,
+                    replicable: true,
                 };
 
                 tracing::debug!(

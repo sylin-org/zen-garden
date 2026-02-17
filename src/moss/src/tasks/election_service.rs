@@ -5,11 +5,17 @@
 //!
 //! **REFACTORED (COMM-0001 Phase 4)**: Now uses p2p transport singleton for all UDP operations.
 //! Subscribes to UDP events via p2p::subscribe_to_events() instead of binding own socket.
+//!
+//! **EXTENDED (ORCH-0001 Phase 2)**: Added Fitness scoring mode.
+//! - `ScoreMechanism::Blake` (default): BLAKE3 hash delay, first respondent wins.
+//! - `ScoreMechanism::Fitness`: Candidates respond immediately with fitness scores.
+//!   Requester collects until quiet timeout or hard cap, then picks highest.
 
 use anyhow::Result;
+use garden_common::constants::orchestration::{FITNESS_HARD_CAP_MS, FITNESS_QUIET_TIMEOUT_MS};
 use garden_common::election::{
     calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest, ElectionResult,
-    ElectionType, ElectionWinner,
+    ElectionType, ElectionWinner, ScoreMechanism,
 };
 use garden_common::infra::communications::announcement_types;
 use serde_json::Value;
@@ -45,6 +51,8 @@ pub struct ElectionService {
     initiated: Arc<RwLock<HashMap<String, Instant>>>,
     /// Current state provider (for criteria evaluation)
     state_provider: Arc<RwLock<Box<dyn StateProvider>>>,
+    /// Fitness provider (for OfferingPrimary elections, ORCH-0001)
+    fitness_provider: Arc<RwLock<Option<Box<dyn FitnessProvider>>>>,
 }
 
 // Make ElectionService clonable by cloning the Arcs
@@ -56,6 +64,7 @@ impl Clone for ElectionService {
             pending: self.pending.clone(),
             initiated: self.initiated.clone(),
             state_provider: self.state_provider.clone(),
+            fitness_provider: self.fitness_provider.clone(),
         }
     }
 }
@@ -71,6 +80,23 @@ struct PendingElection {
 /// Trait for providing stone state for criteria evaluation
 pub trait StateProvider: Send + Sync {
     fn get_state(&self) -> HashMap<String, Value>;
+}
+
+/// Trait for computing fitness scores (ORCH-0001).
+///
+/// Implemented by the domain layer, injected into `ElectionService`.
+/// The election service never knows _how_ scores are computed — only
+/// that it can ask for one given an offering FQN.
+pub trait FitnessProvider: Send + Sync {
+    /// Compute fitness score for the given offering FQN.
+    ///
+    /// Returns `Some(score)` if eligible, `None` if ineligible (don't respond).
+    /// Score range: `[-1000, 1000]`. `1001` = pinned (always wins).
+    /// Also returns `pin_timestamp` if pinned.
+    fn compute_fitness(
+        &self,
+        offering_fqn: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<(i16, Option<String>)>> + Send + '_>>;
 }
 
 impl ElectionService {
@@ -92,7 +118,17 @@ impl ElectionService {
             pending: Arc::new(RwLock::new(HashMap::new())),
             initiated: Arc::new(RwLock::new(HashMap::new())),
             state_provider: Arc::new(RwLock::new(state_provider)),
+            fitness_provider: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the fitness provider (injected after AppState construction).
+    ///
+    /// Called by bootstrap once the domain layer is ready.
+    pub async fn set_fitness_provider(&self, provider: Box<dyn FitnessProvider>) {
+        let mut fp = self.fitness_provider.write().await;
+        *fp = Some(provider);
+        tracing::debug!("Fitness provider set on election service");
     }
 
     /// Start UDP event listener loop (subscribes to p2p transport)
@@ -187,6 +223,77 @@ impl ElectionService {
             return Ok(());
         }
 
+        // Branch on score mechanism
+        match req.score_mechanism {
+            ScoreMechanism::Fitness => {
+                self.handle_fitness_candidacy(&req).await?;
+            }
+            ScoreMechanism::Blake => {
+                self.handle_blake_candidacy(&req).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle Fitness-mode candidacy: compute score immediately, respond without delay.
+    async fn handle_fitness_candidacy(&self, req: &ElectionRequest) -> Result<()> {
+        // Extract FQN from election type
+        let offering_fqn = match &req.election_type {
+            ElectionType::OfferingPrimary(fqn) => fqn.clone(),
+            _ => {
+                tracing::warn!(
+                    election_id = %req.election_id,
+                    "Fitness mode used with non-OfferingPrimary election type; ignoring"
+                );
+                return Ok(());
+            }
+        };
+
+        // Compute fitness via the injected provider
+        let fitness_result = {
+            let provider_guard = self.fitness_provider.read().await;
+            let Some(ref provider) = *provider_guard else {
+                tracing::debug!(
+                    election_id = %req.election_id,
+                    "No fitness provider set — cannot participate in Fitness election"
+                );
+                return Ok(());
+            };
+            provider.compute_fitness(&offering_fqn).await
+        };
+
+        let Some((score, pin_timestamp)) = fitness_result else {
+            tracing::debug!(
+                election_id = %req.election_id,
+                offering_fqn = %offering_fqn,
+                "Ineligible for Fitness election (compute returned None)"
+            );
+            return Ok(());
+        };
+
+        tracing::info!(
+            election_id = %req.election_id,
+            offering_fqn = %offering_fqn,
+            score,
+            "Responding to Fitness election immediately"
+        );
+
+        // Send candidacy immediately (no delay in Fitness mode)
+        let candidate = ElectionCandidate {
+            election_id: req.election_id.clone(),
+            stone_id: self.stone_id.clone(),
+            stone_name: self.stone_name.clone(),
+            score: Some(score),
+            pin_timestamp,
+        };
+
+        p2p::send_announcement(announcement_types::ELECTION_CANDIDATE, &candidate).await?;
+        Ok(())
+    }
+
+    /// Handle Blake-mode candidacy: BLAKE3 hash delay, first respondent wins.
+    async fn handle_blake_candidacy(&self, req: &ElectionRequest) -> Result<()> {
         // Calculate delay
         let delay = calculate_election_delay(&self.stone_id, &req.election_id);
         tracing::info!(
@@ -233,6 +340,8 @@ impl ElectionService {
                     election_id: election_id.clone(),
                     stone_id,
                     stone_name,
+                    score: None,
+                    pin_timestamp: None,
                 };
 
                 if let Err(e) =
@@ -254,7 +363,7 @@ impl ElectionService {
             pending.insert(
                 req.election_id.clone(),
                 PendingElection {
-                    election_id: req.election_id,
+                    election_id: req.election_id.clone(),
                     timer_handle: Some(timer_handle),
                     created_at: Instant::now(),
                 },
@@ -290,12 +399,18 @@ impl ElectionService {
     /// Start an election (as requester)
     ///
     /// **REFACTORED (COMM-0001 Phase 4)**: Uses p2p transport for broadcast and subscribes to events.
+    /// **EXTENDED (ORCH-0001 Phase 2)**: Added Fitness collection mode.
+    ///
+    /// - `ScoreMechanism::Blake`: Takes first respondent (existing behavior).
+    /// - `ScoreMechanism::Fitness`: Collects candidates until quiet timeout or hard cap,
+    ///   then picks highest score.
     pub async fn start_election(
         &self,
         election_id: String,
         election_type: ElectionType,
         criteria: Value,
         timeout_secs: u64,
+        score_mechanism: ScoreMechanism,
     ) -> Result<Option<ElectionWinner>> {
         tracing::info!(
             election_id = %election_id,
@@ -315,6 +430,7 @@ impl ElectionService {
             election_id: election_id.clone(),
             election_type,
             criteria,
+            score_mechanism: score_mechanism.clone(),
         };
 
         p2p::send_announcement(announcement_types::ELECTION_REQUEST, &request).await?;
@@ -327,39 +443,16 @@ impl ElectionService {
         // Subscribe to p2p events to receive ELECTION_CANDIDATE responses
         let mut udp_rx =
             p2p::subscribe_to_announcement(announcement_types::ELECTION_CANDIDATE).await?;
-        let wait_duration = Duration::from_secs(timeout_secs);
 
-        let winner = match timeout(wait_duration, async {
-            loop {
-                match udp_rx.recv().await {
-                    Some((payload, _from_addr)) => {
-                        let candidate: ElectionCandidate = match serde_json::from_value(payload) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                tracing::warn!(error = ?e, "Failed to parse candidate");
-                                continue;
-                            }
-                        };
-
-                        if candidate.election_id == election_id {
-                            return Some(ElectionWinner {
-                                stone_id: candidate.stone_id,
-                                stone_name: candidate.stone_name,
-                            });
-                        }
-                    }
-                    None => {
-                        tracing::error!("P2P channel closed");
-                        break;
-                    }
-                }
+        let winner = match score_mechanism {
+            ScoreMechanism::Blake => {
+                self.collect_blake_winner(&election_id, &mut udp_rx, timeout_secs)
+                    .await
             }
-            None
-        })
-        .await
-        {
-            Ok(Some(winner)) => Some(winner),
-            Ok(None) | Err(_) => None,
+            ScoreMechanism::Fitness => {
+                self.collect_fitness_winner(&election_id, &mut udp_rx)
+                    .await
+            }
         };
 
         // Broadcast ELECTION_RESULT if we have a winner
@@ -386,6 +479,132 @@ impl ElectionService {
         }
 
         Ok(winner)
+    }
+
+    // ========================================================================
+    // Collection strategies
+    // ========================================================================
+
+    /// Blake mode: take the first valid respondent.
+    async fn collect_blake_winner(
+        &self,
+        election_id: &str,
+        udp_rx: &mut tokio::sync::mpsc::Receiver<(Value, std::net::SocketAddr)>,
+        timeout_secs: u64,
+    ) -> Option<ElectionWinner> {
+        let wait_duration = Duration::from_secs(timeout_secs);
+        match timeout(wait_duration, async {
+            loop {
+                match udp_rx.recv().await {
+                    Some((payload, _from_addr)) => {
+                        let candidate: ElectionCandidate =
+                            match serde_json::from_value(payload) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::warn!(error = ?e, "Failed to parse candidate");
+                                    continue;
+                                }
+                            };
+                        if candidate.election_id == election_id {
+                            return Some(ElectionWinner {
+                                stone_id: candidate.stone_id,
+                                stone_name: candidate.stone_name,
+                            });
+                        }
+                    }
+                    None => {
+                        tracing::error!("P2P channel closed");
+                        break;
+                    }
+                }
+            }
+            None
+        })
+        .await
+        {
+            Ok(winner) => winner,
+            Err(_) => None,
+        }
+    }
+
+    /// Fitness mode: collect candidates until quiet timeout (1s) or hard cap (3s),
+    /// then pick highest score.
+    async fn collect_fitness_winner(
+        &self,
+        election_id: &str,
+        udp_rx: &mut tokio::sync::mpsc::Receiver<(Value, std::net::SocketAddr)>,
+    ) -> Option<ElectionWinner> {
+        let hard_cap = Duration::from_millis(FITNESS_HARD_CAP_MS);
+        let quiet_timeout = Duration::from_millis(FITNESS_QUIET_TIMEOUT_MS);
+        let start = Instant::now();
+        let mut candidates: Vec<ElectionCandidate> = Vec::new();
+        let mut last_received = Instant::now();
+
+        loop {
+            let elapsed = start.elapsed();
+            if elapsed >= hard_cap {
+                tracing::debug!(
+                    election_id = %election_id,
+                    collected = candidates.len(),
+                    "Fitness election: hard cap reached"
+                );
+                break;
+            }
+
+            // Wait for either quiet timeout or remaining hard cap time
+            let remaining_hard = hard_cap - elapsed;
+            let quiet_remaining = quiet_timeout
+                .checked_sub(last_received.elapsed())
+                .unwrap_or(Duration::ZERO);
+
+            // If quiet timeout already expired AND we have candidates, decide now
+            if quiet_remaining.is_zero() && !candidates.is_empty() {
+                tracing::debug!(
+                    election_id = %election_id,
+                    collected = candidates.len(),
+                    "Fitness election: quiet timeout reached"
+                );
+                break;
+            }
+
+            let wait_time = remaining_hard.min(if candidates.is_empty() {
+                remaining_hard // No candidates yet, wait up to hard cap
+            } else {
+                quiet_remaining.max(Duration::from_millis(50)) // At least 50ms poll
+            });
+
+            match timeout(wait_time, udp_rx.recv()).await {
+                Ok(Some((payload, _from_addr))) => {
+                    let candidate: ElectionCandidate = match serde_json::from_value(payload) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(error = ?e, "Failed to parse Fitness candidate");
+                            continue;
+                        }
+                    };
+                    if candidate.election_id == election_id {
+                        tracing::debug!(
+                            election_id = %election_id,
+                            stone_id = %candidate.stone_id,
+                            score = ?candidate.score,
+                            "Fitness election: received candidate"
+                        );
+                        last_received = Instant::now();
+                        candidates.push(candidate);
+                    }
+                }
+                Ok(None) => {
+                    tracing::error!("P2P channel closed during Fitness election");
+                    break;
+                }
+                Err(_) => {
+                    // Timeout — check loop conditions
+                    continue;
+                }
+            }
+        }
+
+        resolve_fitness_election(&candidates)
     }
 
     /// Cleanup expired elections
@@ -425,5 +644,195 @@ impl ElectionService {
                 });
             }
         }
+    }
+}
+
+// ============================================================================
+// Fitness resolution (pure function — easy to test)
+// ============================================================================
+
+/// Pick the winning candidate from a set of fitness-scored candidates.
+///
+/// **Tiebreak rules** (from ORCH-0001 spec):
+/// 1. Highest `score` wins.
+/// 2. If tied, most-recent `pin_timestamp` wins (pinned stone preference).
+/// 3. If still tied, lexicographically higher `stone_id` wins (deterministic).
+///
+/// Returns `None` if `candidates` is empty.
+pub fn resolve_fitness_election(candidates: &[ElectionCandidate]) -> Option<ElectionWinner> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let winner = candidates.iter().max_by(|a, b| {
+        // 1. Higher score wins
+        let score_a = a.score.unwrap_or(-1000);
+        let score_b = b.score.unwrap_or(-1000);
+        match score_a.cmp(&score_b) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+
+        // 2. Most-recent pin_timestamp wins (Some > None, then lexicographic desc)
+        match (&a.pin_timestamp, &b.pin_timestamp) {
+            (Some(ts_a), Some(ts_b)) => match ts_a.cmp(ts_b) {
+                std::cmp::Ordering::Equal => {}
+                ord => return ord,
+            },
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (None, None) => {}
+        }
+
+        // 3. Lexicographically higher stone_id wins
+        a.stone_id.cmp(&b.stone_id)
+    });
+
+    winner.map(|c| ElectionWinner {
+        stone_id: c.stone_id.clone(),
+        stone_name: c.stone_name.clone(),
+    })
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use garden_common::election::ElectionCandidate;
+
+    fn candidate(id: &str, name: &str, score: i16) -> ElectionCandidate {
+        ElectionCandidate {
+            election_id: "test-election".to_string(),
+            stone_id: id.to_string(),
+            stone_name: name.to_string(),
+            score: Some(score),
+            pin_timestamp: None,
+        }
+    }
+
+    fn pinned_candidate(id: &str, name: &str, pin_ts: &str) -> ElectionCandidate {
+        ElectionCandidate {
+            election_id: "test-election".to_string(),
+            stone_id: id.to_string(),
+            stone_name: name.to_string(),
+            score: Some(1001),
+            pin_timestamp: Some(pin_ts.to_string()),
+        }
+    }
+
+    // ====================================================================
+    // resolve_fitness_election
+    // ====================================================================
+
+    #[test]
+    fn test_no_candidates_returns_none() {
+        assert!(resolve_fitness_election(&[]).is_none());
+    }
+
+    #[test]
+    fn test_single_candidate_wins() {
+        let candidates = vec![candidate("stone-a", "Alpha", 500)];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        assert_eq!(winner.stone_id, "stone-a");
+        assert_eq!(winner.stone_name, "Alpha");
+    }
+
+    #[test]
+    fn test_highest_score_wins() {
+        let candidates = vec![
+            candidate("stone-a", "Alpha", 300),
+            candidate("stone-b", "Bravo", 800),
+            candidate("stone-c", "Charlie", 500),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        assert_eq!(winner.stone_id, "stone-b");
+    }
+
+    #[test]
+    fn test_negative_scores() {
+        let candidates = vec![
+            candidate("stone-a", "Alpha", -200),
+            candidate("stone-b", "Bravo", -50),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        assert_eq!(winner.stone_id, "stone-b");
+    }
+
+    #[test]
+    fn test_tied_scores_pinned_beats_unpinned() {
+        let candidates = vec![
+            candidate("stone-a", "Alpha", 500),
+            ElectionCandidate {
+                election_id: "test-election".to_string(),
+                stone_id: "stone-b".to_string(),
+                stone_name: "Bravo".to_string(),
+                score: Some(500),
+                pin_timestamp: Some("2026-02-16T00:00:00Z".to_string()),
+            },
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        assert_eq!(winner.stone_id, "stone-b");
+    }
+
+    #[test]
+    fn test_dual_pinned_most_recent_wins() {
+        let candidates = vec![
+            pinned_candidate("stone-a", "Alpha", "2026-02-14T00:00:00Z"),
+            pinned_candidate("stone-b", "Bravo", "2026-02-16T00:00:00Z"),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        // Most-recent pin_timestamp wins (lexicographic comparison)
+        assert_eq!(winner.stone_id, "stone-b");
+    }
+
+    #[test]
+    fn test_dual_pinned_same_timestamp_stone_id_tiebreak() {
+        let candidates = vec![
+            pinned_candidate("stone-a", "Alpha", "2026-02-16T00:00:00Z"),
+            pinned_candidate("stone-z", "Zulu", "2026-02-16T00:00:00Z"),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        // Lexicographically higher stone_id wins
+        assert_eq!(winner.stone_id, "stone-z");
+    }
+
+    #[test]
+    fn test_tied_scores_no_pins_stone_id_tiebreak() {
+        let candidates = vec![
+            candidate("stone-a", "Alpha", 500),
+            candidate("stone-m", "Mike", 500),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        assert_eq!(winner.stone_id, "stone-m");
+    }
+
+    #[test]
+    fn test_missing_scores_treated_as_minimum() {
+        let candidates = vec![
+            ElectionCandidate {
+                election_id: "test-election".to_string(),
+                stone_id: "stone-a".to_string(),
+                stone_name: "Alpha".to_string(),
+                score: None,
+                pin_timestamp: None,
+            },
+            candidate("stone-b", "Bravo", -999),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        // None → -1000, so -999 beats it
+        assert_eq!(winner.stone_id, "stone-b");
+    }
+
+    #[test]
+    fn test_pinned_1001_beats_max_score() {
+        let candidates = vec![
+            candidate("stone-a", "Alpha", 1000),
+            pinned_candidate("stone-b", "Bravo", "2026-02-16T00:00:00Z"),
+        ];
+        let winner = resolve_fitness_election(&candidates).unwrap();
+        assert_eq!(winner.stone_id, "stone-b");
     }
 }

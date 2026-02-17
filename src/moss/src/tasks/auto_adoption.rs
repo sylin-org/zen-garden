@@ -309,6 +309,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         ),
                         registered_at: chrono::Utc::now(),
                         updated_at: None,
+                        orchestration: None,
                     };
 
                     // Add to unified offerings registry

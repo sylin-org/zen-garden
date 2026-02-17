@@ -406,6 +406,7 @@ pub async fn create_service_v1(
             }),
             registered_at: chrono::Utc::now(),
             updated_at: None,
+            orchestration: None,
         };
 
         state.upsert_offering(installing_offering, true).await;

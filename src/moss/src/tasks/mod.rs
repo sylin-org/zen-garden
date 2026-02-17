@@ -27,6 +27,7 @@ pub mod job_executors;
 pub mod metrics_collector;
 pub mod network_monitor;
 pub mod nurturing_scheduler;
+pub mod offering_orchestration;
 pub mod presence_monitor;
 pub mod state_provider;
 pub mod task_scheduler;

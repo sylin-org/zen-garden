@@ -13,6 +13,8 @@ All notable changes to Zen Garden will be documented in this file.
 
 - KOI-0001: Embedded HTTP & UDP Bridging proposal — Phase 0 prerequisite for ORCH suite
 - ORCH-0001/0002 updated with KOI-0001 Phase 0 dependency chain
+- ORCH-0001 Phase 1-3: Offering orchestration types, fitness scoring, election runner, orchestration task
+- Compatibility evaluation spec document (docs/specs/compatibility-evaluation.md)
 - KOI-0001 Phase 0c: Container networking — extra_hosts, DNS config, env var injection in Docker
 - Koi builder flags: HTTP(:5641), DNS, UDP enabled at Moss boot
 - Added KOI_HTTP port constant (5641)

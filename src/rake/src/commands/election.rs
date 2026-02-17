@@ -38,6 +38,10 @@ fn parse_election_type(s: &str) -> Result<ElectionType> {
         "ceremony_coordinator" => Ok(ElectionType::CeremonyCoordinator),
         "replica_target" => Ok(ElectionType::ReplicaTarget),
         "backup_source" => Ok(ElectionType::BackupSource),
+        s if s.starts_with("offering_primary:") => {
+            let fqn = s.strip_prefix("offering_primary:").unwrap();
+            Ok(ElectionType::OfferingPrimary(fqn.to_string()))
+        }
         custom => Ok(ElectionType::Custom(custom.to_string())),
     }
 }

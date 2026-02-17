@@ -719,6 +719,10 @@ pub struct TopologyServiceEntry {
     pub offering: String,
     pub category: String,
     pub status: String,
+    /// Orchestration role: "primary", "dormant", "joining", "degraded".
+    /// `None` when orchestration is not active for this offering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 impl TopologyServiceEntry {
@@ -739,6 +743,7 @@ impl TopologyServiceEntry {
                 ServiceStatus::Unknown => SERVICE_UNKNOWN,
             }
             .to_string(),
+            role: None, // ServiceInfo doesn't carry orchestration state
         }
     }
 
@@ -766,6 +771,10 @@ impl TopologyServiceEntry {
                 OfferingStatus::Unknown => SERVICE_UNKNOWN,
             }
             .to_string(),
+            role: offering
+                .orchestration
+                .as_ref()
+                .map(|o| o.role.to_string()),
         }
     }
 
@@ -1071,6 +1080,67 @@ pub struct RemediationFile {
 }
 
 // ============================================================================
+// Orchestration Types (ORCH-0001: Multi-instance coordination)
+// ============================================================================
+
+/// Orchestration role for multi-instance coordination.
+///
+/// Drives the four-state lifecycle:
+/// - **Joining**: Stone is bootstrapping this offering, not yet ready.
+/// - **Primary**: Active instance serving traffic and owning writes.
+/// - **Dormant**: Standby replica pulling data from the current primary.
+/// - **Degraded**: Formerly primary, stepped down due to health failures.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OfferingRole {
+    /// Bootstrapping — not yet ready to participate.
+    Joining,
+    /// Active instance: serves traffic, owns writes.
+    #[default]
+    Primary,
+    /// Standby replica: pulls from primary, ready to promote.
+    Dormant,
+    /// Stepped down due to consecutive health failures.
+    Degraded,
+}
+
+impl std::fmt::Display for OfferingRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Joining => write!(f, "joining"),
+            Self::Primary => write!(f, "primary"),
+            Self::Dormant => write!(f, "dormant"),
+            Self::Degraded => write!(f, "degraded"),
+        }
+    }
+}
+
+/// Orchestration state tracked per offering instance.
+///
+/// Persisted alongside the runtime `Offering`. All fields use `Option`/`Default`
+/// for backward-compatible deserialization of existing JSON on disk.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct OrchestrationState {
+    /// Current role in the orchestration lifecycle.
+    #[serde(default)]
+    pub role: OfferingRole,
+
+    /// Stone ID of the current primary (if known).
+    /// `None` during first deploy (self becomes primary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_stone_id: Option<String>,
+
+    /// Whether this instance has been administratively pinned as primary.
+    #[serde(default)]
+    pub pinned: bool,
+
+    /// ISO 8601 timestamp of when the pin was set.
+    /// Used as a tiebreaker when multiple candidates are pinned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_timestamp: Option<String>,
+}
+
+// ============================================================================
 // Offering Modes Types (Multi-deployment patterns)
 // ============================================================================
 
@@ -1171,6 +1241,14 @@ pub struct Offering {
     /// When this offering was last updated (status change, health change, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    // ═══════════════════════════════════════════════════════════════
+    // ORCHESTRATION (ORCH-0001)
+    // ═══════════════════════════════════════════════════════════════
+    /// Orchestration state for multi-instance coordination.
+    /// `None` when orchestration is not active for this offering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestration: Option<OrchestrationState>,
 }
 
 fn default_version_unknown() -> String {

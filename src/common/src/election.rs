@@ -56,8 +56,30 @@ pub enum ElectionType {
     ReplicaTarget,
     /// Find stone with stored backup to restore from
     BackupSource,
+    /// Elect primary for a replicated offering (ORCH-0001).
+    /// Carries the offering FQN (e.g. `"weaviate:dev"`) so every recipient
+    /// knows the election scope without inspecting the criteria bag.
+    /// Uses `ScoreMechanism::Fitness` — candidates respond with fitness scores.
+    OfferingPrimary(String),
     /// Custom election type
     Custom(String),
+}
+
+/// How candidates are ranked during an election.
+///
+/// - **Blake** (default): BLAKE3 hash delay, first respondent wins. Suitable
+///   for simple arbitrary-winner elections (update source, ceremony coordinator).
+/// - **Fitness**: Candidates respond immediately with a fitness score (i16).
+///   Highest score wins. `1001` = pinned (always wins). Ineligible stones
+///   simply don't respond.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScoreMechanism {
+    /// BLAKE3 hash → delay → first respondent wins (existing).
+    #[default]
+    Blake,
+    /// Candidates respond immediately with a fitness score (i16).
+    Fitness,
 }
 
 /// Election request message (broadcast to all candidates)
@@ -69,6 +91,9 @@ pub struct ElectionRequest {
     pub election_type: ElectionType,
     /// BSON-style filter criteria
     pub criteria: Value,
+    /// How candidates are ranked. Default: Blake.
+    #[serde(default)]
+    pub score_mechanism: ScoreMechanism,
 }
 
 /// Election candidate response (unicast to requester)
@@ -80,6 +105,13 @@ pub struct ElectionCandidate {
     pub stone_id: String,
     /// Name of candidate (for logging)
     pub stone_name: String,
+    /// Fitness score [-1000..1000], or 1001 if pinned.
+    /// Present only in Fitness mode; absent in Blake mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<i16>,
+    /// ISO 8601 timestamp of pin — tiebreaker when multiple candidates score 1001.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_timestamp: Option<String>,
 }
 
 /// Election result announcement (broadcast to abort other candidates)

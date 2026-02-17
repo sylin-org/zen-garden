@@ -21,6 +21,7 @@ pub mod connection;
 pub mod connectivity;
 pub mod constraints;
 pub mod events;
+pub mod fitness;
 pub mod harvest;
 pub mod health;
 pub mod infrastructure;

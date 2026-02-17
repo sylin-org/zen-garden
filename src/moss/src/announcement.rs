@@ -236,6 +236,7 @@ mod tests {
             offering: "redis".to_string(),
             category: "data".to_string(),
             status: "Running".to_string(),
+            role: None,
         });
         let hash2 = calculate_state_hash(&entry);
 

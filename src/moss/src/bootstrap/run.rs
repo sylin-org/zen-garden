@@ -637,6 +637,18 @@ pub async fn run(
 
     tracing::info!("Election service initialized (using p2p transport)");
 
+    // Phase 11.post1.5: Inject fitness provider for ORCH-0001 elections
+    {
+        let state_for_fitness = Arc::new(state.clone());
+        state
+            .election_service
+            .set_fitness_provider(Box::new(
+                crate::tasks::state_provider::MossFitnessProvider::new(state_for_fitness),
+            ))
+            .await;
+        tracing::info!("Fitness provider injected into election service (ORCH-0001)");
+    }
+
     // Phase 11.post2: Start election service listener (subscribes to p2p events)
     tokio::spawn(async move {
         if let Err(e) = election_service_final.run_listener().await {
@@ -1135,6 +1147,25 @@ pub async fn run(
                 .map(|b| b.seed_banks.len())
                 .unwrap_or(0)
         );
+    }
+
+    // Phase 17.7: Offering orchestration (ORCH-0001)
+    // Manages Primary/Dormant/Joining/Degraded lifecycle for replicated offerings.
+    // Must run after registry loader, health monitor, and catalog builder are ready.
+    {
+        let orch_state = state.clone();
+        let orch_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            if let Err(e) = crate::tasks::offering_orchestration::offering_orchestration_task(
+                orch_state,
+                orch_token,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, "Offering orchestration task failed");
+            }
+        });
+        tracing::info!("Offering orchestration task started (ORCH-0001)");
     }
 
     // Initialize tools projection from restored offerings + local seed-banks.

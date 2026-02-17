@@ -2556,6 +2556,7 @@ dependencies = [
 name = "koi-udp"
 version = "0.2.202602161546"
 dependencies = [
+ "async-stream",
  "axum",
  "base64 0.22.1",
  "chrono",

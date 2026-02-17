@@ -196,6 +196,7 @@ pub async fn adopt_offering_container(
         }),
         registered_at: chrono::Utc::now(),
         updated_at: None,
+        orchestration: None,
     };
 
     Ok(Some(adopted))

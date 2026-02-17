@@ -160,6 +160,7 @@ mod normalize_tests {
             }),
             registered_at: chrono::Utc::now(),
             updated_at: None,
+            orchestration: None,
         }
     }
 

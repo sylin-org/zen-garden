@@ -179,6 +179,10 @@ pub struct OfferingMetadata {
 // Runtime Manifests Directory
 // ============================================================================
 
+fn default_replicable() -> bool {
+    true
+}
+
 /// Get runtime manifests directory (uses platform-aware paths)
 pub fn runtime_manifests_dir() -> String {
     if let Ok(dir) = std::env::var("GARDEN_MANIFESTS_DIR") {
@@ -326,6 +330,14 @@ pub struct Offering {
 
     /// Connection profile for dependent services
     pub connection: Option<ConnectionProfile>,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ORCHESTRATION (ORCH-0001)
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Whether this offering supports replication across stones.
+    /// Default: `true` — most offerings can be replicated.
+    #[serde(default = "default_replicable")]
+    pub replicable: bool,
 }
 
 impl Offering {
@@ -681,6 +693,7 @@ impl OfferingRegistry {
             compatibility,
             guidance,
             connection,
+            replicable: true,
         })
     }
 
@@ -705,6 +718,7 @@ impl OfferingRegistry {
             compatibility: manifest.compatibility,
             guidance: manifest.guidance,
             connection: manifest.connection,
+            replicable: manifest.replicable,
         })
     }
 
@@ -745,6 +759,7 @@ impl OfferingRegistry {
             compatibility: None,
             guidance: None,
             connection: adopted_file.connection,
+            replicable: true,
         })
     }
 
@@ -866,6 +881,7 @@ impl OfferingRegistry {
             compatibility,
             guidance,
             connection,
+            replicable: true,
         })
     }
 }
@@ -886,6 +902,8 @@ struct ManifestFile {
     compatibility: Option<CompatibilityRules>,
     guidance: Option<String>,
     connection: Option<ConnectionProfile>,
+    #[serde(default = "default_replicable")]
+    replicable: bool,
 }
 
 /// Adopted-only file format (.adopted.yaml)
@@ -998,6 +1016,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
+            replicable: true,
         };
 
         assert!(offering.supports_mode(&OfferingMode::Managed));
@@ -1024,6 +1043,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
+            replicable: true,
         });
 
         registry.upsert(Offering {
@@ -1047,6 +1067,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
+            replicable: true,
         });
 
         assert_eq!(registry.by_mode(&OfferingMode::Managed).len(), 1);

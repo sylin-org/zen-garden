@@ -1,7 +1,7 @@
 //! Election API endpoints - distributed election protocol testing
 
 use axum::{extract::State, http::StatusCode, Json};
-use garden_common::election::ElectionType;
+use garden_common::election::{ElectionType, ScoreMechanism};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -14,6 +14,8 @@ pub struct StartElectionRequest {
     pub criteria: Value,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    #[serde(default)]
+    pub score_mechanism: ScoreMechanism,
 }
 
 fn default_timeout() -> u64 {
@@ -61,6 +63,7 @@ pub async fn start_election(
             req.election_type,
             req.criteria,
             req.timeout,
+            req.score_mechanism,
         )
         .await
     {

@@ -24,8 +24,9 @@ use crate::{
 };
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
-use garden_common::storage::SeedBankInfo;
+use garden_common::storage::{SeedBankInfo, SeedBankRole};
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -123,6 +124,9 @@ pub async fn start_discovery_listener(
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
+    orchestration_nudge: Arc<tokio::sync::Notify>,
+    seed_bank_roles: Arc<RwLock<HashMap<String, SeedBankRole>>>,
+    seed_bank_pins: Arc<RwLock<HashMap<String, String>>>,
     token: CancellationToken,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
@@ -204,6 +208,8 @@ pub async fn start_discovery_listener(
                         let local_endpoint = api_endpoint.clone();
                         let local_entry = self_entry.clone();
                         let local_tools_cache = tools_cache.clone();
+                        let local_roles = seed_bank_roles.clone();
+                        let local_pins = seed_bank_pins.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
                                 let current = local_entry.read().await.address.http_base();
@@ -214,10 +220,14 @@ pub async fn start_discovery_listener(
                                 }
                             };
 
+                            let roles = local_roles.read().await;
+                            let pins = local_pins.read().await;
                             match crate::infra::storage::broadcast_if_has_storage(
                                 &local_stone_id,
                                 &local_stone_name,
                                 &resolved_endpoint,
+                                Some(&roles),
+                                Some(&pins),
                             )
                             .await
                             {
@@ -315,6 +325,9 @@ pub async fn start_discovery_listener(
 
                     // Update storage cache
                     crate::domain::storage_cache::update_from_beacon(&storage_cache, beacon).await;
+
+                    // Nudge orchestration so role resolution happens immediately
+                    orchestration_nudge.notify_one();
                 }
                 garden_common::infra::communications::announcement_types::TOOLS_BEACON => {
                     let beacon: garden_common::tools::ToolsBeacon =
@@ -513,7 +526,12 @@ pub fn start_maintenance_sweep(state: AppState, token: CancellationToken) {
 }
 
 /// Start auto-adoption task if enabled
-pub fn start_auto_adoption(state: AppState, config: infra::MossConfig, console: &ConsolePrinter, token: CancellationToken) {
+pub fn start_auto_adoption(
+    state: AppState,
+    config: infra::MossConfig,
+    console: &ConsolePrinter,
+    token: CancellationToken,
+) {
     let adoption_config = config.adoption();
     start_auto_adoption_with_config(state, adoption_config, console, token);
 }
@@ -592,8 +610,14 @@ pub async fn start_lantern_registration(
     let lantern_url = lantern_endpoint.clone();
 
     tokio::spawn(async move {
-        if let Err(e) =
-            lantern_registration_loop(reg_stone_id, reg_stone_name, reg_endpoint, lantern_url, token).await
+        if let Err(e) = lantern_registration_loop(
+            reg_stone_id,
+            reg_stone_name,
+            reg_endpoint,
+            lantern_url,
+            token,
+        )
+        .await
         {
             tracing::error!(error = ?e, "Lantern registration loop failed");
         }
@@ -710,10 +734,10 @@ pub async fn start_lantern_registration(
 /// Both tasks share a MountTracker to maintain state about expected mounts.
 #[cfg(target_os = "linux")]
 pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
-    use crate::infra::storage::{create_mount_tracker, SeedBankRegistry};
+    use crate::infra::storage::SeedBankRegistry;
 
-    // Create shared mount tracker
-    let tracker = create_mount_tracker();
+    // Use the mount tracker from AppState (shared with release handler — STORAGE-0006)
+    let tracker = state.mount_tracker.clone();
     let tracker_persistence = tracker.clone();
     let tracker_hotplug = tracker.clone();
 
@@ -754,11 +778,15 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                     .await
                     .address
                     .http_base();
+                let roles = state_persistence.seed_bank_roles.read().await.clone();
+                let pins = state_persistence.seed_bank_pins.read().await.clone();
                 if let Err(e) = crate::infra::storage::update_and_broadcast(
                     &state_persistence.storage_cache,
                     &state_persistence.stone_id,
                     &state_persistence.stone_name,
                     &endpoint,
+                    Some(&roles),
+                    Some(&pins),
                 )
                 .await
                 {
@@ -841,11 +869,15 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
 
                     // Update storage cache and broadcast if we have storage
                     let endpoint = state_hotplug.self_entry.read().await.address.http_base();
+                    let roles = state_hotplug.seed_bank_roles.read().await.clone();
+                    let pins = state_hotplug.seed_bank_pins.read().await.clone();
                     if let Err(e) = crate::infra::storage::update_and_broadcast(
                         &state_hotplug.storage_cache,
                         &state_hotplug.stone_id,
                         &state_hotplug.stone_name,
                         &endpoint,
+                        Some(&roles),
+                        Some(&pins),
                     )
                     .await
                     {
@@ -909,11 +941,15 @@ fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationTo
 
                     // Update storage cache and broadcast if we have storage
                     let endpoint = state.self_entry.read().await.address.http_base();
+                    let roles = state.seed_bank_roles.read().await.clone();
+                    let pins = state.seed_bank_pins.read().await.clone();
                     if let Err(e) = crate::infra::storage::update_and_broadcast(
                         &state.storage_cache,
                         &state.stone_id,
                         &state.stone_name,
                         &endpoint,
+                        Some(&roles),
+                        Some(&pins),
                     )
                     .await
                     {
@@ -982,6 +1018,9 @@ pub async fn start_all_background_tasks(
         console.clone(),
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
+        state.orchestration_nudge.clone(),
+        state.seed_bank_roles.clone(),
+        state.seed_bank_pins.clone(),
         token.child_token(),
     )
     .await;

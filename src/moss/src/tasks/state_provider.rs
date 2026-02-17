@@ -92,8 +92,9 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
     fn compute_fitness(
         &self,
         offering_fqn: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<(i16, Option<String>)>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<(i16, Option<String>)>> + Send + '_>,
+    > {
         let fqn = offering_fqn.to_string();
         Box::pin(async move {
             // Find the running offering by FQN
@@ -104,14 +105,12 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // THIS stone's capabilities when the index was built.
             let compatibility = {
                 let idx_guard = self.state.offerings_index.read().await;
-                idx_guard
-                    .as_ref()
-                    .and_then(|idx| {
-                        idx.offerings
-                            .iter()
-                            .find(|o| o.name == offering.offering)
-                            .map(|o| o.compatibility.clone())
-                    })
+                idx_guard.as_ref().and_then(|idx| {
+                    idx.offerings
+                        .iter()
+                        .find(|o| o.name == offering.offering)
+                        .map(|o| o.compatibility.clone())
+                })
             };
 
             let compat = compatibility.unwrap_or_else(|| {

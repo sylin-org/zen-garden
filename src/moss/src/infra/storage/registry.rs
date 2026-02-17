@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use garden_common::constants::paths;
 use garden_common::storage::{SeedBankInfo, SeedBankManifest};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
@@ -34,7 +34,7 @@ use crate::domain::StorageEvent;
 pub struct TrackedMount {
     /// Device path (e.g., /dev/sdb)
     pub device: String,
-    /// Mount path (e.g., /var/lib/zen-garden/mounts/seed-bank-zen-garden)
+    /// Mount path (e.g., /var/lib/zen-garden/mounts/public-seed-bank)
     pub mount_path: String,
     /// Seed bank name (for logging)
     pub name: String,
@@ -57,7 +57,7 @@ pub fn create_mount_tracker() -> MountTracker {
 /// Registry of all seed banks discovered on this stone (in-memory only)
 #[derive(Debug, Clone, Default)]
 pub struct SeedBankRegistry {
-    /// Map from seed bank name to info
+    /// Map from seed bank id to info (keyed by id for replication support)
     banks: HashMap<String, SeedBankInfo>,
 }
 
@@ -97,6 +97,9 @@ impl SeedBankRegistry {
         }
 
         // Scan each subdirectory in mounts/
+        // Supports both layouts:
+        //   Legacy 1-level: mounts/{name}/.zen-garden/manifest.json
+        //   New 2-level:    mounts/{name}/{short_id}/.zen-garden/manifest.json
         let mut entries = match tokio::fs::read_dir(&mounts_dir).await {
             Ok(e) => e,
             Err(e) => {
@@ -112,91 +115,107 @@ impl SeedBankRegistry {
             }
 
             let manifest_path = path.join(".zen-garden").join("manifest.json");
-            if !manifest_path.exists() {
-                continue;
-            }
-
-            // Read and parse manifest
-            match Self::read_manifest(&manifest_path).await {
-                Ok(manifest) => {
-                    let mount_path = path.to_string_lossy().to_string();
-
-                    // Get device from mount info - this tells us if actually mounted
-                    let device_opt = Self::get_device_for_mount(&mount_path).await;
-                    let is_mounted = device_opt.is_some();
-                    let device = device_opt.unwrap_or_else(|| "not-mounted".to_string());
-
-                    // Skip seed banks that aren't actually mounted
-                    // The manifest may exist from a previous mount, but device isn't there now
-                    if !is_mounted {
-                        debug!(
-                            name = %manifest.name,
-                            mount_path = %mount_path,
-                            "Skipping seed bank - not mounted (manifest exists but no device)"
-                        );
+            if manifest_path.exists() {
+                // Legacy 1-level layout: mounts/{name}/.zen-garden/manifest.json
+                Self::try_register_bank(&mut registry, &path, &manifest_path).await;
+            } else {
+                // New 2-level layout: mounts/{name}/{short_id}/.zen-garden/manifest.json
+                let mut sub_entries = match tokio::fs::read_dir(&path).await {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                while let Ok(Some(sub_entry)) = sub_entries.next_entry().await {
+                    let sub_path = sub_entry.path();
+                    if !sub_path.is_dir() {
                         continue;
                     }
-
-                    if let Err(e) = Self::ensure_seed_bank_layout(&mount_path).await {
-                        warn!(
-                            name = %manifest.name,
-                            mount_path = %mount_path,
-                            error = %e,
-                            "Failed to ensure seed bank layout"
-                        );
-                    }
-
-                    // Get disk usage - also serves as liveness check
-                    // If device was yanked, this will fail or return 0
-                    let (_used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(&mount_path)
-                        .map(|(used, avail)| (used, used + avail))
-                        .unwrap_or((0, 0));
-
-                    // Liveness check: if capacity is 0, mount is likely stale/dead
-                    // This catches the case where device was physically removed
-                    if capacity_bytes == 0 {
-                        warn!(
-                            name = %manifest.name,
-                            device = %device,
-                            mount_path = %mount_path,
-                            "Skipping seed bank - mount appears stale (0 capacity, device may have been removed)"
-                        );
-
-                        // Clean up the stale mount so it doesn't cause issues
-                        #[cfg(target_os = "linux")]
-                        Self::cleanup_stale_mount(&mount_path).await;
-
-                        continue;
-                    }
-
-                    if let Some(info) = Self::build_seed_bank_info(manifest, &mount_path, &device) {
-                        debug!(name = %info.name, device = %info.device, "Discovered seed bank");
-                        registry.banks.insert(info.name.clone(), info);
-                    }
-                }
-                Err(e) => {
-                    let mount_path = path.to_string_lossy().to_string();
-                    let error_str = e.to_string().to_lowercase();
-
-                    // Check if this is an I/O error (device likely yanked)
-                    if error_str.contains("i/o error") || error_str.contains("input/output error") {
-                        warn!(
-                            mount_path = %mount_path,
-                            error = %e,
-                            "Seed bank I/O error - device may have been removed"
-                        );
-
-                        // Clean up the stale mount
-                        #[cfg(target_os = "linux")]
-                        Self::cleanup_stale_mount(&mount_path).await;
-                    } else {
-                        warn!(path = %manifest_path.display(), error = %e, "Failed to read seed bank manifest");
+                    let sub_manifest = sub_path.join(".zen-garden").join("manifest.json");
+                    if sub_manifest.exists() {
+                        Self::try_register_bank(&mut registry, &sub_path, &sub_manifest).await;
                     }
                 }
             }
         }
 
         Ok(registry)
+    }
+
+    /// Attempt to read a manifest and register the seed bank.
+    ///
+    /// Shared by both 1-level and 2-level scan paths.
+    async fn try_register_bank(registry: &mut Self, mount_dir: &Path, manifest_path: &Path) {
+        match Self::read_manifest(manifest_path).await {
+            Ok(manifest) => {
+                let mount_path = mount_dir.to_string_lossy().to_string();
+
+                // Get device from mount info - this tells us if actually mounted
+                let device_opt = Self::get_device_for_mount(&mount_path).await;
+                let is_mounted = device_opt.is_some();
+                let device = device_opt.unwrap_or_else(|| "not-mounted".to_string());
+
+                // Skip seed banks that aren't actually mounted
+                if !is_mounted {
+                    debug!(
+                        name = %manifest.name,
+                        mount_path = %mount_path,
+                        "Skipping seed bank - not mounted (manifest exists but no device)"
+                    );
+                    return;
+                }
+
+                if let Err(e) = Self::ensure_seed_bank_layout(&mount_path).await {
+                    warn!(
+                        name = %manifest.name,
+                        mount_path = %mount_path,
+                        error = %e,
+                        "Failed to ensure seed bank layout"
+                    );
+                }
+
+                // Get disk usage - also serves as liveness check
+                let (_used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(&mount_path)
+                    .map(|(used, avail)| (used, used + avail))
+                    .unwrap_or((0, 0));
+
+                // Liveness check: if capacity is 0, mount is likely stale/dead
+                if capacity_bytes == 0 {
+                    warn!(
+                        name = %manifest.name,
+                        device = %device,
+                        mount_path = %mount_path,
+                        "Skipping seed bank - mount appears stale (0 capacity)"
+                    );
+
+                    #[cfg(target_os = "linux")]
+                    Self::cleanup_stale_mount(&mount_path).await;
+
+                    return;
+                }
+
+                // Use id as registry key (unique per physical device)
+                if let Some(info) = Self::build_seed_bank_info(manifest, &mount_path, &device) {
+                    debug!(name = %info.name, id = %info.id, device = %info.device, "Discovered seed bank");
+                    registry.banks.insert(info.id.clone(), info);
+                }
+            }
+            Err(e) => {
+                let mount_path = mount_dir.to_string_lossy().to_string();
+                let error_str = e.to_string().to_lowercase();
+
+                if error_str.contains("i/o error") || error_str.contains("input/output error") {
+                    warn!(
+                        mount_path = %mount_path,
+                        error = %e,
+                        "Seed bank I/O error - device may have been removed"
+                    );
+
+                    #[cfg(target_os = "linux")]
+                    Self::cleanup_stale_mount(&mount_path).await;
+                } else {
+                    warn!(path = %manifest_path.display(), error = %e, "Failed to read seed bank manifest");
+                }
+            }
+        }
     }
 
     /// Ensure the canonical garden layout exists on the seed bank.
@@ -258,28 +277,25 @@ impl SeedBankRegistry {
             .unwrap_or_else(|_| "unknown".to_string());
         let roaming = manifest.origin_stone != stone_name;
 
-        Some(SeedBankInfo {
-            id: manifest.id,
-            name: manifest.name.clone(),
-            pool_id: manifest.pool_id,
-            group: manifest.group.clone(),
-            replica_id: manifest.replica_id,
-            device: device.to_string(),
-            mount_path: mount_path.to_string(),
+        Some(SeedBankInfo::new(
+            manifest.id,
+            manifest.name.clone(),
+            device.to_string(),
+            mount_path.to_string(),
             capacity_bytes,
             used_bytes,
-            visibility: manifest.visibility,
-            btrfs: manifest.filesystem == "btrfs",
-            origin_stone: manifest.origin_stone,
-            created_at: manifest.created_at,
-            last_sync: None,
+            manifest.visibility,
+            manifest.filesystem == "btrfs",
+            manifest.origin_stone,
+            manifest.created_at,
             roaming,
-            online: true, // Verified: device is mounted and manifest is readable
-        })
+            true, // Verified: device is mounted and manifest is readable
+            manifest.encrypted,
+        ))
     }
 
     /// Read manifest from disk
-    async fn read_manifest(path: &PathBuf) -> Result<SeedBankManifest> {
+    async fn read_manifest(path: &Path) -> Result<SeedBankManifest> {
         let content = tokio::fs::read_to_string(path)
             .await
             .context("Failed to read manifest file")?;
@@ -362,7 +378,7 @@ impl SeedBankRegistry {
                 continue;
             }
 
-            if registry.banks.contains_key(&sb.manifest.name) {
+            if registry.banks.contains_key(&sb.manifest.id) {
                 continue;
             }
 
@@ -383,7 +399,7 @@ impl SeedBankRegistry {
                     mount_path = %info.mount_path,
                     "Seed bank mounted outside canonical mounts directory"
                 );
-                registry.banks.insert(info.name.clone(), info);
+                registry.banks.insert(info.id.clone(), info);
             }
         }
 
@@ -417,18 +433,16 @@ impl SeedBankRegistry {
     /// This is safe for yanked devices that would otherwise hang on regular umount.
     #[cfg(target_os = "linux")]
     async fn cleanup_stale_mount(mount_path: &str) {
-        use std::process::Stdio;
-        use tokio::process::Command;
+        use super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
 
         info!(mount_path = %mount_path, "Cleaning up stale mount (device removed)");
 
-        // Use lazy unmount to avoid hanging on dead device
-        let result = Command::new("sudo")
-            .args(["umount", "-l", mount_path])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .await;
+        let result = run_sudo_timed_quiet(
+            &["umount", "-l", mount_path],
+            timeouts::subprocess_mount_timeout(),
+        )
+        .await;
 
         match result {
             Ok(output) if output.status.success() => {
@@ -446,7 +460,7 @@ impl SeedBankRegistry {
                 debug!(
                     mount_path = %mount_path,
                     error = %e,
-                    "Failed to run umount command"
+                    "Failed to run umount command (timeout or I/O error)"
                 );
             }
         }
@@ -459,68 +473,109 @@ impl SeedBankRegistry {
     /// This handles race conditions with udisks2 or other system processes that
     /// might unmount our devices.
     ///
+    /// Resilience features:
+    /// - **Timed subprocess**: mount commands have a deadline (default 30s)
+    /// - **Per-device isolation**: the write lock is released during mount I/O
+    ///   so a single hung device cannot block monitoring of other mounts
+    /// - **Circuit breaker**: after N consecutive failures (default 5), recovery
+    ///   enters exponential backoff; after M failures (default 50) the device
+    ///   is abandoned and removed from the tracker
+    ///
     /// Returns the number of mounts recovered.
     #[cfg(target_os = "linux")]
     pub async fn verify_and_recover_mounts(tracker: &MountTracker) -> u32 {
-        use std::process::Stdio;
-        use tokio::process::Command;
+        use super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
 
-        let mut recovered = 0u32;
-        let mut tracker_write = tracker.write().await;
+        let mount_timeout = timeouts::subprocess_mount_timeout();
+        let backoff_threshold = timeouts::mount_recovery_backoff_threshold();
+        let max_attempts = timeouts::mount_recovery_max_attempts();
 
-        // Collect devices to check (can't mutate while iterating)
-        let devices_to_check: Vec<(String, TrackedMount)> = tracker_write
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        // ── Phase 1: snapshot state under READ lock ──────────────────────
+        let snapshot: Vec<(String, TrackedMount)> = {
+            let tracker_read = tracker.read().await;
+            tracker_read
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        };
+        // Lock is released here — mount I/O runs lock-free.
 
-        for (device_key, tracked) in devices_to_check {
-            // Check if device still exists
+        /// Per-device recovery outcome
+        enum Outcome {
+            /// Mount is healthy — reset recovery counter
+            Healthy,
+            /// Device physically removed — delete from tracker
+            Removed,
+            /// Mount recovered successfully
+            Recovered,
+            /// Recovery failed — increment counter
+            Failed,
+            /// Skipped this cycle (circuit-breaker backoff)
+            Skipped,
+            /// Exceeded max attempts — abandon device
+            Abandoned,
+        }
+
+        // ── Phase 2: recover each device independently ───────────────────
+        let mut outcomes: Vec<(String, Outcome)> = Vec::with_capacity(snapshot.len());
+
+        for (device_key, tracked) in &snapshot {
+            // ── Circuit breaker: backoff or abandon ──────────────────
+            if tracked.recovery_attempts >= max_attempts {
+                warn!(
+                    device = %tracked.device,
+                    name = %tracked.name,
+                    attempts = tracked.recovery_attempts,
+                    "Mount recovery exceeded max attempts, abandoning device"
+                );
+                outcomes.push((device_key.clone(), Outcome::Abandoned));
+                continue;
+            }
+
+            if tracked.recovery_attempts >= backoff_threshold {
+                // Exponential backoff: skip 2^(attempts - threshold) cycles,
+                // capped at 64 cycles (~5 min at 5s interval).
+                let exponent = std::cmp::min(tracked.recovery_attempts - backoff_threshold, 6);
+                let skip_cycles = 1u32 << exponent; // 1, 2, 4, 8, 16, 32, 64
+                                                    // Use attempt count modulo skip_cycles to decide whether to act
+                if tracked.recovery_attempts % skip_cycles != 0 {
+                    debug!(
+                        device = %tracked.device,
+                        name = %tracked.name,
+                        attempts = tracked.recovery_attempts,
+                        next_try_in_cycles = skip_cycles - (tracked.recovery_attempts % skip_cycles),
+                        "Mount recovery in backoff, skipping this cycle"
+                    );
+                    outcomes.push((device_key.clone(), Outcome::Skipped));
+                    continue;
+                }
+            }
+
+            // ── Check device existence ───────────────────────────────
             let device_exists = tokio::fs::metadata(&tracked.device).await.is_ok();
             if !device_exists {
-                // Device physically removed - stop tracking it
                 info!(
                     device = %tracked.device,
                     name = %tracked.name,
                     "Tracked device no longer exists, removing from tracker"
                 );
-                tracker_write.remove(&device_key);
+                outcomes.push((device_key.clone(), Outcome::Removed));
                 continue;
             }
 
-            // Check if mount is still active
-            let is_mounted = Self::is_device_mounted(&tracked.device).await;
-            if is_mounted {
-                // All good - reset recovery attempts
-                if let Some(entry) = tracker_write.get_mut(&device_key) {
-                    entry.recovery_attempts = 0;
-                }
+            // ── Check if mount is still active ───────────────────────
+            if Self::is_device_mounted(&tracked.device).await {
+                outcomes.push((device_key.clone(), Outcome::Healthy));
                 continue;
             }
 
-            // Device exists but not mounted - need to recover
-            let attempts = tracker_write
-                .get(&device_key)
-                .map(|t| t.recovery_attempts)
-                .unwrap_or(0);
-
-            if attempts >= 10 {
-                // Too many failures - log warning but keep trying (don't give up)
-                if attempts % 10 == 0 {
-                    warn!(
-                        device = %tracked.device,
-                        name = %tracked.name,
-                        attempts = attempts,
-                        "Mount recovery failing repeatedly, will continue trying"
-                    );
-                }
-            }
-
+            // ── Device exists but not mounted — attempt recovery ─────
             info!(
                 device = %tracked.device,
                 mount = %tracked.mount_path,
                 name = %tracked.name,
-                attempt = attempts + 1,
+                attempt = tracked.recovery_attempts + 1,
                 "Mount disappeared, attempting recovery"
             );
 
@@ -531,19 +586,16 @@ impl SeedBankRegistry {
                     error = %e,
                     "Failed to create mount point for recovery"
                 );
-                if let Some(entry) = tracker_write.get_mut(&device_key) {
-                    entry.recovery_attempts += 1;
-                }
+                outcomes.push((device_key.clone(), Outcome::Failed));
                 continue;
             }
 
-            // Try to mount
-            let mount_result = Command::new("sudo")
-                .args(["mount", &tracked.device, &tracked.mount_path])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .await;
+            // Try to mount (with timeout — won't hang on dead device)
+            let mount_result = run_sudo_timed_quiet(
+                &["mount", &tracked.device, &tracked.mount_path],
+                mount_timeout,
+            )
+            .await;
 
             match mount_result {
                 Ok(output) if output.status.success() => {
@@ -553,23 +605,16 @@ impl SeedBankRegistry {
                         name = %tracked.name,
                         "Successfully recovered mount"
                     );
-                    if let Some(entry) = tracker_write.get_mut(&device_key) {
-                        entry.recovery_attempts = 0;
-                        entry.last_mounted = std::time::Instant::now();
-                    }
-                    recovered += 1;
+                    outcomes.push((device_key.clone(), Outcome::Recovered));
                 }
                 Ok(output) => {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    // Check if it's already mounted (race condition)
                     if stderr.contains("already mounted") {
                         debug!(
                             device = %tracked.device,
                             "Device already mounted (race condition handled)"
                         );
-                        if let Some(entry) = tracker_write.get_mut(&device_key) {
-                            entry.recovery_attempts = 0;
-                        }
+                        outcomes.push((device_key.clone(), Outcome::Healthy));
                     } else {
                         warn!(
                             device = %tracked.device,
@@ -577,17 +622,48 @@ impl SeedBankRegistry {
                             error = %stderr.trim(),
                             "Mount recovery failed"
                         );
-                        if let Some(entry) = tracker_write.get_mut(&device_key) {
-                            entry.recovery_attempts += 1;
-                        }
+                        outcomes.push((device_key.clone(), Outcome::Failed));
                     }
                 }
                 Err(e) => {
                     warn!(
                         device = %tracked.device,
                         error = %e,
-                        "Failed to execute mount command for recovery"
+                        "Mount command failed or timed out during recovery"
                     );
+                    outcomes.push((device_key.clone(), Outcome::Failed));
+                }
+            }
+        }
+
+        // ── Phase 3: apply outcomes under WRITE lock ─────────────────────
+        let mut recovered = 0u32;
+        let mut tracker_write = tracker.write().await;
+
+        for (device_key, outcome) in outcomes {
+            match outcome {
+                Outcome::Healthy => {
+                    if let Some(entry) = tracker_write.get_mut(&device_key) {
+                        entry.recovery_attempts = 0;
+                    }
+                }
+                Outcome::Removed | Outcome::Abandoned => {
+                    tracker_write.remove(&device_key);
+                }
+                Outcome::Recovered => {
+                    if let Some(entry) = tracker_write.get_mut(&device_key) {
+                        entry.recovery_attempts = 0;
+                        entry.last_mounted = std::time::Instant::now();
+                    }
+                    recovered += 1;
+                }
+                Outcome::Failed => {
+                    if let Some(entry) = tracker_write.get_mut(&device_key) {
+                        entry.recovery_attempts += 1;
+                    }
+                }
+                Outcome::Skipped => {
+                    // Increment so we advance through the backoff schedule
                     if let Some(entry) = tracker_write.get_mut(&device_key) {
                         entry.recovery_attempts += 1;
                     }
@@ -671,9 +747,10 @@ impl SeedBankRegistry {
         event_bus: Option<&crate::infra::EventBus>,
     ) -> Result<()> {
         use super::device::list_unmounted_removable_devices;
-        use std::process::Stdio;
-        use tokio::process::Command;
+        use super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
 
+        let mount_timeout = timeouts::subprocess_mount_timeout();
         let data_dir = garden_common::constants::paths::data_dir();
         let mounts_dir = PathBuf::from(&data_dir).join("mounts");
 
@@ -738,17 +815,15 @@ impl SeedBankRegistry {
                         device = %device.device,
                         mount = %mount_path,
                         name = %manifest.name,
-                        group = ?manifest.group,
-                        replica_id = ?manifest.replica_id,
+                        id = %manifest.id,
                         "Auto-mounting seed bank (manifest-first)"
                     );
 
-                    let mount_result = Command::new("sudo")
-                        .args(["mount", &device.device, &mount_path])
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped())
-                        .output()
-                        .await;
+                    let mount_result = run_sudo_timed_quiet(
+                        &["mount", &device.device, &mount_path],
+                        mount_timeout,
+                    )
+                    .await;
 
                     match mount_result {
                         Ok(output) if output.status.success() => {
@@ -795,7 +870,7 @@ impl SeedBankRegistry {
                                 device = %device.device,
                                 mount = %mount_path,
                                 error = %e,
-                                "Failed to execute mount command"
+                                "Mount command failed or timed out"
                             );
                         }
                     }
@@ -830,9 +905,10 @@ impl SeedBankRegistry {
         mounts_dir: &PathBuf,
         data_dir: &str,
     ) -> Result<()> {
-        use std::process::Stdio;
-        use tokio::process::Command;
+        use super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
 
+        let mount_timeout = timeouts::subprocess_mount_timeout();
         let mounts_prefix = mounts_dir.to_string_lossy();
         let mounted = Self::list_mounted_seed_banks().await;
 
@@ -856,12 +932,7 @@ impl SeedBankRegistry {
             }
 
             // Ensure desired mount path exists
-            let mkdir = Command::new("sudo")
-                .args(["mkdir", "-p", &desired])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .await;
+            let mkdir = run_sudo_timed_quiet(&["mkdir", "-p", &desired], mount_timeout).await;
             if let Ok(output) = mkdir {
                 if !output.status.success() {
                     warn!(
@@ -875,12 +946,7 @@ impl SeedBankRegistry {
             }
 
             // Unmount current path
-            let umount = Command::new("sudo")
-                .args(["umount", &sb.mount_path])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .await;
+            let umount = run_sudo_timed_quiet(&["umount", &sb.mount_path], mount_timeout).await;
 
             match umount {
                 Ok(output) if output.status.success() => {}
@@ -898,19 +964,14 @@ impl SeedBankRegistry {
                         device = %sb.device,
                         mount = %sb.mount_path,
                         error = %e,
-                        "Failed to execute umount for rehome"
+                        "Umount timed out or failed for rehome"
                     );
                     continue;
                 }
             }
 
             // Mount to canonical path
-            let mount = Command::new("sudo")
-                .args(["mount", &sb.device, &desired])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .await;
+            let mount = run_sudo_timed_quiet(&["mount", &sb.device, &desired], mount_timeout).await;
 
             match mount {
                 Ok(output) if output.status.success() => {
@@ -948,27 +1009,21 @@ impl SeedBankRegistry {
                         "Failed to mount seed bank to canonical path; attempting rollback"
                     );
 
-                    // Best-effort rollback
-                    let _ = Command::new("sudo")
-                        .args(["mount", &sb.device, &sb.mount_path])
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped())
-                        .output()
-                        .await;
+                    // Best-effort rollback (with timeout)
+                    let _ =
+                        run_sudo_timed_quiet(&["mount", &sb.device, &sb.mount_path], mount_timeout)
+                            .await;
                 }
                 Err(e) => {
                     warn!(
                         device = %sb.device,
                         mount = %desired,
                         error = %e,
-                        "Failed to execute mount for rehome; attempting rollback"
+                        "Mount timed out or failed for rehome; attempting rollback"
                     );
-                    let _ = Command::new("sudo")
-                        .args(["mount", &sb.device, &sb.mount_path])
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped())
-                        .output()
-                        .await;
+                    let _ =
+                        run_sudo_timed_quiet(&["mount", &sb.device, &sb.mount_path], mount_timeout)
+                            .await;
                 }
             }
         }
@@ -1029,8 +1084,10 @@ impl SeedBankRegistry {
     /// - Err if probe failed (device error)
     #[cfg(target_os = "linux")]
     async fn probe_device_for_manifest(device_path: &str) -> Result<Option<SeedBankManifest>> {
-        use std::process::Stdio;
-        use tokio::process::Command;
+        use super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
+
+        let mount_timeout = timeouts::subprocess_mount_timeout();
 
         let temp_mount = format!(
             "/tmp/zen-garden-probe-{}-{}",
@@ -1039,18 +1096,14 @@ impl SeedBankRegistry {
         );
 
         // Create temp mount point
-        let _ = Command::new("sudo")
-            .args(["mkdir", "-p", &temp_mount])
-            .output()
-            .await;
+        let _ = run_sudo_timed_quiet(&["mkdir", "-p", &temp_mount], mount_timeout).await;
 
-        // Try to mount read-only
-        let mount_result = Command::new("sudo")
-            .args(["mount", "-o", "ro", device_path, &temp_mount])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .await;
+        // Try to mount read-only (with timeout — prevents hang on dead device)
+        let mount_result = run_sudo_timed_quiet(
+            &["mount", "-o", "ro", device_path, &temp_mount],
+            mount_timeout,
+        )
+        .await;
 
         let manifest = if let Ok(output) = mount_result {
             if output.status.success() {
@@ -1063,7 +1116,7 @@ impl SeedBankRegistry {
                             debug!(
                                 device = %device_path,
                                 name = %m.name,
-                                group = ?m.group,
+                                id = %m.id,
                                 "Found seed bank manifest"
                             );
                             Some(m)
@@ -1082,10 +1135,7 @@ impl SeedBankRegistry {
                 };
 
                 // Unmount
-                let _ = Command::new("sudo")
-                    .args(["umount", &temp_mount])
-                    .output()
-                    .await;
+                let _ = run_sudo_timed_quiet(&["umount", &temp_mount], mount_timeout).await;
 
                 manifest
             } else {
@@ -1096,10 +1146,7 @@ impl SeedBankRegistry {
         };
 
         // Cleanup temp mount point
-        let _ = Command::new("sudo")
-            .args(["rmdir", &temp_mount])
-            .output()
-            .await;
+        let _ = run_sudo_timed_quiet(&["rmdir", &temp_mount], mount_timeout).await;
 
         Ok(manifest)
     }
@@ -1127,9 +1174,14 @@ impl SeedBankRegistry {
         false
     }
 
-    /// Get a seed bank by name
+    /// Get a seed bank by name (returns first match — use `get_all_by_name` for replicas)
     pub fn get(&self, name: &str) -> Option<&SeedBankInfo> {
-        self.banks.get(name)
+        self.banks.values().find(|b| b.name == name)
+    }
+
+    /// Get all seed banks sharing a name (replication-aware)
+    pub fn get_all_by_name(&self, name: &str) -> Vec<&SeedBankInfo> {
+        self.banks.values().filter(|b| b.name == name).collect()
     }
 
     /// List all seed banks
@@ -1137,9 +1189,9 @@ impl SeedBankRegistry {
         self.banks.values().collect()
     }
 
-    /// Check if a seed bank exists
+    /// Check if a seed bank with the given name exists
     pub fn exists(&self, name: &str) -> bool {
-        self.banks.contains_key(name)
+        self.banks.values().any(|b| b.name == name)
     }
 
     /// Find seed bank by device path
@@ -1152,9 +1204,9 @@ impl SeedBankRegistry {
         self.banks.values().find(|b| b.mount_path == mount_path)
     }
 
-    /// Find seed bank by ID (GUIDv7)
+    /// Find seed bank by ID (GUIDv7) — direct HashMap lookup
     pub fn find_by_id(&self, id: &str) -> Option<&SeedBankInfo> {
-        self.banks.values().find(|b| b.id == id)
+        self.banks.get(id)
     }
 
     /// Get seed bank by name (alias for get)

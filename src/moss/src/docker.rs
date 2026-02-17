@@ -494,8 +494,16 @@ impl DockerManager {
         // KOI-0001: Auto-inject container networking env vars.
         // Every managed container gets these so it can reach host services.
         let mut full_env = env;
-        full_env.push(format!("KOI_ENDPOINT=http://{}:{}", host_ip, garden_common::constants::KOI_HTTP));
-        full_env.push(format!("GARDEN_STONE_ENDPOINT=http://{}:{}", host_ip, garden_common::constants::MOSS_HTTP));
+        full_env.push(format!(
+            "KOI_ENDPOINT=http://{}:{}",
+            host_ip,
+            garden_common::constants::KOI_HTTP
+        ));
+        full_env.push(format!(
+            "GARDEN_STONE_ENDPOINT=http://{}:{}",
+            host_ip,
+            garden_common::constants::MOSS_HTTP
+        ));
         full_env.push(format!("GARDEN_OFFERING_NAME={}", name));
 
         // KOI-0001: Configure extra_hosts so containers can resolve the host by name,

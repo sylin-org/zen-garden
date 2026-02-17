@@ -4,12 +4,13 @@
 //! Objects are stored under: {mount_path}/garden/storage/{bucket}/{key}
 //!
 //! Design: This is the infrastructure layer - handles actual filesystem I/O.
-//! Business logic (path validation, quota enforcement) should be in domain layer.
+//! All content I/O flows through [`SeedBankStore`] (STORAGE-0006 chokepoint).
+//! When the store has a DEK, content is encrypted transparently.
 
+use super::store::SeedBankStore;
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
 /// Metadata about a stored object
@@ -36,21 +37,48 @@ pub struct PutResult {
 
 /// Object store interface for a specific seed bank
 pub struct ObjectStore {
-    /// Root path for storage objects (garden/storage)
+    /// SeedBankStore chokepoint — all content I/O flows through here
+    store: SeedBankStore,
+    /// Full filesystem path for storage root (for directory walking)
     root_path: PathBuf,
+    /// Relative path from mount root to storage dir (e.g., "garden/storage")
+    storage_rel: PathBuf,
 }
 
 impl ObjectStore {
-    /// Create a new object store for a seed bank mount
+    /// Create a new object store for a seed bank mount (public / unencrypted).
+    ///
+    /// For encrypted seed banks, use [`ObjectStore::with_store`] instead.
     pub fn new(mount_path: impl AsRef<Path>) -> Self {
         let root_path = mount_path.as_ref().join(paths::SEED_BANK_STORAGE_DIR);
-        Self { root_path }
+        Self {
+            store: SeedBankStore::new_public(mount_path.as_ref()),
+            root_path,
+            storage_rel: PathBuf::from(paths::SEED_BANK_STORAGE_DIR),
+        }
     }
 
-    /// Get the full filesystem path for an object
-    fn object_path(&self, bucket: &str, key: &str) -> PathBuf {
-        // Structure: {mount}/garden/storage/{bucket}/{key}
-        self.root_path.join(bucket).join(key)
+    /// Create an object store backed by an explicit [`SeedBankStore`].
+    ///
+    /// Use this when the seed bank may be encrypted.
+    pub fn with_store(store: SeedBankStore) -> Self {
+        let root_path = store.mount_root().join(paths::SEED_BANK_STORAGE_DIR);
+        Self {
+            storage_rel: PathBuf::from(paths::SEED_BANK_STORAGE_DIR),
+            root_path,
+            store,
+        }
+    }
+
+    /// Relative path from mount root for an object (for SeedBankStore)
+    fn object_rel(&self, bucket: &str, key: &str) -> PathBuf {
+        self.storage_rel.join(bucket).join(key)
+    }
+
+    /// Relative path from mount root for a metadata sidecar
+    fn meta_rel(&self, object_rel: &Path) -> PathBuf {
+        let file_name = object_rel.file_name().unwrap_or_default().to_string_lossy();
+        object_rel.with_file_name(format!("{}.meta.json", file_name))
     }
 
     /// Get the full filesystem path for a bucket
@@ -58,7 +86,7 @@ impl ObjectStore {
         self.root_path.join(bucket)
     }
 
-    /// PUT object - store data with streaming hash
+    /// PUT object - store data with atomic write through SeedBankStore
     pub async fn put_object(
         &self,
         bucket: &str,
@@ -66,39 +94,17 @@ impl ObjectStore {
         content_type: &str,
         data: &[u8],
     ) -> Result<PutResult> {
-        let path = self.object_path(bucket, key);
+        let rel = self.object_rel(bucket, key);
 
-        // Ensure parent directories exist
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .context("Failed to create object directories")?;
-        }
-
-        // Calculate MD5 hash using md5::compute
+        // Calculate MD5 hash on plaintext (before any encryption)
         let hash = md5::compute(data);
         let etag = format!("\"{}\"", hex::encode(hash.0));
 
-        // Write object atomically: temp file → fsync → rename
-        let tmp_path = path.with_extension("tmp");
-
-        let mut file = tokio::fs::File::create(&tmp_path)
-            .await
-            .context("Failed to create temp file")?;
-
-        file.write_all(data)
+        // Write content through SeedBankStore (encrypts if dek is set)
+        self.store
+            .write(&rel, data)
             .await
             .context("Failed to write object data")?;
-
-        file.sync_all()
-            .await
-            .context("Failed to sync object file")?;
-
-        drop(file);
-
-        tokio::fs::rename(&tmp_path, &path)
-            .await
-            .context("Failed to rename temp file")?;
 
         // Store metadata in sidecar file (.meta.json)
         let meta = ObjectMetadataSidecar {
@@ -107,9 +113,10 @@ impl ObjectStore {
             size: data.len() as u64,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
-        let meta_path = self.meta_path(&path);
         let meta_json = serde_json::to_string(&meta)?;
-        tokio::fs::write(&meta_path, meta_json)
+        let sidecar_rel = self.meta_rel(&rel);
+        self.store
+            .write_string(&sidecar_rel, &meta_json)
             .await
             .context("Failed to write metadata")?;
 
@@ -118,53 +125,56 @@ impl ObjectStore {
         Ok(PutResult { etag })
     }
 
-    /// GET object - retrieve data
+    /// GET object - retrieve data (decrypted if encrypted)
     pub async fn get_object(
         &self,
         bucket: &str,
         key: &str,
     ) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
-        let path = self.object_path(bucket, key);
+        let rel = self.object_rel(bucket, key);
 
-        if !path.exists() {
+        if !self.store.exists(&rel).await {
             return Ok(None);
         }
 
-        let data = tokio::fs::read(&path)
+        let data = self
+            .store
+            .read(&rel)
             .await
             .context("Failed to read object")?;
 
-        let metadata = self.get_metadata_for_path(&path, key).await?;
+        let metadata = self.get_metadata_for_rel(&rel, key).await?;
 
         Ok(Some((data, metadata)))
     }
 
     /// HEAD object - get metadata only
     pub async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<ObjectMetadata>> {
-        let path = self.object_path(bucket, key);
+        let rel = self.object_rel(bucket, key);
 
-        if !path.exists() {
+        if !self.store.exists(&rel).await {
             return Ok(None);
         }
 
-        self.get_metadata_for_path(&path, key).await.map(Some)
+        self.get_metadata_for_rel(&rel, key).await.map(Some)
     }
 
     /// DELETE object
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<bool> {
-        let path = self.object_path(bucket, key);
+        let rel = self.object_rel(bucket, key);
 
-        if !path.exists() {
+        if !self.store.exists(&rel).await {
             return Ok(false);
         }
 
-        tokio::fs::remove_file(&path)
+        self.store
+            .delete(&rel)
             .await
             .context("Failed to delete object")?;
 
         // Also remove metadata sidecar
-        let meta_path = self.meta_path(&path);
-        let _ = tokio::fs::remove_file(&meta_path).await;
+        let sidecar_rel = self.meta_rel(&rel);
+        let _ = self.store.delete(&sidecar_rel).await;
 
         debug!(bucket = %bucket, key = %key, "Object deleted");
 
@@ -201,6 +211,7 @@ impl ObjectStore {
         self.walk_directory(
             &bucket_path,
             &bucket_path,
+            bucket,
             prefix,
             &delimiter,
             &mut contents,
@@ -262,11 +273,16 @@ impl ObjectStore {
         Ok(buckets)
     }
 
-    /// Recursively walk directory and collect objects
+    /// Recursively walk directory and collect objects.
+    ///
+    /// Directory walking uses the filesystem directly (just listing entries).
+    /// Content reads for metadata go through SeedBankStore.
+    #[allow(clippy::too_many_arguments)]
     fn walk_directory<'a>(
         &'a self,
         base_path: &'a Path,
         current_path: &'a Path,
+        bucket: &'a str,
         prefix: &'a str,
         delimiter: &'a Option<String>,
         contents: &'a mut Vec<ObjectMetadata>,
@@ -282,8 +298,8 @@ impl ObjectStore {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
 
-                // Skip metadata sidecar files
-                if name.ends_with(".meta.json") {
+                // Skip metadata sidecar files and tmp files
+                if name.ends_with(".meta.json") || name.ends_with(".tmp") {
                     continue;
                 }
 
@@ -306,6 +322,7 @@ impl ObjectStore {
                         self.walk_directory(
                             base_path,
                             &path,
+                            bucket,
                             prefix,
                             delimiter,
                             contents,
@@ -330,8 +347,11 @@ impl ObjectStore {
                         }
                     }
 
+                    // Build store-relative path for reads through SeedBankStore
+                    let store_rel = self.object_rel(bucket, &relative);
+
                     // Get metadata
-                    match self.get_metadata_for_path(&path, &relative).await {
+                    match self.get_metadata_for_rel(&store_rel, &relative).await {
                         Ok(meta) => contents.push(meta),
                         Err(e) => {
                             warn!(path = %path.display(), error = %e, "Failed to get object metadata")
@@ -344,24 +364,25 @@ impl ObjectStore {
         })
     }
 
-    /// Get metadata for a file path
-    async fn get_metadata_for_path(&self, path: &Path, key: &str) -> Result<ObjectMetadata> {
-        let file_meta = tokio::fs::metadata(path)
+    /// Get metadata for a store-relative path.
+    async fn get_metadata_for_rel(&self, rel: &Path, key: &str) -> Result<ObjectMetadata> {
+        let full_path = self.store.full_path(rel);
+        let file_meta = tokio::fs::metadata(&full_path)
             .await
             .context("Failed to get file metadata")?;
 
-        // Try to read sidecar metadata
-        let meta_path = self.meta_path(path);
-        let (content_type, etag) = if meta_path.exists() {
-            match tokio::fs::read_to_string(&meta_path).await {
+        // Try to read sidecar metadata through SeedBankStore
+        let sidecar_rel = self.meta_rel(rel);
+        let (content_type, etag, size) = if self.store.exists(&sidecar_rel).await {
+            match self.store.read_string(&sidecar_rel).await {
                 Ok(json) => match serde_json::from_str::<ObjectMetadataSidecar>(&json) {
-                    Ok(m) => (m.content_type, m.etag),
-                    Err(_) => self.compute_metadata(path).await?,
+                    Ok(m) => (m.content_type, m.etag, m.size),
+                    Err(_) => self.compute_metadata(rel, &full_path).await?,
                 },
-                Err(_) => self.compute_metadata(path).await?,
+                Err(_) => self.compute_metadata(rel, &full_path).await?,
             }
         } else {
-            self.compute_metadata(path).await?
+            self.compute_metadata(rel, &full_path).await?
         };
 
         let last_modified = file_meta
@@ -371,34 +392,29 @@ impl ObjectStore {
 
         Ok(ObjectMetadata {
             key: key.to_string(),
-            size: file_meta.len(),
+            size,
             last_modified,
             etag,
             content_type,
         })
     }
 
-    /// Compute metadata when sidecar is missing
-    async fn compute_metadata(&self, path: &Path) -> Result<(String, String)> {
-        let data = tokio::fs::read(path).await?;
+    /// Compute metadata when sidecar is missing — reads through SeedBankStore (decrypts if needed)
+    async fn compute_metadata(
+        &self,
+        rel: &Path,
+        full_path: &Path,
+    ) -> Result<(String, String, u64)> {
+        let data = self.store.read(rel).await?;
         let hash = md5::compute(&data);
         let etag = format!("\"{}\"", hex::encode(hash.0));
 
         // Guess content type from extension
-        let content_type = mime_guess::from_path(path)
+        let content_type = mime_guess::from_path(full_path)
             .first_or_octet_stream()
             .to_string();
 
-        Ok((content_type, etag))
-    }
-
-    /// Get sidecar metadata file path
-    fn meta_path(&self, object_path: &Path) -> PathBuf {
-        let file_name = object_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
-        object_path.with_file_name(format!("{}.meta.json", file_name))
+        Ok((content_type, etag, data.len() as u64))
     }
 }
 

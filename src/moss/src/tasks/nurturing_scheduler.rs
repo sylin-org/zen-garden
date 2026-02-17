@@ -18,7 +18,7 @@ use crate::domain::nurturing::{build_memories_manifest, NurturingResult, Replica
 use crate::infra::storage::SeedBankRegistry;
 use crate::AppState;
 use anyhow::{Context, Result};
-use garden_common::storage::SeedBankInfo;
+use garden_common::storage::{SeedBankInfo, SeedBankRole};
 use garden_common::types::Offering;
 
 /// Result of a full nurturing workflow execution
@@ -254,8 +254,8 @@ impl NurturingScheduler {
             }
         };
 
-        // Select seed banks based on routing strategy
-        let targets = self.select_targets(&seed_banks);
+        // Select seed banks based on routing strategy + role awareness
+        let targets = self.select_targets(&seed_banks).await;
 
         tracing::debug!(
             offering = offering.name,
@@ -322,17 +322,57 @@ impl NurturingScheduler {
     }
 
     /// Select target seed banks based on routing strategy
-    fn select_targets(&self, seed_banks: &[SeedBankInfo]) -> Vec<SeedBankInfo> {
+    ///
+    /// Filters out Dormant replicas whose Primary is elsewhere (STORAGE-0006).
+    /// Only local Primary banks are eligible write targets. When a logical name
+    /// has no local Primary, the seed bank is skipped (remote write support is
+    /// Phase 3b).
+    async fn select_targets(&self, seed_banks: &[SeedBankInfo]) -> Vec<SeedBankInfo> {
+        // Read current role assignments
+        let roles = self.state.seed_bank_roles.read().await;
+
+        // Filter to only Primary (or unassigned) local banks
+        let primary_banks: Vec<SeedBankInfo> = seed_banks
+            .iter()
+            .filter(|sb| {
+                let role = roles
+                    .get(&sb.name)
+                    .copied()
+                    .unwrap_or(SeedBankRole::Primary);
+                if role == SeedBankRole::Dormant {
+                    tracing::debug!(
+                        seed_bank = %sb.name,
+                        id = %sb.id,
+                        "Skipping dormant seed bank — writes route to primary"
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+        drop(roles);
+
+        if primary_banks.is_empty() && !seed_banks.is_empty() {
+            // All local banks are Dormant — primary is on a remote stone
+            tracing::info!(
+                dormant_count = seed_banks.len(),
+                "All local seed banks are dormant — remote write not yet supported"
+            );
+        }
+
+        // Apply routing strategy to the filtered (Primary-only) set
         match self.config.routing_strategy {
-            RoutingStrategy::First => seed_banks.first().cloned().into_iter().collect(),
+            RoutingStrategy::First => primary_banks.first().cloned().into_iter().collect(),
             RoutingStrategy::MostCapacity => {
-                let mut sorted = seed_banks.to_vec();
+                let mut sorted = primary_banks;
                 sorted.sort_by_key(|sb| {
                     std::cmp::Reverse(sb.capacity_bytes.saturating_sub(sb.used_bytes))
                 });
                 sorted.into_iter().take(1).collect()
             }
-            RoutingStrategy::All => seed_banks.to_vec(),
+            RoutingStrategy::All => primary_banks,
         }
     }
 
@@ -349,12 +389,14 @@ impl NurturingScheduler {
             "Attempting replication"
         );
 
+        let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+
         let result = self
             .state
             .nurturing_store
             .replicate_to_seed_bank(
                 &offering.offering_id,
-                &seed_bank.mount_path,
+                &store,
                 &seed_bank.id,
                 &seed_bank.name,
                 &self.state.stone_id,

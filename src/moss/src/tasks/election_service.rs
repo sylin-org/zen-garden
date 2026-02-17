@@ -93,10 +93,13 @@ pub trait FitnessProvider: Send + Sync {
     /// Returns `Some(score)` if eligible, `None` if ineligible (don't respond).
     /// Score range: `[-1000, 1000]`. `1001` = pinned (always wins).
     /// Also returns `pin_timestamp` if pinned.
+    #[allow(clippy::type_complexity)]
     fn compute_fitness(
         &self,
         offering_fqn: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<(i16, Option<String>)>> + Send + '_>>;
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<(i16, Option<String>)>> + Send + '_>,
+    >;
 }
 
 impl ElectionService {
@@ -449,10 +452,7 @@ impl ElectionService {
                 self.collect_blake_winner(&election_id, &mut udp_rx, timeout_secs)
                     .await
             }
-            ScoreMechanism::Fitness => {
-                self.collect_fitness_winner(&election_id, &mut udp_rx)
-                    .await
-            }
+            ScoreMechanism::Fitness => self.collect_fitness_winner(&election_id, &mut udp_rx).await,
         };
 
         // Broadcast ELECTION_RESULT if we have a winner
@@ -493,18 +493,17 @@ impl ElectionService {
         timeout_secs: u64,
     ) -> Option<ElectionWinner> {
         let wait_duration = Duration::from_secs(timeout_secs);
-        match timeout(wait_duration, async {
+        (timeout(wait_duration, async {
             loop {
                 match udp_rx.recv().await {
                     Some((payload, _from_addr)) => {
-                        let candidate: ElectionCandidate =
-                            match serde_json::from_value(payload) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    tracing::warn!(error = ?e, "Failed to parse candidate");
-                                    continue;
-                                }
-                            };
+                        let candidate: ElectionCandidate = match serde_json::from_value(payload) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(error = ?e, "Failed to parse candidate");
+                                continue;
+                            }
+                        };
                         if candidate.election_id == election_id {
                             return Some(ElectionWinner {
                                 stone_id: candidate.stone_id,
@@ -520,11 +519,8 @@ impl ElectionService {
             }
             None
         })
-        .await
-        {
-            Ok(winner) => winner,
-            Err(_) => None,
-        }
+        .await)
+            .unwrap_or_default()
     }
 
     /// Fitness mode: collect candidates until quiet timeout (1s) or hard cap (3s),

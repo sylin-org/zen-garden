@@ -2,7 +2,7 @@ use crate::domain::connection;
 use crate::domain::tools::readiness::{offering_readiness, seed_bank_readiness};
 use crate::AppState;
 use chrono::Utc;
-use garden_common::storage::DEFAULT_SEED_BANK_NAME;
+use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
 use garden_common::tools::{build_tool_fqid, ToolConnection, ToolProjection, ToolType};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -135,7 +135,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
             if canonical_name == "default" {
                 aliases.push(format!(
                     "seed-bank:{}",
-                    DEFAULT_SEED_BANK_NAME.to_ascii_lowercase()
+                    DEFAULT_PUBLIC_SEED_BANK_NAME.to_ascii_lowercase()
                 ));
             }
 
@@ -174,7 +174,7 @@ fn normalize_aliases(aliases: Vec<String>) -> Vec<String> {
 }
 
 fn canonical_seed_bank_name(name: &str) -> String {
-    if name.eq_ignore_ascii_case(DEFAULT_SEED_BANK_NAME) {
+    if name.eq_ignore_ascii_case(DEFAULT_PUBLIC_SEED_BANK_NAME) {
         "default".to_string()
     } else {
         name.trim().to_ascii_lowercase()

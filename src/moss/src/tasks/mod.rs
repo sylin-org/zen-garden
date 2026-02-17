@@ -29,7 +29,10 @@ pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod offering_orchestration;
 pub mod presence_monitor;
+pub mod seed_bank_orchestration;
+pub mod seed_bank_replication;
 pub mod state_provider;
+pub mod storage_tick_aggregator;
 pub mod task_scheduler;
 
 pub use announcer::start_periodic_announcer;

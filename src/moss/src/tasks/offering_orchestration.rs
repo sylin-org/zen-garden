@@ -1,4 +1,4 @@
-﻿//! Offering orchestration background task (ORCH-0001 Phase 3)
+//! Offering orchestration background task (ORCH-0001 Phase 3)
 //!
 //! Single background task managing the full offering orchestration lifecycle:
 //! - Role assignment (Primary / Dormant / Joining / Degraded)
@@ -153,13 +153,7 @@ async fn backfill_orchestration(state: &AppState) {
     let candidates: Vec<(String, String, String)> = offerings
         .iter()
         .filter(|o| o.orchestration.is_none() && o.status == OfferingStatus::Running)
-        .map(|o| {
-            (
-                o.offering_id.clone(),
-                o.name.clone(),
-                o.offering.clone(),
-            )
-        })
+        .map(|o| (o.offering_id.clone(), o.name.clone(), o.offering.clone()))
         .collect();
 
     if candidates.is_empty() {
@@ -358,9 +352,10 @@ async fn dispatch_dormant(
             .unsigned_abs();
 
         // Also check if the primary's role for this FQN is degraded
-        let primary_degraded = primary_entry.services.iter().any(|svc| {
-            svc.name == fqn && svc.role.as_deref() == Some("degraded")
-        });
+        let primary_degraded = primary_entry
+            .services
+            .iter()
+            .any(|svc| svc.name == fqn && svc.role.as_deref() == Some("degraded"));
 
         if staleness_ms > PRIMARY_STALE_THRESHOLD_MS || primary_degraded {
             drop(cache); // Release lock before election
@@ -482,13 +477,13 @@ async fn transition_role(
 ) -> Result<()> {
     let old_role = {
         let mut offerings = state.offerings.write().await;
-        let offering = offerings
-            .iter_mut()
-            .find(|o| o.offering_id == offering_id);
+        let offering = offerings.iter_mut().find(|o| o.offering_id == offering_id);
 
         match offering {
             Some(o) => {
-                let orch = o.orchestration.get_or_insert_with(OrchestrationState::default);
+                let orch = o
+                    .orchestration
+                    .get_or_insert_with(OrchestrationState::default);
                 let old = orch.role.clone();
 
                 if old == new_role {
@@ -550,10 +545,7 @@ async fn update_primary_stone_id(
     primary_id: &str,
 ) -> Result<()> {
     let mut offerings = state.offerings.write().await;
-    if let Some(o) = offerings
-        .iter_mut()
-        .find(|o| o.offering_id == offering_id)
-    {
+    if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
         if let Some(ref mut orch) = o.orchestration {
             orch.primary_stone_id = Some(primary_id.to_string());
         }
@@ -609,10 +601,7 @@ pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str)
     // Set orchestration state directly (no event for initial assignment — deploy event suffices)
     {
         let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings
-            .iter_mut()
-            .find(|o| o.offering_id == offering_id)
-        {
+        if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
             let primary_id = if new_role == OfferingRole::Primary {
                 Some(state.stone_id.clone())
             } else {

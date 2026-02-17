@@ -2,6 +2,9 @@
 //!
 //! Examines storage devices to determine if they can be prepared as seed banks.
 //! Uses multiple detection methods for robust USB/removable device identification.
+//!
+//! All subprocess calls use [`super::subprocess::run_command_timed_sync`] so that
+//! a dying storage controller cannot block the system indefinitely.
 
 use anyhow::{Context, Result};
 use garden_common::storage::{DeviceState, StorageDetectedInfo};
@@ -80,10 +83,14 @@ impl DeviceAnalyzer {
         // Method 6: Check via lsblk TRAN field (most reliable but requires external command)
         #[cfg(target_os = "linux")]
         {
-            if let Ok(output) = std::process::Command::new("lsblk")
-                .args(["-dno", "TRAN", device_path])
-                .output()
-            {
+            use super::subprocess::run_command_timed_sync;
+            use garden_common::constants::timeouts;
+
+            if let Ok(output) = run_command_timed_sync(
+                "lsblk",
+                &["-dno", "TRAN", device_path],
+                timeouts::subprocess_query_timeout(),
+            ) {
                 if output.status.success() {
                     let tran = String::from_utf8_lossy(&output.stdout);
                     let tran = tran.trim().to_lowercase();
@@ -132,9 +139,14 @@ impl DeviceAnalyzer {
         // Fallback: try blockdev command
         #[cfg(target_os = "linux")]
         {
-            let output = std::process::Command::new("blockdev")
-                .args(["--getsize64", device_path])
-                .output();
+            use super::subprocess::run_command_timed_sync;
+            use garden_common::constants::timeouts;
+
+            let output = run_command_timed_sync(
+                "blockdev",
+                &["--getsize64", device_path],
+                timeouts::subprocess_query_timeout(),
+            );
 
             if let Ok(output) = output {
                 if output.status.success() {
@@ -155,10 +167,15 @@ impl DeviceAnalyzer {
         // Try lsblk for label
         #[cfg(target_os = "linux")]
         {
-            let output = std::process::Command::new("lsblk")
-                .args(["-no", "LABEL", device_path])
-                .output()
-                .ok()?;
+            use super::subprocess::run_command_timed_sync;
+            use garden_common::constants::timeouts;
+
+            let output = run_command_timed_sync(
+                "lsblk",
+                &["-no", "LABEL", device_path],
+                timeouts::subprocess_query_timeout(),
+            )
+            .ok()?;
 
             if output.status.success() {
                 let label = String::from_utf8_lossy(&output.stdout);
@@ -202,10 +219,15 @@ impl DeviceAnalyzer {
     pub fn get_disk_usage(mount_path: &str) -> Option<(u64, u64)> {
         #[cfg(target_os = "linux")]
         {
-            let output = std::process::Command::new("df")
-                .args(["-B1", "--output=used,avail", mount_path])
-                .output()
-                .ok()?;
+            use super::subprocess::run_command_timed_sync;
+            use garden_common::constants::timeouts;
+
+            let output = run_command_timed_sync(
+                "df",
+                &["-B1", "--output=used,avail", mount_path],
+                timeouts::subprocess_query_timeout(),
+            )
+            .ok()?;
 
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -230,16 +252,22 @@ impl DeviceAnalyzer {
         // Check if device has a filesystem
         #[cfg(target_os = "linux")]
         {
-            let output = std::process::Command::new("blkid")
-                .args(["-o", "value", "-s", "TYPE", device_path])
-                .output()
-                .context("Failed to run blkid")?;
+            use super::subprocess::run_command_timed_sync;
+            use garden_common::constants::timeouts;
+
+            let query_timeout = timeouts::subprocess_query_timeout();
+            let mount_timeout = timeouts::subprocess_mount_timeout();
+
+            let output = run_command_timed_sync(
+                "blkid",
+                &["-o", "value", "-s", "TYPE", device_path],
+                query_timeout,
+            )
+            .context("Failed to run blkid")?;
 
             if !output.status.success() || output.stdout.is_empty() {
                 // No filesystem detected - check if partitioned
-                let output = std::process::Command::new("blkid")
-                    .args(["-p", device_path])
-                    .output()
+                let output = run_command_timed_sync("blkid", &["-p", device_path], query_timeout)
                     .context("Failed to run blkid -p")?;
 
                 if output.stdout.is_empty() {
@@ -257,37 +285,37 @@ impl DeviceAnalyzer {
         // Not mounted - try to mount temporarily to inspect
         #[cfg(target_os = "linux")]
         {
+            use super::subprocess::run_command_timed_sync;
+            use garden_common::constants::timeouts;
+
+            let mount_timeout = timeouts::subprocess_mount_timeout();
             let temp_mount = format!("/tmp/zen-garden-inspect-{}", std::process::id());
 
             // Create temp mount point (use sudo for mkdir in case /tmp has permissions issues)
-            let _ = std::process::Command::new("sudo")
-                .args(["mkdir", "-p", &temp_mount])
-                .output();
+            let _ = run_command_timed_sync("sudo", &["mkdir", "-p", &temp_mount], mount_timeout);
 
             if Path::new(&temp_mount).exists() {
-                // Try to mount read-only with sudo
-                let mount_result = std::process::Command::new("sudo")
-                    .args(["mount", "-o", "ro", device_path, &temp_mount])
-                    .output();
+                // Try to mount read-only with sudo (with timeout)
+                let mount_result = run_command_timed_sync(
+                    "sudo",
+                    &["mount", "-o", "ro", device_path, &temp_mount],
+                    mount_timeout,
+                );
 
                 if let Ok(output) = mount_result {
                     if output.status.success() {
                         let result = Self::check_mount_contents(&temp_mount);
 
                         // Always unmount with sudo
-                        let _ = std::process::Command::new("sudo")
-                            .args(["umount", &temp_mount])
-                            .output();
-                        let _ = std::process::Command::new("sudo")
-                            .args(["rmdir", &temp_mount])
-                            .output();
+                        let _ =
+                            run_command_timed_sync("sudo", &["umount", &temp_mount], mount_timeout);
+                        let _ =
+                            run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
 
                         return result;
                     }
                 }
-                let _ = std::process::Command::new("sudo")
-                    .args(["rmdir", &temp_mount])
-                    .output();
+                let _ = run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
             }
         }
 
@@ -495,9 +523,14 @@ pub fn list_unmounted_removable_devices() -> Result<Vec<UnmountedDevice>> {
                     // Check if it has a filesystem (not raw)
                     #[cfg(target_os = "linux")]
                     {
-                        let output = std::process::Command::new("blkid")
-                            .args(["-o", "value", "-s", "TYPE", &part_path])
-                            .output();
+                        use super::subprocess::run_command_timed_sync;
+                        use garden_common::constants::timeouts;
+
+                        let output = run_command_timed_sync(
+                            "blkid",
+                            &["-o", "value", "-s", "TYPE", &part_path],
+                            timeouts::subprocess_query_timeout(),
+                        );
 
                         if let Ok(output) = output {
                             if !output.status.success() || output.stdout.is_empty() {
@@ -532,9 +565,14 @@ pub fn list_unmounted_removable_devices() -> Result<Vec<UnmountedDevice>> {
         if !mounted_devices.contains(&whole_disk_path) {
             #[cfg(target_os = "linux")]
             {
-                let output = std::process::Command::new("blkid")
-                    .args(["-o", "value", "-s", "TYPE", &whole_disk_path])
-                    .output();
+                use super::subprocess::run_command_timed_sync;
+                use garden_common::constants::timeouts;
+
+                let output = run_command_timed_sync(
+                    "blkid",
+                    &["-o", "value", "-s", "TYPE", &whole_disk_path],
+                    timeouts::subprocess_query_timeout(),
+                );
 
                 if let Ok(output) = output {
                     if output.status.success() && !output.stdout.is_empty() {

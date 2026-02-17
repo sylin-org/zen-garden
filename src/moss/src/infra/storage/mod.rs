@@ -23,6 +23,9 @@ mod beacon;
 mod device;
 mod objects;
 mod registry;
+mod store;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod subprocess;
 
 #[cfg(target_os = "linux")]
 mod monitor;
@@ -37,6 +40,7 @@ pub use device::{
 };
 pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
 pub use registry::SeedBankRegistry;
+pub use store::SeedBankStore;
 
 #[cfg(target_os = "linux")]
 pub use registry::{create_mount_tracker, MountTracker, TrackedMount};

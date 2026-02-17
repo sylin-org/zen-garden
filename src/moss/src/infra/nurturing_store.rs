@@ -26,6 +26,7 @@ use crate::domain::nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
     RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
 };
+use crate::infra::storage::SeedBankStore;
 use crate::infra::{create_harvest, HarvestStore};
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
@@ -38,6 +39,10 @@ pub struct NurturingStore {
     index_path: PathBuf,
     /// Underlying harvest store for backup operations
     harvest_store: HarvestStore,
+    /// Mutex to serialize index load/modify/save cycles (STORAGE-0006 fix)
+    /// Without this, two concurrent snapshots can read the same index,
+    /// modify independently, and overwrite each other's changes.
+    index_lock: tokio::sync::Mutex<()>,
 }
 
 impl NurturingStore {
@@ -49,6 +54,7 @@ impl NurturingStore {
         Self {
             index_path,
             harvest_store,
+            index_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -127,6 +133,11 @@ impl NurturingStore {
         stone_id: &str,
         commit_image: bool,
     ) -> Result<NurturingResult> {
+        // STORAGE-0006: Hold index lock for the entire read-modify-save cycle.
+        // The harvest creation (slow I/O) happens inside the lock — acceptable
+        // because nurturing snapshots are already serialized per stone.
+        let _index_guard = self.index_lock.lock().await;
+
         let mut index = self.load_index().await?;
 
         // Get or create slots for this offering
@@ -268,6 +279,7 @@ impl NurturingStore {
     ///
     /// Removes both the index entry and all associated harvests.
     pub async fn delete_offering(&self, offering_id: &str) -> Result<()> {
+        let _index_guard = self.index_lock.lock().await;
         let mut index = self.load_index().await?;
 
         if let Some(slots) = index.remove(offering_id) {
@@ -314,7 +326,7 @@ impl NurturingStore {
     pub async fn replicate_to_seed_bank(
         &self,
         offering_id: &str,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         seed_bank_id: &str,
         seed_bank_name: &str,
         stone_id: &str,
@@ -347,29 +359,23 @@ impl NurturingStore {
         let archive_data = self.create_harvest_archive(&harvest_path).await?;
         let size_bytes = archive_data.len() as u64;
 
-        // Store on seed bank under garden/memories
-        let offering_dir = paths::seed_bank_memory_offering_dir(seed_bank_mount, offering_id);
-        tokio::fs::create_dir_all(&offering_dir)
-            .await
-            .context("Failed to create memories offering directory")?;
-
+        // Store on seed bank under garden/memories (through SeedBankStore chokepoint)
         let object_key = format!("{}/{}.tar.gz", offering_id, harvest_id);
-        let archive_path = memories_object_path(seed_bank_mount, &object_key);
-        write_bytes_atomic(&archive_path, &archive_data)
+        let archive_rel = memories_rel_path(&object_key);
+        store
+            .write(&archive_rel, &archive_data)
             .await
             .context("Failed to store snapshot on seed bank")?;
 
         // Store hydration manifest (offering definition + metadata)
         if let Some(manifest) = hydration_manifest {
-            self.store_offering_manifest(seed_bank_mount, &manifest)
+            self.store_offering_manifest(store, &manifest)
                 .await
                 .context("Failed to store offering manifest on seed bank")?;
         }
 
         // Update remote index with retention enforcement
-        let mut remote_index = self
-            .load_remote_index(seed_bank_mount, seed_bank_id)
-            .await?;
+        let mut remote_index = self.load_remote_index(store, seed_bank_id).await?;
         let pruned = remote_index.add_with_retention(RemoteSnapshot {
             offering_id: offering_id.to_string(),
             offering_name: offering_name.to_string(),
@@ -381,13 +387,12 @@ impl NurturingStore {
             size_bytes,
             object_key: object_key.clone(),
         });
-        self.save_remote_index(seed_bank_mount, &remote_index)
-            .await?;
+        self.save_remote_index(store, &remote_index).await?;
 
         // Delete pruned snapshots (retention policy enforcement)
         for old_snapshot in &pruned {
-            let old_path = memories_object_path(seed_bank_mount, &old_snapshot.object_key);
-            if let Err(e) = tokio::fs::remove_file(&old_path).await {
+            let old_rel = memories_rel_path(&old_snapshot.object_key);
+            if let Err(e) = store.delete(&old_rel).await {
                 tracing::warn!(
                     harvest_id = %old_snapshot.harvest_id,
                     error = ?e,
@@ -444,10 +449,10 @@ impl NurturingStore {
     /// List remote snapshots on a seed bank
     pub async fn list_remote_snapshots(
         &self,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
-        self.load_remote_index(seed_bank_mount, seed_bank_id).await
+        self.load_remote_index(store, seed_bank_id).await
     }
 
     /// Restore from a remote seed bank snapshot
@@ -462,14 +467,12 @@ impl NurturingStore {
     pub async fn restore_from_seed_bank(
         &self,
         docker: &DockerManager,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         seed_bank_id: &str,
         offering_id: &str,
         harvest_id: Option<&str>,
     ) -> Result<HarvestManifest> {
-        let remote_index = self
-            .load_remote_index(seed_bank_mount, seed_bank_id)
-            .await?;
+        let remote_index = self.load_remote_index(store, seed_bank_id).await?;
 
         // Find the snapshot
         let snapshot = if let Some(id) = harvest_id {
@@ -496,9 +499,10 @@ impl NurturingStore {
             "Restoring from remote seed bank snapshot"
         );
 
-        // Download the archive
-        let archive_path = memories_object_path(seed_bank_mount, &snapshot.object_key);
-        let archive_data = tokio::fs::read(&archive_path)
+        // Download the archive (through SeedBankStore — decrypts if encrypted)
+        let archive_rel = memories_rel_path(&snapshot.object_key);
+        let archive_data = store
+            .read(&archive_rel)
             .await
             .context("Failed to read snapshot from seed bank")?;
 
@@ -526,22 +530,19 @@ impl NurturingStore {
     /// Delete a remote snapshot from a seed bank
     pub async fn delete_remote_snapshot(
         &self,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         seed_bank_id: &str,
         harvest_id: &str,
     ) -> Result<bool> {
-        let mut remote_index = self
-            .load_remote_index(seed_bank_mount, seed_bank_id)
-            .await?;
+        let mut remote_index = self.load_remote_index(store, seed_bank_id).await?;
 
         if let Some(snapshot) = remote_index.remove(harvest_id) {
-            // Delete the object
-            let archive_path = memories_object_path(seed_bank_mount, &snapshot.object_key);
-            let _ = tokio::fs::remove_file(&archive_path).await;
+            // Delete the object through SeedBankStore
+            let archive_rel = memories_rel_path(&snapshot.object_key);
+            let _ = store.delete(&archive_rel).await;
 
             // Save updated index
-            self.save_remote_index(seed_bank_mount, &remote_index)
-                .await?;
+            self.save_remote_index(store, &remote_index).await?;
 
             tracing::info!(harvest_id, seed_bank_id, "Deleted remote snapshot");
             Ok(true)
@@ -557,15 +558,16 @@ impl NurturingStore {
     /// Load the remote nurturing index from a seed bank
     async fn load_remote_index(
         &self,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
-        let index_path = memories_index_path(seed_bank_mount);
-        if tokio::fs::metadata(&index_path).await.is_err() {
+        let index_rel = memories_index_rel();
+        if !store.exists(&index_rel).await {
             return Ok(RemoteNurturingIndex::new(seed_bank_id));
         }
 
-        let json = tokio::fs::read_to_string(&index_path)
+        let json = store
+            .read_string(&index_rel)
             .await
             .context("Failed to read remote nurturing index")?;
         serde_json::from_str(&json).context("Failed to parse remote nurturing index")
@@ -574,13 +576,14 @@ impl NurturingStore {
     /// Save the remote nurturing index to a seed bank
     async fn save_remote_index(
         &self,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         index: &RemoteNurturingIndex,
     ) -> Result<()> {
         let json =
             serde_json::to_string_pretty(index).context("Failed to serialize remote index")?;
-        let index_path = memories_index_path(seed_bank_mount);
-        write_string_atomic(&index_path, &json)
+        let index_rel = memories_index_rel();
+        store
+            .write_string(&index_rel, &json)
             .await
             .context("Failed to save remote nurturing index")?;
 
@@ -589,14 +592,16 @@ impl NurturingStore {
 
     async fn store_offering_manifest(
         &self,
-        seed_bank_mount: &str,
+        store: &SeedBankStore,
         manifest: &MemoriesOfferingManifest,
     ) -> Result<()> {
         let json = serde_json::to_string_pretty(manifest)
             .context("Failed to serialize offering manifest")?;
-        let path =
-            paths::seed_bank_memory_offering_manifest_path(seed_bank_mount, &manifest.offering_id);
-        write_string_atomic(&path, &json)
+        let manifest_rel = Path::new(paths::SEED_BANK_MEMORIES_DIR)
+            .join(&manifest.offering_id)
+            .join(paths::SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE);
+        store
+            .write_string(&manifest_rel, &json)
             .await
             .context("Failed to write offering manifest")?;
         Ok(())
@@ -641,48 +646,17 @@ impl NurturingStore {
 }
 
 // ========================================================================
-// Seed Bank Memories Helpers
+// Seed Bank Memories Helpers (relative paths for SeedBankStore)
 // ========================================================================
 
-fn memories_index_path(seed_bank_mount: &str) -> String {
-    paths::seed_bank_memories_index_path(seed_bank_mount)
+/// Relative path: `garden/memories/index.json`
+fn memories_index_rel() -> PathBuf {
+    Path::new(paths::SEED_BANK_MEMORIES_DIR).join(paths::SEED_BANK_MEMORIES_INDEX_FILE)
 }
 
-fn memories_object_path(seed_bank_mount: &str, object_key: &str) -> PathBuf {
-    PathBuf::from(paths::seed_bank_memories_dir(seed_bank_mount)).join(object_key)
-}
-
-async fn write_bytes_atomic(path: &PathBuf, data: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .context("Failed to create parent directory")?;
-    }
-
-    let tmp_path = path.with_extension("tmp");
-    tokio::fs::write(&tmp_path, data)
-        .await
-        .context("Failed to write temp file")?;
-
-    // Best-effort sync
-    if let Ok(file) = std::fs::File::open(&tmp_path) {
-        let _ = file.sync_all();
-    }
-
-    #[cfg(windows)]
-    if path.exists() {
-        let _ = tokio::fs::remove_file(path).await;
-    }
-
-    tokio::fs::rename(&tmp_path, path)
-        .await
-        .context("Failed to rename temp file")?;
-
-    Ok(())
-}
-
-async fn write_string_atomic(path: &str, data: &str) -> Result<()> {
-    write_bytes_atomic(&PathBuf::from(path), data.as_bytes()).await
+/// Relative path: `garden/memories/{object_key}`
+fn memories_rel_path(object_key: &str) -> PathBuf {
+    Path::new(paths::SEED_BANK_MEMORIES_DIR).join(object_key)
 }
 
 #[cfg(test)]
@@ -702,6 +676,7 @@ mod tests {
         let store = NurturingStore {
             index_path: config_dir.join("nurturing").join("index.json"),
             harvest_store,
+            index_lock: tokio::sync::Mutex::new(()),
         };
 
         // Initially empty

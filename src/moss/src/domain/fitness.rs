@@ -1,4 +1,4 @@
-﻿//! Fitness scoring for offering orchestration (ORCH-0001)
+//! Fitness scoring for offering orchestration (ORCH-0001)
 //!
 //! Computes a single opaque `i16` fitness score for election candidacy.
 //! The score is Moss-private — the election protocol only sees "candidates
@@ -86,12 +86,11 @@ pub fn compute_fitness_score(
     let distribution = scoring::calculate_distribution_penalty(offering_count);
 
     // Health bonus
-    let health_bonus: i32 =
-        if offering.health == garden_common::ServiceHealthStatus::Healthy {
-            15
-        } else {
-            0
-        };
+    let health_bonus: i32 = if offering.health == garden_common::ServiceHealthStatus::Healthy {
+        15
+    } else {
+        0
+    };
 
     // Compose final score.
     // Raw components sum to roughly [-999, 70] in worst-to-best case.
@@ -129,7 +128,10 @@ fn compatibility_decision_from_compiled(
             reason: compiled.reason.clone().unwrap_or_default(),
         },
         _ => super::compatibility::CompatibilityDecision::Fail {
-            reason: compiled.reason.clone().unwrap_or_else(|| "Incompatible".into()),
+            reason: compiled
+                .reason
+                .clone()
+                .unwrap_or_else(|| "Incompatible".into()),
             suggestion: compiled.suggestion.clone(),
         },
     }
@@ -436,7 +438,7 @@ mod tests {
     // domain::scoring, and tasks::election_service::resolve_fitness_election
     // — the three modules that compose ORCH-0001's election path.
 
-    use garden_common::election::{ElectionCandidate, ElectionWinner};
+    use garden_common::election::ElectionCandidate;
 
     /// Helper: simulate a stone computing its fitness and assembling a candidate.
     fn simulate_stone(
@@ -467,12 +469,32 @@ mod tests {
         let idle_metrics = make_metrics(10, 28000, 32000);
         let busy_metrics = make_metrics(85, 4000, 32000);
 
-        let idle = simulate_stone("stone-idle", "Idle", false, &compat_pass(), Some(&idle_metrics), 1).unwrap();
-        let busy = simulate_stone("stone-busy", "Busy", false, &compat_pass(), Some(&busy_metrics), 8).unwrap();
+        let idle = simulate_stone(
+            "stone-idle",
+            "Idle",
+            false,
+            &compat_pass(),
+            Some(&idle_metrics),
+            1,
+        )
+        .unwrap();
+        let busy = simulate_stone(
+            "stone-busy",
+            "Busy",
+            false,
+            &compat_pass(),
+            Some(&busy_metrics),
+            8,
+        )
+        .unwrap();
 
-        assert!(idle.score.unwrap() > busy.score.unwrap(), "Idle should outscore busy");
+        assert!(
+            idle.score.unwrap() > busy.score.unwrap(),
+            "Idle should outscore busy"
+        );
 
-        let winner = crate::tasks::election_service::resolve_fitness_election(&[idle, busy]).unwrap();
+        let winner =
+            crate::tasks::election_service::resolve_fitness_election(&[idle, busy]).unwrap();
         assert_eq!(winner.stone_id, "stone-idle");
     }
 
@@ -481,13 +503,30 @@ mod tests {
         let great_metrics = make_metrics(5, 30000, 32000);
         let mediocre_metrics = make_metrics(50, 16000, 32000);
 
-        let great = simulate_stone("stone-great", "Great", false, &compat_pass(), Some(&great_metrics), 1).unwrap();
-        let pinned = simulate_stone("stone-pinned", "Pinned", true, &compat_pass(), Some(&mediocre_metrics), 5).unwrap();
+        let great = simulate_stone(
+            "stone-great",
+            "Great",
+            false,
+            &compat_pass(),
+            Some(&great_metrics),
+            1,
+        )
+        .unwrap();
+        let pinned = simulate_stone(
+            "stone-pinned",
+            "Pinned",
+            true,
+            &compat_pass(),
+            Some(&mediocre_metrics),
+            5,
+        )
+        .unwrap();
 
         assert_eq!(pinned.score.unwrap(), FITNESS_SCORE_PINNED);
         assert!(great.score.unwrap() < FITNESS_SCORE_PINNED);
 
-        let winner = crate::tasks::election_service::resolve_fitness_election(&[great, pinned]).unwrap();
+        let winner =
+            crate::tasks::election_service::resolve_fitness_election(&[great, pinned]).unwrap();
         assert_eq!(winner.stone_id, "stone-pinned");
     }
 
@@ -507,12 +546,29 @@ mod tests {
     fn integration_compat_warning_loses_to_pass() {
         let metrics = make_metrics(30, 20000, 32000);
 
-        let pass = simulate_stone("stone-pass", "Pass", false, &compat_pass(), Some(&metrics), 2).unwrap();
-        let warn = simulate_stone("stone-warn", "Warn", false, &compat_warning("low VRAM"), Some(&metrics), 2).unwrap();
+        let pass = simulate_stone(
+            "stone-pass",
+            "Pass",
+            false,
+            &compat_pass(),
+            Some(&metrics),
+            2,
+        )
+        .unwrap();
+        let warn = simulate_stone(
+            "stone-warn",
+            "Warn",
+            false,
+            &compat_warning("low VRAM"),
+            Some(&metrics),
+            2,
+        )
+        .unwrap();
 
         assert!(pass.score.unwrap() > warn.score.unwrap());
 
-        let winner = crate::tasks::election_service::resolve_fitness_election(&[pass, warn]).unwrap();
+        let winner =
+            crate::tasks::election_service::resolve_fitness_election(&[pass, warn]).unwrap();
         assert_eq!(winner.stone_id, "stone-pass");
     }
 
@@ -520,30 +576,41 @@ mod tests {
     fn integration_three_stones_mixed_conditions() {
         // Stone A: great hardware, compat pass, few offerings
         let a = simulate_stone(
-            "stone-a", "Alpha", false,
+            "stone-a",
+            "Alpha",
+            false,
             &compat_pass(),
             Some(&make_metrics(15, 25000, 32000)),
             2,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Stone B: mediocre hardware, compat fallback
         let b = simulate_stone(
-            "stone-b", "Bravo", false,
+            "stone-b",
+            "Bravo",
+            false,
             &compat_fallback("no AVX"),
             Some(&make_metrics(40, 15000, 32000)),
             3,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Stone C: compat fail — excluded entirely
         let c = simulate_stone(
-            "stone-c", "Charlie", false,
+            "stone-c",
+            "Charlie",
+            false,
             &compat_fail("unsupported arch"),
             Some(&make_metrics(5, 30000, 32000)),
             1,
         );
 
         assert!(c.is_none(), "Fail compat should be excluded");
-        assert!(a.score.unwrap() > b.score.unwrap(), "Pass compat should beat fallback");
+        assert!(
+            a.score.unwrap() > b.score.unwrap(),
+            "Pass compat should beat fallback"
+        );
 
         let winner = crate::tasks::election_service::resolve_fitness_election(&[a, b]).unwrap();
         assert_eq!(winner.stone_id, "stone-a");
@@ -565,11 +632,16 @@ mod tests {
     fn integration_identical_stones_deterministic_tiebreak() {
         let metrics = make_metrics(30, 20000, 32000);
 
-        let a = simulate_stone("stone-a", "Alpha", false, &compat_pass(), Some(&metrics), 2).unwrap();
-        let z = simulate_stone("stone-z", "Zulu", false, &compat_pass(), Some(&metrics), 2).unwrap();
+        let a =
+            simulate_stone("stone-a", "Alpha", false, &compat_pass(), Some(&metrics), 2).unwrap();
+        let z =
+            simulate_stone("stone-z", "Zulu", false, &compat_pass(), Some(&metrics), 2).unwrap();
 
         // Same conditions → same score
-        assert_eq!(a.score, z.score, "Identical conditions should yield same score");
+        assert_eq!(
+            a.score, z.score,
+            "Identical conditions should yield same score"
+        );
 
         // Deterministic tiebreak: lexicographically higher stone_id wins
         let winner = crate::tasks::election_service::resolve_fitness_election(&[a, z]).unwrap();

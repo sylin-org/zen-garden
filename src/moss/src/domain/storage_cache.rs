@@ -5,7 +5,7 @@
 //!
 //! See docs/decisions/STORAGE-0003-beacon-protocol.md
 
-use garden_common::storage::{SeedBankAnnouncement, StorageBeacon};
+use garden_common::storage::{SeedBankAnnouncement, SeedBankRole, StorageBeacon};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -74,6 +74,40 @@ impl StorageCacheInner {
             }
         }
         None
+    }
+
+    /// Find the Primary replica of a named seed bank (STORAGE-0006).
+    ///
+    /// Prefers Primary role. Falls back to any replica if no Primary is found.
+    /// Use for write operations where we need the authoritative replica.
+    pub fn find_primary_by_name(&self, name: &str) -> Option<(&str, &SeedBankAnnouncement)> {
+        let mut fallback: Option<(&str, &SeedBankAnnouncement)> = None;
+        for (stone_id, beacon) in &self.beacons {
+            for sb in &beacon.seed_banks {
+                if sb.name == name {
+                    if sb.role == SeedBankRole::Primary {
+                        return Some((stone_id.as_str(), sb));
+                    }
+                    if fallback.is_none() {
+                        fallback = Some((stone_id.as_str(), sb));
+                    }
+                }
+            }
+        }
+        fallback
+    }
+
+    /// Find all replicas of a named seed bank across all stones.
+    pub fn find_all_by_name(&self, name: &str) -> Vec<(&str, &SeedBankAnnouncement)> {
+        let mut results = Vec::new();
+        for (stone_id, beacon) in &self.beacons {
+            for sb in &beacon.seed_banks {
+                if sb.name == name {
+                    results.push((stone_id.as_str(), sb));
+                }
+            }
+        }
+        results
     }
 
     /// Find a seed bank by ID across all stones
@@ -172,6 +206,30 @@ pub async fn find_by_name(
         .map(|(id, sb)| (id.to_string(), sb.clone()))
 }
 
+/// Find Primary replica of a named seed bank (STORAGE-0006)
+pub async fn find_primary_by_name(
+    cache: &StorageCache,
+    name: &str,
+) -> Option<(String, SeedBankAnnouncement)> {
+    let inner = cache.read().await;
+    inner
+        .find_primary_by_name(name)
+        .map(|(id, sb)| (id.to_string(), sb.clone()))
+}
+
+/// Find all replicas of a named seed bank
+pub async fn find_all_by_name(
+    cache: &StorageCache,
+    name: &str,
+) -> Vec<(String, SeedBankAnnouncement)> {
+    let inner = cache.read().await;
+    inner
+        .find_all_by_name(name)
+        .into_iter()
+        .map(|(id, sb)| (id.to_string(), sb.clone()))
+        .collect()
+}
+
 /// Prune stale entries
 pub async fn prune_stale(cache: &StorageCache, topology: &TopologyCache) -> usize {
     let mut inner = cache.write().await;
@@ -182,7 +240,7 @@ pub async fn prune_stale(cache: &StorageCache, topology: &TopologyCache) -> usiz
 mod tests {
     use super::*;
     use chrono::Utc;
-    use garden_common::storage::StorageAccess;
+    use garden_common::storage::{SeedBankRole, StorageAccess};
 
     fn make_test_beacon(stone_id: &str, stone_name: &str, seed_banks: Vec<&str>) -> StorageBeacon {
         StorageBeacon {
@@ -198,12 +256,15 @@ mod tests {
                 .map(|name| SeedBankAnnouncement {
                     id: format!("sb-{}", name),
                     name: name.to_string(),
+                    role: SeedBankRole::default(),
                     protocols: vec!["s3".to_string(), "storage".to_string()],
                     access: StorageAccess::Direct,
                     visibility: "open".to_string(),
                     health: "healthy".to_string(),
                     capacity_bytes: 1_000_000_000,
                     used_bytes: 500_000_000,
+                    encrypted: false,
+                    pin_id: None,
                 })
                 .collect(),
             timestamp: Utc::now(),
@@ -259,5 +320,105 @@ mod tests {
         assert_eq!(cache.count_stones(), 1);
         assert_eq!(cache.count_seed_banks(), 0);
         assert!(cache.find_s3_gateways().is_empty());
+    }
+
+    fn make_beacon_with_role(
+        stone_id: &str,
+        stone_name: &str,
+        banks: Vec<(&str, SeedBankRole)>,
+    ) -> StorageBeacon {
+        StorageBeacon {
+            stone_id: stone_id.to_string(),
+            stone_name: stone_name.to_string(),
+            endpoint: format!("http://{}.local:7185", stone_name),
+            seed_banks: banks
+                .into_iter()
+                .map(|(name, role)| SeedBankAnnouncement {
+                    id: format!("sb-{}-{}", stone_id, name),
+                    name: name.to_string(),
+                    role,
+                    protocols: vec!["s3".to_string()],
+                    access: StorageAccess::Direct,
+                    visibility: "open".to_string(),
+                    health: "healthy".to_string(),
+                    capacity_bytes: 1_000_000_000,
+                    used_bytes: 0,
+                    encrypted: false,
+                    pin_id: None,
+                })
+                .collect(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_find_primary_prefers_primary_role() {
+        let mut cache = StorageCacheInner::default();
+
+        cache.update(make_beacon_with_role(
+            "stone-1",
+            "alpha",
+            vec![("mybank", SeedBankRole::Dormant)],
+        ));
+        cache.update(make_beacon_with_role(
+            "stone-2",
+            "beta",
+            vec![("mybank", SeedBankRole::Primary)],
+        ));
+
+        let result = cache.find_primary_by_name("mybank");
+        assert!(result.is_some());
+        let (stone_id, sb) = result.unwrap();
+        assert_eq!(stone_id, "stone-2");
+        assert_eq!(sb.role, SeedBankRole::Primary);
+    }
+
+    #[test]
+    fn test_find_primary_falls_back_when_no_primary() {
+        let mut cache = StorageCacheInner::default();
+
+        cache.update(make_beacon_with_role(
+            "stone-1",
+            "alpha",
+            vec![("mybank", SeedBankRole::Dormant)],
+        ));
+
+        let result = cache.find_primary_by_name("mybank");
+        assert!(result.is_some(), "should fall back to dormant replica");
+        assert_eq!(result.unwrap().0, "stone-1");
+    }
+
+    #[test]
+    fn test_find_primary_returns_none_for_unknown() {
+        let cache = StorageCacheInner::default();
+        assert!(cache.find_primary_by_name("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_find_all_by_name() {
+        let mut cache = StorageCacheInner::default();
+
+        cache.update(make_beacon_with_role(
+            "stone-1",
+            "alpha",
+            vec![("shared", SeedBankRole::Primary)],
+        ));
+        cache.update(make_beacon_with_role(
+            "stone-2",
+            "beta",
+            vec![
+                ("shared", SeedBankRole::Dormant),
+                ("other", SeedBankRole::Primary),
+            ],
+        ));
+
+        let all = cache.find_all_by_name("shared");
+        assert_eq!(all.len(), 2);
+
+        let all_other = cache.find_all_by_name("other");
+        assert_eq!(all_other.len(), 1);
+
+        let none = cache.find_all_by_name("nonexistent");
+        assert!(none.is_empty());
     }
 }

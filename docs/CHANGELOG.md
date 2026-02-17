@@ -13,6 +13,7 @@ All notable changes to Zen Garden will be documented in this file.
 
 - KOI-0001: Embedded HTTP & UDP Bridging proposal — Phase 0 prerequisite for ORCH suite
 - ORCH-0001/0002 updated with KOI-0001 Phase 0 dependency chain
+- ORCH-0001: Wire orchestration activation — install hook + boot backfill for pre-existing offerings
 - ORCH-0001 Phase 1-3: Offering orchestration types, fitness scoring, election runner, orchestration task
 - Compatibility evaluation spec document (docs/specs/compatibility-evaluation.md)
 - KOI-0001 Phase 0c: Container networking — extra_hosts, DNS config, env var injection in Docker

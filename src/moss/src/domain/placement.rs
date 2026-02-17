@@ -513,6 +513,7 @@ async fn fetch_remote_offerings(
             },
             tasks: std::collections::HashMap::new(), // Not included in OfferingView
             network: garden_common::manifests::NetworkRequirements::default(), // Not included in OfferingView
+            replicable: true, // Default: assume replicable from remote views
         })
         .collect();
 

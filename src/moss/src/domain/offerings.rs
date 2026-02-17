@@ -34,6 +34,13 @@ pub struct CompiledOffering {
     /// Network requirements (static IP preference)
     #[serde(default)]
     pub network: NetworkRequirements,
+    /// Whether this offering supports replication across stones (ORCH-0001).
+    #[serde(default = "default_replicable")]
+    pub replicable: bool,
+}
+
+fn default_replicable() -> bool {
+    true
 }
 
 impl CompiledOffering {
@@ -260,6 +267,7 @@ pub fn rebuild_offerings_index(
             compatibility,
             tasks: template.tasks,
             network: template.network,
+            replicable: entry.replicable,
         });
     }
 

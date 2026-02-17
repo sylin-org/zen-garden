@@ -48,6 +48,10 @@ pub async fn offering_orchestration_task(state: AppState, token: CancellationTok
     // Phase 1: Startup reconciliation
     startup_reconciliation(&state, &token).await?;
 
+    // Phase 1.5: Backfill — assign initial roles to offerings missing orchestration state.
+    // This handles pre-existing offerings that were deployed before ORCH-0001.
+    backfill_orchestration(&state).await;
+
     // Phase 2: Pin recovery — re-elect pinned offerings
     pin_recovery(&state).await;
 
@@ -128,6 +132,80 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Backfill orchestration state
+// ============================================================================
+
+/// Assign initial orchestration roles to offerings loaded from disk that have
+/// `orchestration: None`. This handles pre-existing offerings deployed before
+/// ORCH-0001 was implemented.
+///
+/// Only backfills offerings where:
+/// - `orchestration` is `None`
+/// - The manifest is marked `replicable: true`
+/// - The offering is in `Running` status
+async fn backfill_orchestration(state: &AppState) {
+    use garden_common::OfferingStatus;
+
+    let offerings = state.get_offerings().await;
+    let candidates: Vec<(String, String, String)> = offerings
+        .iter()
+        .filter(|o| o.orchestration.is_none() && o.status == OfferingStatus::Running)
+        .map(|o| {
+            (
+                o.offering_id.clone(),
+                o.name.clone(),
+                o.offering.clone(),
+            )
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    // Check offerings index for replicable flag
+    let replicable_types: std::collections::HashSet<String> = {
+        let index_guard = state.offerings_index.read().await;
+        match index_guard.as_ref() {
+            Some(index) => index
+                .offerings
+                .iter()
+                .filter(|co| co.replicable)
+                .map(|co| co.name.clone())
+                .collect(),
+            None => {
+                // Index not built yet — assume all are replicable (safe default)
+                candidates.iter().map(|(_, _, t)| t.clone()).collect()
+            }
+        }
+    };
+
+    let mut count = 0u32;
+    for (offering_id, fqn, offering_type) in &candidates {
+        if !replicable_types.contains(offering_type) {
+            continue;
+        }
+
+        if let Err(e) = assign_initial_role(state, offering_id, fqn).await {
+            tracing::warn!(
+                offering = %fqn,
+                error = ?e,
+                "Backfill: failed to assign orchestration role"
+            );
+        } else {
+            count += 1;
+        }
+    }
+
+    if count > 0 {
+        tracing::info!(
+            count,
+            "Backfill: assigned initial orchestration roles to pre-existing offerings"
+        );
+    }
 }
 
 // ============================================================================

@@ -820,6 +820,20 @@ pub async fn install_service_task(
         &image_full,
     ));
 
+    // Assign initial orchestration role for replicable offerings (ORCH-0001)
+    if compiled.replicable {
+        if let Err(e) =
+            crate::tasks::offering_orchestration::assign_initial_role(state, &offering_id, offering)
+                .await
+        {
+            tracing::warn!(
+                offering = %offering,
+                error = ?e,
+                "Failed to assign initial orchestration role (non-fatal)"
+            );
+        }
+    }
+
     // Register scheduled tasks from manifest
     if !compiled.tasks.is_empty() {
         let task_store = TaskStore::new();

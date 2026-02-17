@@ -771,10 +771,7 @@ impl TopologyServiceEntry {
                 OfferingStatus::Unknown => SERVICE_UNKNOWN,
             }
             .to_string(),
-            role: offering
-                .orchestration
-                .as_ref()
-                .map(|o| o.role.to_string()),
+            role: offering.orchestration.as_ref().map(|o| o.role.to_string()),
         }
     }
 

@@ -138,3 +138,38 @@ pub fn sleep_short() -> Duration {
 pub fn sleep_medium() -> Duration {
     env_duration_millis("GARDEN_SLEEP_MEDIUM_MS", 500)
 }
+
+// ============================================================================
+// Subprocess Timeouts (storage device operations)
+// ============================================================================
+
+/// Timeout for mount/umount subprocess commands (default 30s)
+///
+/// Mount operations on dead or unresponsive devices can hang indefinitely.
+/// This timeout ensures the system recovers rather than blocking a task forever.
+pub fn subprocess_mount_timeout() -> Duration {
+    env_duration_secs("GARDEN_SUBPROCESS_MOUNT_TIMEOUT_SECS", 30)
+}
+
+/// Timeout for fast device-query commands: blkid, lsblk, df, blockdev (default 10s)
+///
+/// These are normally sub-second but can stall on dying storage controllers.
+pub fn subprocess_query_timeout() -> Duration {
+    env_duration_secs("GARDEN_SUBPROCESS_QUERY_TIMEOUT_SECS", 10)
+}
+
+/// Maximum consecutive mount-recovery failures before exponential backoff (default 5)
+pub fn mount_recovery_backoff_threshold() -> u32 {
+    std::env::var("GARDEN_MOUNT_RECOVERY_BACKOFF_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5)
+}
+
+/// Maximum consecutive mount-recovery failures before giving up (default 50)
+pub fn mount_recovery_max_attempts() -> u32 {
+    std::env::var("GARDEN_MOUNT_RECOVERY_MAX_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+}

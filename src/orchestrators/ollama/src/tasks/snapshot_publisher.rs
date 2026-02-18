@@ -7,6 +7,7 @@
 
 use crate::app_state::AppState;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -131,9 +132,21 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let demand = metrics.demand_shares(window);
     let demand_json: serde_json::Value = demand
         .iter()
-        .map(|(m, s)| (m.clone(), json!({"share": (s * 100.0).round() / 100.0})))
+        .map(|(m, s)| (m.clone(), json!((s * 100.0).round() / 100.0)))
         .collect::<serde_json::Map<String, serde_json::Value>>()
         .into();
+
+    // Flip placement from model→[endpoints] to stone_name→[models]
+    let mut assignments_by_stone: HashMap<String, Vec<String>> = HashMap::new();
+    for (model, endpoints) in &placement.assignments {
+        for ep in endpoints {
+            let name = instances
+                .get(ep)
+                .map(|i| i.stone_name.clone())
+                .unwrap_or_else(|| ep.clone());
+            assignments_by_stone.entry(name).or_default().push(model.clone());
+        }
+    }
 
     json!({
         "offering_name": state.offering_name,
@@ -142,7 +155,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
         "tiers": tier_list,
         "models": model_list,
         "placement": {
-            "assignments": placement.assignments,
+            "assignments": assignments_by_stone,
             "computed_at": placement.computed_at,
             "stable": placement.stable,
         },

@@ -2,6 +2,12 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-20
+
+- Rake CLI: manifest-driven SSOT — Clap builder API generated from CommandManifest, replacing derive macros
+- Rake CLI: main.rs reduced from 3248 to 197 lines; routing moved to route.rs with string-based ArgMatches
+- Parser: zen/normative verb detection now driven by manifest-provided sets instead of hardcoded match blocks
+
 ## 2026-02-19
 
 - STORAGE-0008: Garden/Stone API split — name-based `/api/v1/garden/storage/{name}` routes with Primary-or-proxy

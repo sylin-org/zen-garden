@@ -48,6 +48,7 @@ Running as a container offering validates the full Koi Phase 0 infrastructure (T
 16. [API Surface](#api-surface)
 17. [Implementation Phases](#implementation-phases)
 18. [Future Considerations](#future-considerations)
+19. [Appendix A: Ollama API Reference](#appendix-a-ollama-api-reference)
 
 ---
 
@@ -165,12 +166,15 @@ Each Ollama tool entry includes connection info and capabilities. The router als
 
 ### Hardware Profiling
 
-On discovery of a new Ollama instance:
+On discovery of a new Ollama instance, the router queries three endpoints:
 
 ```http
-GET http://<ollama-instance>:11434/api/ps
-GET http://<ollama-instance>:11434/api/tags
+GET  http://<ollama-instance>:11434/api/ps       # Running models (includes size_vram!)
+GET  http://<ollama-instance>:11434/api/tags      # All available models (includes size, parameter_size, quantization)
+POST http://<ollama-instance>:11434/api/show      # Detailed model info (includes model_info.general.parameter_count)
 ```
+
+The **critical field** is `size_vram` from `/api/ps` — it reports the exact VRAM consumption per loaded model in bytes, not an estimate. The router also uses `details.parameter_size` and `details.quantization_level` from `/api/tags` to estimate VRAM for models not currently loaded.
 
 Combined with Stone metrics from the Tools API, the router builds a hardware profile:
 
@@ -184,12 +188,15 @@ Combined with Stone metrics from the Tools API, the router builds a hardware pro
     "vram_total_mb": 24576,
     "vram_budget_mb": 24576
   },
-  "models_loaded": ["llama3.1:8b", "nomic-embed-text"],
+  "models_loaded": [
+    { "name": "llama3.1:8b", "size_vram": 4915724288, "expires_at": "2026-02-18T14:38:31Z" },
+    { "name": "nomic-embed-text", "size_vram": 274726912, "expires_at": "2026-02-18T14:40:00Z" }
+  ],
   "models_available": ["llama3.1:8b", "deepseek-r1:32b", "nomic-embed-text", "mistral:7b"]
 }
 ```
 
-The `vram_budget_mb` field defaults to `vram_total_mb` but can be capped by the user's per-stone VRAM budget setting (e.g., thermal limits on a shared machine).
+The `vram_budget_mb` field defaults to `vram_total_mb` but can be capped by the user's per-stone VRAM budget setting (e.g., thermal limits on a shared machine). The `expires_at` field from `/api/ps` tells the router when Ollama will auto-unload each model (based on `keep_alive`), enabling proactive routing decisions.
 
 ### Auto-Tiering
 
@@ -228,7 +235,10 @@ The router maintains a model registry assembled from all Ollama instances:
 | llama3.1:8b | 4.7 GB | 8G | all |
 | deepseek-r1:32b | 18.5 GB | 24G | stone-03, stone-04 |
 
-Model VRAM requirement is determined from Ollama's `/api/show` response or the `/api/tags` size field.
+Model VRAM requirement is determined from:
+- **`size_vram`** from `/api/ps` — exact VRAM for loaded models (authoritative)
+- **`model_info.general.parameter_count`** + **`details.quantization_level`** from `/api/show` — computed estimate for unloaded models
+- **`size`** from `/api/tags` — disk size, used as fallback approximation
 
 ---
 
@@ -316,7 +326,7 @@ When a large request arrives and a lease is needed:
 
 ```
 1. Extract model name from request body
-   (POST /api/generate, /api/chat, /api/embeddings all include "model" field)
+   (POST /api/generate, /api/chat, /api/embed all include "model" field)
 
 2. Determine model's VRAM requirement from registry
 
@@ -359,11 +369,12 @@ The router strongly prefers warm instances. Loading a model takes seconds to min
 
 ### Streaming Passthrough
 
-Ollama uses streaming responses. The router proxies the connection, not the response body:
+Ollama uses **newline-delimited JSON (NDJSON)** streaming — each response chunk is a complete JSON object separated by newlines (not Server-Sent Events). The final object in the stream includes `"done": true` plus performance statistics. The router proxies the connection, not the response body:
 
 - No additional latency per token
 - No memory accumulation in the router
 - Client sees the same streaming behavior as direct connection
+- Router reads the final `done: true` object to extract metrics (`eval_count`, `total_duration`, etc.)
 
 ### Request Types
 
@@ -371,12 +382,16 @@ Ollama uses streaming responses. The router proxies the connection, not the resp
 |----------|-------------|------------------|
 | `POST /api/generate` | `model` | Route by model + tier + load |
 | `POST /api/chat` | `model` | Route by model + tier + load |
-| `POST /api/embeddings` | `model` | Route by model + tier |
+| `POST /api/embed` | `model` | Route by model + tier (new embeddings endpoint) |
+| `POST /api/embeddings` | `model` | Route by model + tier (deprecated, forwards to `/api/embed`) |
 | `GET /api/tags` | *(none)* | Aggregate from all instances, deduplicate |
-| `GET /api/ps` | *(none)* | Aggregate from all instances |
-| `POST /api/pull` | `name` | Via model management (see below) |
-| `POST /api/show` | `name` | Route to any instance that has the model |
-| `DELETE /api/delete` | `name` | Via model management (see below) |
+| `GET /api/ps` | *(none)* | Aggregate from all instances (includes `size_vram`) |
+| `POST /api/pull` | `model` | Via model management (see below) |
+| `POST /api/show` | `model` | Route to any instance that has the model |
+| `POST /api/create` | `model` | Route to target instance |
+| `POST /api/copy` | `source` | Route to instance that has the source model |
+| `DELETE /api/delete` | `model` | Via model management (see below) |
+| `GET /api/version` | *(none)* | Route to any instance |
 
 ---
 
@@ -392,7 +407,9 @@ The proxy sees every request and response. Metrics are captured at near-zero cos
 |--------|--------|
 | Request count | Proxy passthrough |
 | Token count (input + output) | Ollama response: `prompt_eval_count`, `eval_count` |
-| Total inference time | Ollama response: `total_duration` |
+| Total inference time | Ollama response: `total_duration` (nanoseconds) |
+| Model load time | Ollama response: `load_duration` (nanoseconds) |
+| Prompt evaluation time | Ollama response: `prompt_eval_duration` (nanoseconds) |
 | Average response time (wall clock) | Proxy timing |
 | Queue depth over time | Internal routing state |
 
@@ -408,18 +425,22 @@ The proxy sees every request and response. Metrics are captured at near-zero cos
 
 ### Token Tracking
 
-Ollama's `/api/generate` and `/api/chat` responses include:
+Ollama's `/api/generate` and `/api/chat` final response objects include (all durations in **nanoseconds**):
 
 ```json
 {
   "eval_count": 284,
   "prompt_eval_count": 52,
-  "total_duration": 4839281,
-  "eval_duration": 4320000
+  "total_duration": 10706818083,
+  "load_duration": 6338219291,
+  "prompt_eval_duration": 130079000,
+  "eval_duration": 4232710000
 }
 ```
 
-The proxy already reads response completion to decrement queue depth. Extracting these fields is a one-liner. This gives accurate token counts without estimation.
+Tokens/sec can be computed as: `eval_count / eval_duration × 10⁹`.
+
+The proxy already reads the final `done: true` object to decrement queue depth. Extracting these fields is a one-liner. This gives accurate token counts and timing without estimation.
 
 ### Storage
 
@@ -833,7 +854,7 @@ All standard Ollama API endpoints, proxied transparently with routing logic appl
 - Lowest-viable-tier routing algorithm
 - Lease-on-demand scheduler (GLOBAL/LEASED state machine, adaptive timer)
 - Upward-only overflow logic
-- Streaming passthrough for Ollama SSE responses
+- Streaming passthrough for Ollama NDJSON responses
 - Queue depth tracking per stone
 - Self-calibrating pressure valve
 
@@ -886,3 +907,159 @@ All standard Ollama API endpoints, proxied transparently with routing logic appl
 - **Cost-aware routing**: Factor in power consumption (iGPU vs discrete GPU) for energy-conscious routing
 - **Embedding-specific optimization**: Batch embedding requests for throughput vs latency tradeoff
 - **Multi-GPU split inference**: Route to stone pairs that can cooperatively serve a model too large for any single GPU
+
+---
+
+## Appendix A: Ollama API Reference
+
+Verified against the [official Ollama API documentation](https://github.com/ollama/ollama/blob/main/docs/api.md) on 2026-02-18. All durations are in **nanoseconds**. Streaming uses **newline-delimited JSON (NDJSON)**, not Server-Sent Events.
+
+### Endpoints Used by the Router
+
+#### Inference (proxied with routing logic)
+
+| Endpoint | Method | Model Field | Stream | Notes |
+|----------|--------|-------------|--------|-------|
+| `/api/generate` | POST | `model` | Yes (NDJSON) | Completion. Final object has `done: true` + stats |
+| `/api/chat` | POST | `model` | Yes (NDJSON) | Chat completion. Supports `tools`, `messages` |
+| `/api/embed` | POST | `model` | No | New embeddings endpoint. Field: `input` (string or array) |
+| `/api/embeddings` | POST | `model` | No | **Deprecated**, superseded by `/api/embed`. Field: `prompt` |
+
+#### Model Management (used by model management UI)
+
+| Endpoint | Method | Key Fields | Stream | Notes |
+|----------|--------|------------|--------|-------|
+| `/api/pull` | POST | `model` | Yes | Pull progress: `{status, digest, total, completed}` |
+| `/api/delete` | DELETE | `model` | No | Returns 200 OK or 404 |
+| `/api/create` | POST | `model`, `from` | Yes | Create from existing model, GGUF, or safetensors |
+| `/api/copy` | POST | `source`, `destination` | No | Copy/rename. Returns 200 or 404 |
+| `/api/show` | POST | `model` | No | Model info including `model_info`, `capabilities` |
+
+#### Discovery (polled for state)
+
+| Endpoint | Method | Notes |
+|----------|--------|-------|
+| `/api/tags` | GET | List local models. Returns `models[]` with `name`, `size`, `details` |
+| `/api/ps` | GET | List running models. Returns `models[]` with `size_vram`, `expires_at` |
+| `/api/version` | GET | Returns `{"version": "0.5.1"}` |
+
+### Critical Response Fields
+
+#### `GET /api/ps` — Running Models
+
+```json
+{
+  "models": [
+    {
+      "name": "mistral:latest",
+      "model": "mistral:latest",
+      "size": 5137025024,
+      "digest": "2ae6f6dd7a3d...",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "llama",
+        "families": ["llama"],
+        "parameter_size": "7.2B",
+        "quantization_level": "Q4_0"
+      },
+      "expires_at": "2024-06-04T14:38:31.83753-07:00",
+      "size_vram": 5137025024
+    }
+  ]
+}
+```
+
+**Key fields for routing:**
+- `size_vram` — Exact VRAM consumption in bytes. **This is the authoritative source for VRAM-aware tiering.**
+- `expires_at` — When Ollama will auto-unload (based on `keep_alive`). Enables proactive routing.
+- `details.parameter_size` — Human-readable param count ("7.2B").
+- `details.quantization_level` — Quantization type ("Q4_0", "Q4_K_M", etc.).
+
+#### `GET /api/tags` — Local Models
+
+```json
+{
+  "models": [
+    {
+      "name": "deepseek-r1:latest",
+      "model": "deepseek-r1:latest",
+      "modified_at": "2025-05-10T08:06:48.639712648-07:00",
+      "size": 4683075271,
+      "digest": "0a8c26691023...",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "qwen2",
+        "families": ["qwen2"],
+        "parameter_size": "7.6B",
+        "quantization_level": "Q4_K_M"
+      }
+    }
+  ]
+}
+```
+
+**Key fields:** `size` (disk size, not VRAM — use as fallback), `details.parameter_size`, `details.quantization_level`.
+
+#### `POST /api/show` — Model Information
+
+```json
+{
+  "details": {
+    "format": "gguf",
+    "family": "llama",
+    "families": ["llama"],
+    "parameter_size": "8.0B",
+    "quantization_level": "Q4_0"
+  },
+  "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 8030261248,
+    "llama.context_length": 8192,
+    "llama.embedding_length": 4096
+  },
+  "capabilities": ["completion", "vision"]
+}
+```
+
+**Key fields:** `model_info.general.parameter_count` (exact param count for VRAM estimation), `capabilities` (informs routing — vision models, tool-capable models).
+
+#### Inference Response — Final Object (both `/api/generate` and `/api/chat`)
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10706818083,
+  "load_duration": 6338219291,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 130079000,
+  "eval_count": 259,
+  "eval_duration": 4232710000
+}
+```
+
+All durations in nanoseconds. Tokens/sec = `eval_count / eval_duration × 10⁹`.
+
+#### Pull Progress Stream
+
+```json
+{"status": "pulling manifest"}
+{"status": "pulling digestname", "digest": "digestname", "total": 2142590208, "completed": 241970}
+{"status": "verifying sha256 digest"}
+{"status": "writing manifest"}
+{"status": "removing any unused layers"}
+{"status": "success"}
+```
+
+Progress percentage = `completed / total`. The `completed` field may be absent before download starts.
+
+### Load/Unload Model (via generate or chat)
+
+- **Load**: `POST /api/generate` with `{"model": "llama3.2"}` (empty prompt)
+- **Unload**: `POST /api/generate` with `{"model": "llama3.2", "keep_alive": 0}`
+- Same pattern works with `/api/chat` using empty `messages` array
+- Response includes `done_reason: "load"` or `done_reason: "unload"`

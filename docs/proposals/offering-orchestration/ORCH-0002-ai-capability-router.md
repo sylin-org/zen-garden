@@ -48,7 +48,8 @@ Running as a container offering validates the full Koi Phase 0 infrastructure (T
 16. [API Surface](#api-surface)
 17. [Implementation Phases](#implementation-phases)
 18. [Future Considerations](#future-considerations)
-19. [Appendix A: Ollama API Reference](#appendix-a-ollama-api-reference)
+19. [State Reconciliation](#state-reconciliation)
+20. [Appendix: Ollama API Reference](#appendix-ollama-api-reference)
 
 ---
 
@@ -162,17 +163,49 @@ The router subscribes to the Tools API stream filtered for Ollama offerings:
 GET /api/v1/garden/tools/stream?tool_type=offering&tool_fqid=offering:ollama
 ```
 
-Each Ollama tool entry includes connection info and capabilities. The router also queries each instance directly for hardware details.
+Each Ollama tool entry includes connection info and capabilities. When a new Ollama instance appears in the stream, the router immediately contacts it to build a complete snapshot before adding it to the routing pool.
 
-### Hardware Profiling
+### Initial Data Capture
 
-On discovery of a new Ollama instance, the router queries three endpoints:
+On discovery of a new Ollama instance, the router executes the following sequence **before the instance is eligible for routing**:
+
+**Step 1 — Inventory & load state** (parallel):
 
 ```http
-GET  http://<ollama-instance>:11434/api/ps       # Running models (includes size_vram!)
-GET  http://<ollama-instance>:11434/api/tags      # All available models (includes size, parameter_size, quantization)
-POST http://<ollama-instance>:11434/api/show      # Detailed model info (includes model_info.general.parameter_count)
+GET  http://<ollama-instance>:11434/api/tags      # All models on disk
+GET  http://<ollama-instance>:11434/api/ps         # Models currently loaded in VRAM
+GET  http://<ollama-instance>:11434/api/version    # Ollama version (for capability gating)
 ```
+
+**Step 2 — Deep model profiles** (parallel, one per model from `/api/tags`):
+
+```http
+POST http://<ollama-instance>:11434/api/show       # For each model: capabilities, parameter_count, quant level
+     {"model": "llama3.1:8b"}
+POST http://<ollama-instance>:11434/api/show
+     {"model": "deepseek-r1:32b"}
+...
+```
+
+**Step 3 — Build registry entry**:
+
+For each model, the router records:
+
+| Field | Source | Purpose |
+|---|---|---|
+| `name` | `/api/tags` | Model identity |
+| `size` (disk) | `/api/tags` | Fallback VRAM estimate |
+| `parameter_size`, `quantization_level` | `/api/tags` → `details` | VRAM estimation for unloaded models |
+| `parameter_count` | `/api/show` → `model_info.general.parameter_count` | Precise VRAM estimation |
+| `capabilities` | `/api/show` → `capabilities` | Route vision/tool-use requests correctly |
+| `size_vram` | `/api/ps` (if loaded) | **Authoritative** VRAM consumption |
+| `expires_at` | `/api/ps` (if loaded) | Proactive routing (model about to unload) |
+
+Only after Step 3 completes does the instance enter the routing pool. This ensures no request is ever routed to an instance the router hasn't fully profiled.
+
+> **See [Ollama API Reference](../../reference/ollama-api-reference.md)** for full endpoint contracts, response schemas, and field descriptions.
+
+### Hardware Profiling
 
 The **critical field** is `size_vram` from `/api/ps` — it reports the exact VRAM consumption per loaded model in bytes, not an estimate. The router also uses `details.parameter_size` and `details.quantization_level` from `/api/tags` to estimate VRAM for models not currently loaded.
 
@@ -910,156 +943,60 @@ All standard Ollama API endpoints, proxied transparently with routing logic appl
 
 ---
 
-## Appendix A: Ollama API Reference
+## State Reconciliation
 
-Verified against the [official Ollama API documentation](https://github.com/ollama/ollama/blob/main/docs/api.md) on 2026-02-18. All durations are in **nanoseconds**. Streaming uses **newline-delimited JSON (NDJSON)**, not Server-Sent Events.
+The router's model registry can drift from reality when users (or external tools) pull, delete, or unload models directly on Ollama instances, bypassing the router. Three mechanisms keep the registry accurate.
 
-### Endpoints Used by the Router
+### Periodic Polling
 
-#### Inference (proxied with routing logic)
+Every **30 seconds** (not configurable — this is cheap and the interval is short enough for routing correctness), the router polls every known Ollama instance:
 
-| Endpoint | Method | Model Field | Stream | Notes |
-|----------|--------|-------------|--------|-------|
-| `/api/generate` | POST | `model` | Yes (NDJSON) | Completion. Final object has `done: true` + stats |
-| `/api/chat` | POST | `model` | Yes (NDJSON) | Chat completion. Supports `tools`, `messages` |
-| `/api/embed` | POST | `model` | No | New embeddings endpoint. Field: `input` (string or array) |
-| `/api/embeddings` | POST | `model` | No | **Deprecated**, superseded by `/api/embed`. Field: `prompt` |
-
-#### Model Management (used by model management UI)
-
-| Endpoint | Method | Key Fields | Stream | Notes |
-|----------|--------|------------|--------|-------|
-| `/api/pull` | POST | `model` | Yes | Pull progress: `{status, digest, total, completed}` |
-| `/api/delete` | DELETE | `model` | No | Returns 200 OK or 404 |
-| `/api/create` | POST | `model`, `from` | Yes | Create from existing model, GGUF, or safetensors |
-| `/api/copy` | POST | `source`, `destination` | No | Copy/rename. Returns 200 or 404 |
-| `/api/show` | POST | `model` | No | Model info including `model_info`, `capabilities` |
-
-#### Discovery (polled for state)
-
-| Endpoint | Method | Notes |
-|----------|--------|-------|
-| `/api/tags` | GET | List local models. Returns `models[]` with `name`, `size`, `details` |
-| `/api/ps` | GET | List running models. Returns `models[]` with `size_vram`, `expires_at` |
-| `/api/version` | GET | Returns `{"version": "0.5.1"}` |
-
-### Critical Response Fields
-
-#### `GET /api/ps` — Running Models
-
-```json
-{
-  "models": [
-    {
-      "name": "mistral:latest",
-      "model": "mistral:latest",
-      "size": 5137025024,
-      "digest": "2ae6f6dd7a3d...",
-      "details": {
-        "parent_model": "",
-        "format": "gguf",
-        "family": "llama",
-        "families": ["llama"],
-        "parameter_size": "7.2B",
-        "quantization_level": "Q4_0"
-      },
-      "expires_at": "2024-06-04T14:38:31.83753-07:00",
-      "size_vram": 5137025024
-    }
-  ]
-}
+```http
+GET http://<instance>:11434/api/tags   # models on disk
+GET http://<instance>:11434/api/ps     # models in VRAM
 ```
 
-**Key fields for routing:**
-- `size_vram` — Exact VRAM consumption in bytes. **This is the authoritative source for VRAM-aware tiering.**
-- `expires_at` — When Ollama will auto-unload (based on `keep_alive`). Enables proactive routing.
-- `details.parameter_size` — Human-readable param count ("7.2B").
-- `details.quantization_level` — Quantization type ("Q4_0", "Q4_K_M", etc.).
+The router diffs the response against its registry:
 
-#### `GET /api/tags` — Local Models
+| Drift Detected | Action |
+|---|---|
+| Model in `/api/tags` response but not in registry | Add to registry, query `/api/show` for capabilities and parameter count |
+| Model in registry but missing from `/api/tags` | Remove from registry, log `model_disappeared` event |
+| Model loaded in `/api/ps` but registry says unloaded | Update load state, capture `size_vram` (authoritative VRAM) |
+| Model in registry as loaded but missing from `/api/ps` | Mark as unloaded (Ollama auto-evicted or user unloaded manually) |
+| `size_vram` changed (different quant loaded) | Update VRAM estimate, re-evaluate tier placement |
 
-```json
-{
-  "models": [
-    {
-      "name": "deepseek-r1:latest",
-      "model": "deepseek-r1:latest",
-      "modified_at": "2025-05-10T08:06:48.639712648-07:00",
-      "size": 4683075271,
-      "digest": "0a8c26691023...",
-      "details": {
-        "parent_model": "",
-        "format": "gguf",
-        "family": "qwen2",
-        "families": ["qwen2"],
-        "parameter_size": "7.6B",
-        "quantization_level": "Q4_K_M"
-      }
-    }
-  ]
-}
-```
+After diffing, if any tier membership changed (e.g., a stone lost its only 70B model), the router recomputes tiers immediately.
 
-**Key fields:** `size` (disk size, not VRAM — use as fallback), `details.parameter_size`, `details.quantization_level`.
+### Error-Based Inference
 
-#### `POST /api/show` — Model Information
+When a routed request fails, the error tells the router about registry drift before the next polling cycle:
 
-```json
-{
-  "details": {
-    "format": "gguf",
-    "family": "llama",
-    "families": ["llama"],
-    "parameter_size": "8.0B",
-    "quantization_level": "Q4_0"
-  },
-  "model_info": {
-    "general.architecture": "llama",
-    "general.parameter_count": 8030261248,
-    "llama.context_length": 8192,
-    "llama.embedding_length": 4096
-  },
-  "capabilities": ["completion", "vision"]
-}
-```
+| Error | Inference | Action |
+|---|---|---|
+| 404 "model not found" from Ollama | Model was deleted outside the router | Remove from registry, reroute to another instance or return 404 to caller |
+| Ollama returns `size_vram` exceeding instance budget | Model quant changed or VRAM pressure from external load | Mark instance as degraded, route elsewhere, re-profile on next poll |
+| Connection refused / timeout | Instance down | Mark unhealthy (existing health-check path), stop routing |
+| Unexpected `load_duration` spike (>10× historical) | Likely model was evicted and had to reload | Update load state, note for lease-on-demand calibration |
 
-**Key fields:** `model_info.general.parameter_count` (exact param count for VRAM estimation), `capabilities` (informs routing — vision models, tool-capable models).
+Error-based inference is **reactive and immediate** — it repairs the registry on the request that discovered the problem, so subsequent requests route correctly without waiting for the next poll.
 
-#### Inference Response — Final Object (both `/api/generate` and `/api/chat`)
+### Reconciliation on Success
 
-```json
-{
-  "model": "llama3.2",
-  "created_at": "2023-08-04T19:22:45.499127Z",
-  "done": true,
-  "done_reason": "stop",
-  "total_duration": 10706818083,
-  "load_duration": 6338219291,
-  "prompt_eval_count": 26,
-  "prompt_eval_duration": 130079000,
-  "eval_count": 259,
-  "eval_duration": 4232710000
-}
-```
+When a request succeeds, the final NDJSON object contains `model`, `eval_count`, `eval_duration`, and `load_duration`. The router uses this to:
 
-All durations in nanoseconds. Tokens/sec = `eval_count / eval_duration × 10⁹`.
+1. **Confirm the model exists** — if the model isn't in the registry (somehow), add it
+2. **Update performance baselines** — recalibrate tokens/sec for the model+instance pair
+3. **Detect cold loads** — a non-zero `load_duration` means the model wasn't in VRAM; update load state
 
-#### Pull Progress Stream
+This creates a self-healing feedback loop: every request either confirms the registry or corrects it.
 
-```json
-{"status": "pulling manifest"}
-{"status": "pulling digestname", "digest": "digestname", "total": 2142590208, "completed": 241970}
-{"status": "verifying sha256 digest"}
-{"status": "writing manifest"}
-{"status": "removing any unused layers"}
-{"status": "success"}
-```
+---
 
-Progress percentage = `completed / total`. The `completed` field may be absent before download starts.
+## Appendix: Ollama API Reference
 
-### Load/Unload Model (via generate or chat)
+The full Ollama API surface used by the router is documented in:
 
-- **Load**: `POST /api/generate` with `{"model": "llama3.2"}` (empty prompt)
-- **Unload**: `POST /api/generate` with `{"model": "llama3.2", "keep_alive": 0}`
-- Same pattern works with `/api/chat` using empty `messages` array
-- Response includes `done_reason: "load"` or `done_reason: "unload"`
+> **[Ollama API Reference (for Zen Garden)](../../reference/ollama-api-reference.md)**
+
+That reference includes all endpoint contracts, request/response schemas, field descriptions, streaming formats, and load/unload patterns. It is verified against the [official Ollama API docs](https://github.com/ollama/ollama/blob/main/docs/api.md) and kept as a standalone reference for any Zen Garden component that interacts with Ollama.

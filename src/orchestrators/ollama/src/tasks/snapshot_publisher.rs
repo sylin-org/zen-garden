@@ -47,6 +47,9 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let placement = state.placement.read().await;
     let depths = state.queue_depths.read().await;
 
+    // Pre-compute per-stone tok/s
+    let tps_recent = metrics.tokens_per_sec_by_stone(300);
+
     let stones: Vec<serde_json::Value> = instances
         .values()
         .map(|i| {
@@ -73,6 +76,8 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
                     "remaining_secs": l.duration.as_secs().saturating_sub(l.granted_at.elapsed().as_secs()),
                 })),
                 "ollama_version": i.ollama_version,
+                "tokens_per_sec": tps_recent.get(&i.stone_name).copied().map(|v| (v * 10.0).round() / 10.0),
+                "tokens_per_sec_cumulative": metrics.cumulative_tokens_per_sec(&i.stone_name).map(|v| (v * 10.0).round() / 10.0),
             })
         })
         .collect();

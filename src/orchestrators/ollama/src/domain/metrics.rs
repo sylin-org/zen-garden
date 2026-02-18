@@ -13,6 +13,9 @@ const RING_CAPACITY: usize = 1000;
 /// Maximum number of demand samples for placement calculations.
 const DEMAND_RING_CAPACITY: usize = 10_000;
 
+/// Maximum number of per-stone throughput samples.
+const THROUGHPUT_RING_CAPACITY: usize = 2000;
+
 /// Live metrics state (owned by AppState behind a RwLock).
 #[derive(Debug)]
 pub struct MetricsEngine {
@@ -28,6 +31,8 @@ pub struct MetricsEngine {
     pub enabled: bool,
     /// Per-model request timestamps for placement demand tracking.
     pub model_demand: VecDeque<(Instant, String)>,
+    /// Per-stone throughput ring: (wall-clock, stone_name, tokens_out, duration_ns).
+    pub stone_throughput: VecDeque<(Instant, String, u64, u64)>,
 }
 
 impl MetricsEngine {
@@ -43,6 +48,7 @@ impl MetricsEngine {
             started_at: Instant::now(),
             enabled: true,
             model_demand: VecDeque::with_capacity(DEMAND_RING_CAPACITY),
+            stone_throughput: VecDeque::with_capacity(THROUGHPUT_RING_CAPACITY),
         }
     }
 
@@ -73,6 +79,13 @@ impl MetricsEngine {
         stone.tokens_in += tokens_in;
         stone.tokens_out += tokens_out;
         stone.total_duration_ns += duration_ns;
+
+        // Per-stone throughput ring
+        if self.stone_throughput.len() >= THROUGHPUT_RING_CAPACITY {
+            self.stone_throughput.pop_front();
+        }
+        self.stone_throughput
+            .push_back((Instant::now(), stone_name.to_string(), tokens_out, duration_ns));
 
         // Ring buffer
         if self.response_times.len() >= RING_CAPACITY {
@@ -135,6 +148,7 @@ impl MetricsEngine {
         self.per_model.clear();
         self.response_times.clear();
         self.model_demand.clear();
+        self.stone_throughput.clear();
         self.started_at = Instant::now();
     }
 
@@ -155,6 +169,44 @@ impl MetricsEngine {
             ),
             snapshot_at: Some(chrono::Utc::now().to_rfc3339()),
         }
+    }
+
+    // ── Per-stone throughput ────────────────────────────────────────
+
+    /// Compute tokens/sec per stone over a recent time window.
+    ///
+    /// Returns stone_name → tok/s (output tokens per second of active inference).
+    pub fn tokens_per_sec_by_stone(&self, window_secs: u64) -> HashMap<String, f64> {
+        let cutoff = Instant::now() - std::time::Duration::from_secs(window_secs);
+        let mut per_stone: HashMap<&str, (u64, u64)> = HashMap::new(); // (tokens_out, duration_ns)
+        for (t, stone, tok, dur) in &self.stone_throughput {
+            if *t > cutoff {
+                let e = per_stone.entry(stone.as_str()).or_default();
+                e.0 += tok;
+                e.1 += dur;
+            }
+        }
+        per_stone
+            .into_iter()
+            .filter_map(|(s, (tok, dur))| {
+                if dur > 0 {
+                    Some((s.to_string(), tok as f64 / (dur as f64 / 1_000_000_000.0)))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// All-time tokens/sec for a single stone (from cumulative StoneMetrics).
+    pub fn cumulative_tokens_per_sec(&self, stone_name: &str) -> Option<f64> {
+        self.per_stone.get(stone_name).and_then(|sm| {
+            if sm.total_duration_ns > 0 {
+                Some(sm.tokens_out as f64 / (sm.total_duration_ns as f64 / 1_000_000_000.0))
+            } else {
+                None
+            }
+        })
     }
 
     // ── Demand Tracking (for placement engine) ────────────────────

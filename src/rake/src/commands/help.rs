@@ -52,9 +52,9 @@ pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: 
     println!();
 
     // Parameters
-    if !cmd.params.is_empty() {
+    if !cmd.args.is_empty() {
         println!("{}{}", indent, fmt.group("PARAMETERS"));
-        for param in &cmd.params {
+        for param in &cmd.args {
             let required = if param.required {
                 fmt.label(" (required)")
             } else {

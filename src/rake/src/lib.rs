@@ -9,6 +9,8 @@
 //! - discovery/ - Stone discovery (UDP, mDNS)
 
 pub mod api;
+pub mod arg_spec;
+pub mod cli_build;
 pub mod client;
 pub mod command_manifest;
 pub mod commands;

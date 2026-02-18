@@ -1,7 +1,10 @@
 //! Zen syntax parser for CLI commands
 //!
 //! Parses command-line arguments to detect zen syntax and extract positional keywords
-//! before they reach Clap. Supports:
+//! before they reach Clap. Verb recognition is driven by caller-provided sets
+//! (typically built from the command manifest — single source of truth).
+//!
+//! Supports:
 //! - `on <stone>` / `at <stone>` - target stone (on is preferred, at is legacy alias)
 //! - `from <url>` - source URL for borrow command
 //! - `quietly` - suppress non-essential output
@@ -13,11 +16,16 @@
 //! # Example
 //! ```ignore
 //! use garden_common::cli::parser::parse_args;
+//! use std::collections::HashSet;
 //!
+//! let zen: HashSet<&str> = ["offer", "observe"].into_iter().collect();
+//! let norm: HashSet<&str> = ["services"].into_iter().collect();
 //! let args = vec!["offer".to_string(), "mongodb".to_string(), "on".to_string(), "stone-02".to_string()];
-//! let parsed = parse_args(args)?;
+//! let parsed = parse_args(args, &zen, &norm)?;
 //! assert_eq!(parsed.keywords.on_stone, Some("stone-02".to_string()));
 //! ```
+
+use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
 
@@ -46,8 +54,15 @@ pub struct ParsedCommand {
     pub keywords: ParsedKeywords,
 }
 
-/// Parse raw args to detect zen vs normative and extract positional keywords
-pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
+/// Parse raw args to detect zen vs normative and extract positional keywords.
+///
+/// Verb recognition is driven by the caller-provided sets — typically built
+/// from the command manifest (single source of truth).
+pub fn parse_args(
+    args: Vec<String>,
+    zen_verbs: &HashSet<&str>,
+    normative_verbs: &HashSet<&str>,
+) -> Result<ParsedCommand> {
     if args.is_empty() {
         return Err(anyhow!("No command provided"));
     }
@@ -55,11 +70,11 @@ pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
     let first_arg = &args[0];
 
     // Detect style based on first argument
-    let style = if is_zen_verb(first_arg) {
+    let style = if zen_verbs.contains(first_arg.as_str()) {
         CommandStyle::Zen
     } else if first_arg.starts_with("--")
         || first_arg.starts_with("-")
-        || is_normative_verb(first_arg)
+        || normative_verbs.contains(first_arg.as_str())
     {
         CommandStyle::Normative
     } else {
@@ -89,65 +104,6 @@ pub fn parse_args(args: Vec<String>) -> Result<ParsedCommand> {
         args: filtered_args,
         keywords,
     })
-}
-
-/// Check if a verb is a zen verb
-fn is_zen_verb(verb: &str) -> bool {
-    matches!(
-        verb,
-        // Service lifecycle (zen)
-        "offer" | "rest" | "wake" | "nourish" | "remove" | "uproot" |
-        // Adoption (zen)
-        "adopt" | "release" | "find" | "config" | "adopted" | "borrowed" |
-        // External services (zen)
-        "borrow" | "return" |
-        // Observation (zen)
-        "observe" | "watch" | "presence" | "list" | "status" |
-        // Context (zen)
-        "tend" |
-        // Pond (zen)
-        "place" | "lift" | "invite" |
-        // Admin (zen)
-        "make" | "refresh" | "reconcile" | "template" | "ceremony" |
-        // Stone admin (zen) - power management
-        "rouse" | "slumber" | "stir" |
-        // Installation (zen alias)
-        "take-root" |
-        // Discovery/aliases (zen)
-        "explore" | "touch" | "garden" |
-        // Test/Diagnostic (zen)
-        "election" |
-        // Companions (zen)
-        "hey" |
-        // Nurturing (backup/restore)
-        "restore" | "nurturing" |
-        // Capabilities (zen)
-        "capabilities" |
-        // Storage (zen)
-        "prepare" | "seed-banks" |
-        // Local/Meta commands (zen)
-        "launch" | "commands" |
-        // Lifecycle (zen)
-        "upgrade"
-    )
-}
-
-/// Check if a verb is a normative verb (resource-first pattern)
-fn is_normative_verb(verb: &str) -> bool {
-    matches!(
-        verb,
-        // Resource commands (normative)
-        "services" | "offerings" | "stones" | "adoption" | "templates" |
-        "ceremonies" | "console" | "context" | "pond" | "events" | "jobs" |
-        // Admin/utility (normative)
-        "help" | "browse-commands" |
-        // Developer tools (normative)
-        "api" | "locate" |
-        // Installation (normative)
-        "install-service" |
-        // Storage (normative - uses dashes)
-        "prepare" | "release-seed-bank" | "seed-banks" | "store"
-    )
 }
 
 /// Check if args contain zen positional keywords
@@ -228,6 +184,21 @@ fn extract_keywords(
 mod tests {
     use super::*;
 
+    /// Test fixture: minimal zen verbs for parser behavior tests
+    fn zen() -> HashSet<&'static str> {
+        [
+            "offer", "observe", "watch", "borrow", "capabilities", "rest",
+            "wake", "status", "adopt", "release",
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    /// Test fixture: minimal normative verbs for parser behavior tests
+    fn norm() -> HashSet<&'static str> {
+        ["services", "offerings", "stones"].into_iter().collect()
+    }
+
     #[test]
     fn test_zen_offer_with_on() {
         let args = vec![
@@ -236,7 +207,7 @@ mod tests {
             "on".to_string(),
             "stone-02".to_string(),
         ];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert_eq!(parsed.style, CommandStyle::Zen);
         assert_eq!(parsed.verb, "offer");
         assert_eq!(parsed.args, vec!["mongodb"]);
@@ -251,7 +222,7 @@ mod tests {
             "at".to_string(),
             "stone-02".to_string(),
         ];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert_eq!(parsed.keywords.on_stone, Some("stone-02".to_string()));
     }
 
@@ -263,7 +234,7 @@ mod tests {
             "from".to_string(),
             "redis://cache:6379".to_string(),
         ];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert_eq!(parsed.style, CommandStyle::Zen);
         assert_eq!(parsed.verb, "borrow");
         assert_eq!(parsed.args, vec!["redis"]);
@@ -282,7 +253,7 @@ mod tests {
             "from".to_string(),
             "stone-02".to_string(),
         ];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert_eq!(parsed.verb, "capabilities");
         assert_eq!(parsed.args, vec!["ollama", "mirror", "from", "stone-02"]);
         assert!(parsed.keywords.from_url.is_none());
@@ -295,7 +266,7 @@ mod tests {
             "all".to_string(),
             "quietly".to_string(),
         ];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert!(parsed.keywords.quietly);
         assert_eq!(parsed.args, vec!["all"]);
     }
@@ -308,14 +279,14 @@ mod tests {
             "until".to_string(),
             "ready".to_string(),
         ];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert_eq!(parsed.keywords.until_condition, Some("ready".to_string()));
     }
 
     #[test]
     fn test_normative_services() {
         let args = vec!["services".to_string(), "list".to_string()];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert_eq!(parsed.style, CommandStyle::Normative);
     }
 
@@ -326,14 +297,14 @@ mod tests {
             "list".to_string(),
             "quietly".to_string(),
         ];
-        let result = parse_args(args);
+        let result = parse_args(args, &zen(), &norm());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_zen_fresh() {
         let args = vec!["observe".to_string(), "fresh".to_string()];
-        let parsed = parse_args(args).unwrap();
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert!(parsed.keywords.fresh);
     }
 }

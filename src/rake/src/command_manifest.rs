@@ -1,11 +1,14 @@
 //! Command manifest system for Zen Garden Rake
 //!
-//! This module provides a declarative way to define commands with compile-time validation
-//! that ensures every clap command has a corresponding manifest entry.
+//! Single source of truth for ALL command metadata: identity, arguments,
+//! examples, descriptions, and relationships. The Clap CLI is generated
+//! from this manifest via the builder API (see cli_build.rs).
 //!
-//! Philosophy: Single source of truth - commands are defined once in the manifest,
-//! and both the CLI parser and metadata are generated from it.
+//! Adding a new command requires exactly TWO changes:
+//! 1. Add a CommandDef entry here
+//! 2. Add a handler in commands/ and wire it in route.rs
 
+use crate::arg_spec::{at_arg, at_arg_global, force_flag, ArgSpec, SubDef};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
@@ -144,21 +147,13 @@ pub struct CommandExample {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct CommandParam {
-    pub name: &'static str,
-    pub zen_syntax: &'static str,
-    pub normative_syntax: Option<&'static str>,
-    pub description: &'static str,
-    pub required: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct CommandDef {
-    /// Primary command name (used for lookup)
+    /// Primary command name (used for lookup and Clap subcommand name)
     pub name: &'static str,
     /// Zen command name (e.g., "take-root")
     pub zen_name: &'static str,
+    /// Additional zen verb aliases (e.g., "explore" → "offer", "touch" → "status")
+    pub zen_aliases: &'static [&'static str],
     /// Normative command name (e.g., "install-service"), if different from zen
     pub normative_name: Option<&'static str>,
     /// Command category for grouping
@@ -169,12 +164,18 @@ pub struct CommandDef {
     pub long_description: &'static str,
     /// Whether command supports --at/at for remote execution
     pub remote_capable: bool,
-    /// Command parameters
-    pub params: Vec<CommandParam>,
+    /// Command arguments (single source of truth for parsing AND help)
+    pub args: Vec<ArgSpec>,
+    /// Nested subcommands (e.g., pond init/status/invite)
+    pub subcommands: Vec<SubDef>,
     /// Usage examples
     pub examples: Vec<CommandExample>,
     /// Related commands
     pub see_also: Vec<&'static str>,
+    /// Hide from default command listing
+    pub hidden: bool,
+    /// Whether subcommand presence negates parent required args
+    pub subcommand_negates_reqs: bool,
 }
 
 pub struct CommandManifest {
@@ -212,6 +213,13 @@ impl CommandManifest {
     pub fn all(&self) -> Vec<&CommandDef> {
         self.commands.values().collect()
     }
+
+    /// Get all commands sorted by name (deterministic ordering for builder)
+    pub fn all_sorted(&self) -> Vec<&CommandDef> {
+        let mut cmds: Vec<&CommandDef> = self.commands.values().collect();
+        cmds.sort_by_key(|c| c.name);
+        cmds
+    }
 }
 
 /// Global command manifest - initialized at program start
@@ -223,6 +231,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "observe",
         zen_name: "observe",
+        zen_aliases: &["garden"],
         normative_name: None,
         category: CommandCategory::Discovery,
         description: "View garden state snapshot",
@@ -230,22 +239,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Shows current state of all stones and their offerings in a formatted table.\n\
             Provides snapshot view of the entire garden or filtered by stone/offering.",
         remote_capable: false,
-        params: vec![
-            CommandParam {
-                name: "stone",
-                zen_syntax: "<stone>",
-                normative_syntax: None,
-                description: "Filter by specific stone name",
-                required: false,
-            },
-            CommandParam {
-                name: "offering",
-                zen_syntax: "--offering <name>",
-                normative_syntax: None,
-                description: "Filter by offering name (comma-separated)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("stone", "Filter by specific stone name")
+                .zen("<stone>"),
+            ArgSpec::option("offering", "Filter by offering name (comma-separated)")
+                .zen("--offering <name>"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Observe all stones in garden",
@@ -269,11 +269,15 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["watch", "list"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
+
 
     manifest.add(CommandDef {
         name: "watch",
         zen_name: "watch",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Discovery,
         description: "Stream real-time events from stone",
@@ -281,20 +285,42 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Watch provides live updates on container lifecycle, offering installations, and system events.\n\
             Can monitor general events or specific offering logs.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
+        args: vec![
+            at_arg_global(),
+            ArgSpec::option("until", "Exit when string appears in event stream")
+                .zen("until <condition>")
+                .normative("--until <condition>"),
+        ],
+        subcommands: vec![
+            SubDef {
+                name: "offering",
+                description: "Watch offering events",
+                args: vec![
+                    ArgSpec::positional("name", "Offering name")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![SubDef {
+                    name: "logs",
+                    description: "Stream offering container logs",
+                    args: vec![],
+                    subcommands: vec![],
+                }],
             },
-            CommandParam {
-                name: "until",
-                zen_syntax: "until <condition>",
-                normative_syntax: Some("--until <condition>"),
-                description: "Exit when string appears in event stream",
-                required: false,
+            SubDef {
+                name: "stone",
+                description: "Watch stone events",
+                args: vec![
+                    ArgSpec::positional("name", "Stone name")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![SubDef {
+                    name: "logs",
+                    description: "Stream stone logs",
+                    args: vec![],
+                    subcommands: vec![],
+                }],
             },
         ],
         examples: vec![
@@ -320,24 +346,22 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["observe", "make"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "list",
         zen_name: "list",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Discovery,
         description: "List services on stone",
         long_description: "List all services (offerings) currently running on a stone.\n\n\
             Shows service names, status, ports, and basic health information.",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "at",
-            zen_syntax: "at <stone>",
-            normative_syntax: Some("--at <stone>"),
-            description: "Target stone (omit to use tended stone)",
-            required: false,
-        }],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "List services on tended stone",
@@ -351,6 +375,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["observe", "status"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === LIFECYCLE COMMANDS ===
@@ -358,6 +384,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "offer",
         zen_name: "offer",
+        zen_aliases: &["explore"],
         normative_name: None,
         category: CommandCategory::Lifecycle,
         description: "Install or list offerings",
@@ -365,29 +392,20 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Offerings are validated container templates. Installation includes compatibility checks,\n\
             hardware requirements validation, and automatic fallback recommendations.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "offering",
-                zen_syntax: "<offering>",
-                normative_syntax: None,
-                description: "Offering name (omit to list all)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
-            CommandParam {
-                name: "prefer",
-                zen_syntax: "--prefer <hardware>",
-                normative_syntax: None,
-                description: "Bias recommendations (e.g., ssd, nvme)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("offering", "Offering name (omit to list all)")
+                .zen("[offering]"),
+            at_arg_global(),
+            ArgSpec::multi_option("prefer", "Bias recommendations (e.g., ssd, nvme)")
+                .zen("--prefer <hardware>")
+                .delimiter(','),
         ],
+        subcommands: vec![SubDef {
+            name: "info",
+            description: "Show offering details and compatibility",
+            args: vec![],
+            subcommands: vec![],
+        }],
         examples: vec![
             CommandExample {
                 description: "List all available offerings by category",
@@ -416,11 +434,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["release", "list"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "rest",
         zen_name: "rest",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Lifecycle,
         description: "Stop a service (rest mode)",
@@ -428,22 +449,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Service enters rest mode and can be woken later with all data preserved.\n\
             Container is stopped but not removed.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name to stop",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to stop")
+                .zen("<service>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Put service to rest on tended stone",
@@ -457,11 +469,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["wake", "release"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "wake",
         zen_name: "wake",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Lifecycle,
         description: "Start a service (wake from rest)",
@@ -469,22 +484,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Service resumes with all previous data and configuration intact.\n\
             Container is started from stopped state.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name to start",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to start")
+                .zen("<service>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Wake service on tended stone",
@@ -498,11 +504,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["rest", "offer"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "remove",
         zen_name: "remove",
+        zen_aliases: &[],
         normative_name: Some("services delete"),
         category: CommandCategory::Lifecycle,
         description: "Remove service from registry (soft delete)",
@@ -511,22 +520,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             The container becomes a 'stray' - still running but unmanaged.\n\
             Use 'uproot' for hard delete (destroy container and data).",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name to remove from registry",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to remove from registry")
+                .zen("<service>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Remove service (stops and removes container, preserves volumes)",
@@ -540,11 +540,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["uproot", "adopt", "find"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "uproot",
         zen_name: "uproot",
+        zen_aliases: &[],
         normative_name: Some("services destroy"),
         category: CommandCategory::Lifecycle,
         description: "Destroy service completely (hard delete)",
@@ -552,29 +555,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             This is irreversible - container and volumes are deleted.\n\
             Use --force to skip confirmation prompt.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name to destroy",
-                required: true,
-            },
-            CommandParam {
-                name: "force",
-                zen_syntax: "--force",
-                normative_syntax: None,
-                description: "Skip confirmation prompt",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to destroy")
+                .zen("<service>")
+                .required(),
+            force_flag(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Destroy service with confirmation",
@@ -593,11 +581,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["remove", "rest"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "nourish",
         zen_name: "nourish",
+        zen_aliases: &[],
         normative_name: Some("services upgrade"),
         category: CommandCategory::Lifecycle,
         description: "Upgrade service to latest version",
@@ -605,29 +596,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Pulls latest container images and recreates services with data preserved.\n\
             Use --all to upgrade all services on stone.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name (omit with --all)",
-                required: false,
-            },
-            CommandParam {
-                name: "all",
-                zen_syntax: "--all",
-                normative_syntax: None,
-                description: "Upgrade all services on stone",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name (omit with --all)")
+                .zen("[service]"),
+            ArgSpec::flag("all", "Upgrade all services on stone").zen("--all"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Upgrade specific service",
@@ -646,11 +621,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["offer", "reconcile"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::UPGRADE,
         zen_name: "upgrade",
+        zen_aliases: &[],
         normative_name: Some("services upgrade"),
         category: CommandCategory::Lifecycle,
         description: "Upgrade a service to latest image",
@@ -658,29 +636,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             This pulls the latest image and recreates the container with the same configuration.\n\
             Use --all to upgrade all services on the stone.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "[service]",
-                normative_syntax: None,
-                description: "Service name to upgrade (required unless --all)",
-                required: false,
-            },
-            CommandParam {
-                name: "all",
-                zen_syntax: "--all",
-                normative_syntax: None,
-                description: "Upgrade all services",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to upgrade (required unless --all)")
+                .zen("[service]"),
+            ArgSpec::flag("all", "Upgrade all services").zen("--all"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Upgrade specific service",
@@ -694,11 +656,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["nourish", "offer", "rest"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::CAPABILITIES,
         zen_name: "capabilities",
+        zen_aliases: &[],
         normative_name: Some("services capabilities"),
         category: CommandCategory::Lifecycle,
         description: "Manage offering capabilities (models, extensions)",
@@ -707,27 +672,68 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             For AI offerings like Ollama, this manages available models.\n\
             For databases, this could manage extensions or plugins.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "offering",
-                zen_syntax: "<offering>",
-                normative_syntax: None,
-                description: "Offering name to manage capabilities for",
-                required: true,
+        args: vec![
+            ArgSpec::positional("offering", "Offering name to manage capabilities for")
+                .zen("<offering>")
+                .required(),
+            at_arg_global(),
+        ],
+        subcommands: vec![
+            SubDef {
+                name: "add",
+                description: "Add a capability to an offering",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name")
+                        .zen("<offering>")
+                        .required(),
+                    ArgSpec::positional("name", "Capability name to add")
+                        .zen("<name>")
+                        .required(),
+                    ArgSpec::option("type", "Capability type")
+                        .zen("--type <type>")
+                        .short('t'),
+                    ArgSpec::flag("dry-run", "Validate only without adding").zen("--dry-run"),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "action",
-                zen_syntax: "[add|remove|refresh|mirror] <args>",
-                normative_syntax: None,
-                description: "Action: add, remove, refresh, or mirror capabilities",
-                required: false,
+            SubDef {
+                name: "remove",
+                description: "Remove a capability from an offering",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name")
+                        .zen("<offering>")
+                        .required(),
+                    ArgSpec::positional("name", "Capability name to remove")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
+            SubDef {
+                name: "refresh",
+                description: "Refresh capabilities for an offering",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name")
+                        .zen("<offering>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "mirror",
+                description: "Mirror capabilities between stones",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name")
+                        .zen("<offering>")
+                        .required(),
+                    ArgSpec::option("from", "Source stone")
+                        .zen("from <stone>")
+                        .normative("--from <stone>"),
+                    ArgSpec::option("to", "Destination stone")
+                        .zen("to <stone>")
+                        .normative("--to <stone>"),
+                ],
+                subcommands: vec![],
             },
         ],
         examples: vec![
@@ -757,6 +763,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["offer", "status"],
+        hidden: false,
+        subcommand_negates_reqs: true,
     });
 
     // === ADOPTION COMMANDS ===
@@ -764,6 +772,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "adopt",
         zen_name: "adopt",
+        zen_aliases: &[],
         normative_name: Some("adoption claim"),
         category: CommandCategory::Adoption,
         description: "Adopt a stray container or detected service",
@@ -772,22 +781,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Strays are containers that exist but aren't in moss registry.\n\
             Adopted services are external services (not containers) that moss monitors.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "target",
-                zen_syntax: "<container|offering>",
-                normative_syntax: None,
-                description: "Container name or offering name to claim",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("target", "Container name or offering name to claim")
+                .zen("<container|offering>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Adopt a stray container",
@@ -801,11 +801,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["release", "find", "adopted"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "release",
         zen_name: "release",
+        zen_aliases: &[],
         normative_name: Some("adoption release"),
         category: CommandCategory::Adoption,
         description: "Release an adopted service from management",
@@ -813,22 +816,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             The service continues running but is no longer monitored by moss.\n\
             Does not affect borrowed services - use 'return' for those.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Adopted service name to release",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Adopted service name to release")
+                .zen("<service>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Release adopted service",
@@ -842,11 +836,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["adopt", "adopted"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "locate",
         zen_name: "locate",
+        zen_aliases: &[],
         normative_name: Some("adoption locate"),
         category: CommandCategory::Adoption,
         description: "Locate adoptable containers (strays)",
@@ -854,22 +851,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Strays are containers running on the stone but not in moss registry.\n\
             Use 'adopt <name>' to claim a stray container.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "target",
-                zen_syntax: "<strays>",
-                normative_syntax: None,
-                description: "'strays' to locate unmanaged containers",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
-        ],
+        args: vec![at_arg_global()],
+        subcommands: vec![SubDef {
+            name: "strays",
+            description: "Locate unmanaged containers",
+            args: vec![],
+            subcommands: vec![],
+        }],
         examples: vec![
             CommandExample {
                 description: "Locate stray containers",
@@ -883,11 +871,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["adopt", "adopted"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "find",
         zen_name: "find",
+        zen_aliases: &[],
         normative_name: Some("services find"),
         category: CommandCategory::Discovery,
         description: "Find running services and get connection URIs",
@@ -896,36 +887,18 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Results are returned instantly from topology cache.\n\n\
             Use 'wishfully' modifier to auto-provision if service not found.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "query",
-                zen_syntax: "<query>",
-                normative_syntax: None,
-                description: "Service name, c:category, or t:tag",
-                required: true,
-            },
-            CommandParam {
-                name: "format",
-                zen_syntax: "--format <format>",
-                normative_syntax: None,
-                description: "Output format: human, json, uri, uri-ip",
-                required: false,
-            },
-            CommandParam {
-                name: "wishfully",
-                zen_syntax: "wishfully",
-                normative_syntax: Some("--wishful"),
-                description: "Auto-provision if not found",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("query", "Service name, c:category, or t:tag")
+                .zen("<query>")
+                .required(),
+            ArgSpec::option("format", "Output format: human, json, uri, uri-ip")
+                .zen("--format <format>"),
+            ArgSpec::flag("wishfully", "Auto-provision if not found")
+                .zen("wishfully")
+                .normative("--wishful"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Find mongodb service",
@@ -949,11 +922,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["observe", "list", "offer", "config"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "config",
         zen_name: "config",
+        zen_aliases: &[],
         normative_name: Some("services config"),
         category: CommandCategory::Discovery,
         description: "Get service configuration for automation",
@@ -962,36 +938,17 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Returns connection URIs, ports, hostname, and protocol information.\n\n\
             Use --field to extract specific values for scripts.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name to query",
-                required: true,
-            },
-            CommandParam {
-                name: "output",
-                zen_syntax: "--output <format>",
-                normative_syntax: None,
-                description: "Output format: human (default) or json",
-                required: false,
-            },
-            CommandParam {
-                name: "field",
-                zen_syntax: "--field <path>",
-                normative_syntax: None,
-                description: "Extract specific field (dot notation: connection.uri)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to query")
+                .zen("<service>")
+                .required(),
+            ArgSpec::option("output", "Output format: human (default) or json")
+                .zen("--output <format>"),
+            ArgSpec::option("field", "Extract specific field (dot notation: connection.uri)")
+                .zen("--field <path>"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Get full config (human-readable)",
@@ -1019,11 +976,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["find", "list", "status"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "adopted",
         zen_name: "adopted",
+        zen_aliases: &[],
         normative_name: Some("adoption list"),
         category: CommandCategory::Adoption,
         description: "List adopted services",
@@ -1031,13 +991,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             "List all services currently adopted (external services under moss management).\n\n\
             Adopted services are not containers - they're external services moss monitors.",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "at",
-            zen_syntax: "on <stone>",
-            normative_syntax: Some("--at <stone>"),
-            description: "Target stone (omit to use tended stone)",
-            required: false,
-        }],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "List adopted services",
@@ -1051,11 +1006,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["adopt", "release", "borrowed"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "borrowed",
         zen_name: "borrowed",
+        zen_aliases: &[],
         normative_name: Some("adoption list-borrowed"),
         category: CommandCategory::Adoption,
         description: "List borrowed (external) services",
@@ -1064,13 +1022,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Borrowed services are external services not managed by this stone,\n\
             but registered for service discovery and reference.",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "at",
-            zen_syntax: "on <stone>",
-            normative_syntax: Some("--at <stone>"),
-            description: "Target stone (omit to use tended stone)",
-            required: false,
-        }],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "List borrowed services",
@@ -1084,11 +1037,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["borrow", "return", "adopted"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "borrow",
         zen_name: "borrow",
+        zen_aliases: &[],
         normative_name: Some("adoption borrow"),
         category: CommandCategory::Adoption,
         description: "Register an external service",
@@ -1097,29 +1053,17 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Borrowed services are external network services not managed by this stone.\n\
             They're registered so other services can discover and connect to them.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "name",
-                zen_syntax: "<name>",
-                normative_syntax: None,
-                description: "Name for this borrowed service",
-                required: true,
-            },
-            CommandParam {
-                name: "from",
-                zen_syntax: "from <url>",
-                normative_syntax: Some("--url <url>"),
-                description: "URL/connection string for the external service",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("name", "Name for this borrowed service")
+                .zen("<name>")
+                .required(),
+            ArgSpec::option("from", "URL/connection string for the external service")
+                .zen("from <url>")
+                .normative("--url <url>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Borrow external Redis",
@@ -1144,11 +1088,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["return", "borrowed"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "return",
         zen_name: "return",
+        zen_aliases: &[],
         normative_name: Some("adoption unborrow"),
         category: CommandCategory::Adoption,
         description: "Unregister a borrowed service",
@@ -1157,22 +1104,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Removes the service from moss's borrowed registry.\n\
             The external service continues running unaffected.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "name",
-                zen_syntax: "<name>",
-                normative_syntax: None,
-                description: "Name of the borrowed service to return",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("name", "Name of the borrowed service to return")
+                .zen("<name>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Return (unregister) borrowed service",
@@ -1186,33 +1124,27 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["borrow", "borrowed"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "status",
         zen_name: "status",
+        zen_aliases: &["touch"],
         normative_name: Some("services status"),
         category: CommandCategory::Discovery,
         description: "Show service status",
         long_description: "Show detailed status of a specific service.\n\n\
             Includes health, ports, resource usage, and recent events.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "service",
-                zen_syntax: "<service>",
-                normative_syntax: None,
-                description: "Service name to query",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "on <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("service", "Service name to query")
+                .zen("<service>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Show MongoDB status",
@@ -1226,6 +1158,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["list", "observe"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === MANAGEMENT COMMANDS ===
@@ -1233,6 +1167,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "tend",
         zen_name: "tend",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Management,
         description: "Set which stone rake commands target",
@@ -1240,29 +1175,15 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Tending establishes a context that persists for 90 seconds and affects all subsequent commands.\n\
             Commands with --at/at will override the tended context temporarily.",
         remote_capable: false,
-        params: vec![
-            CommandParam {
-                name: "target",
-                zen_syntax: "<target>",
-                normative_syntax: None,
-                description: "'this', 'local', 'auto', or explicit endpoint URL",
-                required: false,
-            },
-            CommandParam {
-                name: "clear",
-                zen_syntax: "--clear",
-                normative_syntax: None,
-                description: "Clear tending state",
-                required: false,
-            },
-            CommandParam {
-                name: "verbose",
-                zen_syntax: "-v / --verbose",
-                normative_syntax: None,
-                description: "Show verbose tending information",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("target", "'this', 'local', 'auto', or explicit endpoint URL")
+                .zen("[target]"),
+            ArgSpec::flag("clear", "Clear tending state").zen("--clear"),
+            ArgSpec::count("verbose", "Show verbose tending information")
+                .zen("-v / --verbose")
+                .short('v'),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Show current tending state",
@@ -1291,11 +1212,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["observe", "watch"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "reconcile",
         zen_name: "reconcile",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Management,
         description: "Adopt existing containers",
@@ -1304,22 +1228,12 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Useful after moss restart/update, or if containers were created externally.\n\
             Can optionally remove invalid zen-offering-* containers.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "drop-invalid",
-                zen_syntax: "--drop-invalid",
-                normative_syntax: None,
-                description: "Remove invalid zen-offering-* containers",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::flag("drop-invalid", "Remove invalid zen-offering-* containers")
+                .zen("--drop-invalid"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Adopt any missing containers",
@@ -1338,11 +1252,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["nourish", "refresh"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "refresh",
         zen_name: "refresh",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Management,
         description: "Update moss or rake binary",
@@ -1351,29 +1268,16 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Binary is validated for architecture compatibility before installation.\n\
             Garden-Moss automatically restarts after update.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "component",
-                zen_syntax: "<component>",
-                normative_syntax: None,
-                description: "'moss' or 'rake'",
-                required: true,
-            },
-            CommandParam {
-                name: "from",
-                zen_syntax: "--from <path>",
-                normative_syntax: None,
-                description: "Path to binary file",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("component", "'moss' or 'rake'")
+                .zen("<component>")
+                .required(),
+            ArgSpec::option("from", "Path to binary file")
+                .zen("--from <path>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Update moss binary",
@@ -1394,6 +1298,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["reconcile"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === SYSTEM COMMANDS ===
@@ -1401,6 +1307,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "take-root",
         zen_name: "take-root",
+        zen_aliases: &[],
         normative_name: Some("install-service"),
         category: CommandCategory::System,
         description: "Install moss as a system service",
@@ -1410,15 +1317,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             If running from removable media (USB), automatically copies to C:\\ProgramData\\ZenGarden.\n\n\
             To uninstall: sc delete ZenGardenMoss",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
-        ],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Install service on tended stone",
@@ -1442,11 +1342,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["lift", "make"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "make",
         zen_name: "make",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::System,
         description: "Control stone console output",
@@ -1457,34 +1360,39 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             informative  - Major lifecycle events (default)\n\
             verbose      - Full debug output (sing mode)",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "target",
-                zen_syntax: "<target>",
-                normative_syntax: None,
-                description: "'stone'",
-                required: true,
+        args: vec![
+            ArgSpec::positional("target", "'stone'")
+                .zen("<target>")
+                .required(),
+            at_arg_global(),
+        ],
+        subcommands: vec![
+            SubDef {
+                name: "sing",
+                description: "Enable verbose output",
+                args: vec![
+                    ArgSpec::positional("duration", "'forever' or omit for 30min timeout")
+                        .zen("[duration]"),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "action",
-                zen_syntax: "<action>",
-                normative_syntax: None,
-                description: "'sing', 'quiet', 'silent'",
-                required: true,
+            SubDef {
+                name: "quiet",
+                description: "Reset to default (informative) output",
+                args: vec![],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "duration",
-                zen_syntax: "<duration>",
-                normative_syntax: None,
-                description: "'forever' or omit for 30min timeout",
-                required: false,
+            SubDef {
+                name: "silent",
+                description: "Disable console output",
+                args: vec![],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
+            SubDef {
+                name: "minimal",
+                description: "Critical events only",
+                args: vec![],
+                subcommands: vec![],
             },
         ],
         examples: vec![
@@ -1515,6 +1423,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["watch", "take-root"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === POND COMMANDS ===
@@ -1522,6 +1432,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "pond",
         zen_name: "pond",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Pond,
         description: "Manage pond security network",
@@ -1530,20 +1441,107 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Subcommands: init, status, invite, join, remove, untrust.\n\
             Phase 3b feature - implementation pending.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "action",
-                zen_syntax: "<action>",
-                normative_syntax: None,
-                description: "Action: init, status, invite, join, remove, untrust",
-                required: true,
+        args: vec![at_arg_global()],
+        subcommands: vec![
+            SubDef {
+                name: "init",
+                description: "Initialize pond security",
+                args: vec![
+                    ArgSpec::option("passphrase", "Encrypt pond certificate")
+                        .zen("--passphrase <pass>"),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
+            SubDef {
+                name: "status",
+                description: "Show pond status",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "invite",
+                description: "Generate invitation code",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "join",
+                description: "Join pond with invitation code",
+                args: vec![
+                    ArgSpec::positional("code", "Invitation code")
+                        .zen("<code>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "enroll",
+                description: "Enroll a stone into the pond",
+                args: vec![
+                    ArgSpec::positional("stone", "Stone to enroll")
+                        .zen("<stone>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "trust",
+                description: "Trust a stone in the pond",
+                args: vec![
+                    ArgSpec::positional("stone", "Stone to trust")
+                        .zen("<stone>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "unlock",
+                description: "Unlock pond certificate",
+                args: vec![
+                    ArgSpec::option("passphrase", "Certificate passphrase")
+                        .zen("--passphrase <pass>"),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "remove",
+                description: "Remove a stone from the pond",
+                args: vec![
+                    ArgSpec::positional("stone", "Stone to remove")
+                        .zen("<stone>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "untrust",
+                description: "Revoke trust for a stone",
+                args: vec![
+                    ArgSpec::positional("stone", "Stone to untrust")
+                        .zen("<stone>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "promote",
+                description: "Promote a stone to keystone",
+                args: vec![
+                    ArgSpec::positional("stone", "Stone to promote")
+                        .zen("<stone>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "rename",
+                description: "Rename the pond",
+                args: vec![
+                    ArgSpec::positional("name", "New pond name")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![],
             },
         ],
         examples: vec![
@@ -1569,11 +1567,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["place", "invite", "lift"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "place",
         zen_name: "place",
+        zen_aliases: &[],
         normative_name: Some("pond init / pond join"),
         category: CommandCategory::Pond,
         description: "Initialize pond or join pond",
@@ -1582,36 +1583,17 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Pond security enables multi-stone trust relationships with encrypted certificates.\n\
             Phase 3b feature - implementation pending.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "target",
-                zen_syntax: "<target>",
-                normative_syntax: None,
-                description: "'keystone' or 'stone'",
-                required: true,
-            },
-            CommandParam {
-                name: "code",
-                zen_syntax: "--code <code>",
-                normative_syntax: None,
-                description: "Invitation code (required for 'stone')",
-                required: false,
-            },
-            CommandParam {
-                name: "passphrase",
-                zen_syntax: "--passphrase <pass>",
-                normative_syntax: None,
-                description: "Encrypt pond certificate (keystone only)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("target", "'keystone' or 'stone'")
+                .zen("<target>")
+                .required(),
+            ArgSpec::option("code", "Invitation code (required for 'stone')")
+                .zen("--code <code>"),
+            ArgSpec::option("passphrase", "Encrypt pond certificate (keystone only)")
+                .zen("--passphrase <pass>"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Initialize pond (place keystone)",
@@ -1635,11 +1617,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["invite", "lift"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "invite",
         zen_name: "invite",
+        zen_aliases: &[],
         normative_name: Some("pond invite"),
         category: CommandCategory::Pond,
         description: "Generate pond invitation code",
@@ -1647,13 +1632,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Invitation codes expire after 24 hours or first use.\n\
             Phase 3b feature - implementation pending.",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "at",
-            zen_syntax: "at <stone>",
-            normative_syntax: Some("--at <stone>"),
-            description: "Target stone (omit to use tended stone)",
-            required: false,
-        }],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Generate invitation code",
@@ -1667,11 +1647,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["place", "lift"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: "lift",
         zen_name: "lift",
+        zen_aliases: &[],
         normative_name: Some("pond untrust / pond remove"),
         category: CommandCategory::Pond,
         description: "Remove stone from pond",
@@ -1679,29 +1662,15 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Can remove specific stone (untrust) or remove keystone (destroy pond).\n\
             Phase 3b feature - implementation pending.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "target_type",
-                zen_syntax: "<type>",
-                normative_syntax: None,
-                description: "'keystone' or 'stone'",
-                required: true,
-            },
-            CommandParam {
-                name: "stone_name",
-                zen_syntax: "<stone>",
-                normative_syntax: None,
-                description: "Stone name (required if type is 'stone')",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("target_type", "'keystone' or 'stone'")
+                .zen("<type>")
+                .required(),
+            ArgSpec::positional("stone_name", "Stone name (required if type is 'stone')")
+                .zen("[stone]"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Remove specific stone from pond",
@@ -1720,6 +1689,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["place", "invite"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === SCAFFOLDED COMMANDS ===
@@ -1728,6 +1699,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: cmd::CEREMONY,
         zen_name: "ceremony",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Management,
         description: "Run guided workflows (coming soon)",
@@ -1738,24 +1710,25 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             - ceremony migrate: Service migration workflow\n\
             - ceremony backup: Guided backup configuration",
         remote_capable: false,
-        params: vec![CommandParam {
-            name: "workflow",
-            zen_syntax: "<workflow>",
-            normative_syntax: None,
-            description: "Workflow name (bootstrap, migrate, backup)",
-            required: false,
-        }],
+        args: vec![
+            ArgSpec::positional("workflow", "Workflow name (bootstrap, migrate, backup)")
+                .zen("[workflow]"),
+        ],
+        subcommands: vec![],
         examples: vec![CommandExample {
             description: "Run bootstrap ceremony",
             zen_syntax: Some("garden-rake ceremony bootstrap"),
             normative_syntax: None,
         }],
         see_also: vec!["offer", "tend"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::TEMPLATE,
         zen_name: "template",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Management,
         description: "Manage offering templates (coming soon)",
@@ -1765,19 +1738,33 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             - template show: Display template details\n\
             - template create: Create custom template",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "action",
-            zen_syntax: "<action>",
-            normative_syntax: None,
-            description: "Action (list, show, create)",
-            required: false,
-        }],
+        args: vec![],
+        subcommands: vec![
+            SubDef {
+                name: "list",
+                description: "List available templates",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "show",
+                description: "Display template details",
+                args: vec![
+                    ArgSpec::positional("name", "Template name")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+        ],
         examples: vec![CommandExample {
             description: "List templates",
             zen_syntax: Some("garden-rake template list"),
             normative_syntax: None,
         }],
         see_also: vec!["offer"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === STONE ADMIN COMMANDS ===
@@ -1786,6 +1773,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: cmd::ROUSE,
         zen_name: "rouse",
+        zen_aliases: &[],
         normative_name: Some("admin stone wake"),
         category: CommandCategory::System,
         description: "Wake a stone via Wake-on-LAN",
@@ -1794,22 +1782,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             The stone must have WoL enabled in BIOS/UEFI and NIC configuration.\n\
             MAC addresses are preserved even when stones go offline (up to 64 offline stones, 24h retention).",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "stone",
-                zen_syntax: "<stone>",
-                normative_syntax: None,
-                description: "Stone name to wake",
-                required: true,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Stone to send WoL from (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("stone", "Stone name to wake")
+                .zen("<stone>")
+                .required(),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Wake a stone by name",
@@ -1823,11 +1802,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["slumber", "stir", "observe"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::SLUMBER,
         zen_name: "slumber",
+        zen_aliases: &[],
         normative_name: Some("admin stone shutdown"),
         category: CommandCategory::System,
         description: "Shut down a stone (power off)",
@@ -1836,22 +1818,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             The stone's MAC address is preserved in topology cache for future Wake-on-LAN.\n\
             If no stone is specified, operates on the tended stone.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "stone",
-                zen_syntax: "[stone]",
-                normative_syntax: Some("--target <stone>"),
-                description: "Stone name to shut down (omit for tended stone)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Stone to send command from (if target is remote)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("stone", "Stone name to shut down (omit for tended stone)")
+                .zen("[stone]")
+                .normative("--target <stone>"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Shut down tended stone",
@@ -1865,11 +1838,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["rouse", "stir"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::STIR,
         zen_name: "stir",
+        zen_aliases: &[],
         normative_name: Some("admin stone reboot"),
         category: CommandCategory::System,
         description: "Reboot a stone",
@@ -1877,22 +1853,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Uses systemctl reboot on Linux and shutdown /r /t 0 on Windows.\n\
             If no stone is specified, operates on the tended stone.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "stone",
-                zen_syntax: "[stone]",
-                normative_syntax: Some("--target <stone>"),
-                description: "Stone name to reboot (omit for tended stone)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Stone to send command from (if target is remote)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("stone", "Stone name to reboot (omit for tended stone)")
+                .zen("[stone]")
+                .normative("--target <stone>"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Reboot tended stone",
@@ -1906,11 +1873,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["slumber", "rouse"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::ELECTION,
         zen_name: "election",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::System,
         description: "Test distributed election protocol",
@@ -1918,36 +1888,18 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Starts an election across all stones in the garden with optional criteria.\n\
             Used for testing leader selection for coordinated operations like updates.",
         remote_capable: false,
-        params: vec![
-            CommandParam {
-                name: "action",
-                zen_syntax: "<action>",
-                normative_syntax: None,
-                description: "Election action (start)",
-                required: true,
-            },
-            CommandParam {
-                name: "election-type",
-                zen_syntax: "--election-type <type>",
-                normative_syntax: None,
-                description: "Election type (default: update_source; options: ceremony_coordinator, replica_target, backup_source)",
-                required: false,
-            },
-            CommandParam {
-                name: "criteria",
-                zen_syntax: "--criteria <json>",
-                normative_syntax: None,
-                description: "Selection criteria as BSON-style JSON",
-                required: false,
-            },
-            CommandParam {
-                name: "timeout",
-                zen_syntax: "--timeout <seconds>",
-                normative_syntax: None,
-                description: "Election timeout in seconds (default: 10)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("action", "Election action (start)")
+                .zen("<action>")
+                .required(),
+            ArgSpec::option("election-type", "Election type (default: update_source; options: ceremony_coordinator, replica_target, backup_source)")
+                .zen("--election-type <type>"),
+            ArgSpec::option("criteria", "Selection criteria as BSON-style JSON")
+                .zen("--criteria <json>"),
+            ArgSpec::option("timeout", "Election timeout in seconds (default: 10)")
+                .zen("--timeout <seconds>"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Start election with default type (update_source)",
@@ -1966,11 +1918,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["observe", "status"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::PRESENCE,
         zen_name: "presence",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Discovery,
         description: "Monitor stone presence events in real-time",
@@ -1981,15 +1936,11 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             - Service events: adoption, removal\n\n\
             Optional filtering by event category (service, stone, offering, ceremony, nourishment, etc.)",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "categories",
-                zen_syntax: "--categories <types>",
-                normative_syntax: None,
-                description: "Filter by event categories (comma-separated: service,stone,offering,ceremony,nourishment,firmware)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::option("categories", "Filter by event categories (comma-separated: service,stone,offering,ceremony,nourishment,firmware)")
+                .zen("--categories <types>"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Monitor all presence events",
@@ -2008,6 +1959,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["watch", "observe"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === Companion COMMANDS ===
@@ -2015,6 +1968,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: "hey",
         zen_name: "hey",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Companion,
         description: "Communicate with Companions (Cricket, Firefly, etc.)",
@@ -2023,13 +1977,11 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             LED displays (Firefly), and more. Use 'hey tell' to interact with them.\n\n\
             Rake passes commands through to Moss, which forwards them to the Companion.",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "tell",
-            zen_syntax: "tell <Companion> [args...]",
-            normative_syntax: None,
-            description: "Send command to Companion with raw arguments",
-            required: false,
-        }],
+        args: vec![
+            ArgSpec::trailing("tell", "Send command to Companion with raw arguments")
+                .zen("tell <Companion> [args...]"),
+        ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "List all registered Companions",
@@ -2058,6 +2010,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["watch", "presence"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === STORAGE COMMANDS ===
@@ -2065,6 +2019,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: cmd::PREPARE,
         zen_name: "prepare",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Storage,
         description: "Prepare a USB device as a seed bank",
@@ -2072,22 +2027,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Creates the required directory structure and metadata for the device\n\
             to be used as portable storage in the Zen Garden ecosystem.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "device",
-                zen_syntax: "<device>",
-                normative_syntax: None,
-                description: "Device name (e.g., sdb1)",
-                required: true,
-            },
-            CommandParam {
-                name: "name",
-                zen_syntax: "--name <name>",
-                normative_syntax: None,
-                description: "Custom seed bank name",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("device", "Device name (e.g., sdb1)")
+                .zen("<device>")
+                .required(),
+            ArgSpec::option("name", "Custom seed bank name").zen("--name <name>"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Prepare USB device",
@@ -2101,42 +2047,48 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["seed-banks", "release-seed-bank", "store"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::RELEASE_SEED_BANK,
         zen_name: "release-seed-bank",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Storage,
         description: "Release a seed bank for safe removal",
         long_description: "Safely unmount a seed bank, ensuring all writes are complete\n\
             before the USB device is physically removed.",
         remote_capable: true,
-        params: vec![CommandParam {
-            name: "name",
-            zen_syntax: "<name>",
-            normative_syntax: None,
-            description: "Seed bank name to release",
-            required: true,
-        }],
+        args: vec![
+            ArgSpec::positional("name", "Seed bank name to release")
+                .zen("<name>")
+                .required(),
+        ],
+        subcommands: vec![],
         examples: vec![CommandExample {
             description: "Release seed bank",
             zen_syntax: Some("garden-rake release-seed-bank my-seeds"),
             normative_syntax: None,
         }],
         see_also: vec!["seed-banks", "prepare"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::SEED_BANKS,
         zen_name: "seed-banks",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Storage,
         description: "Show seed banks on a stone",
         long_description: "List all seed banks and eligible USB storage devices on a stone.\n\n\
             Shows both actively mounted seed banks and available devices that can be prepared.",
         remote_capable: true,
-        params: vec![],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "List seed banks",
@@ -2150,11 +2102,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["prepare", "release-seed-bank", "store"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::STORE,
         zen_name: "store",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Storage,
         description: "Object storage operations on seed banks",
@@ -2163,50 +2118,22 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             objects in seed bank buckets. Objects are stored under garden/storage/{bucket}/{key}.\n\
             Use --app to prefix keys as {app}/{bucket}/... (default: zen-garden).",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "operation",
-                zen_syntax: "<put|get|ls|rm|head>",
-                normative_syntax: None,
-                description: "Storage operation to perform",
-                required: true,
-            },
-            CommandParam {
-                name: "bucket",
-                zen_syntax: "<bucket>",
-                normative_syntax: None,
-                description: "Bucket name",
-                required: true,
-            },
-            CommandParam {
-                name: "key",
-                zen_syntax: "<key>",
-                normative_syntax: None,
-                description: "Object key (required for put/get/rm/head)",
-                required: false,
-            },
-            CommandParam {
-                name: "file",
-                zen_syntax: "<file>",
-                normative_syntax: None,
-                description: "Local file path (source for put, destination for get)",
-                required: false,
-            },
-            CommandParam {
-                name: "prefix",
-                zen_syntax: "--prefix <prefix>",
-                normative_syntax: None,
-                description: "Prefix for list operations",
-                required: false,
-            },
-            CommandParam {
-                name: "app",
-                zen_syntax: "--app <name>",
-                normative_syntax: None,
-                description: "Application namespace (default: zen-garden)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("operation", "Storage operation to perform")
+                .zen("<put|get|ls|rm|head>")
+                .required(),
+            ArgSpec::positional("bucket", "Bucket name")
+                .zen("<bucket>")
+                .required(),
+            ArgSpec::positional("key", "Object key (required for put/get/rm/head)")
+                .zen("[key]"),
+            ArgSpec::positional("file", "Local file path (source for put, destination for get)")
+                .zen("[file]"),
+            ArgSpec::option("prefix", "Prefix for list operations").zen("--prefix <prefix>"),
+            ArgSpec::option("app", "Application namespace (default: zen-garden)")
+                .zen("--app <name>"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Upload file",
@@ -2245,6 +2172,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["seed-banks", "prepare"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === NURTURING (BACKUP/RESTORE) COMMANDS ===
@@ -2252,6 +2181,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: cmd::RESTORE,
         zen_name: "restore",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Storage,
         description: "Restore an offering from backup",
@@ -2259,43 +2189,18 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Supports restoring from local A/B slots or remote seed banks.\n\
             Use --dry-run to preview without executing.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "offering",
-                zen_syntax: "<offering>",
-                normative_syntax: None,
-                description: "Offering name to restore",
-                required: true,
-            },
-            CommandParam {
-                name: "source",
-                zen_syntax: "from slot A|B | from seed-bank <name>",
-                normative_syntax: None,
-                description: "Source: local slot or seed bank",
-                required: false,
-            },
-            CommandParam {
-                name: "dry-run",
-                zen_syntax: "--dry-run",
-                normative_syntax: None,
-                description: "Preview without executing",
-                required: false,
-            },
-            CommandParam {
-                name: "harvest-id",
-                zen_syntax: "--harvest-id <id>",
-                normative_syntax: None,
-                description: "Specific harvest ID (for seed bank restore)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("offering", "Offering name to restore")
+                .zen("<offering>")
+                .required(),
+            ArgSpec::option("source", "Source: local slot or seed bank")
+                .zen("from slot A|B | from seed-bank <name>"),
+            ArgSpec::flag("dry-run", "Preview without executing").zen("--dry-run"),
+            ArgSpec::option("harvest-id", "Specific harvest ID (for seed bank restore)")
+                .zen("--harvest-id <id>"),
+            at_arg(),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Restore from current slot",
@@ -2319,11 +2224,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["nurturing", "seed-banks"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::NURTURING,
         zen_name: "nurturing",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Storage,
         description: "Manage nurturing (backup) operations",
@@ -2331,41 +2239,44 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             View backup status, list available snapshots, and trigger backup workflows.\n\
             Nurturing provides A/B local slots plus remote seed bank replication.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "action",
-                zen_syntax: "status|list|trigger|trigger-all",
-                normative_syntax: None,
-                description: "Action to perform",
-                required: true,
+        args: vec![at_arg_global()],
+        subcommands: vec![
+            SubDef {
+                name: "status",
+                description: "Show backup status for offerings",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name (omit for all)")
+                        .zen("[offering]"),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "offering",
-                zen_syntax: "<offering>",
-                normative_syntax: None,
-                description: "Offering name (for status/list/trigger)",
-                required: false,
+            SubDef {
+                name: "list",
+                description: "List available backups",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name")
+                        .zen("<offering>")
+                        .required(),
+                    ArgSpec::flag("local", "Show only local backups").zen("--local"),
+                    ArgSpec::flag("remote", "Show only remote backups").zen("--remote"),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "local",
-                zen_syntax: "--local",
-                normative_syntax: None,
-                description: "Show only local backups (for list)",
-                required: false,
+            SubDef {
+                name: "trigger",
+                description: "Trigger backup for an offering",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name")
+                        .zen("<offering>")
+                        .required(),
+                ],
+                subcommands: vec![],
             },
-            CommandParam {
-                name: "remote",
-                zen_syntax: "--remote",
-                normative_syntax: None,
-                description: "Show only remote backups (for list)",
-                required: false,
-            },
-            CommandParam {
-                name: "at",
-                zen_syntax: "at <stone>",
-                normative_syntax: Some("--at <stone>"),
-                description: "Target stone (omit to use tended stone)",
-                required: false,
+            SubDef {
+                name: "trigger-all",
+                description: "Trigger backup for all offerings",
+                args: vec![],
+                subcommands: vec![],
             },
         ],
         examples: vec![
@@ -2401,6 +2312,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["restore", "seed-banks", "nourish"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === DEVELOPER TOOLS ===
@@ -2408,6 +2321,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: cmd::API,
         zen_name: "api",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::Discovery,
         description: "Display Moss HTTP API reference",
@@ -2417,29 +2331,15 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Filter by category (health, offerings, services, stone, garden, admin) or\n\
             view detailed documentation for a specific endpoint path.",
         remote_capable: true,
-        params: vec![
-            CommandParam {
-                name: "endpoint",
-                zen_syntax: "<endpoint>",
-                normative_syntax: None,
-                description: "Specific endpoint path to show details for (e.g., /api/v1/stone/services)",
-                required: false,
-            },
-            CommandParam {
-                name: "category",
-                zen_syntax: "--category <name>",
-                normative_syntax: None,
-                description: "Filter by API category (health, offerings, services, stone, garden, events, admin)",
-                required: false,
-            },
-            CommandParam {
-                name: "examples",
-                zen_syntax: "--examples",
-                normative_syntax: None,
-                description: "Show curl examples for each endpoint",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("endpoint", "Specific endpoint path to show details for (e.g., /api/v1/stone/services)")
+                .zen("[endpoint]"),
+            ArgSpec::option("category", "Filter by API category (health, offerings, services, stone, garden, events, admin)")
+                .zen("--category <name>"),
+            ArgSpec::flag("examples", "Show curl examples for each endpoint")
+                .zen("--examples"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Show all endpoints by category",
@@ -2468,6 +2368,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["hey", "observe"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     // === LOCAL UTILITY COMMANDS ===
@@ -2475,6 +2377,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     manifest.add(CommandDef {
         name: cmd::LAUNCH,
         zen_name: "launch",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::System,
         description: "Open stone portrait in browser",
@@ -2482,13 +2385,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Works on Windows, macOS, and Linux with graphical environment.\n\
             If no stone is specified, opens the tended stone's portrait.",
         remote_capable: false,
-        params: vec![CommandParam {
-            name: "at",
-            zen_syntax: "at <stone>",
-            normative_syntax: Some("--at <stone>"),
-            description: "Stone to open portrait for (omit to use tended stone)",
-            required: false,
-        }],
+        args: vec![at_arg()],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Open tended stone's portrait",
@@ -2507,11 +2405,14 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["observe", "status", "tend"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest.add(CommandDef {
         name: cmd::COMMANDS,
         zen_name: "commands",
+        zen_aliases: &[],
         normative_name: None,
         category: CommandCategory::System,
         description: "Browse command directory",
@@ -2526,36 +2427,15 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             - system: Commands for stone and system operations\n\
             - pond: Commands for distributed operations",
         remote_capable: false,
-        params: vec![
-            CommandParam {
-                name: "name",
-                zen_syntax: "[command-name]",
-                normative_syntax: None,
-                description: "Specific command to show detailed help for",
-                required: false,
-            },
-            CommandParam {
-                name: "category",
-                zen_syntax: "--category <name>",
-                normative_syntax: None,
-                description: "Filter by category (discovery, lifecycle, management, system, pond)",
-                required: false,
-            },
-            CommandParam {
-                name: "zen",
-                zen_syntax: "--zen",
-                normative_syntax: None,
-                description: "Show only zen syntax",
-                required: false,
-            },
-            CommandParam {
-                name: "normative",
-                zen_syntax: "--normative",
-                normative_syntax: None,
-                description: "Show only normative syntax",
-                required: false,
-            },
+        args: vec![
+            ArgSpec::positional("name", "Specific command to show detailed help for")
+                .zen("[command-name]"),
+            ArgSpec::option("category", "Filter by category (discovery, lifecycle, management, system, pond)")
+                .zen("--category <name>"),
+            ArgSpec::flag("zen", "Show only zen syntax").zen("--zen"),
+            ArgSpec::flag("normative", "Show only normative syntax").zen("--normative"),
         ],
+        subcommands: vec![],
         examples: vec![
             CommandExample {
                 description: "Show all commands by category",
@@ -2579,6 +2459,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
         ],
         see_also: vec!["api", "launch"],
+        hidden: false,
+        subcommand_negates_reqs: false,
     });
 
     manifest

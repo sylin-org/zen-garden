@@ -1,9 +1,11 @@
-use super::*;
 use crate::commands::offering::stone_prefer_score;
 
 // NOTE: normalize_tokens, token_matches_category, and offering_relevance_score
 // have been moved to Moss. Tests for those functions are in moss/src/api/v1/offerings.rs.
 // Rake is now a thin client that calls Moss search API.
+//
+// The old Cli::parse_from / Commands / OfferAction tests were removed when the
+// derive-based CLI was replaced by the manifest + builder architecture.
 
 fn caps_with_disk_type(disk_type: &str) -> garden_common::HardwareCapabilities {
     garden_common::HardwareCapabilities {
@@ -44,43 +46,7 @@ fn stone_prefer_score_biases_nvme_and_ssd() {
     assert_eq!(stone_prefer_score(&["hdd".to_string()], Some(&caps)), 0);
 }
 
-#[test]
-fn clap_parses_offer_prefer_and_anywhere_on_fail() {
-    let cli = Cli::parse_from([
-        "garden-rake",
-        "offer",
-        "database,document",
-        "--prefer",
-        "ssd,nvme",
-        "--anywhere-on-fail",
-    ]);
-
-    match cli.command {
-        Some(Commands::Offer {
-            offering,
-            prefer,
-            anywhere_on_fail,
-            ..
-        }) => {
-            assert_eq!(offering.as_deref(), Some("database,document"));
-            assert_eq!(prefer, vec!["ssd".to_string(), "nvme".to_string()]);
-            assert!(anywhere_on_fail);
-        }
-        _ => panic!("expected Commands::Offer"),
-    }
-}
-
-#[test]
-fn clap_parses_offer_info_subcommand() {
-    let cli = Cli::parse_from(["garden-rake", "offer", "mongodb", "info"]);
-
-    match cli.command {
-        Some(Commands::Offer {
-            offering, action, ..
-        }) => {
-            assert_eq!(offering.as_deref(), Some("mongodb"));
-            assert!(matches!(action, Some(OfferAction::Info)));
-        }
-        _ => panic!("expected Commands::Offer"),
-    }
-}
+// Old tests `clap_parses_offer_prefer_and_anywhere_on_fail` and
+// `clap_parses_offer_info_subcommand` removed — they tested the old derive-based
+// Cli/Commands enum which was replaced by CommandManifest + builder API.
+// The equivalent coverage is now in surface testing (--help pages, zen alias tests).

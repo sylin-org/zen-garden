@@ -189,6 +189,20 @@ pub fn nurturing_index_path() -> String {
 }
 
 // ============================================================================
+// Zen Garden Sentinel (device protection marker)
+// ============================================================================
+
+/// Sentinel filename placed on Zen Garden storage media to prevent accidental
+/// formatting during automated OS installation or disk operations.
+///
+/// Any block device whose filesystem contains this file at its root will be
+/// skipped by the NewStone preseed disk-selection logic. Companions that expose
+/// storage (Firefly, etc.) should also write this file to their media.
+///
+/// Contents: JSON object with at least `{"role":"<component>"}`.
+pub const ZEN_GARDEN_SENTINEL: &str = ".zen-garden-sentinel";
+
+// ============================================================================
 // Seed Bank Memories & Storage Paths
 // ============================================================================
 

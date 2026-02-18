@@ -63,10 +63,18 @@ pub async fn post_settings(
     (StatusCode::OK, Json(json!({"status": "ok"})))
 }
 
-/// `POST /api/metrics/reset` — reset all metrics counters.
+/// `POST /api/metrics/reset` — reset all metrics counters and clear persisted data.
 pub async fn post_metrics_reset(State(state): State<AppState>) -> impl IntoResponse {
-    let mut metrics = state.metrics.write().await;
-    metrics.reset();
+    {
+        let mut metrics = state.metrics.write().await;
+        metrics.reset();
+    }
+
+    // Clear the metrics/ folder on disk
+    if let Err(e) = crate::infra::persistence::clear_metrics(&state.data_dir).await {
+        tracing::warn!(error = %e, "failed to clear metrics folder");
+    }
+
     state.emit_event("metrics.reset", "{}").await;
     Json(json!({"status": "ok"}))
 }

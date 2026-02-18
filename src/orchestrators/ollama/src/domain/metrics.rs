@@ -154,6 +154,19 @@ impl MetricsEngine {
         self.started_at = Instant::now();
     }
 
+    /// Restore cumulative counters from a persisted snapshot.
+    ///
+    /// Ring buffers (response_times, stone_throughput, model_demand)
+    /// are NOT restored — only cumulative counters survive restarts.
+    pub fn restore_from_snapshot(&mut self, snapshot: MetricsSnapshot) {
+        self.requests_total = snapshot.requests_total;
+        self.tokens_in_total = snapshot.tokens_in_total;
+        self.tokens_out_total = snapshot.tokens_out_total;
+        self.errors_total = snapshot.errors_total;
+        self.per_stone = snapshot.per_stone;
+        self.per_model = snapshot.per_model;
+    }
+
     /// Produce a serializable snapshot for persistence.
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {

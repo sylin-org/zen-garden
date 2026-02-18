@@ -932,7 +932,20 @@ function Write-StoneFiles {
     }
     
     Write-Step "Preseed configuration written" "OK"
-    
+
+    # Write sentinel file to prevent Debian installer from targeting the USB drive.
+    # Any Zen Garden storage-bearing device (installer USB, Firefly, etc.) should
+    # carry this marker so automated disk selection logic skips it.
+    $sentinelPath = Join-Path $UsbDrive ".zen-garden-sentinel"
+    $sentinelContent = "{`"role`":`"installer`",`"component`":`"newstone`"}"
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        $sentinelContent | Out-File -FilePath $sentinelPath -Encoding utf8NoBOM -NoNewline
+    }
+    else {
+        $sentinelContent | Out-File -FilePath $sentinelPath -Encoding utf8 -NoNewline
+    }
+    Write-Step "Zen Garden sentinel written (.zen-garden-sentinel)" "OK"
+
     # Write moss pre-install manifest if offerings were configured
     if ($script:PreparedPreInstallManifest) {
         Write-Step "Writing garden-moss-preinstall.json..." "..."

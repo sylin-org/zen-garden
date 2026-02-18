@@ -55,16 +55,35 @@ d-i partman-md/device_remove_md boolean true
 d-i partman-lvm/confirm boolean true
 d-i partman-lvm/confirm_nooverwrite boolean true
 
-# Dynamically select first non-USB, non-removable disk
+# Dynamically select first non-USB, non-removable, non-sentinel disk
 # This prevents accidentally partitioning the installer USB drive
 # Works on: eMMC (mmcblk*), NVMe (nvme*), SATA/SCSI (sd*), virtio (vd*)
+#
+# Guard layers (any one is sufficient):
+#   1. Skip devices with removable=1 in sysfs
+#   2. Skip devices whose sysfs path contains /usb
+#   3. Skip devices carrying a .zen-garden-sentinel file (Zen Garden convention)
 d-i partman/early_command string \
     DISK=""; \
+    mkdir -p /tmp/_zg_chk; \
     for b in /sys/block/*; do \
         d="$(basename "$b")"; \
         case "$d" in loop*|ram*|sr*|fd*) continue ;; esac; \
         [ -r "$b/removable" ] && [ "$(cat "$b/removable")" = "1" ] && continue; \
         readlink -f "$b" | grep -q '/usb' && continue; \
+        _sentinel=0; \
+        for part in /dev/${d}[0-9]* /dev/${d}p[0-9]*; do \
+            [ -b "$part" ] || continue; \
+            if mount -o ro "$part" /tmp/_zg_chk 2>/dev/null; then \
+                [ -f /tmp/_zg_chk/.zen-garden-sentinel ] && _sentinel=1; \
+                umount /tmp/_zg_chk 2>/dev/null; \
+            fi; \
+            [ "$_sentinel" = "1" ] && break; \
+        done; \
+        if [ "$_sentinel" = "1" ]; then \
+            echo "Stone installer: skipping /dev/$d (zen-garden sentinel)" >> /var/log/syslog; \
+            continue; \
+        fi; \
         DISK="/dev/$d"; break; \
     done; \
     if [ -z "$DISK" ]; then \

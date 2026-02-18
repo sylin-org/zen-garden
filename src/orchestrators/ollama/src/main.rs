@@ -95,6 +95,18 @@ async fn main() -> Result<()> {
     // Load any cached tending state from a previous run
     state.load_tending().await;
 
+    // Restore persisted metrics from /metrics folder
+    let persisted = persistence::load_metrics(&cli.data_dir).await;
+    if persisted.requests_total > 0 {
+        let mut metrics = state.metrics.write().await;
+        metrics.restore_from_snapshot(persisted);
+        tracing::info!(
+            requests = metrics.requests_total,
+            stones = metrics.per_stone.len(),
+            "restored persisted metrics"
+        );
+    }
+
     let client = OllamaClient::new();
 
     // ── Background Tasks ─────────────────────────────────────────

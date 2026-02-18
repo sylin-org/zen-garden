@@ -277,9 +277,8 @@ async fn resolve_seed_bank_write_route(
         }
 
         // Check if local bank is Primary
-        let roles = state.seed_bank_roles.read().await;
+        let roles = state.seed_bank_roles_snapshot().await;
         let role = roles.get(name).copied().unwrap_or(SeedBankRole::Primary);
-        drop(roles);
 
         if role == SeedBankRole::Primary {
             return Ok(SeedBankRoute::Local {

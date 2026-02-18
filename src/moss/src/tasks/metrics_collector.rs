@@ -18,7 +18,6 @@ use crate::infra::storage::SeedBankRegistry;
 use crate::AppState;
 use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_interval};
 use garden_common::metrics::system::{get_fast_metrics, get_network_metrics, get_storage_metrics};
-use garden_common::storage::SeedBankInfo;
 #[cfg(target_os = "linux")]
 use garden_common::storage::StorageDetectedInfo;
 #[cfg(target_os = "linux")]
@@ -73,14 +72,13 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
         tracing::debug!("Initial network metrics collected");
     }
 
-    // Collect initial seed bank registry (subsequent updates come from storage events)
+    // Collect initial seed bank registry
+    // Lifecycle objects (state.seed_banks) are the source of truth;
+    // this scan populates disk usage via health ticks.
     match SeedBankRegistry::scan().await {
         Ok(registry) => {
-            let banks: Vec<SeedBankInfo> = registry.list().into_iter().cloned().collect();
-            let count = banks.len();
-            let mut cache = state.seed_bank_cache.write().await;
-            *cache = banks;
-            tracing::debug!(count, "Initial seed bank registry loaded");
+            let count = registry.list().len();
+            tracing::debug!(count, "Initial seed bank registry scanned");
         }
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to load initial seed bank registry");
@@ -167,15 +165,14 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     }
                 }
 
-                // Refresh seed bank disk usage (slow - involves statvfs per mount)
-                // Note: The seed bank list itself is maintained by storage_monitor on events.
-                // This just refreshes used_bytes/capacity_bytes for existing entries.
+                // Refresh seed bank disk usage via lifecycle objects' health ticks
+                // (used_bytes / capacity_bytes updated through StorageDevice::health_tick)
                 {
-                    let mut cache = state.seed_bank_cache.write().await;
-                    for bank in cache.iter_mut() {
-                        if let Some((used, avail)) = crate::infra::storage::DeviceAnalyzer::get_disk_usage(&bank.mount_path) {
-                            bank.used_bytes = used;
-                            bank.capacity_bytes = used + avail;
+                    let mut banks = state.seed_banks.write().await;
+                    for bank in banks.values_mut() {
+                        if let Some((used, avail)) = crate::infra::storage::DeviceAnalyzer::get_disk_usage(&bank.storage.mount_path.to_string_lossy()) {
+                            bank.storage.used_bytes = used;
+                            bank.storage.capacity_bytes = used + avail;
                         }
                     }
                 }

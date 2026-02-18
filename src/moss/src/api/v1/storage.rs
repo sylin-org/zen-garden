@@ -1,21 +1,23 @@
-//! Storage API endpoints for seed bank management
+//! Storage API endpoints for seed bank management (stone-local)
 //!
 //! Design: USB device manifests ARE the source of truth. No persistence file.
 //! The registry is built in-memory by scanning mounted devices.
 //!
-//! ## API Structure (STORAGE-0002)
+//! ## API Structure (STORAGE-0002, amended by STORAGE-0008)
+//!
+//! Stone-tier routes — always operate on this stone's local replicas.
+//! File operations are read-only (GET/HEAD). Writes go through the
+//! garden-tier in `garden_storage.rs`.
 //!
 //! ```text
 //! /api/v1/stone/storage                     GET  → Overview (bank types, counts)
 //! /api/v1/stone/storage/bank                GET  → List all seed banks (ApiResponse)
 //! /api/v1/stone/storage/bank/:id            GET  → Bank details + root objects (ApiResponse)
-//! /api/v1/stone/storage/bank/:id/*path      GET  → Get object (raw bytes)
-//! /api/v1/stone/storage/bank/:id/*path      PUT  → Create/update object (ApiResponse)
-//! /api/v1/stone/storage/bank/:id/*path      DELETE → Delete object (ApiResponse)
-//! /api/v1/stone/storage/bank/:id/*path      HEAD → Object metadata (headers)
+//! /api/v1/stone/storage/bank/:id/*path      GET  → Get object (raw bytes, local only)
+//! /api/v1/stone/storage/bank/:id/*path      HEAD → Object metadata (headers, local only)
 //! ```
 //!
-//! See docs/decisions/STORAGE-0002-api-structure.md
+//! See docs/decisions/STORAGE-0008-garden-stone-api-split.md
 
 use axum::{
     body::Bytes,
@@ -261,8 +263,8 @@ pub async fn storage_overview_v1(
 
     // Get garden-wide view from storage_cache
     let storage_cache = state.storage_cache.read().await;
-    let local_roles = state.seed_bank_roles.read().await;
-    let local_pins = state.seed_bank_pins.read().await;
+    let local_roles = state.seed_bank_roles_snapshot().await;
+    let local_pins = state.seed_bank_pins_snapshot().await;
     let mut garden_banks = Vec::new();
 
     for beacon in storage_cache.all_beacons() {
@@ -580,13 +582,21 @@ pub async fn release_bank_v1(
         warn!("Failed to print released ribbon: {}", e);
     }
 
+    // STORAGE-0007: Remove from lifecycle objects
+    {
+        let mut banks = state.seed_banks.write().await;
+        if banks.remove(&id).is_some() {
+            debug!(id = %id, "Removed released bank from lifecycle objects");
+        }
+    }
+
     // STORAGE-0003: Update local storage cache AND broadcast beacon
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let roles = state.seed_bank_roles.read().await.clone();
-    let pins = state.seed_bank_pins.read().await.clone();
+    let roles = state.seed_bank_roles_snapshot().await;
+    let pins = state.seed_bank_pins_snapshot().await;
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -680,13 +690,21 @@ pub async fn rename_bank_v1(
 
     info!(id = %id, old_name = %bank.name, new_name = %request.new_name, "Bank renamed");
 
+    // STORAGE-0007: Sync name to lifecycle object
+    {
+        let mut banks = state.seed_banks.write().await;
+        if let Some(bank) = banks.get_mut(&id) {
+            bank.name = request.new_name.clone();
+        }
+    }
+
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
     let nudge = state.orchestration_nudge.clone();
-    let roles = state.seed_bank_roles.read().await.clone();
-    let pins = state.seed_bank_pins.read().await.clone();
+    let roles = state.seed_bank_roles_snapshot().await;
+    let pins = state.seed_bank_pins_snapshot().await;
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -1346,8 +1364,8 @@ pub async fn prepare_seed_bank_v1(
             Ok(()) => {
                 // STORAGE-0003: Update local cache + broadcast on successful preparation
                 let endpoint = format!("http://{}:{}", stone_name, api_port);
-                let roles = tools_state.seed_bank_roles.read().await.clone();
-                let pins = tools_state.seed_bank_pins.read().await.clone();
+                let roles = tools_state.seed_bank_roles_snapshot().await;
+                let pins = tools_state.seed_bank_pins_snapshot().await;
                 if let Err(e) = crate::infra::storage::update_and_broadcast(
                     &tools_state.storage_cache,
                     &stone_id,
@@ -1716,13 +1734,21 @@ pub async fn set_visibility_v1(
 
     info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
 
+    // STORAGE-0007: Sync visibility to lifecycle object
+    {
+        let mut banks = state.seed_banks.write().await;
+        if let Some(bank) = banks.values_mut().find(|b| b.name == name) {
+            bank.visibility = request.visibility;
+        }
+    }
+
     // STORAGE-0003: Update local storage cache AND broadcast beacon
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let roles = state.seed_bank_roles.read().await.clone();
-    let pins = state.seed_bank_pins.read().await.clone();
+    let roles = state.seed_bank_roles_snapshot().await;
+    let pins = state.seed_bank_pins_snapshot().await;
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -1883,12 +1909,18 @@ pub async fn release_all_seed_banks_v1(
     };
     let _ = state.sse_tx.send(event);
 
+    // STORAGE-0007: Clear all lifecycle objects (all banks released)
+    {
+        let mut banks = state.seed_banks.write().await;
+        banks.clear();
+    }
+
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let roles = state.seed_bank_roles.read().await.clone();
-    let pins = state.seed_bank_pins.read().await.clone();
+    let roles = state.seed_bank_roles_snapshot().await;
+    let pins = state.seed_bank_pins_snapshot().await;
     let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
         if let Err(e) = crate::infra::storage::update_and_broadcast(
@@ -1960,58 +1992,37 @@ pub async fn pin_bank_v1(
         ));
     }
 
-    // Verify the seed bank exists locally
-    let registry = SeedBankRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    // STORAGE-0007: Use lifecycle objects — pin() verifies mount before writing.
+    let pin_id = {
+        let mut banks = state.seed_banks.write().await;
+        let bank = banks
+            .values_mut()
+            .find(|b| b.name == name)
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    &format!("No seed bank named '{}' on this stone", name),
+                )
+            })?;
 
-    let has_bank = registry.list().iter().any(|b| b.name == name);
-    if !has_bank {
-        return Err(err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("No seed bank named '{}' on this stone", name),
-        ));
-    }
-
-    // Generate a GUIDv7 pin_id (time-sortable — last-pin-wins)
-    let pin_id = uuid::Uuid::now_v7().to_string();
-
-    // Persist pin to disk so it survives restarts
-    if let Some(bank) = registry.list().iter().find(|b| b.name == name) {
-        let store =
-            crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
-        if let Err(e) = store.write_pin(&pin_id).await {
-            warn!(name = %name, error = %e, "Failed to persist pin to disk");
-        }
-    }
-
-    // Set the pin and force role to Primary
-    {
-        let mut pins = state.seed_bank_pins.write().await;
-        pins.insert(name.clone(), pin_id.clone());
-    }
-    {
-        let mut roles = state.seed_bank_roles.write().await;
-        roles.insert(
-            name.clone(),
-            garden_common::storage::SeedBankRole::Primary,
-        );
-    }
-
-    info!(name = %name, pin_id = %pin_id, "Seed bank pinned — claiming Primary");
+        // pin() calls storage.ensure_mounted() → verifies mount → writes pin.json → sets role
+        bank.pin().await.map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PIN_FAILED",
+                &e.to_string(),
+            )
+        })?
+    };
 
     // Re-broadcast beacon so other stones see the pin
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let endpoint = state.self_entry.read().await.address.http_base();
-    let roles = state.seed_bank_roles.read().await.clone();
-    let pins = state.seed_bank_pins.read().await.clone();
+    let roles = state.seed_bank_roles_snapshot().await;
+    let pins = state.seed_bank_pins_snapshot().await;
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
         let _ = crate::infra::storage::update_and_broadcast(
@@ -2053,36 +2064,30 @@ pub async fn unpin_bank_v1(
         ));
     }
 
-    // Remove the pin (no-op if not set)
-    let was_pinned = {
-        let mut pins = state.seed_bank_pins.write().await;
-        pins.remove(&name)
-    };
-
-    if let Some(old_pin_id) = &was_pinned {
-        info!(name = %name, pin_id = %old_pin_id, "Seed bank Primary role unpinned");
-
-        // Remove persisted pin from disk
-        if let Ok(registry) = SeedBankRegistry::scan().await {
-            if let Some(bank) = registry.list().iter().find(|b| b.name == name) {
-                let store =
-                    crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
-                if let Err(e) = store.delete_pin().await {
-                    warn!(name = %name, error = %e, "Failed to delete pin file from disk");
+    // STORAGE-0007: Use lifecycle objects — unpin() clears pin + deletes disk file.
+    let _was_pinned = {
+        let mut banks = state.seed_banks.write().await;
+        if let Some(bank) = banks.values_mut().find(|b| b.name == name) {
+            match bank.unpin().await {
+                Ok(old_pin_id) => old_pin_id,
+                Err(e) => {
+                    warn!(name = %name, error = %e, "Unpin encountered an error");
+                    None
                 }
             }
+        } else {
+            debug!(name = %name, "Seed bank not found for unpin — no-op");
+            None
         }
-    } else {
-        debug!(name = %name, "Seed bank was not pinned — no-op");
-    }
+    };
 
     // Re-broadcast beacon
     let storage_cache = state.storage_cache.clone();
     let stone_id = state.stone_id.clone();
     let stone_name = state.stone_name.clone();
     let endpoint = state.self_entry.read().await.address.http_base();
-    let roles = state.seed_bank_roles.read().await.clone();
-    let pins = state.seed_bank_pins.read().await.clone();
+    let roles = state.seed_bank_roles_snapshot().await;
+    let pins = state.seed_bank_pins_snapshot().await;
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
         let _ = crate::infra::storage::update_and_broadcast(

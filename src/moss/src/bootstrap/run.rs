@@ -208,31 +208,8 @@ pub async fn run(
     // Create orchestration nudge early — shared between discovery listener and AppState
     let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
 
-    // Create seed bank roles/pins early — shared between discovery listener and AppState
-    let seed_bank_roles: Arc<RwLock<HashMap<String, garden_common::storage::SeedBankRole>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-    let seed_bank_pins: Arc<RwLock<HashMap<String, String>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-
-    // Load persisted pins from seed bank mounts
-    if let Ok(registry) = crate::infra::storage::SeedBankRegistry::scan().await {
-        let mut loaded_pins = HashMap::new();
-        for bank in registry.list() {
-            let store =
-                crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
-            if let Some(pin_id) = store.read_pin().await {
-                tracing::info!(
-                    name = %bank.name,
-                    pin_id = %pin_id,
-                    "Loaded persisted pin from seed bank"
-                );
-                loaded_pins.insert(bank.name.clone(), pin_id);
-            }
-        }
-        if !loaded_pins.is_empty() {
-            *seed_bank_pins.write().await = loaded_pins;
-        }
-    }
+    // Seed bank lifecycle objects (STORAGE-0007) — created empty, populated after AppState
+    let seed_banks = crate::domain::new_seed_banks();
 
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
@@ -249,8 +226,7 @@ pub async fn run(
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
         orchestration_nudge.clone(),
-        seed_bank_roles.clone(),
-        seed_bank_pins.clone(),
+        seed_banks.clone(),
         shutdown_token.child_token(),
     )
     .await;
@@ -639,7 +615,6 @@ pub async fn run(
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
         infrastructure_handlers: infrastructure_handlers.clone(),
         // Cached metrics - populated by background tasks, read-only for endpoints
-        seed_bank_cache: Arc::new(RwLock::new(Vec::new())),
         candidates_cache: Arc::new(RwLock::new(Vec::new())),
         network_metrics_cache: Arc::new(RwLock::new(None)),
         // Notification registry - subsystems set/clear, chirp compiles to tags
@@ -651,10 +626,6 @@ pub async fn run(
         // Mount tracker — shared with coordinator + release handler (STORAGE-0006)
         #[cfg(target_os = "linux")]
         mount_tracker: crate::infra::storage::create_mount_tracker(),
-        // Seed bank roles — Primary/Dormant per FQN (STORAGE-0006)
-        seed_bank_roles: seed_bank_roles.clone(),
-        // Pinned seed bank names (STORAGE-0006 Phase 5)
-        seed_bank_pins: seed_bank_pins.clone(),
         // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
         storage_tick_tx: {
             let (tx, _) = tokio::sync::broadcast::channel(64);
@@ -667,6 +638,8 @@ pub async fn run(
         },
         // Orchestration nudge — immediate role re-evaluation trigger
         orchestration_nudge: orchestration_nudge.clone(),
+        // Seed bank lifecycle objects — single source of truth (STORAGE-0007)
+        seed_banks: seed_banks.clone(),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -718,6 +691,62 @@ pub async fn run(
     });
     tracing::info!("Discovery handler initialized (using p2p transport)");
 
+    // Phase 11.post4a: Initialize seed bank lifecycle objects (STORAGE-0007)
+    // Scan mounted devices, construct SeedBank objects with Storage + Store + pin state.
+    // This replaces the old scattered pin-loading code — SeedBank::from_storage loads pins.
+    {
+        if let Ok(registry) = crate::infra::storage::SeedBankRegistry::scan().await {
+            let mut banks = state.seed_banks.write().await;
+            for info in registry.list() {
+                // Read manifest for full identity
+                let manifest_path = std::path::Path::new(&info.mount_path)
+                    .join(".zen-garden")
+                    .join("manifest.json");
+                let manifest = match tokio::fs::read_to_string(&manifest_path).await {
+                    Ok(content) => match serde_json::from_str::<
+                        garden_common::storage::SeedBankManifest,
+                    >(&content)
+                    {
+                        Ok(m) => m,
+                        Err(e) => {
+                            tracing::warn!(
+                                name = %info.name,
+                                error = %e,
+                                "Failed to parse seed bank manifest — skipping"
+                            );
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            name = %info.name,
+                            error = %e,
+                            "Failed to read seed bank manifest — skipping"
+                        );
+                        continue;
+                    }
+                };
+
+                let storage =
+                    crate::infra::storage::StorageDevice::from_seed_bank_info(info);
+                let bank =
+                    crate::domain::SeedBank::from_storage(storage, &manifest, None).await;
+                tracing::info!(
+                    name = %bank.name,
+                    id = %bank.id,
+                    pinned = bank.is_pinned(),
+                    "Seed bank lifecycle object initialized"
+                );
+
+                banks.insert(bank.id.clone(), bank);
+            }
+            let count = banks.len();
+            if count > 0 {
+                tracing::info!(count, "Seed bank lifecycle objects initialized (STORAGE-0007)");
+            }
+        }
+    }
+
     // Phase 11.post4: Start offering lifecycle event listeners
     {
         // ChirpListener: Broadcasts topology changes via UDP
@@ -742,14 +771,7 @@ pub async fn run(
         let timer_listener = Arc::new(infra::TimerListener::new());
         let _timer_handle = infra::spawn_listener(&event_bus, timer_listener);
 
-        // SeedBankCacheListener: Updates seed bank cache on storage events
-        // This ensures portrait endpoint reads from cache without I/O
-        let seed_bank_cache_listener = Arc::new(infra::SeedBankCacheListener::new(
-            state.seed_bank_cache.clone(),
-        ));
-        let _seed_bank_handle = infra::spawn_listener(&event_bus, seed_bank_cache_listener);
-
-        tracing::info!("Domain event listeners started (chirp, sse, timer, seed_bank_cache)");
+        tracing::info!("Domain event listeners started (chirp, sse, timer)");
     }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)

@@ -36,6 +36,7 @@ pub mod pond;
 pub mod reconciliation;
 pub mod registry;
 pub mod scoring;
+pub mod seed_bank;
 pub mod service_discovery;
 pub mod service_manager;
 pub mod services;
@@ -66,6 +67,7 @@ pub use offerings::{
 };
 pub use reconciliation::{reconcile_services, ReconciliationResult};
 pub use registry::Registry;
+pub use seed_bank::{new_seed_banks, PinState, SeedBank, SeedBanks};
 pub use service_discovery::{
     find_local_services, find_services, get_offering_port, list_all_local_services, FoundService,
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,

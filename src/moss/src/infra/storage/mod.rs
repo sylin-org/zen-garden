@@ -21,6 +21,7 @@
 
 mod beacon;
 mod device;
+mod lifecycle;
 mod objects;
 mod registry;
 mod store;
@@ -38,6 +39,7 @@ pub use device::{
     analyze_device, list_unmounted_removable_devices, list_usb_partitions, DeviceAnalyzer,
     UnmountedDevice,
 };
+pub use lifecycle::{StorageDevice, StorageHealth};
 pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
 pub use registry::SeedBankRegistry;
 pub use store::SeedBankStore;

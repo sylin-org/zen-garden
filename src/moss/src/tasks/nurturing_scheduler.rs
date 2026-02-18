@@ -327,17 +327,17 @@ impl NurturingScheduler {
     /// Only local Primary banks are eligible write targets. When a logical name
     /// has no local Primary, the seed bank is skipped (remote write support is
     /// Phase 3b).
+    ///
+    /// STORAGE-0007: Uses lifecycle objects for role lookup.
     async fn select_targets(&self, seed_banks: &[SeedBankInfo]) -> Vec<SeedBankInfo> {
-        // Read current role assignments
-        let roles = self.state.seed_bank_roles.read().await;
+        let lifecycle_banks = self.state.seed_banks.read().await;
 
-        // Filter to only Primary (or unassigned) local banks
         let primary_banks: Vec<SeedBankInfo> = seed_banks
             .iter()
             .filter(|sb| {
-                let role = roles
-                    .get(&sb.name)
-                    .copied()
+                let role = lifecycle_banks
+                    .get(&sb.id)
+                    .map(|b| b.role)
                     .unwrap_or(SeedBankRole::Primary);
                 if role == SeedBankRole::Dormant {
                     tracing::debug!(
@@ -352,7 +352,6 @@ impl NurturingScheduler {
             })
             .cloned()
             .collect();
-        drop(roles);
 
         if primary_banks.is_empty() && !seed_banks.is_empty() {
             // All local banks are Dormant — primary is on a remote stone
@@ -389,7 +388,16 @@ impl NurturingScheduler {
             "Attempting replication"
         );
 
-        let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+        // STORAGE-0007: prefer store from lifecycle object; fall back to ad-hoc
+        let store = {
+            let banks = self.state.seed_banks.read().await;
+            banks
+                .get(&seed_bank.id)
+                .map(|b| b.store.clone())
+                .unwrap_or_else(|| {
+                    crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path)
+                })
+        };
 
         let result = self
             .state

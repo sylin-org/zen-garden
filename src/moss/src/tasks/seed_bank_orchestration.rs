@@ -8,8 +8,8 @@
 //! - Dual-primary resolution: lower stone_id yields to higher
 //! - 6 s stale detection (2 × reconciliation window)
 //!
-//! The task updates `state.seed_bank_roles` which the beacon builder
-//! reads when constructing `SeedBankAnnouncement::role`.
+//! The task updates roles on lifecycle objects (`state.seed_banks`) which
+//! the beacon builder reads when constructing `SeedBankAnnouncement::role`.
 
 use anyhow::Result;
 use garden_common::storage::SeedBankRole;
@@ -143,22 +143,33 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
     let my_stone_id = &state.stone_id;
     let cache = state.storage_cache.read().await;
-    let pins = state.seed_bank_pins.read().await;
+
+    // Read current roles and pins from lifecycle objects
+    let (current_roles, current_pins) = {
+        let banks = state.seed_banks.read().await;
+        let roles: std::collections::HashMap<String, SeedBankRole> =
+            banks.values().map(|b| (b.name.clone(), b.role)).collect();
+        let pins: std::collections::HashMap<String, String> = banks
+            .values()
+            .filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string())))
+            .collect();
+        (roles, pins)
+    };
 
     let mut new_roles = std::collections::HashMap::new();
     let mut any_changed = false;
     let mut auto_unpin: Vec<String> = Vec::new();
 
     for name in &local_names {
-        let local_pin_id = pins.get(name).cloned();
+        let local_pin_id = current_pins.get(name).cloned();
 
         // Find remote beacons that have this name as Primary
         let remote_primary = find_remote_primary_with_pin(&cache, name, my_stone_id);
 
-        let current_role = {
-            let roles = state.seed_bank_roles.read().await;
-            roles.get(name).copied().unwrap_or(SeedBankRole::Primary)
-        };
+        let current_role = current_roles
+            .get(name)
+            .copied()
+            .unwrap_or(SeedBankRole::Primary);
 
         let new_role = {
             let remote = remote_primary
@@ -209,38 +220,27 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         new_roles.insert(name.clone(), new_role);
     }
 
-    drop(pins);
     drop(cache);
 
-    // Apply auto-unpin for pins that lost to a newer remote pin_id
-    if !auto_unpin.is_empty() {
-        let mut pins = state.seed_bank_pins.write().await;
+    // Apply auto-unpin and role updates via lifecycle objects
+    {
+        let mut banks = state.seed_banks.write().await;
+
         for name in &auto_unpin {
-            pins.remove(name);
-            // Delete persisted pin file from disk
-            if let Some(bank) = local_banks.iter().find(|b| &b.name == name) {
-                let store =
-                    crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
-                if let Err(e) = store.delete_pin().await {
-                    warn!(name = %name, error = %e, "Failed to delete auto-unpinned pin file");
+            if let Some(bank) = banks.values_mut().find(|b| b.name == *name) {
+                if let Err(e) = bank.unpin().await {
+                    warn!(name = %name, error = %e, "Failed to auto-unpin via lifecycle object");
                 }
             }
         }
-        any_changed = true;
-    }
-
-    // Write all roles at once
-    {
-        let mut roles = state.seed_bank_roles.write().await;
-        for (name, role) in new_roles {
-            roles.insert(name, role);
+        if !auto_unpin.is_empty() {
+            any_changed = true;
         }
 
-        // Prune roles for seed banks no longer present locally
-        let before = roles.len();
-        roles.retain(|name, _| local_names.contains(name));
-        if roles.len() != before {
-            any_changed = true;
+        for (name, role) in &new_roles {
+            if let Some(bank) = banks.values_mut().find(|b| b.name == *name) {
+                bank.role = *role;
+            }
         }
     }
 
@@ -248,8 +248,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     // so other stones see the resolved roles (not default Primary).
     if any_changed {
         let endpoint = state.self_entry.read().await.address.http_base();
-        let roles = state.seed_bank_roles.read().await;
-        let pins = state.seed_bank_pins.read().await;
+        let roles = state.seed_bank_roles_snapshot().await;
+        let pins = state.seed_bank_pins_snapshot().await;
         if let Err(e) = crate::infra::storage::update_and_broadcast(
             &state.storage_cache,
             &state.stone_id,
@@ -277,43 +277,25 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 /// from the current time and prunes older entries. A GUIDv7 cursor
 /// embeds its timestamp, so the cutoff is a synthetic GUIDv7 at
 /// `now - CHANGELOG_RETENTION`.
+///
+/// STORAGE-0007: Uses lifecycle objects for store access.
 async fn compact_primary_changelogs(state: &AppState) {
-    let registry = match SeedBankRegistry::scan().await {
-        Ok(r) => r,
-        Err(e) => {
-            debug!(error = %e, "Skipping changelog compaction — scan failed");
-            return;
-        }
-    };
+    let cutoff_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .saturating_sub(CHANGELOG_RETENTION.as_millis()) as u64;
 
-    let roles = state.seed_bank_roles.read().await;
+    let cutoff_cursor = build_cutoff_cursor(cutoff_ms);
 
-    for bank in registry.list() {
-        // Only compact Primary banks — Dormant banks don't own the changelog
-        let role = roles
-            .get(&bank.name)
-            .copied()
-            .unwrap_or(SeedBankRole::Primary);
-        if role != SeedBankRole::Primary {
+    let banks = state.seed_banks.read().await;
+    for bank in banks.values() {
+        if bank.role != SeedBankRole::Primary {
             continue;
         }
 
-        let store = crate::infra::storage::SeedBankStore::new_public(&bank.mount_path);
-
-        // Build a synthetic GUIDv7-comparable cutoff string.
-        // GUIDv7 embeds a 48-bit Unix-ms timestamp in the first 12 hex chars.
-        // We compute `now - retention` as milliseconds and format as a GUIDv7 prefix
-        // so string comparison works correctly against real GUIDv7 cursors.
-        let cutoff_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-            .saturating_sub(CHANGELOG_RETENTION.as_millis()) as u64;
-
-        let cutoff_cursor = build_cutoff_cursor(cutoff_ms);
-
-        match store.compact_changelog(&cutoff_cursor).await {
-            Ok(0) => {} // nothing to prune
+        match bank.store.compact_changelog(&cutoff_cursor).await {
+            Ok(0) => {}
             Ok(pruned) => {
                 info!(
                     bank = %bank.name,

@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::app_state::AppState;
-use crate::infra::storage::{SeedBankRegistry, SeedBankStore};
+use crate::infra::storage::SeedBankStore;
 
 /// How often the replication sync loop runs (seconds).
 /// The aggregated tick channel provides event-driven sync; this is only
@@ -121,47 +121,37 @@ pub async fn seed_bank_replication_task(state: AppState, token: CancellationToke
 
 /// Run one replication cycle for all local Dormant seed banks.
 async fn replication_tick(state: &AppState) -> Result<()> {
-    let registry = match SeedBankRegistry::scan().await {
-        Ok(r) => r,
-        Err(e) => {
-            debug!(error = %e, "Skipping replication — scan failed");
-            return Ok(());
-        }
-    };
-
-    let roles = state.seed_bank_roles.read().await;
-
-    // Collect Dormant banks with their names
-    let dormant_banks: Vec<_> = registry
-        .list()
-        .into_iter()
-        .filter(|bank| {
-            roles
-                .get(&bank.name)
-                .copied()
-                .unwrap_or(SeedBankRole::Primary)
-                == SeedBankRole::Dormant
+    // Collect Dormant banks from lifecycle objects
+    let banks = state.seed_banks.read().await;
+    let dormant_banks: Vec<(String, String, std::path::PathBuf)> = banks
+        .values()
+        .filter(|b| b.role == SeedBankRole::Dormant)
+        .map(|b| {
+            (
+                b.name.clone(),
+                b.id.clone(),
+                b.storage.mount_path.clone(),
+            )
         })
         .collect();
-
-    drop(roles);
+    drop(banks);
 
     if dormant_banks.is_empty() {
         return Ok(());
     }
 
-    for bank in &dormant_banks {
+    for (name, id, mount_path) in &dormant_banks {
         if let Err(e) = sync_dormant_bank(
             state,
-            &bank.name,
-            &bank.id,
-            std::path::Path::new(&bank.mount_path),
+            name,
+            id,
+            mount_path.as_path(),
         )
         .await
         {
             warn!(
-                bank = %bank.name,
-                bank_id = %bank.id,
+                bank = %name,
+                bank_id = %id,
                 error = ?e,
                 "Failed to sync Dormant seed bank"
             );
@@ -223,7 +213,16 @@ async fn sync_dormant_bank(
     let primary_bank_id = &primary_announcement.id;
 
     // 3. Read local last_cursor
-    let local_store = SeedBankStore::new_public(mount_path);
+    // STORAGE-0007: prefer store from lifecycle object if available
+    let lifecycle_store = {
+        let banks = state.seed_banks.read().await;
+        banks
+            .values()
+            .find(|b| b.name == name)
+            .map(|b| b.store.clone())
+    };
+    let local_store =
+        lifecycle_store.unwrap_or_else(|| SeedBankStore::new_public(mount_path));
     let last_cursor = local_store.read_last_cursor().await;
 
     // 4. Pull changes from Primary

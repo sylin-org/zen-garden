@@ -541,42 +541,24 @@ pub async fn get_portrait_data(
     };
 
     // === Seed Banks ===
-    // NOTE: Read from cache - populated by storage_monitor on events + periodic refresh
+    // STORAGE-0007: Read from unified lifecycle objects (single source of truth).
     let seed_banks = {
-        let cached = state.seed_bank_cache.read().await;
-        let roles = state.seed_bank_roles.read().await;
-        let pins = state.seed_bank_pins.read().await;
-        cached
-            .iter()
-            .map(|bank| {
-                let role = roles
-                    .get(&bank.name)
-                    .cloned()
-                    .unwrap_or(SeedBankRole::Dormant);
-                let pinned = pins.contains_key(&bank.name);
-                let short_id = if bank.id.len() >= 8 {
-                    bank.id[..8].to_string()
-                } else {
-                    bank.id.clone()
-                };
-                PortraitSeedBank {
-                    id: bank.id.clone(),
-                    short_id,
-                    name: bank.name.clone(),
-                    used_gb: bank.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                    capacity_gb: bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                    filesystem: if bank.btrfs {
-                        "btrfs".into()
-                    } else {
-                        "ext4".into()
-                    },
-                    visibility: bank.visibility.to_string(),
-                    role,
-                    pinned,
-                    encrypted: bank.encrypted,
-                    roaming: bank.roaming,
-                    online: bank.online,
-                }
+        let banks = state.seed_banks.read().await;
+        banks
+            .values()
+            .map(|bank| PortraitSeedBank {
+                id: bank.id.clone(),
+                short_id: bank.short_id.clone(),
+                name: bank.name.clone(),
+                used_gb: bank.storage.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                capacity_gb: bank.storage.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                filesystem: bank.storage.filesystem.clone(),
+                visibility: bank.visibility.to_string(),
+                role: bank.role,
+                pinned: bank.is_pinned(),
+                encrypted: bank.encrypted,
+                roaming: bank.roaming,
+                online: bank.storage.health.is_usable(),
             })
             .collect()
     };

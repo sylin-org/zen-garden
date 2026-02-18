@@ -24,7 +24,7 @@ use crate::{
 };
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
-use garden_common::storage::{SeedBankInfo, SeedBankRole};
+use garden_common::storage::SeedBankRole;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -125,8 +125,7 @@ pub async fn start_discovery_listener(
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
     orchestration_nudge: Arc<tokio::sync::Notify>,
-    seed_bank_roles: Arc<RwLock<HashMap<String, SeedBankRole>>>,
-    seed_bank_pins: Arc<RwLock<HashMap<String, String>>>,
+    seed_banks: crate::domain::SeedBanks,
     token: CancellationToken,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
@@ -208,8 +207,7 @@ pub async fn start_discovery_listener(
                         let local_endpoint = api_endpoint.clone();
                         let local_entry = self_entry.clone();
                         let local_tools_cache = tools_cache.clone();
-                        let local_roles = seed_bank_roles.clone();
-                        let local_pins = seed_bank_pins.clone();
+                        let local_seed_banks = seed_banks.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
                                 let current = local_entry.read().await.address.http_base();
@@ -220,8 +218,12 @@ pub async fn start_discovery_listener(
                                 }
                             };
 
-                            let roles = local_roles.read().await;
-                            let pins = local_pins.read().await;
+                            let (roles, pins) = {
+                                let banks = local_seed_banks.read().await;
+                                let roles: HashMap<String, SeedBankRole> = banks.values().map(|b| (b.name.clone(), b.role)).collect();
+                                let pins: HashMap<String, String> = banks.values().filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string()))).collect();
+                                (roles, pins)
+                            };
                             match crate::infra::storage::broadcast_if_has_storage(
                                 &local_stone_id,
                                 &local_stone_name,
@@ -778,8 +780,8 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                     .await
                     .address
                     .http_base();
-                let roles = state_persistence.seed_bank_roles.read().await.clone();
-                let pins = state_persistence.seed_bank_pins.read().await.clone();
+                let roles = state_persistence.seed_bank_roles_snapshot().await;
+                let pins = state_persistence.seed_bank_pins_snapshot().await;
                 if let Err(e) = crate::infra::storage::update_and_broadcast(
                     &state_persistence.storage_cache,
                     &state_persistence.stone_id,
@@ -798,13 +800,13 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                     state_persistence.refresh_local_tools_projection().await;
                 }
 
-                // Refresh seed bank cache for portrait/UI
+                // Refresh seed bank cache + lifecycle objects
                 match SeedBankRegistry::scan().await {
                     Ok(registry) => {
-                        let banks: Vec<SeedBankInfo> =
-                            registry.list().into_iter().cloned().collect();
-                        let mut cache = state_persistence.seed_bank_cache.write().await;
-                        *cache = banks;
+                        // STORAGE-0007: update lifecycle objects from fresh scan
+                        state_persistence
+                            .refresh_seed_banks_from_scan(&registry)
+                            .await;
                     }
                     Err(e) => {
                         tracing::debug!(
@@ -851,6 +853,9 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                 }
             }
 
+            // STORAGE-0007: health tick all seed banks (~10s)
+            state_hotplug.tick_seed_bank_health().await;
+
             // Scan to get registry state (also triggers auto-mount internally, but we need the result)
             match SeedBankRegistry::scan().await {
                 Ok(registry) => {
@@ -859,18 +864,15 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                         tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
                     }
 
-                    // Refresh seed bank cache for portrait/UI
-                    {
-                        let banks: Vec<SeedBankInfo> =
-                            registry.list().into_iter().cloned().collect();
-                        let mut cache = state_hotplug.seed_bank_cache.write().await;
-                        *cache = banks;
-                    }
+                    // STORAGE-0007: refresh lifecycle objects
+                    state_hotplug
+                        .refresh_seed_banks_from_scan(&registry)
+                        .await;
 
                     // Update storage cache and broadcast if we have storage
                     let endpoint = state_hotplug.self_entry.read().await.address.http_base();
-                    let roles = state_hotplug.seed_bank_roles.read().await.clone();
-                    let pins = state_hotplug.seed_bank_pins.read().await.clone();
+                    let roles = state_hotplug.seed_bank_roles_snapshot().await;
+                    let pins = state_hotplug.seed_bank_pins_snapshot().await;
                     if let Err(e) = crate::infra::storage::update_and_broadcast(
                         &state_hotplug.storage_cache,
                         &state_hotplug.stone_id,
@@ -924,6 +926,9 @@ fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationTo
                 }
             }
 
+            // STORAGE-0007: health tick all seed banks (~10s)
+            state.tick_seed_bank_health().await;
+
             // Scan triggers auto-mount for any new zen-seed devices
             match crate::infra::storage::SeedBankRegistry::scan().await {
                 Ok(registry) => {
@@ -932,17 +937,13 @@ fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationTo
                         tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
                     }
 
-                    {
-                        let banks: Vec<SeedBankInfo> =
-                            registry.list().into_iter().cloned().collect();
-                        let mut cache = state.seed_bank_cache.write().await;
-                        *cache = banks;
-                    }
+                    // STORAGE-0007: refresh lifecycle objects
+                    state.refresh_seed_banks_from_scan(&registry).await;
 
                     // Update storage cache and broadcast if we have storage
                     let endpoint = state.self_entry.read().await.address.http_base();
-                    let roles = state.seed_bank_roles.read().await.clone();
-                    let pins = state.seed_bank_pins.read().await.clone();
+                    let roles = state.seed_bank_roles_snapshot().await;
+                    let pins = state.seed_bank_pins_snapshot().await;
                     if let Err(e) = crate::infra::storage::update_and_broadcast(
                         &state.storage_cache,
                         &state.stone_id,
@@ -1019,8 +1020,7 @@ pub async fn start_all_background_tasks(
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
         state.orchestration_nudge.clone(),
-        state.seed_bank_roles.clone(),
-        state.seed_bank_pins.clone(),
+        state.seed_banks.clone(),
         token.child_token(),
     )
     .await;

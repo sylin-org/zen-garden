@@ -6,6 +6,15 @@
 **Depends On:** ORCH-0001 (Offering Orchestration), KOI-0001 (Embedded HTTP & UDP Bridging), Sub-Capabilities Proposal, Tools API  
 **Policy Trigger:** `garden-rake policy ollama routed`
 
+### Dependency Status (verified 2026-02-17)
+
+| Dependency | Status | Notes |
+|---|---|---|
+| KOI-0001 (all phases) | **Done** | HTTP self-hosting, koi-udp, container wiring all merged |
+| Tools API | **Done** | `GET /api/v1/garden/tools/stream` live (moss-tools-domain implemented) |
+| ORCH-0001 Phase 1 (types, elections) | **Done** | `OfferingRole`, `OrchestrationState`, election scoring |
+| Sub-Capabilities Proposal | **Draft** | Router can query Ollama directly (`/api/tags`, `/api/ps`) as interim |
+
 ---
 
 ## Abstract

@@ -57,17 +57,23 @@ The codebase already has key systems that this work extends. Read and understand
 | **Garden API** | `src/moss/src/api/v1/garden.rs` | `get_garden_v1`, `get_stone_v1`, `get_topology_v1` |
 | **Removal handler** | `src/moss/src/api/v1/services.rs` | `delete_service_v1` / `take_away_offering_v1` — removes an offering from a stone |
 
-### What Does NOT Exist Yet
+### What Does NOT Exist Yet (verified 2026-02-17)
 
 - No `UnifiedOffering`, `SwEntry`, or `OfferingManifest` structs — use the ones in the table above
 - No chirp message enum — the system uses string announcement type constants with different payload structs
-- No `observe` command in Rake — needs to be created
 - No DNS registration code in Moss — `.dns()` handle exists but has never been called; research `koi_embedded::DnsHandle` API first
-- No `koi-udp` crate — created in KOI-0001 Phase 0b; until then, containers cannot send/receive UDP
-- No container network wiring — containers have no `extra_hosts`, no injected env vars; created in KOI-0001 Phase 0c
-- No `replicable` field on offering manifests
-- No orchestration fields on `ToolProjection` or `TopologyServiceEntry`
-- No `RoleChanged` variant on `OfferingEvent`
+- No orchestration fields on `ToolProjection` (topology's `TopologyServiceEntry` already has `role: Option<String>`)
+
+### What NOW Exists (since this prompt was written)
+
+- **`observe` command** — `ObserveCommand` in `src/rake/src/commands/discovery/observe.rs`
+- **`koi-udp` crate** — implemented in koi repo (Phase 0b), in Cargo.lock. Containers can bind/recv/send UDP via HTTP
+- **Container network wiring** (Phase 0c) — `docker.rs`: `extra_hosts`, `KOI_ENDPOINT`, `GARDEN_STONE_ENDPOINT`, `GARDEN_OFFERING_NAME` env injection
+- **`replicable` field** — `pub replicable: bool` on `manifests::offering::Offering`
+- **`RoleChanged` variant** — on `OfferingEvent` with full match arms in event handlers
+- **`OrchestrationState` + `OfferingRole`** — in `src/common/src/types.rs`, wired into runtime `Offering`
+- **Orchestration task** — `src/moss/src/tasks/offering_orchestration.rs` (role dispatch, state machine)
+- **Koi HTTP self-hosting** (Phase 0a) — `koi-embedded` spawns axum on `:5641`
 
 ## Critical Architectural Principles
 

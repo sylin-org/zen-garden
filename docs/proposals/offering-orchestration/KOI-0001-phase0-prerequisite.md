@@ -1,8 +1,21 @@
 ﻿# KOI-0001: Phase 0 Prerequisite for Offering Orchestration
 
 **Canonical Location:** [`koi` repo → docs/proposals/KOI-0001-embedded-http-and-udp-bridging.md](https://github.com/your-org/koi/blob/dev/docs/proposals/KOI-0001-embedded-http-and-udp-bridging.md)  
-**Status:** Draft  
+**Status:** Accepted (all phases implemented)  
 **Depended On By:** ORCH-0001, ORCH-0002, ORCH-0003
+
+---
+
+## Implementation Status (verified 2026-02-17)
+
+| Phase | Repo | Status | Evidence |
+|-------|------|--------|----------|
+| 0a: HTTP self-hosting | `koi` | **Done** | `koi-embedded/src/http.rs` — axum listener on `:5641`, commit `45c0909` |
+| 0b: koi-udp crate | `koi` | **Done** | `koi-udp/` crate (558 lines), SSE recv, bind/unbind/send, 680 lines of integration tests |
+| 0c: Moss container wiring | `zen-garden` | **Done** | `docker.rs` — `extra_hosts`, `KOI_ENDPOINT`, `GARDEN_STONE_ENDPOINT`, DNS injection |
+
+All three phases are merged to `main` in both repos. The `koi` repo has 10 unreleased
+commits above tag `v0.2.202602151054` covering Phase 0a/0b.
 
 ---
 

@@ -1,11 +1,21 @@
 # ORCH-0001: Offering Orchestration & Autonomous Resilience
 
-**Status:** Draft  
+**Status:** Partially Implemented (Phases 1-3 done, Phase 4+ not started)  
 **Date:** 2026-02-16  
 **Authors:** Leo Botinelly, Claude  
 **Supersedes:** Federation/Process/Consistency sections of same-offering-orchestration.md  
-**Depends On:** KOI-0001 (Embedded HTTP & UDP Bridging) — Phase 0 prerequisite  
+**Depends On:** KOI-0001 (Embedded HTTP & UDP Bridging) — Phase 0 prerequisite (**done**)  
 **Related:** OFFER-0003 (FQN), OFFER-0004 (Placement), Koi Embedded Integration, Lantern Registry, Sub-Capabilities Proposal, Nurturing Proposal
+
+### Implementation Status (verified 2026-02-17)
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | KOI-0001 infrastructure (HTTP self-hosting, koi-udp, container wiring) | **Done** — all 3 sub-phases |
+| 1 | Shared types, state machine, election | **Done** — `OfferingRole`, `OrchestrationState`, `RoleChanged` event, `replicable` field |
+| 2 | Pull-based sync | **Partial** — orchestration task runs, role assignment works; replant ceremony not implemented |
+| 3 | DNS publication via Koi | **Not started** — `.dns()` handle exists but no registration code in Moss |
+| 4+ | Pinning, degradation, chirp coordination, observability | **Not started** |
 
 ---
 

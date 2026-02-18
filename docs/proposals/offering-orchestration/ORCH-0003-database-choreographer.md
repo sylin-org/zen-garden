@@ -6,6 +6,15 @@
 **Depends On:** ORCH-0001 (Offering Orchestration), Tools API, Koi DNS  
 **Policy Trigger:** `garden-rake policy mongodb clustered`
 
+### Dependency Status (verified 2026-02-17)
+
+| Dependency | Status | Notes |
+|---|---|---|
+| KOI-0001 (all phases) | **Done** | HTTP self-hosting, koi-udp, container wiring all merged |
+| Tools API | **Done** | `GET /api/v1/garden/tools/stream` live |
+| ORCH-0001 Phase 1 (types, elections) | **Done** | `OfferingRole`, `OrchestrationState`, election scoring |
+| Koi DNS | **Not started** | `.dns()` handle exists in Moss but no registration code yet |
+
 ---
 
 ## Abstract

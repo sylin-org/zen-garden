@@ -22,19 +22,24 @@ Use these APIs for different purposes:
 - **Nurturing**: offering backups (A/B local snapshots, replication to seed banks)
 - **Memories**: read‑only access to nurturing snapshots for hydration and external orchestrators
 
-Two scopes exist:
+Three scopes exist:
 
-- **Stone‑local**: `/api/v1/stone/...` (always targets the local stone)
-- **Garden‑wide**: `/api/v1/storage`, `/api/v1/storage/s3`, `/api/v1/memories` (route to the stone that hosts the selected seed bank)
+- **Stone‑local**: `/api/v1/stone/...` (always targets the local stone; file ops are read‑only)
+- **Garden‑tier**: `/api/v1/garden/storage/{name}/...` (name‑based, Primary‑or‑proxy; any Moss is a valid entry point)
+- **SDK gateways**: `/api/v1/storage/...`, `/api/v1/storage/s3/...`, `/api/v1/memories` (convenience layers)
 
 Seed bank identifiers:
 
-- **Seed bank name**: human‑readable name, used by gateway and memories APIs
-- **Seed bank id**: GUIDv7, used by stone‑local storage object endpoints
+- **Seed bank name**: human‑readable name, used by garden‑tier, gateway, and memories APIs
+- **Seed bank id**: GUIDv7, used by stone‑local admin endpoints only
 
 Default seed bank name (when none provided):
 
 - `seed-bank-zen-garden`
+
+> **STORAGE‑0008**: Writes (PUT/DELETE) go through the garden tier, which
+> routes to the Primary replica. Stone‑local file routes are read‑only
+> (GET/HEAD). See §3a below.
 
 ---
 
@@ -122,7 +127,86 @@ curl -X DELETE http://stone-01:7185/api/v1/storage/my-bucket/hello.txt
 
 ---
 
+## 3a. Garden‑Tier Storage (STORAGE‑0008)
+
+The **garden‑tier** is the primary way to read/write seed bank objects. Any Moss
+can be the entry point — if the local bank is Primary, requests execute locally;
+otherwise they are proxied to the stone hosting the Primary replica.
+
+### 3a.1 Discover all replicas
+
+```bash
+curl http://stone-01:7185/api/v1/garden/storage/seed-swift-shore
+```
+
+Response shows every stone that hosts this seed bank:
+
+```json
+{
+  "data": {
+    "name": "seed-swift-shore",
+    "instances": [
+      {
+        "stone_id": "abc123",
+        "stone_name": "stone-pearl-harbor",
+        "bank_id": "019c0789-...",
+        "role": "primary",
+        "pinned": true,
+        "pin_id": "019c6df7-...",
+        "endpoint": "http://192.168.1.241:7185",
+        "visibility": "open",
+        "health": "healthy"
+      }
+    ]
+  }
+}
+```
+
+### 3a.2 Write an object (any Moss)
+
+```bash
+curl -X PUT \
+  -H "Content-Type: text/plain" \
+  --data "hello garden" \
+  http://stone-02:7185/api/v1/garden/storage/seed-swift-shore/my-bucket/hello.txt
+```
+
+If stone‑02 is the Primary holder → writes locally.
+If stone‑02 is Dormant → proxies to the Primary stone transparently.
+
+### 3a.3 Read an object
+
+```bash
+curl http://stone-02:7185/api/v1/garden/storage/seed-swift-shore/my-bucket/hello.txt
+```
+
+### 3a.4 Delete an object
+
+```bash
+curl -X DELETE \
+  http://stone-02:7185/api/v1/garden/storage/seed-swift-shore/my-bucket/hello.txt
+```
+
+### 3a.5 Object metadata (HEAD)
+
+```bash
+curl -I http://stone-01:7185/api/v1/garden/storage/seed-swift-shore/my-bucket/hello.txt
+```
+
+Returns `Content-Type`, `Content-Length`, `ETag`, `Last-Modified` headers.
+
+### 3a.6 Loop guard
+
+All proxied requests include `X-Zen-Proxied: true`. If a proxied request
+reaches a non‑Primary stone (e.g. during orchestration transitions), it
+returns `503 PROXY_LOOP` instead of chaining further.
+
+---
+
 ## 4. Storage (Stone‑Local, by Seed Bank ID)
+
+> **Note (STORAGE‑0008):** Stone‑local file routes are **read‑only** (GET/HEAD).
+> For writes, use the garden‑tier routes in §3a or the SDK gateway in §3.
 
 Use these endpoints when you know the **seed bank id** and want direct, local access.
 
@@ -145,13 +229,10 @@ Example response snippet:
 }
 ```
 
-### 4.2 Put object by id
+### 4.2 Get object by id (read‑only)
 
 ```bash
-curl -X PUT \
-  -H "Content-Type: application/json" \
-  --data '{"value":42}' \
-  http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
+curl http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
 ```
 
 ### 4.3 List bucket contents by id
@@ -164,13 +245,10 @@ Optional query parameter:
 
 - `depth=1` (default), `depth=3`, `depth=all`
 
-### 4.4 Get and delete by id
+### 4.4 Head object by id
 
 ```bash
-curl http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
-
-curl -X DELETE \
-  http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
+curl -I http://stone-01:7185/api/v1/stone/storage/bank/019c26fc-5e46-7ac1-9fbb-f1664790dead/my-bucket/value.json
 ```
 
 ---
@@ -378,17 +456,24 @@ Likely causes:
 
 ## 12. API Summary (Storage + Nurturing)
 
-Storage (stone‑local):
+Storage (garden‑tier — name-based, Primary‑or‑proxy):
 
-- `GET /api/v1/stone/storage`
-- `GET /api/v1/stone/storage/health`
-- `GET /api/v1/stone/storage/bank`
-- `GET /api/v1/stone/storage/bank/{id}`
-- `PUT /api/v1/stone/storage/bank/{id}/{bucket}/{key}`
-- `GET /api/v1/stone/storage/bank/{id}/{bucket}/{key}`
-- `DELETE /api/v1/stone/storage/bank/{id}/{bucket}/{key}`
+- `GET    /api/v1/garden/storage/{name}`               — discover replicas
+- `GET    /api/v1/garden/storage/{name}/{bucket}/{key}` — get object
+- `PUT    /api/v1/garden/storage/{name}/{bucket}/{key}` — put object
+- `DELETE /api/v1/garden/storage/{name}/{bucket}/{key}` — delete object
+- `HEAD   /api/v1/garden/storage/{name}/{bucket}/{key}` — object metadata
 
-Storage (garden‑wide):
+Storage (stone‑local — read‑only file ops):
+
+- `GET  /api/v1/stone/storage`              — overview
+- `GET  /api/v1/stone/storage/health`       — health
+- `GET  /api/v1/stone/storage/bank`         — list banks
+- `GET  /api/v1/stone/storage/bank/{id}`    — bank detail
+- `GET  /api/v1/stone/storage/bank/{id}/{*path}`  — get object (local)
+- `HEAD /api/v1/stone/storage/bank/{id}/{*path}`  — head object (local)
+
+Storage (SDK gateway — convenience):
 
 - `GET /api/v1/storage`
 - `PUT /api/v1/storage/{bucket}/{key}`

@@ -50,7 +50,7 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/storage/bank/:id` | Bank details |
 | DELETE | `/api/v1/stone/storage/bank/:id` | Remove bank |
 | POST | `/api/v1/stone/storage/bank/:id/release` | Unmount |
-| GET/PUT/DELETE | `/api/v1/stone/storage/bank/:id/*path` | Object ops |
+| GET/HEAD | `/api/v1/stone/storage/bank/:id/*path` | Object reads (local only) |
 
 ### S3 Gateway
 | Method | Endpoint | Purpose |
@@ -111,6 +111,15 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/garden/nourishment` | Aggregate updates |
 | POST | `/api/v1/garden/nourishment/execute` | Dispatch to affected stones |
 | GET | `/api/v1/garden/observe` | Aggregate topology |
+
+### Garden Storage (STORAGE-0008)
+| Method | Endpoint | Purpose |
+|--------|----------|----------|
+| GET | `/api/v1/garden/storage/:name` | Discover replicas |
+| GET | `/api/v1/garden/storage/:name/*path` | Get object (Primary-or-proxy) |
+| PUT | `/api/v1/garden/storage/:name/*path` | Put object (Primary-or-proxy) |
+| DELETE | `/api/v1/garden/storage/:name/*path` | Delete object (Primary-or-proxy) |
+| HEAD | `/api/v1/garden/storage/:name/*path` | Object metadata (Primary-or-proxy) |
 
 ---
 

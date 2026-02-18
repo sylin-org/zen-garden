@@ -110,6 +110,14 @@ canonical: true
   - **Status**: Proposed (2026-02-16)
   - **Rationale**: Primary/dormant roles for seed banks, ChaCha20-Poly1305 encryption for pond-scoped data-at-rest, GUIDv7 last-pin-wins, clone for export, default naming
   - **Impact**: Seed bank redundancy, geographic distribution, encrypted storage, foundation for Replant ceremony. Simplifies data model (removes group/replica_id).
+- **[STORAGE-0007](STORAGE-0007-storage-lifecycle-objects.md)**: Storage Lifecycle Objects
+  - **Status**: Proposed (2026-02-17)
+  - **Rationale**: Two-layer Storage/SeedBank composition model replacing 6 scattered AppState collections with unified lifecycle objects and self-healing mount verification
+  - **Impact**: Eliminates mount-loss bugs structurally, single source of truth per seed bank, enables future Storage reuse (HarvestStore)
+- **[STORAGE-0008](STORAGE-0008-garden-stone-api-split.md)**: Garden / Stone API Split for Storage
+  - **Status**: Accepted (2026-02-17)
+  - **Rationale**: Name-based garden-tier routes with Primary-or-proxy routing; stone-tier file routes become read-only
+  - **Impact**: Clients use names not IDs, writes always reach Primary, discovery endpoint for dashboards
 
 ### Tools
 - **[TOOLS-0001](TOOLS-0001-garden-tools-domain.md)**: Unified Garden Tools Domain

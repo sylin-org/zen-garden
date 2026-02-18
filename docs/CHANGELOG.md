@@ -2,6 +2,18 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-19
+
+- STORAGE-0008: Garden/Stone API split — name-based `/api/v1/garden/storage/{name}` routes with Primary-or-proxy
+- STORAGE-0008: Discovery endpoint `GET /api/v1/garden/storage/{name}` returns all replicas across the garden
+- STORAGE-0008: Stone-tier file routes now read-only (GET/HEAD); writes go through garden tier only
+- STORAGE-0008: `X-Zen-Proxied` loop guard prevents infinite proxy chains during orchestration transitions
+- STORAGE-0007: SeedBank lifecycle objects — single source of truth per seed bank (StorageDevice + SeedBankStore)
+- STORAGE-0007: StorageDevice.ensure_mounted() verifies /proc/mounts before any I/O — prevents writes to unmounted dirs
+- STORAGE-0007: Coordinator refresh_seed_banks_from_scan() + tick_seed_bank_health() wired to hotplug/persistence tasks
+- STORAGE-0007: Orchestration, replication, nurturing scheduler migrated to use lifecycle objects with legacy fallback
+- STORAGE-0007: Portrait builder reads from SeedBank lifecycle objects with legacy fallback path
+
 ## 2026-02-18
 
 - Pin redesign: GUIDv7 pin_id with last-pin-wins semantics — any replica holder can claim Primary

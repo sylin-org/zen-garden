@@ -246,6 +246,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
 dependencies = [
  "axum-core",
+ "axum-macros",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -289,6 +290,17 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "axum-macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "604fde5e028fea851ce1d8570bbdc034bec850d157f7569d10f347d06808c05c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -1592,6 +1604,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "garden-router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "chrono",
+ "clap",
+ "futures-util",
+ "garden-common",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2335,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "koi-certmesh"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "axum",
  "chrono",
@@ -2361,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "koi-client"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "hickory-proto",
  "koi-common",
@@ -2375,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "koi-common"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "axum",
  "serde",
@@ -2388,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "koi-config"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "koi-common",
  "serde",
@@ -2400,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "koi-crypto"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2425,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "koi-dns"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "axum",
  "hickory-proto",
@@ -2446,7 +2481,7 @@ dependencies = [
 
 [[package]]
 name = "koi-embedded"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "axum",
  "futures-util",
@@ -2474,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "koi-health"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "axum",
  "chrono",
@@ -2496,7 +2531,7 @@ dependencies = [
 
 [[package]]
 name = "koi-mdns"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "async-stream",
  "axum",
@@ -2517,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "koi-proxy"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "axum",
  "axum-server",
@@ -2545,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "koi-truststore"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "koi-common",
  "thiserror 2.0.17",
@@ -2554,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "koi-udp"
-version = "0.2.202602161546"
+version = "0.2.202602180049"
 dependencies = [
  "async-stream",
  "axum",

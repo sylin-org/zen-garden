@@ -1,0 +1,734 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Router — Dashboard</title>
+<style>
+/* ── Design Tokens (Zen Garden / Lantern) ─────────────────── */
+:root {
+  --bg-base: #f4f2ee;
+  --stone-900: #1a1a1a;
+  --stone-600: #57534e;
+  --stone-400: #a8a29e;
+  --vellum-white: rgba(255, 255, 255, 0.45);
+  --vellum-border: rgba(255, 255, 255, 0.6);
+  --accent-sage: #84a59d;
+  --accent-clay: #d4a373;
+  --accent-hopeful: #c4b060;
+  --accent-hopeful-glow: rgba(196, 176, 96, 0.2);
+  --accent-muted: #a8a29e;
+  --accent-red: #c45050;
+  --glass-blur: blur(14px);
+  --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'IBM Plex Mono', 'Cascadia Code', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-base: #1a1a1a;
+    --stone-900: #fafaf9;
+    --stone-600: #a8a29e;
+    --stone-400: #78716c;
+    --vellum-white: rgba(40, 40, 40, 0.6);
+    --vellum-border: rgba(255, 255, 255, 0.1);
+    --accent-hopeful: #d4c170;
+    --accent-hopeful-glow: rgba(212, 193, 112, 0.15);
+  }
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-sans);
+  color: var(--stone-900);
+  background: var(--bg-base);
+  min-height: 100vh;
+  display: flex; justify-content: center;
+  padding: 3rem 1.5rem;
+  line-height: 1.6;
+  background-image:
+    radial-gradient(ellipse at 20% 50%, rgba(132,165,157,0.08) 0%, transparent 70%),
+    radial-gradient(ellipse at 80% 20%, rgba(212,163,115,0.06) 0%, transparent 60%);
+}
+
+.container {
+  max-width: 960px; width: 100%;
+  display: flex; flex-direction: column; gap: 3rem;
+  animation: fadeIn 0.8s ease-out;
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ── Typography ───────────────────────────────────────────── */
+.section-title {
+  font-family: var(--font-mono);
+  font-size: 0.65rem; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.25em;
+  color: var(--stone-400); margin-bottom: 1rem;
+}
+
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--stone-400); }
+.sage { color: var(--accent-sage); }
+.clay { color: var(--accent-clay); }
+.gold { color: var(--accent-hopeful); }
+.red  { color: var(--accent-red); }
+
+/* ── Cards (Vellum Glass) ─────────────────────────────────── */
+.card {
+  background: var(--vellum-white);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--vellum-border);
+  border-radius: 3px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.03), inset 0 0 20px rgba(255,255,255,0.1);
+  transition: var(--transition-soft);
+}
+.card:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(0,0,0,0.05); }
+
+/* ── Hero ─────────────────────────────────────────────────── */
+.hero {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: 2rem;
+}
+.hero .identity {
+  border-left: 3px solid var(--accent-sage);
+  padding-left: 1.5rem;
+}
+.hero .identity h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 600; letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.hero .identity .role {
+  font-family: var(--font-mono);
+  font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.2em; color: var(--accent-sage);
+  margin-top: 0.3rem;
+}
+.hero .identity .endpoint {
+  font-family: var(--font-mono);
+  font-size: 0.75rem; color: var(--stone-400);
+  margin-top: 0.5rem;
+}
+.hero .glance {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--stone-400);
+}
+.hero .glance .stat-big {
+  font-size: 2rem; font-weight: 600; color: var(--stone-900); line-height: 1;
+}
+
+/* ── Status Dots ──────────────────────────────────────────── */
+.dot {
+  display: inline-block; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent-sage);
+  box-shadow: 0 0 8px var(--accent-sage);
+  animation: pulse 2.5s infinite;
+}
+.dot.unhealthy { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+.dot.profiling { background: var(--accent-hopeful); box-shadow: 0 0 8px var(--accent-hopeful-glow); }
+.dot.stopped   { background: var(--accent-muted); box-shadow: none; animation: none; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.5; }
+}
+
+/* ── Gauges ────────────────────────────────────────────────── */
+.gauge {
+  height: 2px; background: rgba(128,128,128,0.1);
+  border-radius: 1px; overflow: hidden; margin-top: 0.3rem;
+}
+.gauge-fill {
+  height: 100%; width: 0%;
+  transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+  background: var(--accent-sage);
+}
+.gauge-fill.warn { background: var(--accent-clay); }
+.gauge-fill.danger { background: var(--accent-red); }
+
+/* ── Grid Layouts ─────────────────────────────────────────── */
+.grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 600px) {
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* ── Stones Section ───────────────────────────────────────── */
+.stone-card .stone-header {
+  display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;
+}
+.stone-card .stone-name {
+  font-weight: 600; font-size: 1rem;
+}
+.stone-card .stone-meta {
+  font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
+  display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem;
+}
+.stone-card .model-tags {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.75rem;
+}
+.model-tag {
+  font-family: var(--font-mono); font-size: 0.6rem;
+  padding: 0.15rem 0.5rem; border-radius: 2px;
+  background: rgba(132,165,157,0.12); color: var(--accent-sage);
+  border: 1px solid rgba(132,165,157,0.2);
+}
+.model-tag.loaded {
+  background: rgba(196,176,96,0.15); color: var(--accent-hopeful);
+  border-color: rgba(196,176,96,0.3);
+}
+
+/* ── Tiers Section ────────────────────────────────────────── */
+.tier-card {
+  border-left: 3px solid var(--accent-sage);
+}
+.tier-card .tier-label {
+  font-family: var(--font-mono); font-weight: 600; font-size: 1.1rem;
+}
+.tier-card .tier-instances {
+  font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
+  margin-top: 0.25rem;
+}
+
+/* ── Models Section ───────────────────────────────────────── */
+.model-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 0.5rem; align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--vellum-border);
+  font-size: 0.8rem;
+}
+.model-row:last-child { border-bottom: none; }
+.model-row .model-name {
+  font-family: var(--font-mono); font-weight: 500;
+}
+.model-row .model-detail {
+  font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
+}
+
+/* ── Metrics Section ──────────────────────────────────────── */
+.metric-card { text-align: center; padding: 1.25rem; }
+.metric-card .metric-value {
+  font-size: 1.8rem; font-weight: 600; line-height: 1;
+  font-family: var(--font-mono);
+}
+.metric-card .metric-label {
+  font-family: var(--font-mono); font-size: 0.6rem;
+  text-transform: uppercase; letter-spacing: 0.2em;
+  color: var(--stone-400); margin-top: 0.4rem;
+}
+
+/* ── Settings Section ─────────────────────────────────────── */
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--vellum-border);
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-label {
+  font-family: var(--font-mono); font-size: 0.8rem;
+}
+.toggle {
+  position: relative; width: 36px; height: 20px;
+  background: var(--accent-muted); border-radius: 10px;
+  cursor: pointer; transition: background 0.3s;
+}
+.toggle.active { background: var(--accent-sage); }
+.toggle::after {
+  content: ''; position: absolute; left: 2px; top: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: white; transition: transform 0.3s;
+}
+.toggle.active::after { transform: translateX(16px); }
+
+/* ── Actions ──────────────────────────────────────────────── */
+.action-btn {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  padding: 0.5rem 1rem; border: 1px solid var(--vellum-border);
+  background: transparent; color: var(--stone-600);
+  border-radius: 2px; cursor: pointer; transition: var(--transition-soft);
+}
+.action-btn:hover { border-color: var(--accent-sage); color: var(--accent-sage); }
+.action-btn.confirming { border-color: var(--accent-clay); color: var(--accent-clay); }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Model Management ─────────────────────────────────────── */
+.mgmt-bar {
+  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+}
+.mgmt-input {
+  font-family: var(--font-mono); font-size: 0.75rem;
+  padding: 0.4rem 0.75rem; border: 1px solid var(--vellum-border);
+  background: transparent; color: var(--stone-900);
+  border-radius: 2px; flex: 1; min-width: 200px;
+}
+.mgmt-input:focus { outline: none; border-color: var(--accent-sage); }
+
+/* ── Connection Banner ────────────────────────────────────── */
+.connection-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+  padding: 0.5rem; text-align: center;
+  font-family: var(--font-mono); font-size: 0.7rem;
+  background: var(--vellum-white);
+  backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--accent-clay);
+  color: var(--accent-clay);
+  transform: translateY(-100%); opacity: 0;
+  transition: var(--transition-soft);
+}
+.connection-banner.visible { transform: translateY(0); opacity: 1; }
+
+/* ── Vellum Grain ─────────────────────────────────────────── */
+.vellum-grain {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  opacity: 0.03; z-index: 9999; pointer-events: none;
+}
+
+/* ── Hidden ───────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ── Log / Activity ───────────────────────────────────────── */
+.activity-log {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  max-height: 200px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.25rem;
+}
+.log-entry {
+  display: flex; gap: 0.75rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid rgba(128,128,128,0.05);
+}
+.log-time { color: var(--stone-400); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<!-- Vellum grain overlay -->
+<svg class="vellum-grain" xmlns="http://www.w3.org/2000/svg">
+  <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" stitchTiles="stitch"/></filter>
+  <rect width="100%" height="100%" filter="url(#grain)"/>
+</svg>
+
+<!-- Connection banner -->
+<div class="connection-banner" id="banner">Connection lost — retrying…</div>
+
+<div class="container">
+
+  <!-- ── Hero ──────────────────────────────────────────────── -->
+  <header class="hero">
+    <div class="identity">
+      <h1 id="routerName">AI Router</h1>
+      <div class="role">AI Capability Router</div>
+      <div class="endpoint" id="routerEndpoint">:11434 proxy — :7190 dashboard</div>
+    </div>
+    <div class="glance">
+      <div><span class="stat-big" id="stoneCount">0</span></div>
+      <div>stones</div>
+      <div style="margin-top:0.5rem"><span class="stat-big" id="modelCount">0</span></div>
+      <div>models</div>
+    </div>
+  </header>
+
+  <!-- ── Stones ────────────────────────────────────────────── -->
+  <section id="stonesSection">
+    <div class="section-title">Stones</div>
+    <div class="grid-auto" id="stonesGrid"></div>
+  </section>
+
+  <!-- ── Tiers ─────────────────────────────────────────────── -->
+  <section id="tiersSection">
+    <div class="section-title">Capacity Tiers</div>
+    <div class="grid-auto" id="tiersGrid"></div>
+  </section>
+
+  <!-- ── Models ────────────────────────────────────────────── -->
+  <section id="modelsSection">
+    <div class="section-title">Models</div>
+    <div class="card" id="modelsCard">
+      <div class="model-row" style="font-weight:600; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400);">
+        <div>Name</div><div>VRAM</div><div>Available On</div><div>Loaded On</div>
+      </div>
+      <div id="modelsBody"></div>
+    </div>
+  </section>
+
+  <!-- ── Model Management ──────────────────────────────────── -->
+  <section>
+    <div class="section-title">Model Management</div>
+    <div class="card">
+      <div class="mgmt-bar">
+        <input class="mgmt-input" id="pullModelInput" placeholder="model name (e.g. llama3.2:3b)" />
+        <button class="action-btn" id="pullBtn" onclick="pullModel()">Pull</button>
+        <button class="action-btn" id="deleteBtn" onclick="deleteModel()">Delete</button>
+      </div>
+      <div id="mgmtStatus" class="mono muted" style="font-size:0.7rem; margin-top:0.75rem;"></div>
+    </div>
+  </section>
+
+  <!-- ── Metrics ───────────────────────────────────────────── -->
+  <section id="metricsSection">
+    <div class="section-title">Metrics</div>
+    <div class="grid-auto" id="metricsGrid">
+      <div class="card metric-card">
+        <div class="metric-value sage" id="metRequests">0</div>
+        <div class="metric-label">Requests</div>
+      </div>
+      <div class="card metric-card">
+        <div class="metric-value" id="metTokensOut">0</div>
+        <div class="metric-label">Tokens Out</div>
+      </div>
+      <div class="card metric-card">
+        <div class="metric-value" id="metAvgMs">—</div>
+        <div class="metric-label">Avg Response</div>
+      </div>
+      <div class="card metric-card">
+        <div class="metric-value" id="metErrors">0</div>
+        <div class="metric-label">Errors</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:1rem;" id="topModelsCard">
+      <div class="section-title" style="margin-bottom:0.5rem;">Top Models (5 min)</div>
+      <div id="topModelsBody" class="mono" style="font-size:0.75rem;"></div>
+    </div>
+  </section>
+
+  <!-- ── Settings ──────────────────────────────────────────── -->
+  <section>
+    <div class="section-title">Settings</div>
+    <div class="card">
+      <div class="setting-row">
+        <span class="setting-label">Auto-pull models</span>
+        <div class="toggle" id="toggleAutoPull" onclick="toggleSetting('auto_pull')"></div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Delete idle models</span>
+        <div class="toggle" id="toggleDeleteOnIdle" onclick="toggleSetting('delete_on_idle')"></div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Metrics collection</span>
+        <div class="toggle" id="toggleMetrics" onclick="toggleSetting('metrics_enabled')"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Activity ──────────────────────────────────────────── -->
+  <section>
+    <div class="section-title">Activity</div>
+    <div class="card">
+      <div class="activity-log" id="activityLog"></div>
+      <div class="mono muted" style="font-size:0.65rem; margin-top:0.5rem;" id="activityEmpty">
+        Listening for events…
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ────────────────────────────────────────────── -->
+  <footer style="text-align:center; padding:2rem 0;">
+    <span class="mono muted" style="font-size:0.65rem;">
+      AI Router · <a href="/health" style="color:var(--accent-sage);">/health</a>
+      · <span id="uptimeLabel">uptime: —</span>
+    </span>
+  </footer>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+let state = null;
+let settings = { auto_pull: true, delete_on_idle: false, metrics_enabled: true };
+let connected = true;
+let activityRing = [];
+const MAX_ACTIVITY = 30;
+
+// ── Polling ────────────────────────────────────────────────────
+async function refresh() {
+  try {
+    const resp = await fetch('/api/status');
+    if (!resp.ok) throw new Error(resp.statusText);
+    state = await resp.json();
+    connected = true;
+    document.getElementById('banner').classList.remove('visible');
+    render();
+  } catch (e) {
+    if (connected) {
+      connected = false;
+      document.getElementById('banner').classList.add('visible');
+    }
+  }
+}
+
+setInterval(refresh, 2500);
+refresh();
+
+// ── SSE (live events) ─────────────────────────────────────────
+function connectSSE() {
+  const es = new EventSource('/api/events');
+  es.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      addActivity(data.event_type || 'event', data.data || '');
+    } catch (_) {
+      addActivity('event', ev.data);
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectSSE, 5000);
+  };
+}
+connectSSE();
+
+// ── Render ─────────────────────────────────────────────────────
+function render() {
+  if (!state) return;
+
+  // Hero
+  document.getElementById('routerName').textContent = state.offering_name || 'AI Router';
+  document.getElementById('stoneCount').textContent = state.stones ? state.stones.length : 0;
+  document.getElementById('modelCount').textContent = state.models ? state.models.length : 0;
+  document.getElementById('uptimeLabel').textContent = 'uptime: ' + formatDuration(state.uptime_secs);
+
+  // Settings
+  settings = state.config || settings;
+  syncToggles();
+
+  // Stones
+  renderStones(state.stones || []);
+
+  // Tiers
+  renderTiers(state.tiers || []);
+
+  // Models
+  renderModels(state.models || []);
+
+  // Metrics
+  renderMetrics(state.metrics || {});
+}
+
+// ── Stones ─────────────────────────────────────────────────────
+function renderStones(stones) {
+  const grid = document.getElementById('stonesGrid');
+  grid.innerHTML = '';
+  if (!stones.length) {
+    grid.innerHTML = '<div class="card mono muted" style="font-size:0.8rem;">Waiting for Ollama instances…</div>';
+    return;
+  }
+  stones.forEach(s => {
+    const healthClass = s.healthy ? '' : (s.health === 'Profiling' ? 'profiling' : 'unhealthy');
+    const loaded = (s.models_loaded || []).map(m => m.name || m);
+    const available = s.models_available || [];
+    const queuePct = Math.min((s.queue_depth || 0) / 8 * 100, 100);
+
+    let html = `<div class="card stone-card">
+      <div class="stone-header">
+        <span class="dot ${healthClass}"></span>
+        <span class="stone-name">${esc(s.stone_name)}</span>
+      </div>
+      <div class="stone-meta">
+        <div>${esc(s.gpu_name || 'GPU')} · ${s.vram_budget_mb || '?'} MB VRAM</div>
+        <div>${esc(s.endpoint)}</div>
+        <div>Queue: ${s.queue_depth || 0}${s.lease ? ' · Lease: ' + esc(s.lease.model) + ' (' + s.lease.remaining_secs + 's)' : ''}</div>
+      </div>
+      <div class="gauge"><div class="gauge-fill${queuePct > 75 ? ' warn' : ''}" style="width:${queuePct}%"></div></div>
+      <div class="model-tags">`;
+
+    available.forEach(m => {
+      const isLoaded = loaded.includes(m);
+      html += `<span class="model-tag${isLoaded ? ' loaded' : ''}">${esc(m)}</span>`;
+    });
+
+    html += `</div></div>`;
+    grid.innerHTML += html;
+  });
+}
+
+// ── Tiers ──────────────────────────────────────────────────────
+function renderTiers(tiers) {
+  const grid = document.getElementById('tiersGrid');
+  const section = document.getElementById('tiersSection');
+  if (!tiers.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+  grid.innerHTML = '';
+  tiers.forEach(t => {
+    grid.innerHTML += `<div class="card tier-card">
+      <div class="tier-label">${esc(t.label || t.vram_gb + 'G')}</div>
+      <div class="tier-instances">${(t.instances || []).length} instance${(t.instances || []).length !== 1 ? 's' : ''}</div>
+    </div>`;
+  });
+}
+
+// ── Models ─────────────────────────────────────────────────────
+function renderModels(models) {
+  const body = document.getElementById('modelsBody');
+  const section = document.getElementById('modelsSection');
+  if (!models.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+  body.innerHTML = '';
+  models.forEach(m => {
+    body.innerHTML += `<div class="model-row">
+      <div class="model-name">${esc(m.name)}</div>
+      <div class="model-detail">${m.vram_estimate_mb ? m.vram_estimate_mb + ' MB' : '—'}</div>
+      <div class="model-detail">${(m.on_stones || []).join(', ') || '—'}</div>
+      <div class="model-detail">${(m.loaded_on || []).map(s => '<span class="gold">' + esc(s) + '</span>').join(', ') || '—'}</div>
+    </div>`;
+  });
+}
+
+// ── Metrics ────────────────────────────────────────────────────
+function renderMetrics(met) {
+  document.getElementById('metRequests').textContent = formatNum(met.requests_total || 0);
+  document.getElementById('metTokensOut').textContent = formatNum(met.tokens_out || 0);
+  document.getElementById('metAvgMs').textContent = met.avg_response_ms ? met.avg_response_ms + ' ms' : '—';
+  document.getElementById('metErrors').textContent = formatNum(met.errors || 0);
+
+  const topBody = document.getElementById('topModelsBody');
+  const top = met.top_models || [];
+  if (top.length) {
+    topBody.innerHTML = top.map(([name, count]) =>
+      `<div style="display:flex; justify-content:space-between; padding:0.15rem 0;">
+        <span>${esc(name)}</span><span class="sage">${count}</span>
+      </div>`
+    ).join('');
+  } else {
+    topBody.innerHTML = '<span class="muted">No requests yet</span>';
+  }
+}
+
+// ── Settings ───────────────────────────────────────────────────
+function syncToggles() {
+  setToggle('toggleAutoPull', settings.auto_pull);
+  setToggle('toggleDeleteOnIdle', settings.delete_on_idle);
+  setToggle('toggleMetrics', settings.metrics_enabled);
+}
+
+function setToggle(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('active', !!val);
+}
+
+async function toggleSetting(key) {
+  settings[key] = !settings[key];
+  syncToggles();
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ features: settings, stones: {} }),
+    });
+  } catch (e) {
+    addActivity('error', 'Failed to save settings: ' + e.message);
+  }
+}
+
+// ── Model Management ───────────────────────────────────────────
+async function pullModel() {
+  const input = document.getElementById('pullModelInput');
+  const model = input.value.trim();
+  if (!model) return;
+  const status = document.getElementById('mgmtStatus');
+  status.textContent = 'Pulling ' + model + '…';
+  document.getElementById('pullBtn').disabled = true;
+  try {
+    const resp = await fetch('/api/management/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    const data = await resp.json();
+    const successes = (data.results || []).filter(r => r.success).length;
+    const total = (data.results || []).length;
+    status.textContent = `Pull complete: ${successes}/${total} instances succeeded`;
+    addActivity('pull', model + ': ' + successes + '/' + total + ' ok');
+  } catch (e) {
+    status.textContent = 'Pull failed: ' + e.message;
+  }
+  document.getElementById('pullBtn').disabled = false;
+}
+
+async function deleteModel() {
+  const input = document.getElementById('pullModelInput');
+  const model = input.value.trim();
+  if (!model) return;
+  const status = document.getElementById('mgmtStatus');
+  status.textContent = 'Deleting ' + model + '…';
+  document.getElementById('deleteBtn').disabled = true;
+  try {
+    const resp = await fetch('/api/management/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    const data = await resp.json();
+    const successes = (data.results || []).filter(r => r.success).length;
+    const total = (data.results || []).length;
+    status.textContent = `Delete complete: ${successes}/${total} instances succeeded`;
+    addActivity('delete', model + ': ' + successes + '/' + total + ' ok');
+  } catch (e) {
+    status.textContent = 'Delete failed: ' + e.message;
+  }
+  document.getElementById('deleteBtn').disabled = false;
+}
+
+// ── Activity Log ───────────────────────────────────────────────
+function addActivity(type, message) {
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-GB', { hour12: false });
+  activityRing.push({ time, type, message });
+  if (activityRing.length > MAX_ACTIVITY) activityRing.shift();
+  renderActivity();
+}
+
+function renderActivity() {
+  const log = document.getElementById('activityLog');
+  const empty = document.getElementById('activityEmpty');
+  if (!activityRing.length) { empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+  log.innerHTML = activityRing.map(a =>
+    `<div class="log-entry">
+      <span class="log-time">${esc(a.time)}</span>
+      <span class="clay">${esc(a.type)}</span>
+      <span>${esc(a.message)}</span>
+    </div>`
+  ).reverse().join('');
+}
+
+// ── Utilities ──────────────────────────────────────────────────
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function formatNum(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function formatDuration(secs) {
+  if (!secs && secs !== 0) return '—';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm';
+  return secs + 's';
+}
+</script>
+</body>
+</html>

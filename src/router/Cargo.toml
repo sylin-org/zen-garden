@@ -1,0 +1,46 @@
+﻿[package]
+name = "garden-router"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "AI Capability Router — VRAM-aware Ollama orchestrator for Zen Garden"
+
+[[bin]]
+name = "garden-router"
+path = "src/main.rs"
+
+[dependencies]
+garden-common = { path = "../common" }
+
+# Core
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# HTTP server
+axum = { workspace = true, features = ["macros"] }
+tower-http = { workspace = true }
+
+# HTTP client (for Ollama + Tools API)
+reqwest = { workspace = true, features = ["stream"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+toml = "0.8"
+
+# Streaming
+bytes = "1"
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Time
+chrono.workspace = true
+
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Shutdown coordination
+tokio-util = { version = "0.7", features = ["rt"] }

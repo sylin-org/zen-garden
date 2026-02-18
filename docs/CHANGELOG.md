@@ -4,6 +4,13 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-21
 
+- **NEW**: AI Capability Router crate (garden-router) — ORCH-0002 implementation
+- Router: VRAM-aware Ollama proxy (DDD architecture, 28 files, 13 unit tests)
+- Router: Dashboard SPA (Portrait visual language, SSE live updates, model management)
+- Router: Dockerfile.router with multi-stage build (debian-slim runtime)
+
+## 2026-02-21
+
 - Rake CLI: pipeline simplification — Runtime, CommandInvocation, AliasIndex, OnStoneMapping
 - route.rs rewritten: 1,917→1,006 lines; 66 dispatch calls eliminated via Runtime.execute()
 - AliasIndex replaces 3 separate lookup tables (zen, normative, combined)

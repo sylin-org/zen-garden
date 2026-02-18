@@ -1,14 +1,14 @@
 ﻿---
 audience: [developer, ai]
 doc_type: decision
-status: proposed
+status: accepted
 last_verified: 2026-02-17
 ---
 
 # STORAGE-0007: Storage Lifecycle Objects
 
 **Date**: 2026-02-17
-**Status**: Proposed
+**Status**: Accepted
 **Depends on**: STORAGE-0004 (Resilience), STORAGE-0005 (Manifest-First Discovery), STORAGE-0006 (Replication & Roles)
 **Depended on by**: —
 

@@ -107,11 +107,11 @@ canonical: true
 
 ### Storage (Seed Banks)
 - **[STORAGE-0006](STORAGE-0006-seed-bank-replication.md)**: Seed Bank Replication, Roles, and Pond Encryption
-  - **Status**: Proposed (2026-02-16)
+  - **Status**: Accepted (2026-02-17)
   - **Rationale**: Primary/dormant roles for seed banks, ChaCha20-Poly1305 encryption for pond-scoped data-at-rest, GUIDv7 last-pin-wins, clone for export, default naming
   - **Impact**: Seed bank redundancy, geographic distribution, encrypted storage, foundation for Replant ceremony. Simplifies data model (removes group/replica_id).
 - **[STORAGE-0007](STORAGE-0007-storage-lifecycle-objects.md)**: Storage Lifecycle Objects
-  - **Status**: Proposed (2026-02-17)
+  - **Status**: Accepted (2026-02-17)
   - **Rationale**: Two-layer Storage/SeedBank composition model replacing 6 scattered AppState collections with unified lifecycle objects and self-healing mount verification
   - **Impact**: Eliminates mount-loss bugs structurally, single source of truth per seed bank, enables future Storage reuse (HarvestStore)
 - **[STORAGE-0008](STORAGE-0008-garden-stone-api-split.md)**: Garden / Stone API Split for Storage

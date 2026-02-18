@@ -1,14 +1,14 @@
 ﻿---
 audience: [developer, ai]
 doc_type: decision
-status: proposed
-last_verified: 2026-02-16
+status: accepted
+last_verified: 2026-02-17
 ---
 
 # STORAGE-0006: Seed Bank Replication and Primary/Dormant Roles
 
 **Date**: 2026-02-16
-**Status**: Proposed
+**Status**: Accepted
 **Depends on**: STORAGE-0003 (Beacon Protocol), STORAGE-0005 (Manifest-First Discovery)
 **Depended on by**: ORCH-0001 (Replant Ceremony — Phase 4)
 

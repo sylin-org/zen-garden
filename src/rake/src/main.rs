@@ -5,8 +5,7 @@ mod route;
 // Use shared modules from the library
 use garden_common::ui::rendering as ui;
 use garden_rake::cli_build::{
-    build_clap_app, build_normative_lookup, build_zen_lookup, count_verbosity,
-    extract_global_flags, normalize_zen_to_clap,
+    build_clap_app, count_verbosity, extract_global_flags, normalize_zen_to_clap, AliasIndex,
 };
 use garden_rake::command_manifest::{self, MANIFEST};
 use garden_rake::commands;
@@ -86,7 +85,7 @@ async fn async_main() -> anyhow::Result<()> {
 
         if let Some(name) = help_name {
             if !name.is_empty() {
-                if let Some(cmd) = MANIFEST.get(name) {
+                if let Some(cmd) = MANIFEST.find_by_any_name(name) {
                     commands::help::display_command_detail(cmd, false, false);
                     return Ok(());
                 } else {
@@ -99,13 +98,15 @@ async fn async_main() -> anyhow::Result<()> {
 
     // Build Clap app from manifest (SSOT: manifest → builder API)
     let app = build_clap_app(&MANIFEST);
-    let zen_lookup = build_zen_lookup(&MANIFEST);
-    let normative_lookup = build_normative_lookup(&MANIFEST);
+    let alias_index = AliasIndex::build(&MANIFEST);
 
     // Build verb sets for the parser (manifest-driven, SSOT)
-    let zen_verbs: std::collections::HashSet<&str> = zen_lookup.keys().copied().collect();
-    let normative_verbs: std::collections::HashSet<&str> =
-        normative_lookup.keys().copied().collect();
+    let zen_verbs = alias_index.zen_verbs().clone();
+    let normative_verbs: std::collections::HashSet<&str> = alias_index
+        .all_known_verbs()
+        .difference(alias_index.zen_verbs())
+        .copied()
+        .collect();
 
     // Detect zen syntax → normalize → parse
     let effective_args = if !raw_args.is_empty() {
@@ -113,7 +114,7 @@ async fn async_main() -> anyhow::Result<()> {
         {
             Ok(parsed) if parsed.style == garden_common::cli::parser::CommandStyle::Zen => {
                 // Zen syntax detected: normalize to Clap-parseable form
-                normalize_zen_to_clap(&parsed, &zen_lookup)?
+                normalize_zen_to_clap(&parsed, &alias_index, &MANIFEST)?
             }
             Ok(_) => {
                 // Normative syntax: pass through as-is
@@ -137,14 +138,6 @@ async fn async_main() -> anyhow::Result<()> {
 
     // Extract global flags from ArgMatches
     let global = extract_global_flags(&matches);
-
-    // Determine effective output format
-    let output_format = if global.field.is_some() {
-        garden_rake::context::OutputFormat::Json
-    } else {
-        global.output.parse().unwrap()
-    };
-    let _ = output_format; // Used by route.rs via global.output
 
     // Create pooled HTTP client with connection reuse (hot cache architecture)
     let mut client_builder = reqwest::Client::builder()
@@ -182,10 +175,15 @@ async fn async_main() -> anyhow::Result<()> {
     let client = client_builder.build()?;
     let term = ui::TerminalInfo::detect();
 
+    // Build Runtime once — encapsulates client, global flags, terminal info
+    let rt = dispatch::Runtime::new(client, global.clone(), term);
+
     // Route to command handler
     match matches.subcommand() {
         Some((name, sub_matches)) => {
-            route::route_command(name, sub_matches, &global, &client, &term).await?;
+            if let Some(inv) = route::route(name, sub_matches, &global, &rt).await? {
+                rt.execute(inv).await?;
+            }
         }
         None => {
             // No subcommand — show command directory

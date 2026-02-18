@@ -4,104 +4,140 @@
 //! - Endpoint resolution (if required by command)
 //! - Stone header display (if requested)
 //! - Error handling and formatting
+//!
+//! Since Proposal B, the `Runtime` struct encapsulates the shared infrastructure
+//! (client, global flags, cache) and provides `execute()` which replaces the old
+//! 7-argument dispatch calls. `CommandInvocation` pairs a Command with its
+//! per-invocation target stone.
 
 use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use garden_common::{GardenApiResponse, HardwareCapabilities};
+use garden_rake::cli_build::GlobalFlags;
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
 use garden_rake::commands::management::tend;
 use garden_rake::commands::Command;
-use garden_rake::context::CommandContext;
+use garden_rake::context::{CommandContext, OutputFormat};
 use garden_rake::discovery;
+use garden_rake::stone_cache::GLOBAL_CACHE;
 use garden_rake::tending;
 use std::time::Duration;
 
-/// Dispatch a command with standard middleware
+// ============================================================================
+// CommandInvocation — pairs a Command with its target stone
+// ============================================================================
+
+/// A fully-constructed command ready for the Runtime to execute.
 ///
-/// This function:
-/// 1. Resolves endpoint if required by command
-/// 2. Displays stone header if requested
-/// 3. Executes the command
-pub async fn dispatch(
-    cmd: &dyn Command,
-    client: &reqwest::Client,
-    at: Option<String>,
-    quiet_mode: bool,
-    fresh_mode: bool,
-    verbose: u8,
-    cache: Option<&dyn CachedStoneOps>,
-) -> anyhow::Result<()> {
-    dispatch_full(
-        cmd,
-        client,
-        at,
-        quiet_mode,
-        fresh_mode,
-        verbose,
-        cache,
-        garden_rake::context::OutputFormat::default(),
-        None,
-    )
-    .await
+/// Bundles the `Command` object with the optional target stone (`--at` / `on`).
+/// This eliminates the pattern of manually extracting `at` 44 times in route.rs.
+pub struct CommandInvocation {
+    pub command: Box<dyn Command>,
+    pub at: Option<String>,
 }
 
-/// Dispatch a command with full automation options (output format, field extraction)
-#[allow(clippy::too_many_arguments)]
-pub async fn dispatch_full(
-    cmd: &dyn Command,
-    client: &reqwest::Client,
-    at: Option<String>,
-    quiet_mode: bool,
-    fresh_mode: bool,
-    verbose: u8,
-    cache: Option<&dyn CachedStoneOps>,
-    output_format: garden_rake::context::OutputFormat,
-    field: Option<String>,
-) -> anyhow::Result<()> {
-    // Resolve endpoint if command requires it
-    let (endpoint, stone_name) = if cmd.requires_endpoint() {
-        let ep = resolve_endpoint(client, at, cache).await?;
-
-        // Show stone header if requested (suppress in JSON mode)
-        if cmd.show_stone_header() && !output_format.is_json() {
-            print_stone_header(client, &ep).await;
+impl CommandInvocation {
+    /// Remote command: auto-extracts `--at` from Clap matches.
+    pub fn remote(cmd: impl Command + 'static, matches: &clap::ArgMatches) -> Self {
+        Self {
+            command: Box::new(cmd),
+            at: matches.get_one::<String>("at").cloned(),
         }
+    }
 
-        // Try to get stone name from capabilities
-        let name = fetch_stone_name(client, &ep).await;
-        (Some(ep), name)
-    } else {
-        (None, None)
-    };
+    /// Remote command with explicit target stone.
+    pub fn remote_at(cmd: impl Command + 'static, at: Option<String>) -> Self {
+        Self {
+            command: Box::new(cmd),
+            at,
+        }
+    }
 
-    // Build context
-    let ctx = CommandContext::with_automation(
-        client.clone(),
-        endpoint,
-        stone_name,
-        quiet_mode,
-        fresh_mode,
-        verbose,
-        output_format,
-        field,
-    );
-
-    // Execute command
-    cmd.execute(&ctx).await
+    /// Local command: no endpoint needed.
+    pub fn local(cmd: impl Command + 'static) -> Self {
+        Self {
+            command: Box::new(cmd),
+            at: None,
+        }
+    }
 }
 
-/// Dispatch a local command (no endpoint needed)
-#[allow(dead_code)]
-pub async fn dispatch_local(
-    cmd: &dyn Command,
-    client: &reqwest::Client,
-    quiet_mode: bool,
-    fresh_mode: bool,
-    verbose: u8,
-) -> anyhow::Result<()> {
-    let ctx = CommandContext::without_endpoint(client.clone(), quiet_mode, fresh_mode, verbose);
+// ============================================================================
+// Runtime — shared infrastructure built once per invocation (Proposal B)
+// ============================================================================
 
-    cmd.execute(&ctx).await
+/// Shared execution infrastructure for all commands.
+///
+/// Built once in `main()`, replaces the 7-argument `dispatch()` calls
+/// that threaded `client`, `global.quiet`, `global.fresh`, `global.verbose`,
+/// `GLOBAL_CACHE` to every handler (107 occurrences of `global.quiet` alone).
+pub struct Runtime {
+    pub client: reqwest::Client,
+    pub global: GlobalFlags,
+    pub term: TerminalInfo,
 }
+
+impl Runtime {
+    pub fn new(client: reqwest::Client, global: GlobalFlags, term: TerminalInfo) -> Self {
+        Self {
+            client,
+            global,
+            term,
+        }
+    }
+
+    /// Execute a command invocation with full middleware:
+    /// 1. Resolve endpoint (if `cmd.requires_endpoint()`)
+    /// 2. Print stone header (if `cmd.show_stone_header()`)
+    /// 3. Build `CommandContext` with all global flags + automation options
+    /// 4. Call `cmd.execute(&ctx)`
+    pub async fn execute(&self, inv: CommandInvocation) -> anyhow::Result<()> {
+        let cmd = inv.command;
+
+        let output_format: OutputFormat = if self.global.field.is_some() {
+            OutputFormat::Json
+        } else {
+            self.global.output.parse().unwrap_or_default()
+        };
+
+        if cmd.requires_endpoint() {
+            let endpoint =
+                resolve_endpoint(&self.client, inv.at, Some(&*GLOBAL_CACHE)).await?;
+
+            if cmd.show_stone_header() && !output_format.is_json() {
+                print_stone_header(&self.client, &endpoint).await;
+            }
+
+            let stone_name = fetch_stone_name(&self.client, &endpoint).await;
+            let ctx = CommandContext::with_automation(
+                self.client.clone(),
+                Some(endpoint),
+                stone_name,
+                self.global.quiet,
+                self.global.fresh,
+                self.global.verbose,
+                output_format,
+                self.global.field.clone(),
+            );
+            cmd.execute(&ctx).await
+        } else {
+            let ctx = CommandContext::with_automation(
+                self.client.clone(),
+                None,
+                None,
+                self.global.quiet,
+                self.global.fresh,
+                self.global.verbose,
+                output_format,
+                self.global.field.clone(),
+            );
+            cmd.execute(&ctx).await
+        }
+    }
+}
+
+// ============================================================================
+// Endpoint resolution + helpers
+// ============================================================================
 
 /// Resolve endpoint with priority: --at > env var > cached tending > auto-discover
 ///

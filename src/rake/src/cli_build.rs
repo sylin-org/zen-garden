@@ -5,8 +5,8 @@
 //! from manifest data, making the manifest the single source of truth.
 
 use crate::arg_spec::{ArgKind, ArgSpec, SubDef};
-use crate::command_manifest::{CommandDef, CommandManifest};
-use std::collections::HashMap;
+use crate::command_manifest::{CommandDef, CommandManifest, OnStoneMapping};
+use std::collections::{HashMap, HashSet};
 
 /// Global flags extracted from top-level Clap parsing
 #[derive(Debug, Clone)]
@@ -201,90 +201,106 @@ fn build_sub(sub: &SubDef) -> clap::Command {
     cmd
 }
 
-/// Build a zen verb → canonical command name lookup table from the manifest
+// ============================================================================
+// Alias Index — unified lookup for all command names (Proposal D)
+// ============================================================================
+
+/// Unified name resolution index — single source for all alias lookups.
 ///
-/// Maps all zen names and aliases to their canonical command name.
-/// Used by the zen parser to resolve verbs without hardcoded match statements.
-pub fn build_zen_lookup(manifest: &CommandManifest) -> HashMap<&'static str, &'static str> {
-    let mut lookup = HashMap::new();
+/// Replaces the old `build_zen_lookup` + `build_normative_lookup` +
+/// `find_by_any_name` with a single O(1) index built once at startup.
+pub struct AliasIndex {
+    /// Maps any known name → canonical command name
+    to_canonical: HashMap<&'static str, &'static str>,
+    /// Set of zen verbs (for parser style detection)
+    zen_verbs: HashSet<&'static str>,
+}
 
-    for cmd_def in manifest.all_sorted() {
-        // Primary zen name
-        lookup.insert(cmd_def.zen_name, cmd_def.name);
+impl AliasIndex {
+    /// Build from the manifest — consolidates zen names, aliases, and normative names.
+    pub fn build(manifest: &CommandManifest) -> Self {
+        let mut to_canonical = HashMap::new();
+        let mut zen_verbs = HashSet::new();
 
-        // Additional zen aliases (e.g., "explore" → "offer", "touch" → "status")
-        for alias in cmd_def.zen_aliases {
-            lookup.insert(alias, cmd_def.name);
+        for cmd in manifest.all_sorted() {
+            // Primary name always maps to itself
+            to_canonical.insert(cmd.name, cmd.name);
+
+            // Zen name
+            to_canonical.insert(cmd.zen_name, cmd.name);
+            zen_verbs.insert(cmd.zen_name);
+
+            // Zen aliases
+            for alias in cmd.zen_aliases {
+                to_canonical.insert(alias, cmd.name);
+                zen_verbs.insert(alias);
+            }
+
+            // Normative name (single-word only — multi-word like "services status" aren't Clap subcommands)
+            if let Some(norm) = cmd.normative_name {
+                if !norm.contains(' ') {
+                    to_canonical.insert(norm, cmd.name);
+                }
+            }
         }
 
-        // Normative name (if single word and different from canonical)
-        if let Some(norm) = cmd_def.normative_name {
-            if !norm.contains(' ') && norm != cmd_def.name {
-                lookup.insert(norm, cmd_def.name);
-            }
+        Self {
+            to_canonical,
+            zen_verbs,
         }
     }
 
-    lookup
-}
-
-/// Build the normative verb lookup (verbs that are normative-style, not zen)
-pub fn build_normative_lookup(manifest: &CommandManifest) -> HashMap<&'static str, &'static str> {
-    let mut lookup = HashMap::new();
-
-    for cmd_def in manifest.all_sorted() {
-        // Normative name (if single word)
-        if let Some(norm) = cmd_def.normative_name {
-            if !norm.contains(' ') {
-                lookup.insert(norm, cmd_def.name);
-            }
-        }
+    /// Resolve any name (zen, alias, normative, canonical) to the canonical command name.
+    pub fn resolve(&self, name: &str) -> Option<&'static str> {
+        self.to_canonical.get(name).copied()
     }
 
-    // Add well-known normative verbs that aren't in the manifest as normative_name
-    // These are resource-first patterns like "services", "offerings", etc.
-    lookup.insert("services", "services");
-    lookup.insert("offerings", "offerings");
-    lookup.insert("stones", "stones");
-    lookup.insert("adoption", "adoption");
-    lookup.insert("templates", "templates");
-    lookup.insert("ceremonies", "ceremonies");
-    lookup.insert("console", "console");
-    lookup.insert("context", "context");
-    lookup.insert("events", "events");
-    lookup.insert("jobs", "jobs");
-    lookup.insert("help", "help");
-    lookup.insert("browse-commands", "commands");
+    /// Check if a word is a zen verb (for parser style detection).
+    pub fn is_zen_verb(&self, word: &str) -> bool {
+        self.zen_verbs.contains(word)
+    }
 
-    lookup
+    /// Get the full set of zen verbs.
+    pub fn zen_verbs(&self) -> &HashSet<&'static str> {
+        &self.zen_verbs
+    }
+
+    /// Get all known verbs (zen + normative + canonical) for parser detection.
+    pub fn all_known_verbs(&self) -> HashSet<&'static str> {
+        self.to_canonical.keys().copied().collect()
+    }
 }
 
-/// Normalize zen syntax to Clap-parseable args using manifest data
+/// Normalize zen syntax to Clap-parseable args using manifest data.
 ///
 /// Converts zen verb + positional keywords into normative args that Clap can parse.
+/// The `on <stone>` mapping is now driven by `CommandDef.on_stone_mapping` instead
+/// of a hardcoded match statement.
 pub fn normalize_zen_to_clap(
     parsed: &garden_common::cli::parser::ParsedCommand,
-    zen_lookup: &HashMap<&str, &str>,
+    alias_index: &AliasIndex,
+    manifest: &CommandManifest,
 ) -> anyhow::Result<Vec<String>> {
-    let canonical = zen_lookup
-        .get(parsed.verb.as_str())
+    let canonical = alias_index
+        .resolve(&parsed.verb)
         .ok_or_else(|| anyhow::anyhow!("Unknown zen verb: {}", parsed.verb))?;
+
+    // Look up the command def for on_stone_mapping
+    let cmd_def = manifest.get(canonical);
+    let on_stone = cmd_def
+        .map(|d| d.on_stone_mapping)
+        .unwrap_or(OnStoneMapping::ToAtFlag);
 
     let mut args = Vec::new();
     args.push(canonical.to_string());
 
-    // Special verb mappings that affect arg structure
+    // Verb-specific arg structure transformations.
+    // Most verbs just pass args through; a few need special handling.
     match parsed.verb.as_str() {
         // "explore" → "offer" with no args (list mode)
         "explore" => {}
-        // "garden" → "observe" with no args (all stones)
-        "garden" => {}
-        // "touch" → "status" (alias, pass args through)
-        "touch" => {
-            args.extend(parsed.args.clone());
-        }
         // "capabilities" zen syntax: `capabilities ollama mirror from stone-02`
-        // Clap expects: `capabilities mirror ollama from stone-02`
+        // Clap expects: `capabilities mirror ollama`
         "capabilities" if parsed.args.len() >= 2 && parsed.args[1] == "mirror" => {
             let offering = parsed.args[0].clone();
             args.push("mirror".to_string());
@@ -297,10 +313,18 @@ pub fn normalize_zen_to_clap(
         }
     }
 
-    // Add --at if on/at keyword was used
+    // Map `on <stone>` according to the manifest's on_stone_mapping (Proposal C)
     if let Some(stone) = &parsed.keywords.on_stone {
-        args.push("--at".to_string());
-        args.push(stone.clone());
+        match on_stone {
+            OnStoneMapping::ToAtFlag => {
+                args.push("--at".to_string());
+                args.push(stone.clone());
+            }
+            OnStoneMapping::ToPositional => {
+                args.push(stone.clone());
+            }
+            OnStoneMapping::Ignore => {}
+        }
     }
 
     // Handle "somewhere" → --placement-mode
@@ -323,6 +347,16 @@ pub fn normalize_zen_to_clap(
     // Handle "wishfully" → --wishful
     if parsed.keywords.wishfully {
         args.push("--wishful".to_string());
+    }
+
+    // Handle "quietly" → --quiet
+    if parsed.keywords.quietly {
+        args.push("--quiet".to_string());
+    }
+
+    // Handle "fresh" → --fresh
+    if parsed.keywords.fresh {
+        args.push("--fresh".to_string());
     }
 
     Ok(args)

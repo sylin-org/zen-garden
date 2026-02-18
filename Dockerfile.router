@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 # Copy workspace manifests first for layer caching
 COPY Cargo.toml Cargo.lock* ./
 COPY src/common/Cargo.toml src/common/Cargo.toml
-COPY src/router/Cargo.toml src/router/Cargo.toml
+COPY src/orchestrators/ollama/Cargo.toml src/orchestrators/ollama/Cargo.toml
 
 # Stub other members so workspace resolves
 RUN mkdir -p src/lantern/src && echo "" > src/lantern/src/lib.rs && \
@@ -33,7 +33,7 @@ RUN mkdir -p src/lantern/src && echo "" > src/lantern/src/lib.rs && \
 
 # Copy real source for router + common
 COPY src/common/ src/common/
-COPY src/router/ src/router/
+COPY src/orchestrators/ollama/ src/orchestrators/ollama/
 
 # Build only the router binary
 RUN cargo build --profile fast-release --bin garden-router

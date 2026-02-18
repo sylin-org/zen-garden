@@ -15,7 +15,7 @@ members = [
   "src/companion-sdk",
   "src/build-utils",
   "src/probe",
-  "src/router",
+  "src/orchestrators/ollama",
 ]
 resolver = "2"
 

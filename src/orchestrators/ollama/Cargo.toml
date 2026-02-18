@@ -11,7 +11,7 @@ name = "garden-router"
 path = "src/main.rs"
 
 [dependencies]
-garden-common = { path = "../common" }
+garden-common = { path = "../../common" }
 
 # Core
 anyhow.workspace = true

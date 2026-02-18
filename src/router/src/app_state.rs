@@ -21,7 +21,7 @@ pub struct DashboardEvent {
     pub data: String,
 }
 
-/// Shared state for the AI Router.
+/// Shared state for the Ollama Orchestrator.
 #[derive(Clone)]
 pub struct AppState {
     // ── Identity ──

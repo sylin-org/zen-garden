@@ -1,4 +1,4 @@
-﻿//! Garden Router — AI Capability Router (Ollama)
+﻿//! Ollama Orchestrator (zen-garden.ollama.orchestrator)
 //!
 //! Bootstrap only: CLI parsing, logging, state init, spawn tasks, serve HTTP.
 //! All business logic lives in `domain/`, I/O in `infra/`, HTTP in `api/`.
@@ -17,7 +17,7 @@ use garden_router::AppState;
 
 #[derive(Parser)]
 #[command(name = "garden-router")]
-#[command(about = "AI Capability Router — VRAM-aware Ollama orchestrator")]
+#[command(about = "Ollama Orchestrator — VRAM-aware multi-instance orchestration")]
 #[command(version)]
 struct Cli {
     /// Stone endpoint for Tools API access.
@@ -25,7 +25,7 @@ struct Cli {
     stone_endpoint: String,
 
     /// Offering name (for identification in the garden).
-    #[arg(long, env = "GARDEN_OFFERING_NAME", default_value = "ai-router")]
+    #[arg(long, env = "GARDEN_OFFERING_NAME", default_value = "zen-garden.ollama.orchestrator")]
     offering_name: String,
 
     /// Proxy port (Ollama-compatible endpoint).
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
         proxy_port = cli.proxy_port,
         dashboard_port = cli.dashboard_port,
         version = env!("CARGO_PKG_VERSION"),
-        "AI Capability Router starting"
+        "Ollama Orchestrator starting"
     );
 
     // ── Persistence ──────────────────────────────────────────────
@@ -191,6 +191,6 @@ async fn main() -> Result<()> {
     .await
     .ok();
 
-    tracing::info!("AI Capability Router stopped");
+    tracing::info!("Ollama Orchestrator stopped");
     Ok(())
 }

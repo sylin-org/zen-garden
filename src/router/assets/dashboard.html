@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Router — Dashboard</title>
+<title>Ollama Orchestrator</title>
 <style>
 /* ── Design Tokens (Zen Garden / Lantern) ─────────────────── */
 :root {
@@ -332,8 +332,8 @@ body {
   <!-- ── Hero ──────────────────────────────────────────────── -->
   <header class="hero">
     <div class="identity">
-      <h1 id="routerName">AI Router</h1>
-      <div class="role">AI Capability Router</div>
+      <h1 id="routerName">Ollama Orchestrator</h1>
+      <div class="role">zen-garden.ollama.orchestrator</div>
       <div class="endpoint" id="routerEndpoint">:11434 proxy — :7190 dashboard</div>
     </div>
     <div class="glance">
@@ -440,7 +440,7 @@ body {
   <!-- ── Footer ────────────────────────────────────────────── -->
   <footer style="text-align:center; padding:2rem 0;">
     <span class="mono muted" style="font-size:0.65rem;">
-      AI Router · <a href="/health" style="color:var(--accent-sage);">/health</a>
+      Ollama Orchestrator · <a href="/health" style="color:var(--accent-sage);">/health</a>
       · <span id="uptimeLabel">uptime: —</span>
     </span>
   </footer>
@@ -498,7 +498,7 @@ function render() {
   if (!state) return;
 
   // Hero
-  document.getElementById('routerName').textContent = state.offering_name || 'AI Router';
+  document.getElementById('routerName').textContent = state.offering_name || 'Ollama Orchestrator';
   document.getElementById('stoneCount').textContent = state.stones ? state.stones.length : 0;
   document.getElementById('modelCount').textContent = state.models ? state.models.length : 0;
   document.getElementById('uptimeLabel').textContent = 'uptime: ' + formatDuration(state.uptime_secs);

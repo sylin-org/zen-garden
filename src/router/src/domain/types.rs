@@ -1,4 +1,4 @@
-﻿//! Core domain types for the AI Capability Router.
+﻿//! Core domain types for the Ollama Orchestrator.
 //!
 //! Pure data structures — no I/O, no async. Every type here can be
 //! tested with simple unit tests.

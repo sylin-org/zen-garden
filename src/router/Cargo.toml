@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "AI Capability Router — VRAM-aware Ollama orchestrator for Zen Garden"
+description = "Ollama Orchestrator — VRAM-aware Ollama orchestration for Zen Garden"
 
 [[bin]]
 name = "garden-router"

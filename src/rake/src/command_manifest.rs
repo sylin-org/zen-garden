@@ -303,7 +303,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 subcommands: vec![SubDef {
                     name: "logs",
                     description: "Stream offering container logs",
-                    args: vec![],
+                    args: vec![
+                        ArgSpec::flag("timestamps", "Show timestamps in log output"),
+                    ],
                     subcommands: vec![],
                 }],
             },
@@ -318,7 +320,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 subcommands: vec![SubDef {
                     name: "logs",
                     description: "Stream stone logs",
-                    args: vec![],
+                    args: vec![
+                        ArgSpec::flag("timestamps", "Show timestamps in log output"),
+                    ],
                     subcommands: vec![],
                 }],
             },
@@ -399,6 +403,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             ArgSpec::multi_option("prefer", "Bias recommendations (e.g., ssd, nvme)")
                 .zen("--prefer <hardware>")
                 .delimiter(','),
+            ArgSpec::flag("anywhere-on-fail", "Fall back to any available stone if target fails")
+                .zen("--anywhere-on-fail"),
+            ArgSpec::option("placement-mode", "Placement strategy (interactive, auto)")
+                .zen("--placement-mode <mode>"),
         ],
         subcommands: vec![SubDef {
             name: "info",
@@ -525,6 +533,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 .zen("<service>")
                 .required(),
             at_arg(),
+            force_flag(),
         ],
         subcommands: vec![],
         examples: vec![
@@ -706,6 +715,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                     ArgSpec::positional("name", "Capability name to remove")
                         .zen("<name>")
                         .required(),
+                    ArgSpec::option("type", "Capability type")
+                        .zen("--type <type>")
+                        .short('t'),
                 ],
                 subcommands: vec![],
             },
@@ -716,6 +728,11 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                     ArgSpec::positional("offering", "Offering name")
                         .zen("<offering>")
                         .required(),
+                    ArgSpec::option("type", "Capability type")
+                        .zen("--type <type>")
+                        .short('t'),
+                    ArgSpec::flag("dry-run", "Validate only without refreshing")
+                        .zen("--dry-run"),
                 ],
                 subcommands: vec![],
             },
@@ -726,12 +743,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                     ArgSpec::positional("offering", "Offering name")
                         .zen("<offering>")
                         .required(),
-                    ArgSpec::option("from", "Source stone")
-                        .zen("from <stone>")
-                        .normative("--from <stone>"),
-                    ArgSpec::option("to", "Destination stone")
-                        .zen("to <stone>")
-                        .normative("--to <stone>"),
+                    ArgSpec::trailing("args", "Mirror arguments (from <stone> to <stone>)")
+                        .zen("from <stone> to <stone>"),
                 ],
                 subcommands: vec![],
             },
@@ -1317,7 +1330,11 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             If running from removable media (USB), automatically copies to C:\\ProgramData\\ZenGarden.\n\n\
             To uninstall: sc delete ZenGardenMoss",
         remote_capable: true,
-        args: vec![at_arg()],
+        args: vec![
+            ArgSpec::positional("at_keyword", "Zen keyword 'at' (optional)"),
+            ArgSpec::positional("stone", "Stone name for remote installation"),
+            at_arg(),
+        ],
         subcommands: vec![],
         examples: vec![
             CommandExample {
@@ -1371,8 +1388,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 name: "sing",
                 description: "Enable verbose output",
                 args: vec![
-                    ArgSpec::positional("duration", "'forever' or omit for 30min timeout")
-                        .zen("[duration]"),
+                    ArgSpec::flag("forever", "Enable verbose output permanently (no timeout)")
+                        .zen("forever"),
                 ],
                 subcommands: vec![],
             },
@@ -1449,6 +1466,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 args: vec![
                     ArgSpec::option("passphrase", "Encrypt pond certificate")
                         .zen("--passphrase <pass>"),
+                    ArgSpec::option("profile", "Pond security profile")
+                        .zen("--profile <name>"),
                 ],
                 subcommands: vec![],
             },
@@ -1461,7 +1480,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "invite",
                 description: "Generate invitation code",
-                args: vec![],
+                args: vec![
+                    ArgSpec::option("passphrase", "Passphrase to protect the invitation")
+                        .zen("--passphrase <pass>"),
+                ],
                 subcommands: vec![],
             },
             SubDef {
@@ -1500,6 +1522,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 args: vec![
                     ArgSpec::option("passphrase", "Certificate passphrase")
                         .zen("--passphrase <pass>"),
+                    ArgSpec::option("totp", "TOTP code for two-factor unlock")
+                        .zen("--totp <code>"),
                 ],
                 subcommands: vec![],
             },
@@ -1530,6 +1554,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                     ArgSpec::positional("stone", "Stone to promote")
                         .zen("<stone>")
                         .required(),
+                    ArgSpec::option("passphrase", "Passphrase for keystone promotion")
+                        .zen("--passphrase <pass>"),
                 ],
                 subcommands: vec![],
             },
@@ -1738,7 +1764,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             - template show: Display template details\n\
             - template create: Create custom template",
         remote_capable: true,
-        args: vec![],
+        args: vec![at_arg_global()],
         subcommands: vec![
             SubDef {
                 name: "list",
@@ -1937,6 +1963,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Optional filtering by event category (service, stone, offering, ceremony, nourishment, etc.)",
         remote_capable: true,
         args: vec![
+            at_arg(),
             ArgSpec::option("categories", "Filter by event categories (comma-separated: service,stone,offering,ceremony,nourishment,firmware)")
                 .zen("--categories <types>"),
         ],
@@ -1978,6 +2005,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Rake passes commands through to Moss, which forwards them to the Companion.",
         remote_capable: true,
         args: vec![
+            at_arg(),
             ArgSpec::trailing("tell", "Send command to Companion with raw arguments")
                 .zen("tell <Companion> [args...]"),
         ],
@@ -2032,6 +2060,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 .zen("<device>")
                 .required(),
             ArgSpec::option("name", "Custom seed bank name").zen("--name <name>"),
+            ArgSpec::flag("random", "Generate random seed bank name").zen("--random"),
+            ArgSpec::option("fs", "Filesystem type (ext4, btrfs)").zen("--fs <type>"),
+            ArgSpec::flag("encrypted", "Enable LUKS encryption").zen("--encrypted"),
+            at_arg(),
         ],
         subcommands: vec![],
         examples: vec![
@@ -2065,6 +2097,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             ArgSpec::positional("name", "Seed bank name to release")
                 .zen("<name>")
                 .required(),
+            at_arg(),
         ],
         subcommands: vec![],
         examples: vec![CommandExample {
@@ -2132,6 +2165,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             ArgSpec::option("prefix", "Prefix for list operations").zen("--prefix <prefix>"),
             ArgSpec::option("app", "Application namespace (default: zen-garden)")
                 .zen("--app <name>"),
+            ArgSpec::option("delimiter", "Delimiter for list output").zen("--delimiter <char>"),
+            at_arg(),
         ],
         subcommands: vec![],
         examples: vec![
@@ -2193,7 +2228,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             ArgSpec::positional("offering", "Offering name to restore")
                 .zen("<offering>")
                 .required(),
-            ArgSpec::option("source", "Source: local slot or seed bank")
+            ArgSpec::trailing("source", "Source: e.g. 'from slot A' or 'from seed-bank <name>'")
                 .zen("from slot A|B | from seed-bank <name>"),
             ArgSpec::flag("dry-run", "Preview without executing").zen("--dry-run"),
             ArgSpec::option("harvest-id", "Specific harvest ID (for seed bank restore)")
@@ -2334,6 +2369,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         args: vec![
             ArgSpec::positional("endpoint", "Specific endpoint path to show details for (e.g., /api/v1/stone/services)")
                 .zen("[endpoint]"),
+            at_arg(),
             ArgSpec::option("category", "Filter by API category (health, offerings, services, stone, garden, events, admin)")
                 .zen("--category <name>"),
             ArgSpec::flag("examples", "Show curl examples for each endpoint")

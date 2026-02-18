@@ -104,6 +104,21 @@ pub mod cmd {
     pub const NURTURING: &str = "nurturing";
 }
 
+/// How zen `on <stone>` keyword maps in normative form.
+///
+/// Used by [`normalize_zen_to_clap`] so the mapping is manifest-driven
+/// instead of hardcoded in a match statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OnStoneMapping {
+    /// `on <stone>` maps to `--at <stone>` flag (most remote commands)
+    #[default]
+    ToAtFlag,
+    /// `on <stone>` maps to a positional arg (e.g., observe uses `[stone]`)
+    ToPositional,
+    /// `on <stone>` is not applicable (local commands)
+    Ignore,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandCategory {
     /// Discovery commands: explore, observe, watch, list, status
@@ -176,6 +191,8 @@ pub struct CommandDef {
     pub hidden: bool,
     /// Whether subcommand presence negates parent required args
     pub subcommand_negates_reqs: bool,
+    /// How zen `on <stone>` keyword maps for this command
+    pub on_stone_mapping: OnStoneMapping,
 }
 
 pub struct CommandManifest {
@@ -219,6 +236,21 @@ impl CommandManifest {
         let mut cmds: Vec<&CommandDef> = self.commands.values().collect();
         cmds.sort_by_key(|c| c.name);
         cmds
+    }
+
+    /// Find a command by any name: primary name, zen_name, zen_aliases, or normative_name.
+    /// Used by help query syntax (?command / command?) so aliases resolve correctly.
+    pub fn find_by_any_name(&self, name: &str) -> Option<&CommandDef> {
+        // Direct primary key lookup first (fast path)
+        if let Some(cmd) = self.commands.get(name) {
+            return Some(cmd);
+        }
+        // Search zen_name, zen_aliases, and normative_name
+        self.commands.values().find(|cmd| {
+            cmd.zen_name == name
+                || cmd.zen_aliases.contains(&name)
+                || cmd.normative_name == Some(name)
+        })
     }
 }
 
@@ -271,6 +303,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "list"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToPositional,
     });
 
 
@@ -352,6 +385,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "make"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -381,6 +415,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "status"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === LIFECYCLE COMMANDS ===
@@ -444,6 +479,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["release", "list"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -479,6 +515,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["wake", "release"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -514,6 +551,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["rest", "offer"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -551,6 +589,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["uproot", "adopt", "find"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -592,6 +631,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["remove", "rest"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -632,6 +672,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["offer", "reconcile"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::Ignore,
     });
 
     manifest.add(CommandDef {
@@ -667,6 +708,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["nourish", "offer", "rest"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -778,6 +820,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["offer", "status"],
         hidden: false,
         subcommand_negates_reqs: true,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === ADOPTION COMMANDS ===
@@ -816,6 +859,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["release", "find", "adopted"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -851,6 +895,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["adopt", "adopted"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -886,6 +931,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["adopt", "adopted"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -937,6 +983,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "list", "offer", "config"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -991,6 +1038,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["find", "list", "status"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1021,6 +1069,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["adopt", "release", "borrowed"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1052,6 +1101,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["borrow", "return", "adopted"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1103,6 +1153,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["return", "borrowed"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1139,6 +1190,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["borrow", "borrowed"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1173,6 +1225,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["list", "observe"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === MANAGEMENT COMMANDS ===
@@ -1227,6 +1280,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "watch"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::Ignore,
     });
 
     manifest.add(CommandDef {
@@ -1267,6 +1321,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["nourish", "refresh"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1313,6 +1368,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["reconcile"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === SYSTEM COMMANDS ===
@@ -1361,6 +1417,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["lift", "make"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1442,6 +1499,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "take-root"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === POND COMMANDS ===
@@ -1595,6 +1653,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["place", "invite", "lift"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1645,6 +1704,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["invite", "lift"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1675,6 +1735,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["place", "lift"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1717,6 +1778,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["place", "invite"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === SCAFFOLDED COMMANDS ===
@@ -1749,6 +1811,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["offer", "tend"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::Ignore,
     });
 
     manifest.add(CommandDef {
@@ -1791,6 +1854,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["offer"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === STONE ADMIN COMMANDS ===
@@ -1830,6 +1894,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["slumber", "stir", "observe"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1866,6 +1931,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["rouse", "stir"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1901,6 +1967,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["slumber", "rouse"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -1946,6 +2013,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "status"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::Ignore,
     });
 
     manifest.add(CommandDef {
@@ -1988,6 +2056,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "observe"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === Companion COMMANDS ===
@@ -2040,6 +2109,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["watch", "presence"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === STORAGE COMMANDS ===
@@ -2081,6 +2151,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["seed-banks", "release-seed-bank", "store"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -2108,6 +2179,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["seed-banks", "prepare"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -2137,6 +2209,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["prepare", "release-seed-bank", "store"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -2209,6 +2282,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["seed-banks", "prepare"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === NURTURING (BACKUP/RESTORE) COMMANDS ===
@@ -2261,6 +2335,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["nurturing", "seed-banks"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -2349,6 +2424,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["restore", "seed-banks", "nourish"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === DEVELOPER TOOLS ===
@@ -2406,6 +2482,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["hey", "observe"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     // === LOCAL UTILITY COMMANDS ===
@@ -2443,6 +2520,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["observe", "status", "tend"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
 
     manifest.add(CommandDef {
@@ -2497,6 +2575,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         see_also: vec!["api", "launch"],
         hidden: false,
         subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::Ignore,
     });
 
     manifest

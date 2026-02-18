@@ -31,8 +31,8 @@ pub struct MetricsEngine {
     pub enabled: bool,
     /// Per-model request timestamps for placement demand tracking.
     pub model_demand: VecDeque<(Instant, String)>,
-    /// Per-stone throughput ring: (wall-clock, stone_name, tokens_out, duration_ns).
-    pub stone_throughput: VecDeque<(Instant, String, u64, u64)>,
+    /// Per-stone throughput ring: (wall-clock, stone_name, tokens_out, eval_duration_ns, total_duration_ns).
+    pub stone_throughput: VecDeque<(Instant, String, u64, u64, u64)>,
 }
 
 impl MetricsEngine {
@@ -82,12 +82,12 @@ impl MetricsEngine {
         stone.total_duration_ns += duration_ns;
         stone.eval_duration_ns += eval_duration_ns;
 
-        // Per-stone throughput ring (uses eval_duration for true generation tok/s)
+        // Per-stone throughput ring (both durations for generation + roundtrip tok/s)
         if self.stone_throughput.len() >= THROUGHPUT_RING_CAPACITY {
             self.stone_throughput.pop_front();
         }
         self.stone_throughput
-            .push_back((Instant::now(), stone_name.to_string(), tokens_out, eval_duration_ns));
+            .push_back((Instant::now(), stone_name.to_string(), tokens_out, eval_duration_ns, duration_ns));
 
         // Ring buffer
         if self.response_times.len() >= RING_CAPACITY {
@@ -175,17 +175,17 @@ impl MetricsEngine {
 
     // ── Per-stone throughput ────────────────────────────────────────
 
-    /// Compute tokens/sec per stone over a recent time window.
+    /// Compute generation tok/s per stone (eval_duration only) over a recent window.
     ///
-    /// Returns stone_name → tok/s (output tokens per second of active inference).
+    /// Returns stone_name → tok/s.
     pub fn tokens_per_sec_by_stone(&self, window_secs: u64) -> HashMap<String, f64> {
         let cutoff = Instant::now() - std::time::Duration::from_secs(window_secs);
-        let mut per_stone: HashMap<&str, (u64, u64)> = HashMap::new(); // (tokens_out, duration_ns)
-        for (t, stone, tok, dur) in &self.stone_throughput {
+        let mut per_stone: HashMap<&str, (u64, u64)> = HashMap::new();
+        for (t, stone, tok, eval_dur, _total_dur) in &self.stone_throughput {
             if *t > cutoff {
                 let e = per_stone.entry(stone.as_str()).or_default();
                 e.0 += tok;
-                e.1 += dur;
+                e.1 += eval_dur;
             }
         }
         per_stone
@@ -200,11 +200,47 @@ impl MetricsEngine {
             .collect()
     }
 
-    /// All-time tokens/sec for a single stone (from cumulative StoneMetrics).
+    /// Compute roundtrip tok/s per stone (total_duration) over a recent window.
+    ///
+    /// Includes model load, prompt eval, generation, and network overhead.
+    pub fn roundtrip_tokens_per_sec_by_stone(&self, window_secs: u64) -> HashMap<String, f64> {
+        let cutoff = Instant::now() - std::time::Duration::from_secs(window_secs);
+        let mut per_stone: HashMap<&str, (u64, u64)> = HashMap::new();
+        for (t, stone, tok, _eval_dur, total_dur) in &self.stone_throughput {
+            if *t > cutoff {
+                let e = per_stone.entry(stone.as_str()).or_default();
+                e.0 += tok;
+                e.1 += total_dur;
+            }
+        }
+        per_stone
+            .into_iter()
+            .filter_map(|(s, (tok, dur))| {
+                if dur > 0 {
+                    Some((s.to_string(), tok as f64 / (dur as f64 / 1_000_000_000.0)))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// All-time generation tok/s for a single stone (eval_duration only).
     pub fn cumulative_tokens_per_sec(&self, stone_name: &str) -> Option<f64> {
         self.per_stone.get(stone_name).and_then(|sm| {
             if sm.eval_duration_ns > 0 {
                 Some(sm.tokens_out as f64 / (sm.eval_duration_ns as f64 / 1_000_000_000.0))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// All-time roundtrip tok/s for a single stone (total_duration).
+    pub fn cumulative_roundtrip_tokens_per_sec(&self, stone_name: &str) -> Option<f64> {
+        self.per_stone.get(stone_name).and_then(|sm| {
+            if sm.total_duration_ns > 0 {
+                Some(sm.tokens_out as f64 / (sm.total_duration_ns as f64 / 1_000_000_000.0))
             } else {
                 None
             }

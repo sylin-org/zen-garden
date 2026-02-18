@@ -658,7 +658,7 @@ function renderStones(stones) {
       <div class="stone-meta">
         <div>${esc(s.gpu_name || 'GPU')} · ${s.vram_budget_mb || '?'} MB VRAM</div>
         <div>${esc(s.endpoint)}</div>
-        <div>Queue: ${s.queue_depth || 0}${s.lease ? ' · Lease: ' + esc(s.lease.model) + ' (' + s.lease.remaining_secs + 's)' : ''}${s.tokens_per_sec != null ? ' · <span class="gold">' + s.tokens_per_sec.toFixed(1) + ' tok/s</span>' : ''}${s.tokens_per_sec_cumulative != null ? ' <span class="muted">(avg ' + s.tokens_per_sec_cumulative.toFixed(1) + ')</span>' : ''}</div>
+        <div>Queue: ${s.queue_depth || 0}${s.lease ? ' · Lease: ' + esc(s.lease.model) + ' (' + s.lease.remaining_secs + 's)' : ''}${s.tokens_per_sec != null ? ' · gen <span class="gold">' + s.tokens_per_sec.toFixed(1) + ' tok/s</span>' : ''}${s.tokens_per_sec_cumulative != null ? ' <span class="muted">(avg ' + s.tokens_per_sec_cumulative.toFixed(1) + ')</span>' : ''}${s.tokens_per_sec_roundtrip != null ? ' · e2e <span class="gold">' + s.tokens_per_sec_roundtrip.toFixed(1) + ' tok/s</span>' : ''}${s.tokens_per_sec_cumulative_roundtrip != null ? ' <span class="muted">(avg ' + s.tokens_per_sec_cumulative_roundtrip.toFixed(1) + ')</span>' : ''}</div>
       </div>
       <div class="gauge"><div class="gauge-fill${queuePct > 75 ? ' warn' : ''}" style="width:${queuePct}%"></div></div>
       <div class="model-tags">`;

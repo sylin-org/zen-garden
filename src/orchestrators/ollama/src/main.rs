@@ -74,6 +74,12 @@ async fn main() -> Result<()> {
     tokio::fs::create_dir_all(&cli.data_dir).await.ok();
     let config = persistence::load_config(&cli.data_dir).await;
 
+    // ── Channels (Shared Snapshot Space) ────────────────────────
+    let (snapshot_tx, snapshot_rx) =
+        tokio::sync::watch::channel(serde_json::json!({}));
+    let (metrics_tx, metrics_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+
     // ── Shared State ─────────────────────────────────────────────
     let shutdown = CancellationToken::new();
     let state = AppState::new(
@@ -83,6 +89,8 @@ async fn main() -> Result<()> {
         cli.data_dir.clone(),
         config,
         shutdown.clone(),
+        snapshot_rx,
+        metrics_tx,
     );
     // Load any cached tending state from a previous run
     state.load_tending().await;
@@ -114,6 +122,24 @@ async fn main() -> Result<()> {
     ));
 
     let model_sync_handle = tokio::spawn(tasks::model_sync::run(
+        state.clone(),
+        client.clone(),
+        shutdown.clone(),
+    ));
+
+    let snapshot_handle = tokio::spawn(tasks::snapshot_publisher::run(
+        state.clone(),
+        snapshot_tx,
+        shutdown.clone(),
+    ));
+
+    let metrics_proc_handle = tokio::spawn(tasks::metrics_processor::run(
+        state.clone(),
+        metrics_rx,
+        shutdown.clone(),
+    ));
+
+    let placement_handle = tokio::spawn(tasks::placement::run(
         state.clone(),
         client.clone(),
         shutdown.clone(),
@@ -205,6 +231,9 @@ async fn main() -> Result<()> {
         let _ = health_handle.await;
         let _ = metrics_handle.await;
         let _ = model_sync_handle.await;
+        let _ = snapshot_handle.await;
+        let _ = metrics_proc_handle.await;
+        let _ = placement_handle.await;
     })
     .await
     .ok();

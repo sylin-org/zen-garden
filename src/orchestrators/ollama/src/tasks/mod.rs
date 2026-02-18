@@ -1,5 +1,8 @@
 ﻿pub mod discovery;
 pub mod health_check;
 pub mod metrics_flush;
+pub mod metrics_processor;
 pub mod model_sync;
+pub mod placement;
 pub mod reconciliation;
+pub mod snapshot_publisher;

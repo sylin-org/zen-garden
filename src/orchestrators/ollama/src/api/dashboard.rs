@@ -19,108 +19,11 @@ pub async fn get_dashboard() -> Html<&'static str> {
 }
 
 /// `GET /api/status` — full router status JSON (polled by dashboard).
+///
+/// Reads from the pre-built snapshot (zero locks on the request path).
+/// The snapshot is published every 2s by the snapshot_publisher task.
 pub async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
-    let instances = state.instances.read().await;
-    let tiers = state.tiers.read().await;
-    let models = state.models.read().await;
-    let leases = state.leases.read().await;
-    let metrics = state.metrics.read().await;
-    let config = state.config.read().await;
-
-    let stones: Vec<serde_json::Value> = instances
-        .values()
-        .map(|i| {
-            let lease_info = leases.get_lease(&i.endpoint);
-            json!({
-                "stone_name": i.stone_name,
-                "endpoint": i.endpoint,
-                "gpu_name": i.gpu_name,
-                "vram_total_mb": i.vram_total_bytes / 1_048_576,
-                "vram_budget_mb": i.vram_budget_bytes / 1_048_576,
-                "health": format!("{:?}", i.health),
-                "healthy": i.health.is_routable(),
-                "queue_depth": i.queue_depth,
-                "models_available": i.models_available,
-                "models_loaded": i.models_loaded,
-                "lease": lease_info.map(|l| json!({
-                    "model": l.model_name,
-                    "remaining_secs": l.duration.as_secs().saturating_sub(l.granted_at.elapsed().as_secs()),
-                })),
-                "ollama_version": i.ollama_version,
-            })
-        })
-        .collect();
-
-    let tier_list: Vec<serde_json::Value> = tiers
-        .iter()
-        .map(|t| {
-            json!({
-                "label": t.label,
-                "vram_gb": t.vram_bytes / 1_073_741_824,
-                "instances": t.instance_endpoints,
-            })
-        })
-        .collect();
-
-    let model_list: Vec<serde_json::Value> = models
-        .values()
-        .map(|m| {
-            // Find which instances have this model
-            let on_stones: Vec<&str> = instances
-                .values()
-                .filter(|i| i.models_available.iter().any(|name| name == &m.name))
-                .map(|i| i.stone_name.as_str())
-                .collect();
-            let loaded_on: Vec<&str> = instances
-                .values()
-                .filter(|i| i.models_loaded.iter().any(|l| l.name == m.name))
-                .map(|i| i.stone_name.as_str())
-                .collect();
-
-            json!({
-                "name": m.name,
-                "parameter_size": m.parameter_size,
-                "quantization_level": m.quantization_level,
-                "family": m.family,
-                "capabilities": m.capabilities,
-                "vram_estimate_mb": m.vram_estimate_bytes / 1_048_576,
-                "size_disk_mb": m.size_disk / 1_048_576,
-                "on_stones": on_stones,
-                "loaded_on": loaded_on,
-            })
-        })
-        .collect();
-
-    let window = 300; // 5 min
-    let avg_response_ms = metrics
-        .avg_response_ns(window)
-        .map(|ns| ns / 1_000_000)
-        .unwrap_or(0);
-
-    let top_models = metrics.top_models(5);
-
-    Json(json!({
-        "offering_name": state.offering_name,
-        "uptime_secs": state.start_time.elapsed().as_secs(),
-        "stones": stones,
-        "tiers": tier_list,
-        "models": model_list,
-        "metrics": {
-            "requests_total": metrics.requests_total,
-            "tokens_in": metrics.tokens_in_total,
-            "tokens_out": metrics.tokens_out_total,
-            "errors": metrics.errors_total,
-            "requests_5min": metrics.requests_in_window(window),
-            "avg_response_ms": avg_response_ms,
-            "top_models": top_models,
-            "enabled": metrics.enabled,
-        },
-        "config": {
-            "auto_pull_mode": format!("{}", config.features.auto_pull_mode),
-            "delete_on_idle": config.features.delete_on_idle,
-            "metrics_enabled": config.features.metrics_enabled,
-        },
-    }))
+    Json(state.snapshot_rx.borrow().clone())
 }
 
 /// `GET /api/events` — SSE stream for real-time dashboard updates.

@@ -3,12 +3,15 @@
 //! All mutation happens through `record_*` methods. The flush task
 //! periodically snapshots the state to JSON on disk.
 
-use super::types::{MetricsSnapshot, StoneMetrics};
+use super::types::{MetricEvent, MetricsSnapshot, StoneMetrics};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 /// Maximum number of response-time samples in the ring buffer.
 const RING_CAPACITY: usize = 1000;
+
+/// Maximum number of demand samples for placement calculations.
+const DEMAND_RING_CAPACITY: usize = 10_000;
 
 /// Live metrics state (owned by AppState behind a RwLock).
 #[derive(Debug)]
@@ -23,6 +26,8 @@ pub struct MetricsEngine {
     pub response_times: VecDeque<(Instant, u64)>,
     pub started_at: Instant,
     pub enabled: bool,
+    /// Per-model request timestamps for placement demand tracking.
+    pub model_demand: VecDeque<(Instant, String)>,
 }
 
 impl MetricsEngine {
@@ -37,6 +42,7 @@ impl MetricsEngine {
             response_times: VecDeque::with_capacity(RING_CAPACITY),
             started_at: Instant::now(),
             enabled: true,
+            model_demand: VecDeque::with_capacity(DEMAND_RING_CAPACITY),
         }
     }
 
@@ -128,6 +134,7 @@ impl MetricsEngine {
         self.per_stone.clear();
         self.per_model.clear();
         self.response_times.clear();
+        self.model_demand.clear();
         self.started_at = Instant::now();
     }
 
@@ -147,6 +154,57 @@ impl MetricsEngine {
                     .to_rfc3339(),
             ),
             snapshot_at: Some(chrono::Utc::now().to_rfc3339()),
+        }
+    }
+
+    // ── Demand Tracking (for placement engine) ────────────────────
+
+    /// Record a model demand data point.
+    pub fn record_demand(&mut self, model: &str) {
+        if self.model_demand.len() >= DEMAND_RING_CAPACITY {
+            self.model_demand.pop_front();
+        }
+        self.model_demand
+            .push_back((Instant::now(), model.to_string()));
+    }
+
+    /// Get per-model demand shares over a time window.
+    /// Returns model_name → share (0.0..1.0) for models with activity.
+    pub fn demand_shares(&self, window_secs: u64) -> HashMap<String, f64> {
+        let cutoff = Instant::now() - std::time::Duration::from_secs(window_secs);
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        let mut total = 0usize;
+        for (t, m) in &self.model_demand {
+            if *t > cutoff {
+                *counts.entry(m.as_str()).or_default() += 1;
+                total += 1;
+            }
+        }
+        if total == 0 {
+            return HashMap::new();
+        }
+        counts
+            .into_iter()
+            .map(|(m, c)| (m.to_string(), c as f64 / total as f64))
+            .collect()
+    }
+
+    /// Process a metric event from the proxy channel.
+    pub fn process_event(&mut self, event: MetricEvent) {
+        match event {
+            MetricEvent::Request {
+                stone,
+                model,
+                tokens_in,
+                tokens_out,
+                duration_ns,
+            } => {
+                self.record_demand(&model);
+                self.record_request(&stone, &model, tokens_in, tokens_out, duration_ns);
+            }
+            MetricEvent::Error { stone } => {
+                self.record_error(&stone);
+            }
         }
     }
 }

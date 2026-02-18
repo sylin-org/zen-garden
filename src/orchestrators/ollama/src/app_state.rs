@@ -9,10 +9,10 @@ use crate::domain::tiering;
 use crate::domain::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio_util::sync::CancellationToken;
 
 /// Dashboard SSE event.
@@ -67,6 +67,17 @@ pub struct AppState {
     // ── Jobs ──
     pub jobs: Arc<RwLock<VecDeque<OrchestratorJob>>>,
 
+    // ── Shared Snapshot Space ──
+    /// Pre-built dashboard JSON (written by snapshot_publisher, read by dashboard).
+    pub snapshot_rx: watch::Receiver<serde_json::Value>,
+
+    // ── Metric Events ──
+    /// Fire-and-forget channel: proxy → metrics processor.
+    pub metrics_tx: mpsc::UnboundedSender<MetricEvent>,
+
+    // ── Placement ──
+    pub placement: Arc<RwLock<PlacementPlan>>,
+
     // ── Lifecycle ──
     pub shutdown: CancellationToken,
     pub start_time: Instant,
@@ -81,6 +92,8 @@ impl AppState {
         data_dir: String,
         config: RouterConfig,
         shutdown: CancellationToken,
+        snapshot_rx: watch::Receiver<serde_json::Value>,
+        metrics_tx: mpsc::UnboundedSender<MetricEvent>,
     ) -> Self {
         let (dashboard_tx, _) = broadcast::channel(256);
         let metrics_enabled = config.features.metrics_enabled;
@@ -101,6 +114,9 @@ impl AppState {
             metrics: Arc::new(RwLock::new(engine)),
             dashboard_tx,
             jobs: Arc::new(RwLock::new(VecDeque::with_capacity(20))),
+            snapshot_rx,
+            metrics_tx,
+            placement: Arc::new(RwLock::new(PlacementPlan::default())),
             shutdown,
             start_time: Instant::now(),
             data_dir,
@@ -205,17 +221,6 @@ impl AppState {
             .get(endpoint)
             .cloned()
             .unwrap_or_else(|| Arc::new(AtomicU32::new(0)))
-    }
-
-    /// Sync queue depths into the instance records (for routing decisions).
-    pub async fn sync_queue_depths(&self) {
-        let depths = self.queue_depths.read().await;
-        let mut reg = self.instances.write().await;
-        for (ep, counter) in depths.iter() {
-            if let Some(inst) = reg.get_mut(ep.as_str()) {
-                inst.queue_depth = counter.load(Ordering::Relaxed);
-            }
-        }
     }
 
     // ── Events ───────────────────────────────────────────────────

@@ -449,3 +449,37 @@ pub struct OllamaPullProgress {
     pub total: Option<u64>,
     pub completed: Option<u64>,
 }
+
+// ── Metric Events (proxy → metrics processor channel) ────────────
+
+/// Metric event sent from the proxy to the metrics processing task.
+/// Decouples the request hot-path from write locks on MetricsEngine.
+#[derive(Debug, Clone)]
+pub enum MetricEvent {
+    /// Successful inference response.
+    Request {
+        stone: String,
+        model: String,
+        tokens_in: u64,
+        tokens_out: u64,
+        duration_ns: u64,
+    },
+    /// Failed request.
+    Error { stone: String },
+}
+
+// ── Placement ────────────────────────────────────────────────────
+
+/// Demand-weighted placement plan: ideal model→stone assignment.
+///
+/// Computed by the placement engine based on recent demand shares.
+/// The reconciler pre-warms models on their assigned stones.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlacementPlan {
+    /// model_name → list of target endpoints that should hold this model.
+    pub assignments: HashMap<String, Vec<String>>,
+    /// When this plan was last computed (ISO-8601).
+    pub computed_at: Option<String>,
+    /// True if this plan matched the previous computation (hysteresis).
+    pub stable: bool,
+}

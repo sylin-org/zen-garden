@@ -6,7 +6,7 @@
 
 use crate::app_state::AppState;
 use crate::domain::routing;
-use crate::domain::types::{AutoPullMode, JobKind, JobStatus, OllamaInferenceFinal, RoutingError};
+use crate::domain::types::{AutoPullMode, JobKind, JobStatus, MetricEvent, OllamaInferenceFinal, RoutingError};
 use crate::infra::ollama_client::OllamaClient;
 use axum::{
     body::Body,
@@ -87,14 +87,21 @@ async fn proxy_inference(
         .and_then(|v| v.get("stream")?.as_bool())
         == Some(false);
 
-    // Route to best instance
+    // Route to best instance (snapshot state, no locks held during routing)
     let decision = {
-        let instances = state.app.instances.read().await;
-        let models = state.app.models.read().await;
-        let tiers = state.app.tiers.read().await;
+        let mut instances = state.app.instances.read().await.clone();
+        let models = state.app.models.read().await.clone();
+        let tiers = state.app.tiers.read().await.clone();
 
-        // Sync queue depths before routing
-        state.app.sync_queue_depths().await;
+        // Patch live queue depths from atomics (brief lock, then drop)
+        {
+            let depths = state.app.queue_depths.read().await;
+            for (ep, counter) in depths.iter() {
+                if let Some(inst) = instances.get_mut(ep) {
+                    inst.queue_depth = counter.load(Ordering::Relaxed);
+                }
+            }
+        }
 
         routing::select_instance(&model, &instances, &models, &tiers, 64)
     };
@@ -163,7 +170,7 @@ async fn proxy_inference(
                     },
                 )
                 .await;
-            state.app.metrics.write().await.record_error(&stone_name);
+            let _ = state.app.metrics_tx.send(MetricEvent::Error { stone: stone_name.clone() });
             let body = serde_json::json!({"error": format!("upstream error: {e}")});
             return Ok((StatusCode::BAD_GATEWAY, axum::Json(body)).into_response());
         }
@@ -175,23 +182,19 @@ async fn proxy_inference(
     if status == reqwest::StatusCode::NOT_FOUND {
         counter.fetch_sub(1, Ordering::Relaxed);
         tracing::warn!(model = %model, target = %target, "model not found — removed outside router?");
-        // Remove from registry
-        state.app.update_instance_models(
-            target,
-            {
-                let reg = state.app.instances.read().await;
-                reg.get(target)
-                    .map(|i| i.models_available.iter().filter(|m| m.as_str() != model).cloned().collect())
-                    .unwrap_or_default()
-            },
-            {
-                let reg = state.app.instances.read().await;
-                reg.get(target)
-                    .map(|i| i.models_loaded.iter().filter(|m| m.name != model).cloned().collect())
-                    .unwrap_or_default()
-            },
-        ).await;
-        state.app.metrics.write().await.record_error(&stone_name);
+        // Remove from registry (snapshot then drop lock before mutation)
+        {
+            let reg = state.app.instances.read().await;
+            if let Some(inst) = reg.get(target) {
+                let avail: Vec<String> = inst.models_available.iter()
+                    .filter(|m| m.as_str() != model).cloned().collect();
+                let loaded = inst.models_loaded.iter()
+                    .filter(|m| m.name != model).cloned().collect();
+                drop(reg);
+                state.app.update_instance_models(target, avail, loaded).await;
+            }
+        }
+        let _ = state.app.metrics_tx.send(MetricEvent::Error { stone: stone_name.clone() });
         let body = serde_json::json!({"error": format!("model '{model}' not found")});
         return Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response());
     }
@@ -199,7 +202,7 @@ async fn proxy_inference(
     // Propagate non-OK status
     if !status.is_success() {
         counter.fetch_sub(1, Ordering::Relaxed);
-        state.app.metrics.write().await.record_error(&stone_name);
+        let _ = state.app.metrics_tx.send(MetricEvent::Error { stone: stone_name.clone() });
         let status_code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let text = response.text().await.unwrap_or_default();
         return Ok((status_code, text).into_response());
@@ -212,13 +215,13 @@ async fn proxy_inference(
 
         // Extract metrics from the response
         if let Ok(final_obj) = serde_json::from_slice::<OllamaInferenceFinal>(&response_bytes) {
-            state.app.metrics.write().await.record_request(
-                &stone_name,
-                &model,
-                final_obj.prompt_eval_count,
-                final_obj.eval_count,
-                final_obj.total_duration,
-            );
+            let _ = state.app.metrics_tx.send(MetricEvent::Request {
+                stone: stone_name.clone(),
+                model: model.clone(),
+                tokens_in: final_obj.prompt_eval_count,
+                tokens_out: final_obj.eval_count,
+                duration_ns: final_obj.total_duration,
+            });
         }
 
         Ok(Response::builder()
@@ -258,13 +261,13 @@ async fn proxy_inference(
                                     serde_json::from_slice::<OllamaInferenceFinal>(line)
                                 {
                                     if obj.done {
-                                        app.metrics.write().await.record_request(
-                                            &stone_for_metrics,
-                                            &model_for_metrics,
-                                            obj.prompt_eval_count,
-                                            obj.eval_count,
-                                            obj.total_duration,
-                                        );
+                                        let _ = app.metrics_tx.send(MetricEvent::Request {
+                                            stone: stone_for_metrics.clone(),
+                                            model: model_for_metrics.clone(),
+                                            tokens_in: obj.prompt_eval_count,
+                                            tokens_out: obj.eval_count,
+                                            duration_ns: obj.total_duration,
+                                        });
                                     }
                                 }
                             }

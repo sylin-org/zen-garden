@@ -167,6 +167,9 @@ body {
 }
 
 /* ── Stones Section ───────────────────────────────────────── */
+.stone-card {
+  border-left: 3px solid var(--stone-color, var(--accent-sage));
+}
 .stone-card .stone-header {
   display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;
 }
@@ -176,6 +179,19 @@ body {
 .stone-card .stone-meta {
   font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
   display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem;
+}
+
+/* ── Stone Dots (model table) ─────────────────────────────── */
+.stone-dots { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.stone-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block; cursor: default;
+  border: 1px solid rgba(0,0,0,0.08);
+  transition: transform 0.15s ease;
+}
+.stone-dot:hover { transform: scale(1.4); }
+.stone-dot.loaded {
+  box-shadow: 0 0 6px var(--dot-color, var(--accent-sage));
 }
 .stone-card .model-tags {
   display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.75rem;
@@ -411,6 +427,25 @@ body {
     </div>
   </section>
 
+  <!-- ── Placement ──────────────────────────────────────────── -->
+  <section id="placementSection" class="hidden">
+    <div class="section-title">Placement</div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="section-title" style="margin-bottom:0.5rem;">Demand (5 min)</div>
+        <div id="demandBody" class="mono" style="font-size:0.75rem;"></div>
+      </div>
+      <div class="card">
+        <div class="section-title" style="margin-bottom:0.5rem;">
+          Assignments
+          <span id="placementStable" class="mono" style="margin-left:0.5rem; font-size:0.6rem;"></span>
+        </div>
+        <div id="placementBody" class="mono" style="font-size:0.75rem;"></div>
+        <div id="placementTime" class="mono muted" style="font-size:0.6rem; margin-top:0.5rem;"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Jobs ──────────────────────────────────────────────── -->
   <section id="jobsSection">
     <div class="section-title">Jobs</div>
@@ -500,6 +535,25 @@ let connected = true;
 let activityRing = [];
 const MAX_ACTIVITY = 30;
 
+// ── Stone Color Palette ────────────────────────────────────────
+const STONE_COLORS = [
+  '#84a59d', // sage
+  '#d4a373', // clay
+  '#c4b060', // hopeful gold
+  '#7ea8be', // sky
+  '#b07aa1', // plum
+  '#e07a5f', // terracotta
+  '#81b29a', // seafoam
+  '#c08497', // rose
+];
+const stoneColorMap = new Map();
+function stoneColor(name) {
+  if (!stoneColorMap.has(name)) {
+    stoneColorMap.set(name, STONE_COLORS[stoneColorMap.size % STONE_COLORS.length]);
+  }
+  return stoneColorMap.get(name);
+}
+
 // ── Polling ────────────────────────────────────────────────────
 async function refresh() {
   try {
@@ -576,6 +630,9 @@ function render() {
 
   // Metrics
   renderMetrics(state.metrics || {});
+
+  // Placement
+  renderPlacement(state.placement || {}, state.demand || {});
 }
 
 // ── Stones ─────────────────────────────────────────────────────
@@ -592,7 +649,8 @@ function renderStones(stones) {
     const available = s.models_available || [];
     const queuePct = Math.min((s.queue_depth || 0) / 8 * 100, 100);
 
-    let html = `<div class="card stone-card">
+    const color = stoneColor(s.stone_name);
+    let html = `<div class="card stone-card" style="--stone-color:${color}">
       <div class="stone-header">
         <span class="dot ${healthClass}"></span>
         <span class="stone-name">${esc(s.stone_name)}</span>
@@ -638,11 +696,17 @@ function renderModels(models) {
   section.classList.remove('hidden');
   body.innerHTML = '';
   models.forEach(m => {
+    const availDots = (m.on_stones || []).map(s =>
+      `<span class="stone-dot" title="${esc(s)}" style="--dot-color:${stoneColor(s)}; background:${stoneColor(s)}"></span>`
+    ).join('') || '—';
+    const loadedDots = (m.loaded_on || []).map(s =>
+      `<span class="stone-dot loaded" title="${esc(s)}" style="--dot-color:${stoneColor(s)}; background:${stoneColor(s)}"></span>`
+    ).join('') || '—';
     body.innerHTML += `<div class="model-row">
       <div class="model-name">${esc(m.name)}</div>
       <div class="model-detail">${m.vram_estimate_mb ? m.vram_estimate_mb + ' MB' : '—'}</div>
-      <div class="model-detail">${(m.on_stones || []).join(', ') || '—'}</div>
-      <div class="model-detail">${(m.loaded_on || []).map(s => '<span class="gold">' + esc(s) + '</span>').join(', ') || '—'}</div>
+      <div class="model-detail"><span class="stone-dots">${availDots}</span></div>
+      <div class="model-detail"><span class="stone-dots">${loadedDots}</span></div>
     </div>`;
   });
 }
@@ -665,6 +729,58 @@ function renderMetrics(met) {
   } else {
     topBody.innerHTML = '<span class="muted">No requests yet</span>';
   }
+}
+
+// ── Placement ──────────────────────────────────────────────────
+function renderPlacement(placement, demand) {
+  const section = document.getElementById('placementSection');
+  const assignments = placement.assignments || {};
+  const demandShares = demand || {};
+  const hasData = Object.keys(assignments).length > 0 || Object.keys(demandShares).length > 0;
+  if (!hasData) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  // Demand bars
+  const demandBody = document.getElementById('demandBody');
+  const entries = Object.entries(demandShares).sort((a, b) => b[1] - a[1]);
+  if (entries.length) {
+    demandBody.innerHTML = entries.map(([model, share]) => {
+      const pct = (share * 100).toFixed(1);
+      return `<div style="display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0;">
+        <span style="min-width:40px; text-align:right; font-size:0.7rem;" class="sage">${pct}%</span>
+        <div class="gauge" style="flex:1; height:3px;"><div class="gauge-fill" style="width:${pct}%"></div></div>
+        <span style="font-size:0.7rem;">${esc(model)}</span>
+      </div>`;
+    }).join('');
+  } else {
+    demandBody.innerHTML = '<span class="muted">No demand data yet</span>';
+  }
+
+  // Assignments
+  const placementBody = document.getElementById('placementBody');
+  const stoneEntries = Object.entries(assignments);
+  if (stoneEntries.length) {
+    placementBody.innerHTML = stoneEntries.map(([stone, models]) => {
+      const color = stoneColor(stone);
+      const tags = models.map(m => `<span class="model-tag">${esc(m)}</span>`).join(' ');
+      return `<div style="display:flex; align-items:center; gap:0.5rem; padding:0.3rem 0; border-bottom:1px solid var(--vellum-border);">
+        <span style="border-left:3px solid ${color}; padding-left:0.4rem; min-width:120px;">${esc(stone)}</span>
+        <div style="display:flex; flex-wrap:wrap; gap:0.25rem;">${tags || '<span class="muted">—</span>'}</div>
+      </div>`;
+    }).join('');
+  } else {
+    placementBody.innerHTML = '<span class="muted">No placement plan</span>';
+  }
+
+  // Metadata
+  const stableEl = document.getElementById('placementStable');
+  stableEl.textContent = placement.stable ? '● stable' : '○ converging';
+  stableEl.className = 'mono ' + (placement.stable ? 'sage' : 'clay');
+
+  const timeEl = document.getElementById('placementTime');
+  timeEl.textContent = placement.computed_at
+    ? 'Last computed: ' + new Date(placement.computed_at).toLocaleTimeString()
+    : '';
 }
 
 // ── Settings ───────────────────────────────────────────────────

@@ -2,6 +2,15 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-19
+
+- Ollama Orchestrator: Shared Snapshot Space — dashboard reads pre-built JSON via watch channel (zero locks)
+- Ollama Orchestrator: Fixed self-deadlock in proxy (instances.read → sync_queue_depths → instances.write)
+- Ollama Orchestrator: Metrics channel — proxy sends fire-and-forget events via mpsc, dedicated processor task
+- Ollama Orchestrator: Demand-weighted placement engine — greedy bin-pack with sticky guarantee + hysteresis
+- Ollama Orchestrator: Placement reconciler task — 60s loop, pre-warms models via load_model
+- Ollama Orchestrator: Dashboard — Placement section with demand bars, assignment map, stability indicator
+
 ## 2026-02-18
 
 - Ollama Orchestrator: Jobs system — ring-buffer job tracking for pull/delete/sync/on-demand operations

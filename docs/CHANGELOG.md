@@ -2,6 +2,15 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-21
+
+- Rake CLI: pipeline simplification — Runtime, CommandInvocation, AliasIndex, OnStoneMapping
+- route.rs rewritten: 1,917→1,006 lines; 66 dispatch calls eliminated via Runtime.execute()
+- AliasIndex replaces 3 separate lookup tables (zen, normative, combined)
+- OnStoneMapping in manifest drives zen `on <stone>` translation (no more hardcoded match)
+- Legacy dispatch/dispatch_full/dispatch_local removed; Runtime encapsulates global flags
+- Removed 2 stale derive-based CLI tests (Cli::parse_from no longer exists)
+
 ## 2026-02-20
 
 - Rake CLI: manifest-driven SSOT — Clap builder API generated from CommandManifest, replacing derive macros

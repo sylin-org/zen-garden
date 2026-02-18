@@ -328,6 +328,8 @@ pub struct StoneMetrics {
     pub errors: u64,
     /// Sum of response durations in nanoseconds (divide by requests for avg).
     pub total_duration_ns: u64,
+    /// Sum of eval (generation-only) durations in nanoseconds — for tok/s.
+    pub eval_duration_ns: u64,
 }
 
 /// Serializable metrics snapshot (persisted as JSON).
@@ -463,6 +465,8 @@ pub enum MetricEvent {
         tokens_in: u64,
         tokens_out: u64,
         duration_ns: u64,
+        /// Eval (generation-only) duration — used for tok/s.
+        eval_duration_ns: u64,
     },
     /// Failed request.
     Error { stone: String },

@@ -60,6 +60,7 @@ impl MetricsEngine {
         tokens_in: u64,
         tokens_out: u64,
         duration_ns: u64,
+        eval_duration_ns: u64,
     ) {
         if !self.enabled {
             return;
@@ -79,13 +80,14 @@ impl MetricsEngine {
         stone.tokens_in += tokens_in;
         stone.tokens_out += tokens_out;
         stone.total_duration_ns += duration_ns;
+        stone.eval_duration_ns += eval_duration_ns;
 
-        // Per-stone throughput ring
+        // Per-stone throughput ring (uses eval_duration for true generation tok/s)
         if self.stone_throughput.len() >= THROUGHPUT_RING_CAPACITY {
             self.stone_throughput.pop_front();
         }
         self.stone_throughput
-            .push_back((Instant::now(), stone_name.to_string(), tokens_out, duration_ns));
+            .push_back((Instant::now(), stone_name.to_string(), tokens_out, eval_duration_ns));
 
         // Ring buffer
         if self.response_times.len() >= RING_CAPACITY {
@@ -201,8 +203,8 @@ impl MetricsEngine {
     /// All-time tokens/sec for a single stone (from cumulative StoneMetrics).
     pub fn cumulative_tokens_per_sec(&self, stone_name: &str) -> Option<f64> {
         self.per_stone.get(stone_name).and_then(|sm| {
-            if sm.total_duration_ns > 0 {
-                Some(sm.tokens_out as f64 / (sm.total_duration_ns as f64 / 1_000_000_000.0))
+            if sm.eval_duration_ns > 0 {
+                Some(sm.tokens_out as f64 / (sm.eval_duration_ns as f64 / 1_000_000_000.0))
             } else {
                 None
             }
@@ -250,9 +252,10 @@ impl MetricsEngine {
                 tokens_in,
                 tokens_out,
                 duration_ns,
+                eval_duration_ns,
             } => {
                 self.record_demand(&model);
-                self.record_request(&stone, &model, tokens_in, tokens_out, duration_ns);
+                self.record_request(&stone, &model, tokens_in, tokens_out, duration_ns, eval_duration_ns);
             }
             MetricEvent::Error { stone } => {
                 self.record_error(&stone);

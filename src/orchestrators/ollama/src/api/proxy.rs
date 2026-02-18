@@ -221,6 +221,7 @@ async fn proxy_inference(
                 tokens_in: final_obj.prompt_eval_count,
                 tokens_out: final_obj.eval_count,
                 duration_ns: final_obj.total_duration,
+                eval_duration_ns: final_obj.eval_duration,
             });
         }
 
@@ -267,6 +268,7 @@ async fn proxy_inference(
                                             tokens_in: obj.prompt_eval_count,
                                             tokens_out: obj.eval_count,
                                             duration_ns: obj.total_duration,
+                                            eval_duration_ns: obj.eval_duration,
                                         });
                                     }
                                 }

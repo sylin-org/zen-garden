@@ -6,7 +6,103 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+// ── Auto-Pull Mode ──────────────────────────────────────────────
+
+/// Three-way auto-pull policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoPullMode {
+    /// No automatic model management. Unknown model → 404.
+    Off,
+    /// Replicate models across stones in the same tier. Unknown model → 404.
+    Sync,
+    /// Sync + pull unknown models on demand. Unknown → 404 immediately,
+    /// but a background job checks viability and pulls if feasible.
+    OnDemand,
+}
+
+impl Default for AutoPullMode {
+    fn default() -> Self {
+        Self::Sync
+    }
+}
+
+impl std::fmt::Display for AutoPullMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Off => write!(f, "off"),
+            Self::Sync => write!(f, "sync"),
+            Self::OnDemand => write!(f, "on_demand"),
+        }
+    }
+}
+
+// ── Orchestrator Jobs ───────────────────────────────────────────
+
+/// What kind of work a job performs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    /// Pulling a model to one or more instances.
+    ModelPull { model: String, targets: Vec<String> },
+    /// Deleting a model from instances.
+    ModelDelete { model: String, targets: Vec<String> },
+    /// Syncing a model across tier peers.
+    ModelSync { model: String, targets: Vec<String> },
+    /// Profiling a newly discovered instance.
+    InstanceProfile { endpoint: String, stone_name: String },
+    /// On-demand discovery pull (model was requested but unknown).
+    OnDemandPull { model: String },
+}
+
+impl JobKind {
+    /// Short human-readable label for the job kind.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ModelPull { .. } => "pull",
+            Self::ModelDelete { .. } => "delete",
+            Self::ModelSync { .. } => "sync",
+            Self::InstanceProfile { .. } => "profile",
+            Self::OnDemandPull { .. } => "on-demand",
+        }
+    }
+
+    /// The primary subject (model name or endpoint).
+    pub fn subject(&self) -> &str {
+        match self {
+            Self::ModelPull { model, .. } => model,
+            Self::ModelDelete { model, .. } => model,
+            Self::ModelSync { model, .. } => model,
+            Self::InstanceProfile { stone_name, .. } => stone_name,
+            Self::OnDemandPull { model, .. } => model,
+        }
+    }
+}
+
+/// Current status of a job.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JobStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// A tracked orchestrator job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorJob {
+    pub id: String,
+    pub kind: JobKind,
+    pub status: JobStatus,
+    pub progress: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
 
 // ── Ollama Instance ──────────────────────────────────────────────
 
@@ -184,8 +280,8 @@ pub struct RouterConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureConfig {
-    #[serde(default = "default_true")]
-    pub auto_pull: bool,
+    #[serde(default)]
+    pub auto_pull_mode: AutoPullMode,
     #[serde(default)]
     pub delete_on_idle: bool,
     #[serde(default = "default_true")]
@@ -205,7 +301,7 @@ fn default_true() -> bool {
 impl Default for FeatureConfig {
     fn default() -> Self {
         Self {
-            auto_pull: true,
+            auto_pull_mode: AutoPullMode::default(),
             delete_on_idle: false,
             metrics_enabled: true,
         }

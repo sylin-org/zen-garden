@@ -1,5 +1,5 @@
 ﻿[package]
-name = "garden-router"
+name = "zen-garden-ollama-orchestrator"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 description = "Ollama Orchestrator — VRAM-aware Ollama orchestration for Zen Garden"
 
 [[bin]]
-name = "garden-router"
+name = "zen-garden-ollama-orchestrator"
 path = "src/main.rs"
 
 [dependencies]

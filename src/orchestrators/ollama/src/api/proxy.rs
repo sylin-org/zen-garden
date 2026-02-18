@@ -6,7 +6,7 @@
 
 use crate::app_state::AppState;
 use crate::domain::routing;
-use crate::domain::types::OllamaInferenceFinal;
+use crate::domain::types::{AutoPullMode, JobKind, JobStatus, OllamaInferenceFinal, RoutingError};
 use crate::infra::ollama_client::OllamaClient;
 use axum::{
     body::Body,
@@ -103,6 +103,24 @@ async fn proxy_inference(
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(model = %model, error = %e, "routing failed");
+
+            // On-demand pull: if model is unknown and mode is OnDemand,
+            // spawn a background job to check feasibility and pull.
+            if let RoutingError::ModelNotFound(ref missing_model) = e {
+                let mode = {
+                    let config = state.app.config.read().await;
+                    config.features.auto_pull_mode
+                };
+                if mode == AutoPullMode::OnDemand {
+                    let app = state.app.clone();
+                    let client = state.client.clone();
+                    let model_name = missing_model.clone();
+                    tokio::spawn(async move {
+                        on_demand_pull_job(app, client, model_name).await;
+                    });
+                }
+            }
+
             let body = serde_json::json!({"error": e.to_string()});
             return Ok((StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response());
         }
@@ -414,6 +432,89 @@ async fn proxy_merged_ps(state: &ProxyState) -> Result<Response, StatusCode> {
 
     let body = serde_json::json!({"models": all_running});
     Ok(axum::Json(body).into_response())
+}
+
+/// Background job: attempt to pull an unknown model to all healthy instances.
+///
+/// Spawned when a request arrives for a model that doesn't exist anywhere
+/// and `auto_pull_mode` is `OnDemand`. The caller still gets a 404, but
+/// the model will be available for the next request if the pull succeeds.
+async fn on_demand_pull_job(app: AppState, client: OllamaClient, model: String) {
+    tracing::info!(model = %model, "on-demand pull: starting background job");
+
+    let job_id = app
+        .create_job(JobKind::OnDemandPull {
+            model: model.clone(),
+        })
+        .await;
+    app.update_job(&job_id, JobStatus::Running, None).await;
+
+    // Select healthy targets
+    let targets: Vec<String> = {
+        let instances = app.instances.read().await;
+        instances
+            .values()
+            .filter(|i| i.health.is_routable())
+            .map(|i| i.endpoint.clone())
+            .collect()
+    };
+
+    if targets.is_empty() {
+        app.fail_job(&job_id, "no healthy instances available")
+            .await;
+        return;
+    }
+
+    let mut any_success = false;
+    for target in &targets {
+        app.update_job(
+            &job_id,
+            JobStatus::Running,
+            Some(format!("pulling to {target}")),
+        )
+        .await;
+
+        match client.pull_model(target, &model).await {
+            Ok(mut stream) => {
+                let mut last_status = String::new();
+                while let Some(chunk) = stream.next().await {
+                    if let Ok(bytes) = chunk {
+                        if let Ok(progress) =
+                            serde_json::from_slice::<crate::domain::types::OllamaPullProgress>(
+                                &bytes,
+                            )
+                        {
+                            last_status = progress.status;
+                        }
+                    }
+                }
+                if last_status == "success" {
+                    tracing::info!(model = %model, target = %target, "on-demand pull succeeded");
+                    any_success = true;
+
+                    // Re-profile the instance to pick up the new model
+                    if let Ok((avail, loaded, infos, _)) = client.full_profile(target).await {
+                        app.update_instance_models(target, avail, loaded).await;
+                        for info in infos {
+                            app.upsert_model(info).await;
+                        }
+                    }
+                } else {
+                    tracing::warn!(model = %model, target = %target, status = %last_status, "on-demand pull did not succeed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(model = %model, target = %target, error = %e, "on-demand pull error");
+            }
+        }
+    }
+
+    if any_success {
+        app.complete_job(&job_id).await;
+        app.emit_event("models.updated", "{}").await;
+    } else {
+        app.fail_job(&job_id, "pull failed on all instances").await;
+    }
 }
 
 /// Extract the "model" field from a JSON body.

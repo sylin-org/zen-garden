@@ -32,7 +32,12 @@ impl ToolQuery {
         }
 
         if let Some(tool_fqid) = &self.tool_fqid {
-            if !projection.tool_fqid.eq_ignore_ascii_case(tool_fqid) {
+            let fqid_matches = projection.tool_fqid.eq_ignore_ascii_case(tool_fqid)
+                || projection
+                    .aliases
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(tool_fqid));
+            if !fqid_matches {
                 return false;
             }
         }
@@ -65,7 +70,17 @@ impl ToolQuery {
 
     pub fn matches_delta(&self, delta: &ToolDelta) -> bool {
         if let Some(tool_fqid) = &self.tool_fqid {
-            if !delta.tool_fqid.eq_ignore_ascii_case(tool_fqid) {
+            let fqid_matches = delta.tool_fqid.eq_ignore_ascii_case(tool_fqid)
+                || delta
+                    .projection
+                    .as_ref()
+                    .map(|p| {
+                        p.aliases
+                            .iter()
+                            .any(|a| a.eq_ignore_ascii_case(tool_fqid))
+                    })
+                    .unwrap_or(false);
+            if !fqid_matches {
                 return false;
             }
         }
@@ -539,5 +554,63 @@ mod tests {
 
         let applied = cache.apply_remote_beacon(&beacon);
         assert_eq!(applied.len(), 1);
+    }
+
+    #[test]
+    fn tool_fqid_filter_matches_aliases() {
+        let mut projection = sample_projection("offering:ollama:adopted", 1);
+        projection.aliases = vec![
+            "offering:ollama".to_string(),
+            "offering:ollama:adopted".to_string(),
+        ];
+
+        let query = ToolQuery {
+            tool_fqid: Some("offering:ollama".to_string()),
+            ..Default::default()
+        };
+
+        // Should match via alias even though FQID is "offering:ollama:adopted"
+        assert!(query.matches_projection(&projection));
+
+        // Should also match the exact FQID
+        let query_exact = ToolQuery {
+            tool_fqid: Some("offering:ollama:adopted".to_string()),
+            ..Default::default()
+        };
+        assert!(query_exact.matches_projection(&projection));
+
+        // Should NOT match an unrelated FQID
+        let query_miss = ToolQuery {
+            tool_fqid: Some("offering:redis".to_string()),
+            ..Default::default()
+        };
+        assert!(!query_miss.matches_projection(&projection));
+    }
+
+    #[test]
+    fn tool_fqid_delta_filter_matches_aliases() {
+        let mut projection = sample_projection("offering:ollama:adopted", 1);
+        projection.aliases = vec![
+            "offering:ollama".to_string(),
+            "offering:ollama:adopted".to_string(),
+        ];
+
+        let delta = ToolDelta {
+            event_id: "evt-alias".to_string(),
+            cursor: 1,
+            timestamp: Utc::now(),
+            kind: ToolDeltaKind::Upsert,
+            tool_fqid: "offering:ollama:adopted".to_string(),
+            tool_uid: "uid-test".to_string(),
+            revision: 1,
+            projection: Some(projection),
+        };
+
+        let query = ToolQuery {
+            tool_fqid: Some("offering:ollama".to_string()),
+            ..Default::default()
+        };
+
+        assert!(query.matches_delta(&delta));
     }
 }

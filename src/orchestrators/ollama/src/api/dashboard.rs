@@ -116,7 +116,7 @@ pub async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
             "enabled": metrics.enabled,
         },
         "config": {
-            "auto_pull": config.features.auto_pull,
+            "auto_pull_mode": format!("{}", config.features.auto_pull_mode),
             "delete_on_idle": config.features.delete_on_idle,
             "metrics_enabled": config.features.metrics_enabled,
         },
@@ -166,4 +166,26 @@ pub async fn post_metrics_reset(State(state): State<AppState>) -> impl IntoRespo
     metrics.reset();
     state.emit_event("metrics.reset", "{}").await;
     Json(json!({"status": "ok"}))
+}
+
+/// `GET /api/jobs` — current and recent jobs.
+pub async fn get_jobs(State(state): State<AppState>) -> impl IntoResponse {
+    let jobs = state.jobs.read().await;
+    let list: Vec<serde_json::Value> = jobs
+        .iter()
+        .rev()
+        .map(|j| {
+            json!({
+                "id": j.id,
+                "kind": j.kind.label(),
+                "subject": j.kind.subject(),
+                "status": j.status,
+                "progress": j.progress,
+                "started_at": j.started_at.to_rfc3339(),
+                "completed_at": j.completed_at.map(|t| t.to_rfc3339()),
+                "error": j.error,
+            })
+        })
+        .collect();
+    Json(json!({"jobs": list}))
 }

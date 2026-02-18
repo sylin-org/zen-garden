@@ -2,38 +2,79 @@
 //!
 //! Pure decision functions — no I/O. The caller executes the decision.
 
-use super::types::{ModelInfo, OllamaInstance, RouterConfig};
+use super::types::{AutoPullMode, OllamaInstance, RouterConfig};
 use std::collections::HashMap;
 
-/// Should the router auto-pull a model that was requested but missing?
+/// Determine which models need syncing across a tier.
 ///
-/// Returns the list of target instance endpoints if auto-pull should fire.
-pub fn should_auto_pull(
+/// In `Sync` or `OnDemand` mode, every model available on *any* instance
+/// in a tier should be available on *all* instances in that tier.
+///
+/// Returns `(model_name, target_endpoints)` pairs.
+pub fn models_needing_sync(
+    instances: &HashMap<String, OllamaInstance>,
+    config: &RouterConfig,
+) -> Vec<(String, Vec<String>)> {
+    match config.features.auto_pull_mode {
+        AutoPullMode::Off => return vec![],
+        AutoPullMode::Sync | AutoPullMode::OnDemand => {}
+    }
+
+    // Group instances by VRAM tier (rounded to nearest GiB).
+    let mut tier_groups: HashMap<u64, Vec<&OllamaInstance>> = HashMap::new();
+    for inst in instances.values() {
+        if !inst.health.is_routable() {
+            continue;
+        }
+        let tier_gb = inst.vram_budget_bytes / 1_073_741_824;
+        tier_groups.entry(tier_gb).or_default().push(inst);
+    }
+
+    let mut sync_targets = Vec::new();
+
+    for (_tier, peers) in &tier_groups {
+        if peers.len() < 2 {
+            continue;
+        }
+
+        // Union of all models in this tier
+        let all_models: std::collections::HashSet<&str> = peers
+            .iter()
+            .flat_map(|i| i.models_available.iter().map(|m| m.as_str()))
+            .collect();
+
+        for model in all_models {
+            let missing_on: Vec<String> = peers
+                .iter()
+                .filter(|i| !i.models_available.iter().any(|m| m == model))
+                .map(|i| i.endpoint.clone())
+                .collect();
+
+            if !missing_on.is_empty() {
+                sync_targets.push((model.to_string(), missing_on));
+            }
+        }
+    }
+
+    sync_targets
+}
+
+/// Should the orchestrator attempt an on-demand pull for an unknown model?
+///
+/// Returns `true` only in `OnDemand` mode when the model doesn't exist anywhere.
+pub fn should_on_demand_pull(
     model: &str,
     instances: &HashMap<String, OllamaInstance>,
-    _models: &HashMap<String, ModelInfo>,
     config: &RouterConfig,
-) -> Vec<String> {
-    if !config.features.auto_pull {
-        return vec![];
+) -> bool {
+    if config.features.auto_pull_mode != AutoPullMode::OnDemand {
+        return false;
     }
 
     // Model must not already exist on any instance
-    let exists_anywhere = instances
+    !instances
         .values()
-        .any(|i| i.models_available.iter().any(|m| m == model));
-    if exists_anywhere {
-        return vec![];
-    }
-
-    // Pick all healthy instances (we don't know the model size yet,
-    // so we can't filter by VRAM — Ollama will handle that).
-    // For now, pull to all healthy instances.
-    instances
-        .values()
-        .filter(|i| i.health.is_routable())
-        .map(|i| i.endpoint.clone())
-        .collect()
+        .any(|i| i.models_available.iter().any(|m| m == model))
 }
 
 /// Identify models that should be deleted due to idle (no requests in window).

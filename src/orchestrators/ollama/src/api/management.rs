@@ -1,8 +1,10 @@
 ﻿//! Model management API endpoints.
 //!
 //! These are called by the dashboard UI for multi-stone model operations.
+//! Pull and delete operations now create background jobs and return immediately.
 
 use crate::app_state::AppState;
+use crate::domain::types::{JobKind, JobStatus};
 use crate::infra::ollama_client::OllamaClient;
 use axum::{
     extract::State,
@@ -35,12 +37,13 @@ pub struct DeleteRequest {
 }
 
 /// `POST /api/management/pull` — pull a model to one or more instances.
+///
+/// Creates a background job and returns immediately with the job ID.
 pub async fn pull_model(
     State(state): State<ManagementState>,
     Json(req): Json<PullRequest>,
 ) -> impl IntoResponse {
     let targets = if req.targets.is_empty() {
-        // Select all healthy instances (VRAM feasibility check could be added)
         let instances = state.app.instances.read().await;
         instances
             .values()
@@ -55,67 +58,65 @@ pub async fn pull_model(
         return Json(json!({"error": "no healthy instances available"})).into_response();
     }
 
-    let mut results = Vec::new();
-    for target in &targets {
-        let stone_name = {
-            let instances = state.app.instances.read().await;
-            instances
-                .get(target.as_str())
-                .map(|i| i.stone_name.clone())
-                .unwrap_or_else(|| target.clone())
-        };
+    let job_id = state
+        .app
+        .create_job(JobKind::ModelPull {
+            model: req.model.clone(),
+            targets: targets.clone(),
+        })
+        .await;
 
-        match state.client.pull_model(target, &req.model).await {
-            Ok(mut stream) => {
-                use futures_util::StreamExt;
-                let mut last_status = String::new();
-                while let Some(chunk) = stream.next().await {
-                    if let Ok(bytes) = chunk {
-                        if let Ok(progress) =
-                            serde_json::from_slice::<crate::domain::types::OllamaPullProgress>(
-                                &bytes,
-                            )
-                        {
-                            last_status = progress.status.clone();
+    // Spawn background work
+    let response_id = job_id.clone();
+    let app = state.app.clone();
+    let client = state.client.clone();
+    let model = req.model.clone();
+    tokio::spawn(async move {
+        app.update_job(&job_id, JobStatus::Running, None).await;
+
+        let mut results = Vec::new();
+        for target in &targets {
+            app.update_job(
+                &job_id,
+                JobStatus::Running,
+                Some(format!("pulling to {target}")),
+            )
+            .await;
+
+            match pull_and_wait(&client, target, &model).await {
+                Ok(status) => {
+                    results.push((target.clone(), status == "success"));
+                    if let Ok((avail, loaded, infos, _)) = client.full_profile(target).await {
+                        app.update_instance_models(target, avail, loaded).await;
+                        for info in infos {
+                            app.upsert_model(info).await;
                         }
                     }
                 }
-                results.push(json!({
-                    "stone": stone_name,
-                    "endpoint": target,
-                    "status": last_status,
-                    "success": last_status == "success",
-                }));
-            }
-            Err(e) => {
-                results.push(json!({
-                    "stone": stone_name,
-                    "endpoint": target,
-                    "status": e.to_string(),
-                    "success": false,
-                }));
+                Err(e) => {
+                    results.push((target.clone(), false));
+                    tracing::warn!(model = %model, target = %target, error = %e, "pull failed");
+                }
             }
         }
-    }
 
-    // Trigger a re-profile of affected instances
-    for target in &targets {
-        if let Ok((avail, loaded, infos, _)) = state.client.full_profile(target).await {
-            state
-                .app
-                .update_instance_models(target, avail, loaded)
-                .await;
-            for info in infos {
-                state.app.upsert_model(info).await;
-            }
+        let successes = results.iter().filter(|(_, ok)| *ok).count();
+        if successes == results.len() {
+            app.complete_job(&job_id).await;
+        } else if successes > 0 {
+            app.complete_job(&job_id).await;
+        } else {
+            app.fail_job(&job_id, "pull failed on all instances").await;
         }
-    }
+        app.emit_event("models.updated", "{}").await;
+    });
 
-    state.app.emit_event("models.updated", "{}").await;
-    Json(json!({"results": results})).into_response()
+    Json(json!({"job_id": response_id, "status": "queued"})).into_response()
 }
 
 /// `POST /api/management/delete` — delete a model from instances.
+///
+/// Creates a background job and returns immediately with the job ID.
 pub async fn delete_model(
     State(state): State<ManagementState>,
     Json(req): Json<DeleteRequest>,
@@ -133,72 +134,77 @@ pub async fn delete_model(
         req.targets.clone()
     };
 
-    let mut results = Vec::new();
-    for target in &targets {
-        let stone_name = {
-            let instances = state.app.instances.read().await;
-            instances
-                .get(target.as_str())
-                .map(|i| i.stone_name.clone())
-                .unwrap_or_else(|| target.clone())
-        };
-
-        match state.client.delete_model(target, &req.model).await {
-            Ok(()) => {
-                results.push(json!({
-                    "stone": stone_name,
-                    "endpoint": target,
-                    "success": true,
-                }));
-            }
-            Err(e) => {
-                results.push(json!({
-                    "stone": stone_name,
-                    "endpoint": target,
-                    "success": false,
-                    "error": e.to_string(),
-                }));
-            }
-        }
+    if targets.is_empty() {
+        return Json(json!({"error": "model not found on any instance"})).into_response();
     }
 
-    // Remove from registry
-    for target in &targets {
-        let instances = state.app.instances.read().await;
-        if let Some(inst) = instances.get(target.as_str()) {
-            let new_available: Vec<String> = inst
-                .models_available
-                .iter()
-                .filter(|m| m.as_str() != req.model)
-                .cloned()
-                .collect();
-            let new_loaded: Vec<crate::domain::types::LoadedModel> = inst
-                .models_loaded
-                .iter()
-                .filter(|m| m.name != req.model)
-                .cloned()
-                .collect();
-            drop(instances);
-            state
-                .app
-                .update_instance_models(target, new_available, new_loaded)
+    let job_id = state
+        .app
+        .create_job(JobKind::ModelDelete {
+            model: req.model.clone(),
+            targets: targets.clone(),
+        })
+        .await;
+
+    let response_id = job_id.clone();
+    let app = state.app.clone();
+    let client = state.client.clone();
+    let model = req.model.clone();
+    tokio::spawn(async move {
+        app.update_job(&job_id, JobStatus::Running, None).await;
+
+        let mut any_failure = false;
+        for target in &targets {
+            match client.delete_model(target, &model).await {
+                Ok(()) => {
+                    // Update instance registry
+                    let instances = app.instances.read().await;
+                    if let Some(inst) = instances.get(target.as_str()) {
+                        let new_available: Vec<String> = inst
+                            .models_available
+                            .iter()
+                            .filter(|m| m.as_str() != model)
+                            .cloned()
+                            .collect();
+                        let new_loaded: Vec<crate::domain::types::LoadedModel> = inst
+                            .models_loaded
+                            .iter()
+                            .filter(|m| m.name != model)
+                            .cloned()
+                            .collect();
+                        drop(instances);
+                        app.update_instance_models(target, new_available, new_loaded)
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(model = %model, target = %target, error = %e, "delete failed");
+                    any_failure = true;
+                }
+            }
+        }
+
+        // If no instances have the model anymore, remove from global registry
+        {
+            let instances = app.instances.read().await;
+            let still_exists = instances
+                .values()
+                .any(|i| i.models_available.iter().any(|m| m == &model));
+            if !still_exists {
+                app.remove_model(&model).await;
+            }
+        }
+
+        if any_failure {
+            app.fail_job(&job_id, "delete failed on some instances")
                 .await;
+        } else {
+            app.complete_job(&job_id).await;
         }
-    }
+        app.emit_event("models.updated", "{}").await;
+    });
 
-    // If no instances have the model anymore, remove from global registry
-    {
-        let instances = state.app.instances.read().await;
-        let still_exists = instances
-            .values()
-            .any(|i| i.models_available.iter().any(|m| m == &req.model));
-        if !still_exists {
-            state.app.remove_model(&req.model).await;
-        }
-    }
-
-    state.app.emit_event("models.updated", "{}").await;
-    Json(json!({"results": results})).into_response()
+    Json(json!({"job_id": response_id, "status": "queued"})).into_response()
 }
 
 /// `GET /api/management/feasibility?model=<name>` — pre-flight VRAM feasibility check.
@@ -240,4 +246,25 @@ pub async fn check_feasibility(
         "vram_needed_mb": vram_needed / 1_048_576,
         "instances": feasible,
     }))
+}
+
+/// Pull a model and consume the stream, returning the last status string.
+async fn pull_and_wait(
+    client: &OllamaClient,
+    endpoint: &str,
+    model: &str,
+) -> anyhow::Result<String> {
+    use futures_util::StreamExt;
+    let mut stream = client.pull_model(endpoint, model).await?;
+    let mut last_status = String::new();
+    while let Some(chunk) = stream.next().await {
+        if let Ok(bytes) = chunk {
+            if let Ok(progress) =
+                serde_json::from_slice::<crate::domain::types::OllamaPullProgress>(&bytes)
+            {
+                last_status = progress.status;
+            }
+        }
+    }
+    Ok(last_status)
 }

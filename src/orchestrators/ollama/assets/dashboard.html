@@ -255,6 +255,42 @@ body {
 }
 .toggle.active::after { transform: translateX(16px); }
 
+/* ── Mode Selector ────────────────────────────────────────── */
+.mode-selector {
+  display: flex; gap: 0; border: 1px solid var(--vellum-border); border-radius: 2px;
+}
+.mode-option {
+  font-family: var(--font-mono); font-size: 0.65rem;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  padding: 0.35rem 0.6rem; cursor: pointer;
+  border-right: 1px solid var(--vellum-border);
+  transition: var(--transition-soft);
+  color: var(--stone-400);
+}
+.mode-option:last-child { border-right: none; }
+.mode-option:hover { color: var(--stone-600); }
+.mode-option.active { background: var(--accent-sage); color: var(--vellum-white); }
+
+/* ── Jobs Section ─────────────────────────────────────────── */
+.job-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr auto;
+  gap: 0.5rem; align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--vellum-border);
+  font-size: 0.75rem; font-family: var(--font-mono);
+}
+.job-row:last-child { border-bottom: none; }
+.job-badge {
+  display: inline-block; padding: 0.15rem 0.4rem;
+  border-radius: 2px; font-size: 0.6rem;
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.job-badge.queued { background: var(--accent-muted); color: var(--stone-400); }
+.job-badge.running { background: var(--accent-sage); color: var(--vellum-white); }
+.job-badge.completed { background: rgba(107,142,35,0.15); color: var(--accent-sage); }
+.job-badge.failed { background: rgba(198,134,107,0.15); color: var(--accent-clay); }
+
 /* ── Actions ──────────────────────────────────────────────── */
 .action-btn {
   font-family: var(--font-mono); font-size: 0.7rem;
@@ -364,19 +400,23 @@ body {
         <div>Name</div><div>VRAM</div><div>Available On</div><div>Loaded On</div>
       </div>
       <div id="modelsBody"></div>
+      <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--vellum-border);">
+        <div class="mgmt-bar">
+          <input class="mgmt-input" id="pullModelInput" placeholder="model name (e.g. llama3.2:3b)" />
+          <button class="action-btn" id="pullBtn" onclick="pullModel()">Pull</button>
+          <button class="action-btn" id="deleteBtn" onclick="deleteModel()">Delete</button>
+        </div>
+        <div id="mgmtStatus" class="mono muted" style="font-size:0.7rem; margin-top:0.75rem;"></div>
+      </div>
     </div>
   </section>
 
-  <!-- ── Model Management ──────────────────────────────────── -->
-  <section>
-    <div class="section-title">Model Management</div>
+  <!-- ── Jobs ──────────────────────────────────────────────── -->
+  <section id="jobsSection">
+    <div class="section-title">Jobs</div>
     <div class="card">
-      <div class="mgmt-bar">
-        <input class="mgmt-input" id="pullModelInput" placeholder="model name (e.g. llama3.2:3b)" />
-        <button class="action-btn" id="pullBtn" onclick="pullModel()">Pull</button>
-        <button class="action-btn" id="deleteBtn" onclick="deleteModel()">Delete</button>
-      </div>
-      <div id="mgmtStatus" class="mono muted" style="font-size:0.7rem; margin-top:0.75rem;"></div>
+      <div id="jobsBody"></div>
+      <div class="mono muted" style="font-size:0.65rem;" id="jobsEmpty">No jobs yet</div>
     </div>
   </section>
 
@@ -412,8 +452,12 @@ body {
     <div class="section-title">Settings</div>
     <div class="card">
       <div class="setting-row">
-        <span class="setting-label">Auto-pull models</span>
-        <div class="toggle" id="toggleAutoPull" onclick="toggleSetting('auto_pull')"></div>
+        <span class="setting-label">Auto-pull mode</span>
+        <div class="mode-selector" id="autoPullMode">
+          <div class="mode-option" data-mode="off" onclick="setAutoPullMode('off')">Off</div>
+          <div class="mode-option" data-mode="sync" onclick="setAutoPullMode('sync')">Sync</div>
+          <div class="mode-option" data-mode="on_demand" onclick="setAutoPullMode('on_demand')">On Demand</div>
+        </div>
       </div>
       <div class="setting-row">
         <span class="setting-label">Delete idle models</span>
@@ -450,7 +494,8 @@ body {
 <script>
 // ── State ──────────────────────────────────────────────────────
 let state = null;
-let settings = { auto_pull: true, delete_on_idle: false, metrics_enabled: true };
+let settings = { auto_pull_mode: 'sync', delete_on_idle: false, metrics_enabled: true };
+let jobs = [];
 let connected = true;
 let activityRing = [];
 const MAX_ACTIVITY = 30;
@@ -472,8 +517,21 @@ async function refresh() {
   }
 }
 
+async function refreshJobs() {
+  try {
+    const resp = await fetch('/api/jobs');
+    if (resp.ok) {
+      const data = await resp.json();
+      jobs = data.jobs || [];
+      renderJobs();
+    }
+  } catch (_) {}
+}
+
 setInterval(refresh, 2500);
+setInterval(refreshJobs, 3000);
 refresh();
+refreshJobs();
 
 // ── SSE (live events) ─────────────────────────────────────────
 function connectSSE() {
@@ -611,7 +669,13 @@ function renderMetrics(met) {
 
 // ── Settings ───────────────────────────────────────────────────
 function syncToggles() {
-  setToggle('toggleAutoPull', settings.auto_pull);
+  // Auto-pull mode selector
+  const modeEl = document.getElementById('autoPullMode');
+  if (modeEl) {
+    modeEl.querySelectorAll('.mode-option').forEach(opt => {
+      opt.classList.toggle('active', opt.dataset.mode === settings.auto_pull_mode);
+    });
+  }
   setToggle('toggleDeleteOnIdle', settings.delete_on_idle);
   setToggle('toggleMetrics', settings.metrics_enabled);
 }
@@ -621,9 +685,19 @@ function setToggle(id, val) {
   if (el) el.classList.toggle('active', !!val);
 }
 
+async function setAutoPullMode(mode) {
+  settings.auto_pull_mode = mode;
+  syncToggles();
+  await saveSettings();
+}
+
 async function toggleSetting(key) {
   settings[key] = !settings[key];
   syncToggles();
+  await saveSettings();
+}
+
+async function saveSettings() {
   try {
     await fetch('/api/settings', {
       method: 'POST',
@@ -650,10 +724,13 @@ async function pullModel() {
       body: JSON.stringify({ model }),
     });
     const data = await resp.json();
-    const successes = (data.results || []).filter(r => r.success).length;
-    const total = (data.results || []).length;
-    status.textContent = `Pull complete: ${successes}/${total} instances succeeded`;
-    addActivity('pull', model + ': ' + successes + '/' + total + ' ok');
+    if (data.job_id) {
+      status.textContent = 'Pull job queued (' + data.job_id + ')';
+      addActivity('pull', model + ': job started');
+      refreshJobs();
+    } else if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+    }
   } catch (e) {
     status.textContent = 'Pull failed: ' + e.message;
   }
@@ -674,14 +751,41 @@ async function deleteModel() {
       body: JSON.stringify({ model }),
     });
     const data = await resp.json();
-    const successes = (data.results || []).filter(r => r.success).length;
-    const total = (data.results || []).length;
-    status.textContent = `Delete complete: ${successes}/${total} instances succeeded`;
-    addActivity('delete', model + ': ' + successes + '/' + total + ' ok');
+    if (data.job_id) {
+      status.textContent = 'Delete job queued (' + data.job_id + ')';
+      addActivity('delete', model + ': job started');
+      refreshJobs();
+    } else if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+    }
   } catch (e) {
     status.textContent = 'Delete failed: ' + e.message;
   }
   document.getElementById('deleteBtn').disabled = false;
+}
+
+// ── Jobs ───────────────────────────────────────────────────────
+function renderJobs() {
+  const body = document.getElementById('jobsBody');
+  const empty = document.getElementById('jobsEmpty');
+  if (!jobs.length) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  body.innerHTML = jobs.map(j => {
+    const elapsed = j.completed_at
+      ? formatDuration(Math.round((new Date(j.completed_at) - new Date(j.started_at)) / 1000))
+      : formatDuration(Math.round((Date.now() - new Date(j.started_at).getTime()) / 1000));
+    const detail = j.progress || j.error || '';
+    return `<div class="job-row">
+      <span class="job-badge ${esc(j.status)}">${esc(j.status)}</span>
+      <span>${esc(j.kind)} · ${esc(j.subject)}</span>
+      <span class="muted">${esc(detail)}</span>
+      <span class="muted">${elapsed}</span>
+    </div>`;
+  }).join('');
 }
 
 // ── Activity Log ───────────────────────────────────────────────

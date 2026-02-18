@@ -2,6 +2,19 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-18
+
+- Ollama Orchestrator: Jobs system — ring-buffer job tracking for pull/delete/sync/on-demand operations
+- Ollama Orchestrator: AutoPullMode 3-way enum (Off / Sync / OnDemand) replaces boolean auto_pull
+- Ollama Orchestrator: Model sync task — 60s background loop replicates models across tier peers
+- Ollama Orchestrator: On-demand pull in proxy — background job on ModelNotFound + OnDemand mode
+- Ollama Orchestrator: Management endpoints converted to non-blocking job-based responses
+- Ollama Orchestrator: Dashboard — Jobs section, merged Model Management into Models card, 3-way mode selector
+- Ollama Orchestrator: Koi mDNS discovery with topology REST API (Phase 2) for reliable multi-stone resolution
+- Ollama Orchestrator: Binary renamed to `zen-garden-ollama-orchestrator`, OCI labels added to Dockerfile
+- Ollama Orchestrator: start.bat runs detached (`-d --restart unless-stopped`), push.bat for Docker Hub
+- Tools API: ToolQuery now matches against tool aliases (FQID + alias list)
+
 ## 2026-02-21
 
 - **NEW**: AI Capability Router crate (garden-router) — ORCH-0002 implementation

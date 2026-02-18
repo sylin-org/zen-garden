@@ -10,19 +10,23 @@ use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use garden_router::api::{dashboard, health, management, proxy};
-use garden_router::infra::{ollama_client::OllamaClient, persistence};
-use garden_router::tasks;
-use garden_router::AppState;
+use zen_garden_ollama_orchestrator::api::{dashboard, health, management, proxy};
+use zen_garden_ollama_orchestrator::infra::{ollama_client::OllamaClient, persistence};
+use zen_garden_ollama_orchestrator::tasks;
+use zen_garden_ollama_orchestrator::AppState;
 
 #[derive(Parser)]
-#[command(name = "garden-router")]
+#[command(name = "zen-garden-ollama-orchestrator")]
 #[command(about = "Ollama Orchestrator — VRAM-aware multi-instance orchestration")]
 #[command(version)]
 struct Cli {
-    /// Stone endpoint for Tools API access.
-    #[arg(long, env = "GARDEN_STONE_ENDPOINT")]
-    stone_endpoint: String,
+    /// Koi endpoint for mDNS/DNS/UDP discovery capabilities.
+    #[arg(long, env = "KOI_ENDPOINT", default_value = "http://localhost:5641")]
+    koi_endpoint: String,
+
+    /// Explicit stone endpoint (skips Koi discovery). Like Rake's `--at`.
+    #[arg(long, env = "GARDEN_STONE")]
+    stone: Option<String>,
 
     /// Offering name (for identification in the garden).
     #[arg(long, env = "GARDEN_OFFERING_NAME", default_value = "zen-garden.ollama.orchestrator")]
@@ -58,7 +62,8 @@ async fn main() -> Result<()> {
 
     tracing::info!(
         offering = %cli.offering_name,
-        stone = %cli.stone_endpoint,
+        koi = %cli.koi_endpoint,
+        stone = ?cli.stone,
         proxy_port = cli.proxy_port,
         dashboard_port = cli.dashboard_port,
         version = env!("CARGO_PKG_VERSION"),
@@ -73,11 +78,15 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let state = AppState::new(
         cli.offering_name.clone(),
-        cli.stone_endpoint.clone(),
+        cli.koi_endpoint.clone(),
+        cli.stone.clone(),
         cli.data_dir.clone(),
         config,
         shutdown.clone(),
     );
+    // Load any cached tending state from a previous run
+    state.load_tending().await;
+
     let client = OllamaClient::new();
 
     // ── Background Tasks ─────────────────────────────────────────
@@ -101,6 +110,12 @@ async fn main() -> Result<()> {
 
     let metrics_handle = tokio::spawn(tasks::metrics_flush::run(
         state.clone(),
+        shutdown.clone(),
+    ));
+
+    let model_sync_handle = tokio::spawn(tasks::model_sync::run(
+        state.clone(),
+        client.clone(),
         shutdown.clone(),
     ));
 
@@ -140,6 +155,8 @@ async fn main() -> Result<()> {
             "/api/metrics/reset",
             axum::routing::post(dashboard::post_metrics_reset),
         )
+        // Jobs
+        .route("/api/jobs", axum::routing::get(dashboard::get_jobs))
         // Health
         .route("/health", axum::routing::get(health::health_check))
         .with_state(state.clone())
@@ -187,6 +204,7 @@ async fn main() -> Result<()> {
         let _ = reconciliation_handle.await;
         let _ = health_handle.await;
         let _ = metrics_handle.await;
+        let _ = model_sync_handle.await;
     })
     .await
     .ok();

@@ -1,7 +1,11 @@
 ﻿//! SSE client for the Moss Tools API stream.
 //!
-//! Subscribes to `GET /api/v1/garden/tools/stream?tool_fqid=offering:ollama`
-//! and emits tool upsert/remove events for Ollama instances.
+//! Subscribes to `GET /api/v1/garden/tools/stream` and filters in-memory
+//! for Ollama offerings (matching `tool_fqid` or aliases starting with
+//! `offering:ollama`).
+//!
+//! TODO: Once Moss tool_fqid filtering supports alias matching, re-add
+//! `?tool_fqid=offering:ollama` server-side filter to reduce traffic.
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
@@ -34,15 +38,16 @@ pub async fn subscribe_tools_stream(
     stone_endpoint: &str,
     mut on_event: impl FnMut(ToolEvent),
 ) -> Result<()> {
+    // TODO: Re-add `?tool_fqid=offering:ollama` once Moss alias-aware filtering is deployed.
     let url = format!(
-        "{stone_endpoint}/api/v1/garden/tools/stream?tool_fqid=offering:ollama"
+        "{stone_endpoint}/api/v1/garden/tools/stream"
     );
 
     tracing::info!(url = %url, "connecting to Tools API stream");
 
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(0)) // no timeout for SSE
+        // No .timeout() — SSE streams are long-lived
         .build()?;
 
     let response = client
@@ -50,9 +55,9 @@ pub async fn subscribe_tools_stream(
         .header("Accept", "text/event-stream")
         .send()
         .await
-        .context("connect to Tools API stream")?
+        .with_context(|| format!("connect to Tools API stream at {url}"))?
         .error_for_status()
-        .context("Tools API stream status")?;
+        .with_context(|| format!("Tools API stream status from {url}"))?;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -73,7 +78,7 @@ pub async fn subscribe_tools_stream(
                 // Empty line = event boundary
                 if !data_lines.is_empty() {
                     let data = data_lines.join("\n");
-                    if let Some(event) = parse_sse_event(&event_type, &data) {
+                    for event in parse_sse_event(&event_type, &data) {
                         on_event(event);
                     }
                     data_lines.clear();
@@ -92,41 +97,21 @@ pub async fn subscribe_tools_stream(
     Ok(())
 }
 
-/// Parse an SSE event into a ToolEvent.
-fn parse_sse_event(event_type: &str, data: &str) -> Option<ToolEvent> {
+/// Parse an SSE event into zero or more `ToolEvent`s.
+///
+/// A `tools.snapshot` can contain multiple Ollama offerings (one per stone),
+/// so this returns a `Vec` rather than a single `Option`.
+fn parse_sse_event(event_type: &str, data: &str) -> Vec<ToolEvent> {
     match event_type {
-        "tools.snapshot" => parse_snapshot(data),
-        "tool.upsert" => parse_upsert(data),
-        "tool.remove" => parse_remove(data),
-        "tools.heartbeat" => Some(ToolEvent::Heartbeat),
+        "tools.snapshot" => parse_snapshot_tools(data),
+        "tool.upsert" => parse_upsert(data).into_iter().collect(),
+        "tool.remove" => parse_remove(data).into_iter().collect(),
+        "tools.heartbeat" => vec![ToolEvent::Heartbeat],
         _ => {
             tracing::trace!(event = event_type, "ignoring SSE event type");
-            None
+            vec![]
         }
     }
-}
-
-/// Parse a tools.snapshot event (initial load).
-fn parse_snapshot(data: &str) -> Option<ToolEvent> {
-    let json: serde_json::Value = serde_json::from_str(data).ok()?;
-
-    // Snapshot contains { tools: [...] } — emit a Discovered for each Ollama tool
-    if let Some(tools) = json.get("tools").and_then(|t| t.as_array()) {
-        for tool in tools {
-            if let Some(event) = extract_ollama_tool(tool) {
-                // For snapshot, we return the first one here and the caller
-                // should handle the full snapshot. But since our callback is FnMut,
-                // we'll emit multiple events. This is OK — but we need to handle it
-                // differently. Let's just return the first and let the task handle
-                // full snapshot parsing.
-                return Some(event);
-            }
-        }
-    }
-
-    // If this is a snapshot with tools array, we handle it in the task
-    // by re-parsing the full JSON there.
-    None
 }
 
 /// Parse a tool.upsert event.

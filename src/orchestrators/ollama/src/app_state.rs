@@ -7,7 +7,8 @@ use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
 use crate::domain::tiering;
 use crate::domain::types::*;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,12 +22,28 @@ pub struct DashboardEvent {
     pub data: String,
 }
 
+/// Persisted tending state — which stone we're bound to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TendedStone {
+    pub stone_name: String,
+    pub stone_id: Option<String>,
+    pub endpoint: String,
+    pub last_seen: chrono::DateTime<chrono::Utc>,
+}
+
 /// Shared state for the Ollama Orchestrator.
 #[derive(Clone)]
 pub struct AppState {
     // ── Identity ──
     pub offering_name: String,
-    pub stone_endpoint: String,
+
+    // ── Discovery ──
+    /// Koi HTTP API endpoint (mDNS, DNS, UDP bridging).
+    pub koi_endpoint: String,
+    /// Explicit stone override (`--stone` / `GARDEN_STONE`). Skips discovery.
+    pub explicit_stone: Option<String>,
+    /// Currently tended stone (bound via discovery or explicit).
+    pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
 
     // ── Registry ──
     pub instances: Arc<RwLock<HashMap<String, OllamaInstance>>>,
@@ -47,6 +64,9 @@ pub struct AppState {
     // ── Events ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
 
+    // ── Jobs ──
+    pub jobs: Arc<RwLock<VecDeque<OrchestratorJob>>>,
+
     // ── Lifecycle ──
     pub shutdown: CancellationToken,
     pub start_time: Instant,
@@ -56,7 +76,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         offering_name: String,
-        stone_endpoint: String,
+        koi_endpoint: String,
+        explicit_stone: Option<String>,
         data_dir: String,
         config: RouterConfig,
         shutdown: CancellationToken,
@@ -68,7 +89,9 @@ impl AppState {
 
         Self {
             offering_name,
-            stone_endpoint,
+            koi_endpoint,
+            explicit_stone,
+            tended_stone: Arc::new(RwLock::new(None)),
             instances: Arc::new(RwLock::new(HashMap::new())),
             models: Arc::new(RwLock::new(HashMap::new())),
             tiers: Arc::new(RwLock::new(Vec::new())),
@@ -77,6 +100,7 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             metrics: Arc::new(RwLock::new(engine)),
             dashboard_tx,
+            jobs: Arc::new(RwLock::new(VecDeque::with_capacity(20))),
             shutdown,
             start_time: Instant::now(),
             data_dir,
@@ -203,6 +227,77 @@ impl AppState {
         });
     }
 
+    // ── Jobs ─────────────────────────────────────────────────────
+
+    /// Maximum number of jobs to retain in the ring buffer.
+    const MAX_JOBS: usize = 20;
+
+    /// Create a new job, add it to the ring buffer, and return its ID.
+    pub async fn create_job(&self, kind: JobKind) -> String {
+        let id = format!("job-{}", chrono::Utc::now().timestamp_millis());
+        let job = OrchestratorJob {
+            id: id.clone(),
+            kind: kind.clone(),
+            status: JobStatus::Queued,
+            progress: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+            error: None,
+        };
+
+        let mut jobs = self.jobs.write().await;
+        if jobs.len() >= Self::MAX_JOBS {
+            jobs.pop_front();
+        }
+        jobs.push_back(job);
+
+        self.emit_event(
+            "job.created",
+            &serde_json::json!({"id": &id, "kind": kind.label(), "subject": kind.subject()}).to_string(),
+        )
+        .await;
+        id
+    }
+
+    /// Mark a job as running, with optional progress text.
+    pub async fn update_job(&self, id: &str, status: JobStatus, progress: Option<String>) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+            job.status = status;
+            if progress.is_some() {
+                job.progress = progress;
+            }
+        }
+    }
+
+    /// Mark a job as completed.
+    pub async fn complete_job(&self, id: &str) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+            job.status = JobStatus::Completed;
+            job.completed_at = Some(chrono::Utc::now());
+        }
+        drop(jobs);
+        self.emit_event("job.completed", &serde_json::json!({"id": id}).to_string())
+            .await;
+    }
+
+    /// Mark a job as failed with an error message.
+    pub async fn fail_job(&self, id: &str, error: &str) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+            job.status = JobStatus::Failed;
+            job.completed_at = Some(chrono::Utc::now());
+            job.error = Some(error.to_string());
+        }
+        drop(jobs);
+        self.emit_event(
+            "job.failed",
+            &serde_json::json!({"id": id, "error": error}).to_string(),
+        )
+        .await;
+    }
+
     // ── Config ───────────────────────────────────────────────────
 
     /// Get the VRAM budget for a stone, or fall back to the discovered total.
@@ -214,5 +309,59 @@ impl AppState {
             .and_then(|s| s.vram_budget_mb)
             .map(|mb| mb * 1_048_576)
             .unwrap_or(vram_total)
+    }
+
+    // ── Tending ──────────────────────────────────────────────────
+
+    /// Bind to a stone. Persists tending state to the data directory.
+    pub async fn tend_to(&self, stone: TendedStone) {
+        tracing::info!(
+            stone = %stone.stone_name,
+            endpoint = %stone.endpoint,
+            "tending to stone"
+        );
+
+        // Persist to disk
+        let path = std::path::Path::new(&self.data_dir).join(".tending");
+        if let Ok(json) = serde_json::to_string_pretty(&stone) {
+            let _ = tokio::fs::write(&path, json).await;
+        }
+
+        *self.tended_stone.write().await = Some(stone);
+        self.emit_event("tending.changed", "{}").await;
+    }
+
+    /// Clear tending state.
+    pub async fn clear_tending(&self) {
+        tracing::info!("clearing tending state");
+        *self.tended_stone.write().await = None;
+
+        let path = std::path::Path::new(&self.data_dir).join(".tending");
+        let _ = tokio::fs::remove_file(&path).await;
+        self.emit_event("tending.changed", "{}").await;
+    }
+
+    /// Get the current tended stone's endpoint, if any.
+    pub async fn tended_endpoint(&self) -> Option<String> {
+        self.tended_stone
+            .read()
+            .await
+            .as_ref()
+            .map(|s| s.endpoint.clone())
+    }
+
+    /// Load persisted tending state from the data directory.
+    pub async fn load_tending(&self) {
+        let path = std::path::Path::new(&self.data_dir).join(".tending");
+        if let Ok(data) = tokio::fs::read_to_string(&path).await {
+            if let Ok(stone) = serde_json::from_str::<TendedStone>(&data) {
+                tracing::info!(
+                    stone = %stone.stone_name,
+                    endpoint = %stone.endpoint,
+                    "restored tending state from disk"
+                );
+                *self.tended_stone.write().await = Some(stone);
+            }
+        }
     }
 }

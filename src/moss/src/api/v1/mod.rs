@@ -6,6 +6,7 @@ pub mod console;
 pub mod election;
 pub mod events;
 pub mod garden;
+pub mod garden_storage;
 pub mod health;
 pub mod helpers;
 pub mod jobs;

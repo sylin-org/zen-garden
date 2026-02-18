@@ -419,6 +419,27 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/companions/{id}/down",
             post(api::v1::companions::stop_companion),
         )
+        // Garden storage — name-based, Primary-or-proxy (STORAGE-0008)
+        .route(
+            "/api/v1/garden/storage/{name}",
+            get(api::v1::garden_storage::discover_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/{*path}",
+            get(api::v1::garden_storage::get_object_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/{*path}",
+            put(api::v1::garden_storage::put_object_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/{*path}",
+            delete(api::v1::garden_storage::delete_object_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/{*path}",
+            head(api::v1::garden_storage::head_object_v1),
+        )
         // Stone storage (seed banks on THIS stone)
         .route(
             "/api/v1/stone/storage",
@@ -478,17 +499,10 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/storage/bank/{id}/changes",
             get(api::v1::storage::bank_changes_v1),
         )
+        // Stone file ops — local reads only, no writes (STORAGE-0008)
         .route(
             "/api/v1/stone/storage/bank/{id}/{*path}",
             get(api::v1::storage::get_object_v1),
-        )
-        .route(
-            "/api/v1/stone/storage/bank/{id}/{*path}",
-            put(api::v1::storage::put_object_v1),
-        )
-        .route(
-            "/api/v1/stone/storage/bank/{id}/{*path}",
-            delete(api::v1::storage::delete_object_v1),
         )
         .route(
             "/api/v1/stone/storage/bank/{id}/{*path}",

@@ -1,8 +1,13 @@
 ﻿# STORAGE-0002: Storage API Structure
 
-**Status:** Accepted  
+**Status:** Partially superseded by [STORAGE-0008](STORAGE-0008-garden-stone-api-split.md)  
 **Date:** 2026-01-28  
 **Context:** S3 interface implementation for seed bank object storage
+
+> **Note:** STORAGE-0008 splits file operations into garden-tier (name-based,
+> Primary-or-proxy) and stone-tier (ID-based, local-only reads). The stone-tier
+> file routes no longer support PUT/DELETE. See STORAGE-0008 for the current API
+> surface.
 
 ## Decision
 

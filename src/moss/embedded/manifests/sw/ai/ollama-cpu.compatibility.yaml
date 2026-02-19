@@ -12,10 +12,9 @@ compatibility_rules:
 
   - name: "gpu-present-use-ollama"
     condition:
-      requires_ai_any: ['cuda', 'rocm']
-    reason: "This stone has a GPU — use the regular 'ollama' offering instead"
-    suggestion: "Install 'ollama' (GPU) rather than 'ollama-cpu'. GPU-equipped stones should serve generation models."
-    warn_only: true
+      has_ai_any: ['cuda', 'rocm']
+    reason: "This stone has a GPU — use the 'ollama' (GPU) offering instead of 'ollama-cpu'"
+    suggestion: "Install 'ollama' rather than 'ollama-cpu'. GPU-equipped stones should run the GPU offering for generation models."
 
   - name: "insufficient-memory"
     condition:

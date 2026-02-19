@@ -1,0 +1,62 @@
+﻿# Ollama CPU-Only - OS-Aware Adopted Mode Configuration
+#
+# This manifest configures Ollama for "adopted" mode on CPU-only thin clients.
+# Moss will detect and monitor a native Ollama installation rather than
+# deploying it in a container. GPU offloading is disabled.
+#
+# IMPORTANT: This requires Ollama to be installed natively on the host:
+#   Linux:   curl -fsSL https://ollama.com/install.sh | sh
+#   Windows: Download from https://ollama.com/download/windows
+
+---
+# Frontmatter (metadata)
+name: ollama-cpu
+description: Ollama CPU-only inference for thin clients (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - llm
+  - inference
+  - embedding
+  - cpu
+  - thin-client
+  - local-ai
+
+# Detection rules (OS-aware)
+detection:
+  # Method 1: HTTP probe (works on all OSes)
+  - method: http_probe
+    config:
+      url: http://localhost:11434/api/tags
+      expected_status: 200
+      timeout_ms: 3000
+    stability_threshold: 2
+    cache_ttl_secs: 300
+
+  # Method 2: Command detection (OS-specific commands)
+  - method: command
+    config:
+      command_windows: powershell -Command "Get-Service -Name 'Ollama' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status"
+      command_linux: systemctl is-active ollama
+      command_macos: launchctl list | grep ollama
+      command: ollama --version
+      expected_pattern: "ollama version"
+      expected_exit_code: 0
+    stability_threshold: 2
+    cache_ttl_secs: 300
+
+# Control configuration
+control:
+  level: monitor
+  health_check_url: http://localhost:11434/api/tags
+
+# Connection profile
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    api: "/api"
+    models: "/api/tags"

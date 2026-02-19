@@ -1,0 +1,23 @@
+﻿{
+  "name": "ollama-cpu",
+  "description": "Ollama CPU-only inference for thin clients (MIT licensed)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "llm",
+    "inference",
+    "embedding",
+    "cpu",
+    "thin-client",
+    "local-ai"
+  ],
+  "port": 11434,
+  "volumes": [
+    "ollama-cpu-data"
+  ],
+  "gpu_recommended": false,
+  "minimum_memory_gb": 2,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  }
+}

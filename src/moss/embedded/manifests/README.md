@@ -37,8 +37,9 @@ manifests/
 ### Messaging (1 service)
 - `rabbitmq` - RabbitMQ 3.x with management UI
 
-### AI (1 service)
-- `ollama` - Ollama local LLM runtime
+### AI (2 services)
+- `ollama` - Ollama local LLM runtime (GPU)
+- `ollama-cpu` - Ollama CPU-only inference for thin clients
 
 ### Secrets (1 service)
 - `vault` - HashiCorp Vault (dev mode)

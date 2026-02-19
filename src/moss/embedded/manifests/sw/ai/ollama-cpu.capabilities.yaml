@@ -1,0 +1,91 @@
+﻿# Ollama CPU-Only Capabilities Manifest
+# Identical to ollama (same binary, same API) — just targeted at CPU thin clients
+
+version: "1"
+offering: ollama-cpu
+
+capabilities:
+  - type: model
+    display:
+      singular: model
+      plural: models
+    mutability: hot
+
+    list:
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} curl -s http://localhost:11434/api/tags"
+          windows: "docker exec {{container_name}} curl -s http://localhost:11434/api/tags"
+          macos: "docker exec {{container_name}} curl -s http://localhost:11434/api/tags"
+        adopted:
+          linux: "curl -s http://localhost:{{port}}/api/tags"
+          windows: "curl.exe -s http://localhost:{{port}}/api/tags"
+          macos: "curl -s http://localhost:{{port}}/api/tags"
+
+      transform:
+        items_path: ".models"
+        fields:
+          name: ".name"
+          size_bytes: ".size"
+          metadata:
+            family: ".details.family"
+            quantization: ".details.quantization_level"
+            modified: ".modified_at"
+            format: ".details.format"
+            parameter_size: ".details.parameter_size"
+
+      output: json
+      timeout_secs: 10
+
+    add:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} ollama pull {{item}}"
+          windows: "docker exec {{container_name}} ollama pull {{item}}"
+          macos: "docker exec {{container_name}} ollama pull {{item}}"
+        adopted:
+          linux: "ollama pull {{item}}"
+          windows: "ollama.exe pull {{item}}"
+          macos: "ollama pull {{item}}"
+      timeout_secs: 3600  # 1 hour — CPU stones often on slower networks
+      progress:
+        pattern: "(\\d+)%"
+
+    remove:
+      available: true
+      commands:
+        managed:
+          linux: "docker exec {{container_name}} ollama rm {{item}}"
+          windows: "docker exec {{container_name}} ollama rm {{item}}"
+          macos: "docker exec {{container_name}} ollama rm {{item}}"
+        adopted:
+          linux: "ollama rm {{item}}"
+          windows: "ollama.exe rm {{item}}"
+          macos: "ollama rm {{item}}"
+      timeout_secs: 60
+
+    check_updates:
+      available: true
+      local_command:
+        managed:
+          linux: "docker exec {{container_name}} ollama show {{item}} --json 2>/dev/null || echo '{}'"
+          windows: "docker exec {{container_name}} ollama show {{item}} --json 2>nul || echo {}"
+          macos: "docker exec {{container_name}} ollama show {{item}} --json 2>/dev/null || echo '{}'"
+        adopted:
+          linux: "ollama show {{item}} --json 2>/dev/null || echo '{}'"
+          windows: "ollama.exe show {{item}} --json 2>nul || echo {}"
+          macos: "ollama show {{item}} --json 2>/dev/null || echo '{}'"
+      compare:
+        local_path: ".digest"
+        remote_path: ".digest"
+      timeout_secs: 30
+
+    upgrade:
+      available: true
+      timeout_secs: 3600
+      progress:
+        pattern: "(\\d+)%"
+
+    summary:
+      format: "{{count}} models (CPU)"

@@ -2,6 +2,30 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-21
+
+- Orchestrator: `Blocked` verdict — hard routing block for models that error during benchmark (score=0, not overridable)
+- Orchestrator: `summarise()` now produces a Blocked summary when all benchmark samples error (fixes Unknown score gap)
+- Orchestrator: extension API — `GET /v1/models` (placement, VRAM, fitness) and `GET /v1/stones` (GPU, queue, health)
+- Build: removed forced cache invalidation — Cargo detects CARGO_BUILD_NUMBER changes via build.rs fingerprints
+- Build: enabled mold linker for Linux Docker builds (~2-5x faster linking)
+- Build: added `[profile.dev.build-override] opt-level = 3` for faster proc-macro execution
+- Build: skip tests in distribution pipeline (run separately, not per-build)
+- IDE: added `.vscode/settings.json` with `rust-analyzer.cargo.targetDir` to prevent cache invalidation
+
+## 2026-02-21
+
+- Implemented ORCH-0004: Gateway announcement — orchestrator self-registers via Koi mDNS + Moss gateway API
+- Added `GatewayRegistration` type to garden-common and `gateways` field to `TopologyEntry`
+- New Moss API: `PUT/DELETE /api/v1/garden/gateway/{offering}` for gateway registration
+- Service discovery: gateway-first resolution in `find_services()` — orchestrator appears before raw instances
+- Orchestrator: new `gateway_announce` task with mDNS + Moss heartbeat loop and graceful deregistration
+- Fixed periodic announcer not evicting expired gateways (stale entries could persist in chirps)
+- Fixed gateway self-duplication in `find_services` (local stone returned same gateway twice)
+- Fixed `tags` not propagating in `upsert_from_chirp` update path (pre-existing)
+- Orchestrator proxy: added `GET /` and `HEAD /` root health probe (clients expect "Ollama is running")
+- Orchestrator proxy: added `HEAD/POST /api/blobs/:digest` pass-through (needed for push/create)
+
 ## 2026-02-20
 
 - **BREAKING**: Fitness profiler: replaced flat FitnessMatrix/BenchmarkProgress with hierarchical BenchmarkRun tree

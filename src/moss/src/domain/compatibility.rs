@@ -304,6 +304,21 @@ pub fn evaluate_compatibility(
             matches &= has_match;
         }
 
+        if let Some(ai_present) = &condition.ai_present_any {
+            // Match if ANY of the specified runtimes are detected on this stone.
+            // Used to DENY offerings on GPU-equipped stones (e.g. ollama-cpu).
+            let detected = ai_present
+                .iter()
+                .any(|runtime| match runtime.to_lowercase().as_str() {
+                    "cuda" => capabilities.has_cuda,
+                    "rocm" => capabilities.has_rocm,
+                    "directml" => capabilities.has_directml,
+                    "openvino" => capabilities.has_openvino,
+                    _ => false,
+                });
+            matches &= detected;
+        }
+
         if let Some(requires_ai_all) = &condition.requires_ai_all {
             // Match if ALL of the specified runtimes are present (AND logic)
             let has_all =
@@ -418,6 +433,67 @@ mod tests {
         };
 
         let result = evaluate_compatibility(&rules, &caps);
+        assert!(matches!(result, CompatibilityDecision::Pass));
+    }
+
+    #[test]
+    fn test_ai_present_any_blocks_gpu_stone() {
+        let rules = garden_common::CompatibilityRules {
+            version: "1.0".to_string(),
+            compatibility_rules: vec![garden_common::CompatibilityRule {
+                name: "gpu-present-use-ollama".into(),
+                condition: garden_common::RuleCondition {
+                    processor_models: None,
+                    processor_patterns: None,
+                    cpu_features_missing: None,
+                    architectures: None,
+                    memory_mb_less_than: None,
+                    os_family: None,
+                    os_family_not: None,
+                    requires_ai_any: None,
+                    requires_ai_all: None,
+                    ai_present_any: Some(vec!["cuda".into(), "rocm".into()]),
+                    vram_mb_less_than: None,
+                    vram_mb_at_least: None,
+                },
+                reason: "GPU detected".into(),
+                suggestion: Some("Use ollama instead".into()),
+                fallback: None,
+                warn_only: false,
+            }],
+            post_install_healthcheck: None,
+        };
+
+        // GPU stone → should FAIL
+        let gpu_caps = CompatCheckCapabilities {
+            cpu_model: Some("Intel i7".into()),
+            cpu_features: Some(vec!["avx2".into()]),
+            architecture: Some("x86_64".into()),
+            total_memory_mb: Some(16384),
+            os_family: "linux".into(),
+            has_cuda: true,
+            has_rocm: false,
+            has_directml: false,
+            has_openvino: false,
+            gpu_vram_total_mb: 8192,
+        };
+        let result = evaluate_compatibility(&rules, &gpu_caps);
+        assert!(matches!(result, CompatibilityDecision::Fail { .. }));
+
+        // CPU-only stone → should PASS
+        let cpu_caps = CompatCheckCapabilities {
+            cpu_model: Some("Intel Celeron J4105".into()),
+            cpu_features: Some(vec!["sse4_2".into()]),
+            architecture: Some("x86_64".into()),
+            total_memory_mb: Some(8192),
+            os_family: "linux".into(),
+            has_cuda: false,
+            has_rocm: false,
+            has_directml: false,
+            has_openvino: false,
+            gpu_vram_total_mb: 0,
+        };
+        let result = evaluate_compatibility(&rules, &cpu_caps);
         assert!(matches!(result, CompatibilityDecision::Pass));
     }
 

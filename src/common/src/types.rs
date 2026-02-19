@@ -1009,11 +1009,17 @@ pub struct RuleCondition {
 
     // AI/GPU requirements
     /// Match if ANY of the listed AI runtimes are present (OR logic: ['cuda', 'rocm'])
+    /// Use for offerings that REQUIRE a GPU.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_ai_any: Option<Vec<String>>,
     /// Match if ALL of the listed AI runtimes are present (AND logic: ['cuda', 'directml'])
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_ai_all: Option<Vec<String>>,
+    /// Match if ANY of the listed AI runtimes are detected on the stone.
+    /// Use for offerings that must EXCLUDE GPU-equipped stones (e.g. ollama-cpu).
+    /// Semantically identical to requires_ai_any but named for the denial case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_present_any: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vram_mb_less_than: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

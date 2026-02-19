@@ -44,6 +44,22 @@ pub async fn proxy_handler(
 
     // Dispatch based on path
     match (method.clone(), path.as_str()) {
+        // ── Root health probe (Ollama clients expect "Ollama is running") ──
+        (Method::GET, "/") => {
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; charset=utf-8")
+                .body(Body::from("Ollama is running"))
+                .unwrap())
+        }
+        (Method::HEAD, "/") => {
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; charset=utf-8")
+                .body(Body::empty())
+                .unwrap())
+        }
+
         // ── Inference endpoints (routed) ──
         (Method::POST, "/api/generate" | "/api/chat" | "/api/embed" | "/api/embeddings") => {
             proxy_inference(&state, &path, &headers, body_bytes).await
@@ -64,6 +80,11 @@ pub async fn proxy_handler(
         (Method::GET, "/api/version") => {
             let body = serde_json::json!({"version": env!("CARGO_PKG_VERSION")});
             Ok(axum::Json(body).into_response())
+        }
+
+        // ── Blob endpoints (proxied to any healthy instance) ──
+        _ if path.starts_with("/api/blobs/") && matches!(method, Method::HEAD | Method::POST) => {
+            proxy_blob(&state, &path, method, &headers, body_bytes).await
         }
 
         // ── Fallback ──
@@ -529,6 +550,43 @@ async fn on_demand_pull_job(app: AppState, client: OllamaClient, model: String) 
     } else {
         app.fail_job(&job_id, "pull failed on all instances").await;
     }
+}
+
+/// Proxy blob check/upload (`HEAD /api/blobs/:digest`, `POST /api/blobs/:digest`).
+///
+/// Blobs are content-addressed, so any healthy instance will do.
+/// HEAD returns 200/404 (exists?), POST uploads the layer data.
+async fn proxy_blob(
+    state: &ProxyState,
+    path: &str,
+    method: Method,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Result<Response, StatusCode> {
+    let target = {
+        let instances = state.app.instances.read().await;
+        instances
+            .values()
+            .find(|i| i.health.is_routable())
+            .map(|i| i.endpoint.clone())
+    };
+
+    let target = target.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let resp = state
+        .client
+        .forward_request(&target, path, method, body, headers.clone())
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let status =
+        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    Ok(Response::builder()
+        .status(status)
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 /// Extract the "model" field from a JSON body.

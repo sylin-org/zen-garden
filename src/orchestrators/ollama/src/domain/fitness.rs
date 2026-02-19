@@ -19,24 +19,40 @@ pub enum Verdict {
     Fast,
     /// Cold start < 90 s AND tok/s > 1 — functional but slow.
     Degraded,
-    /// Exceeds thresholds — performance is poor.
+    /// Exceeds thresholds — performance is poor. Deprioritised but still
+    /// routable as a last resort (can be overridden by queue pressure).
     Vetoed,
+    /// Model errors on this stone (all samples failed, or zero output).
+    /// Hard block — router will NOT route here, even as last resort.
+    Blocked,
 }
 
 impl Verdict {
-    /// Routing score: higher is better.  Advisory only (ORCH-0002).
+    /// Routing score: higher is better.
+    /// Fast/Degraded/Vetoed are advisory (ORCH-0002). Blocked is hard.
     pub fn score(self) -> u32 {
         match self {
             Self::Fast => 100,
             Self::Degraded => 50,
             Self::Vetoed => 10,
+            Self::Blocked => 0,
         }
+    }
+
+    /// Whether the router must refuse to route to this verdict.
+    pub fn is_blocked(self) -> bool {
+        matches!(self, Self::Blocked)
     }
 
     pub fn compute(capability: Capability, cold_start_ms: u64, tokens_per_second: f64) -> Self {
         match capability {
             Capability::Generate | Capability::Vision => {
-                if cold_start_ms < 30_000 && tokens_per_second > 5.0 {
+                // Zero tok/s on a generate/vision model means it produced
+                // no output at all — the model is fundamentally broken on
+                // this GPU.  Block it hard.
+                if tokens_per_second <= 0.0 {
+                    Self::Blocked
+                } else if cold_start_ms < 30_000 && tokens_per_second > 5.0 {
                     Self::Fast
                 } else if cold_start_ms < 90_000 && tokens_per_second > 1.0 {
                     Self::Degraded
@@ -63,6 +79,7 @@ impl std::fmt::Display for Verdict {
             Self::Fast => write!(f, "fast"),
             Self::Degraded => write!(f, "degraded"),
             Self::Vetoed => write!(f, "vetoed"),
+            Self::Blocked => write!(f, "blocked"),
         }
     }
 }
@@ -185,9 +202,21 @@ impl TestSuite {
     }
 
     /// Compute the summary from collected samples.
+    ///
+    /// If ALL samples errored, produces a `Blocked` verdict so the router
+    /// refuses to route here (the model is fundamentally broken on this GPU).
     pub fn summarise(&mut self) {
         let ok: Vec<&Sample> = self.samples.iter().filter(|s| s.error.is_none()).collect();
         if ok.is_empty() {
+            // Every sample failed → hard-block this model on this stone.
+            if !self.samples.is_empty() {
+                self.summary = Some(TestSummary {
+                    median_tps: 0.0,
+                    cold_start_ms: 0,
+                    median_duration_ms: 0,
+                    verdict: Verdict::Blocked,
+                });
+            }
             return;
         }
         let cold_start_ms = ok.first().map(|s| s.cold_start_ms).unwrap_or(0);
@@ -413,6 +442,8 @@ mod tests {
     fn verdict_scoring_order() {
         assert!(Verdict::Fast.score() > Verdict::Degraded.score());
         assert!(Verdict::Degraded.score() > Verdict::Vetoed.score());
+        assert!(Verdict::Vetoed.score() > Verdict::Blocked.score());
+        assert_eq!(Verdict::Blocked.score(), 0);
     }
 
     #[test]
@@ -420,6 +451,8 @@ mod tests {
         assert_eq!(Verdict::compute(Capability::Generate, 5_000, 10.0), Verdict::Fast);
         assert_eq!(Verdict::compute(Capability::Generate, 50_000, 3.0), Verdict::Degraded);
         assert_eq!(Verdict::compute(Capability::Generate, 100_000, 0.5), Verdict::Vetoed);
+        // Zero tok/s means output was never produced — hard block.
+        assert_eq!(Verdict::compute(Capability::Generate, 100_000, 0.0), Verdict::Blocked);
     }
 
     #[test]
@@ -451,6 +484,29 @@ mod tests {
         assert_eq!(s.cold_start_ms, 5_000);
         assert_eq!(s.verdict, Verdict::Fast);
         assert!(s.median_tps > 0.0);
+    }
+
+    #[test]
+    fn summarise_all_errors_produces_blocked() {
+        let mut suite = TestSuite::new("glm-ocr:latest".into(), Capability::Vision);
+        suite.samples.push(Sample {
+            prompt_index: 0,
+            cold_start_ms: 0,
+            tokens_per_second: 0.0,
+            total_duration_ms: 0,
+            error: Some("model not compatible with GPU".into()),
+        });
+        suite.samples.push(Sample {
+            prompt_index: 1,
+            cold_start_ms: 0,
+            tokens_per_second: 0.0,
+            total_duration_ms: 0,
+            error: Some("CUDA OOM".into()),
+        });
+        suite.summarise();
+        let s = suite.summary.as_ref().expect("should produce a summary even when all samples error");
+        assert_eq!(s.verdict, Verdict::Blocked);
+        assert_eq!(s.median_tps, 0.0);
     }
 
     #[test]

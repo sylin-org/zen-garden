@@ -231,6 +231,9 @@ pub struct RoutingDecision {
 pub enum RoutingError {
     /// Model is unknown to the router.
     ModelNotFound(String),
+    /// All instances that have this model are fitness-blocked (all errored
+    /// during benchmark). Unlike Vetoed, Blocked cannot be overridden.
+    ModelBlocked(String),
     /// All instances with capacity are fully busy.
     AllInstancesBusy { model: String },
     /// No healthy instances available at all.
@@ -241,6 +244,7 @@ impl std::fmt::Display for RoutingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ModelNotFound(m) => write!(f, "model '{m}' not found in any instance"),
+            Self::ModelBlocked(m) => write!(f, "model '{m}' is blocked on all available stones (benchmark errors)"),
             Self::AllInstancesBusy { model } => write!(f, "all instances busy for '{model}'"),
             Self::NoHealthyInstances => write!(f, "no healthy Ollama instances"),
         }

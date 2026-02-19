@@ -86,6 +86,7 @@ pub fn select_instance(
     let lowest_tier_vram = tiers.first().map(|t| t.vram_bytes).unwrap_or(0);
 
     // Try each tier: preferred (lowest-first), then fallback (highest-first)
+    let mut all_blocked = false;
     for (tier_idx, tier) in viable_tiers.iter().enumerate() {
         // Find healthy instances in this tier that have the model
         let mut candidates: Vec<&OllamaInstance> = tier
@@ -102,9 +103,29 @@ pub fn select_instance(
         }
 
         // Sort by fitness score (descending) then queue depth (ascending).
-        // Fitness is advisory: Fast > Degraded > Unknown > Vetoed,
-        // but a Vetoed instance still receives traffic if it's the only
-        // candidate (ORCH-0002 safety net).
+        // Fitness is advisory for Fast/Degraded/Vetoed: deprioritised but
+        // still routable as last resort. Blocked is hard: filtered out.
+        if let Some(f) = fitness {
+            candidates.retain(|i| {
+                // Keep candidate unless ALL its fitness entries for this model are Blocked.
+                // (A model may have multiple capabilities; blocked in one doesn't block all.)
+                let dominated = f.entries.iter()
+                    .filter(|e| e.model == model && e.endpoint == i.endpoint)
+                    .all(|e| e.verdict.is_blocked());
+                let has_entries = f.entries.iter()
+                    .any(|e| e.model == model && e.endpoint == i.endpoint);
+                // Only block if we have fitness data AND all entries are Blocked.
+                !(has_entries && dominated)
+            });
+        }
+
+        if candidates.is_empty() {
+            // All candidates in this tier were fitness-blocked.
+            // Track this so we can return ModelBlocked instead of AllInstancesBusy.
+            all_blocked = true;
+            continue;
+        }
+
         candidates.sort_by(|a, b| {
             let fa = fitness
                 .and_then(|f| f.fitness_score(model, &a.endpoint))
@@ -143,10 +164,14 @@ pub fn select_instance(
         }
     }
 
-    // All instances are busy
-    Err(RoutingError::AllInstancesBusy {
-        model: model.to_string(),
-    })
+    // Distinguish: all candidates fitness-blocked vs genuinely busy.
+    if all_blocked {
+        Err(RoutingError::ModelBlocked(model.to_string()))
+    } else {
+        Err(RoutingError::AllInstancesBusy {
+            model: model.to_string(),
+        })
+    }
 }
 
 /// For merged `/api/tags` — find which instances have a given model.
@@ -374,5 +399,100 @@ mod tests {
         // (but the important thing is that it still works)
         let decision2 = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
         assert!(decision2.target_endpoint == "a" || decision2.target_endpoint == "b");
+    }
+
+    #[test]
+    fn blocked_candidates_filtered_returns_model_blocked() {
+        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict, Capability};
+
+        // Single stone has "m7b" but is Blocked on both capabilities.
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b", model("m7b", 4))]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        let tiers = vec![Tier {
+            vram_bytes: 8 * GIB,
+            label: "8G".into(),
+            instance_endpoints: vec!["a".into()],
+        }];
+
+        let matrix = GpuMatrix {
+            generated_at: Some(chrono::Utc::now()),
+            entries: vec![
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s1".into(),
+                    endpoint: "a".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Blocked,
+                    median_tps: 0.0,
+                    cold_start_ms: 0,
+                },
+            ],
+        };
+
+        let result = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RoutingError::ModelBlocked(m) => assert_eq!(m, "m7b"),
+            other => panic!("expected ModelBlocked, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn blocked_on_one_stone_routes_to_other() {
+        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict, Capability};
+
+        // Two stones: "a" is Blocked, "b" is Fast → should route to "b".
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b", model("m7b", 4))]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        let tiers = vec![Tier {
+            vram_bytes: 8 * GIB,
+            label: "8G".into(),
+            instance_endpoints: vec!["a".into(), "b".into()],
+        }];
+
+        let matrix = GpuMatrix {
+            generated_at: Some(chrono::Utc::now()),
+            entries: vec![
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s1".into(),
+                    endpoint: "a".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Blocked,
+                    median_tps: 0.0,
+                    cold_start_ms: 0,
+                },
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s2".into(),
+                    endpoint: "b".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Fast,
+                    median_tps: 25.0,
+                    cold_start_ms: 3_000,
+                },
+            ],
+        };
+
+        let decision = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
+        assert_eq!(decision.target_endpoint, "b");
     }
 }

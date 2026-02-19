@@ -458,6 +458,8 @@ body {
 .verdict-fast .verdict-dot { background: #6b8e23; }
 .verdict-degraded .verdict-dot { background: #b09830; }
 .verdict-vetoed .verdict-dot { background: var(--accent-red); }
+.verdict-blocked .verdict-dot { background: #8b0000; }
+.verdict-blocked .verdict-stats { color: #8b0000; }
 .verdict-unknown .verdict-dot { background: var(--stone-400); }
 .verdict-stats {
   font-size: 0.65rem; color: var(--stone-600);
@@ -1266,6 +1268,7 @@ function buildLegend(stoneNames) {
   html += '<span class="legend-item"><span class="verdict-dot" style="background:#6b8e23"></span> Fast</span>';
   html += '<span class="legend-item"><span class="verdict-dot" style="background:#b09830"></span> Degraded</span>';
   html += '<span class="legend-item"><span class="verdict-dot" style="background:var(--accent-red)"></span> Vetoed</span>';
+  html += '<span class="legend-item"><span class="verdict-dot" style="background:#8b0000"></span> Blocked</span>';
   html += '<span class="legend-item"><span class="verdict-dot" style="background:var(--stone-400);opacity:0.3"></span> Pending</span>';
   html += '<span style="color:var(--stone-400)">tok/s · cold</span>';
   html += '</div>';
@@ -1281,6 +1284,10 @@ function renderResultCell(verdict, medianTps, coldMs, cap, isBest) {
   const v = (verdict || 'unknown').toLowerCase();
   let cls = 'verdict-cell verdict-' + v;
   if (isBest) cls += ' verdict-best';
+  // Blocked: show explicit label instead of meaningless 0.0 stats.
+  if (v === 'blocked') {
+    return `<td class="${cls}" data-tip="blocked — model errors on this stone"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats" style="color:#8b0000">blocked</span></div></td>`;
+  }
   const tps = (medianTps || 0).toFixed(1);
   const cold = (coldMs / 1000).toFixed(1);
   const tip = cap === 'embed'
@@ -1295,7 +1302,7 @@ function renderResultCell(verdict, medianTps, coldMs, cap, isBest) {
 /// Score a result for best-stone comparison.
 /// Higher is better.  Verdict rank dominates, then TPS, then cold (inverted).
 function bestStoneScore(verdict, medianTps, coldMs, cap) {
-  const vRank = { fast: 3, degraded: 2, vetoed: 1 };
+  const vRank = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
   const vr = vRank[(verdict || '').toLowerCase()] || 0;
   const tps = medianTps || 0;
   const cold = coldMs || 999999;

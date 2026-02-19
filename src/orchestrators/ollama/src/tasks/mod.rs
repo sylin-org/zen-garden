@@ -1,5 +1,6 @@
 ﻿pub mod benchmark;
 pub mod discovery;
+pub mod gateway_announce;
 pub mod health_check;
 pub mod metrics_flush;
 pub mod metrics_processor;

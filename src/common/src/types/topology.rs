@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::types::peer_address::PeerAddress;
-use crate::types::{HardwareCapabilities, StoneStatus, TopologyServiceEntry};
+use crate::types::{GatewayRegistration, HardwareCapabilities, StoneStatus, TopologyServiceEntry};
 
 /// Discovered stone entry.
 ///
@@ -44,6 +44,12 @@ pub struct TopologyEntry {
     /// See: `garden_common::notifications` for tag constants.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+
+    /// Gateway registrations (orchestrators fronting offerings on this stone).
+    /// Empty for most stones. Backward-compatible: old Moss ignores this field.
+    /// See: ORCH-0004 for the full gateway announcement design.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateways: Vec<GatewayRegistration>,
 }
 
 impl TopologyEntry {

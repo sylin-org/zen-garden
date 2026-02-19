@@ -26,6 +26,7 @@ use garden_common::storage::StorageDetectedInfo;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
+use garden_common::GatewayRegistration;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -137,6 +138,11 @@ pub struct AppState {
 
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+
+    /// Gateway registrations from orchestrators (ORCH-0004).
+    /// Key: offering name ("ollama"), Value: gateway registration.
+    /// One gateway per offering per stone. TTL-evicted during chirp building.
+    pub gateways: Arc<RwLock<HashMap<String, GatewayRegistration>>>,
 
     /// mDNS handle for re-registration on resolution changes
     /// Used when IP/MAC changes to update mDNS service advertisement
@@ -413,10 +419,23 @@ impl AppState {
         // Compile notification tags for cross-stone awareness
         let tags = self.notifications.compile();
 
+        // Collect non-expired gateway registrations (TTL = 60s)
+        let gateway_entries: Vec<GatewayRegistration> = {
+            let now = chrono::Utc::now();
+            let ttl = chrono::Duration::seconds(60);
+            let gateways = self.gateways.read().await;
+            gateways
+                .values()
+                .filter(|gw| now.signed_duration_since(gw.registered_at) < ttl)
+                .cloned()
+                .collect()
+        };
+
         {
             let mut entry = self.self_entry.write().await;
             entry.services = topology_services;
             entry.tags = tags;
+            entry.gateways = gateway_entries;
             entry.last_seen = chrono::Utc::now();
         }
 

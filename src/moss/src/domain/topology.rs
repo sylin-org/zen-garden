@@ -80,6 +80,8 @@ pub async fn upsert_from_chirp(cache: &TopologyCache, mut chirped_entry: Topolog
         entry.address = chirped_entry.address.clone();
         entry.moss_version = chirped_entry.moss_version;
         entry.services = chirped_entry.services;
+        entry.gateways = chirped_entry.gateways;
+        entry.tags = chirped_entry.tags;
         entry.health = chirped_entry.health;
         entry.capabilities = chirped_entry.capabilities;
         // Only update MAC if provided (preserve existing if None)
@@ -421,6 +423,7 @@ mod tests {
             discovered_at: Utc::now(),
             last_seen: Utc::now(),
             tags: vec![],
+            gateways: vec![],
         }
     }
 
@@ -460,6 +463,7 @@ mod tests {
             discovered_at: Utc::now(),
             last_seen: Utc::now(),
             tags: vec![],
+            gateways: vec![],
         }
     }
 

@@ -1,14 +1,14 @@
 ﻿---
 audience: [developer, ai]
 doc_type: decision
-status: proposed
-last_verified: 2026-02-18
+status: implemented
+last_verified: 2026-02-19
 ---
 
 # ORCH-0004: Gateway Announcement — Orchestrator Self-Registration
 
 **Date**: 2026-02-18
-**Status**: Proposed
+**Status**: Implemented (2026-02-19)
 **Applies to**: `zen-garden-ollama-orchestrator` crate, `moss` (API + chirp), `garden-common`
 **Depends on**: Koi mDNS announce API (`POST /v1/mdns/announce`)
 
@@ -59,7 +59,7 @@ service discovery (topology).
 | **Koi mDNS** | `DELETE /v1/mdns/unregister/{id}` — deregister + goodbye packets | Available |
 | **Moss topology** | UDP chirps carry `Vec<TopologyServiceEntry>` per stone | Available |
 | **Moss service discovery** | `GET /api/v1/garden/services?q=ollama` → searches local offerings + topology cache | Available |
-| **Moss gateway API** | `PUT /api/v1/garden/gateway/{offering}` | **Not yet implemented** |
+| **Moss gateway API** | `PUT /api/v1/garden/gateway/{offering}` | Implemented (this ADR) |
 
 ## Decision
 
@@ -634,6 +634,102 @@ returns `http://ollama-orchestrator.local:21434`.
 
 ---
 
+## Implementation Notes (2026-02-19)
+
+Discoveries and deviations from the original design during implementation:
+
+### Consolidated infra module
+
+The ADR proposed two separate files (`infra/koi_client.rs` and
+`infra/moss_gateway.rs`). Implementation consolidated both into a single
+`infra/gateway.rs` containing `KoiMdnsClient` and `MossGatewayClient`. Both
+clients are small (~100 lines each) and conceptually part of the same
+registration flow, so a single file reduces module sprawl.
+
+### Task creates its own clients
+
+The ADR proposed passing `KoiClient` and `MossGatewayClient` into
+`gateway_announce::run()` from `main.rs`. Implementation simplifies the
+signature to `run(state, shutdown)` — the task constructs its own clients
+internally from `state.koi_endpoint`. This keeps `main.rs` cleaner and avoids
+exposing infra types at the wiring layer.
+
+### GatewayParams vs GatewayRegistration on the wire
+
+The ADR proposed passing a `GatewayRegistration` directly to
+`MossGatewayClient::register()`. Implementation introduces a separate
+`GatewayParams` struct on the client side that excludes `registered_at` — that
+timestamp is set server-side by Moss (authoritative time). This prevents clock
+skew between orchestrator and stone from causing premature TTL expiry.
+
+### Connection resolution adapter
+
+The ADR showed `resolve_connection(&gw.hostname, &gw.ip, ...)` passing the
+gateway's raw IP directly. The existing `resolve_connection()` signature
+expects a `stone_endpoint` URL (e.g. `http://192.168.1.50:21434`) and extracts
+the IP via `extract_ip()`. Implementation wraps the gateway's IP into a
+synthetic endpoint URL: `format!("http://{}:{}", gw.ip, gw.port)`. This
+avoided changing the `resolve_connection` signature, which is used by many
+callers across Moss.
+
+### Self IP detection resolved
+
+The ADR listed three options for IP detection. Implementation uses
+`garden_common::infra::network::get_local_ip()` which was already available
+in the workspace. It uses the `local_ip_address` crate (not `if_addrs` as the
+ADR mentioned) with priority-based NIC selection that avoids Docker bridge IPs.
+No CLI flag override was needed for the initial implementation.
+
+### TTL eviction location
+
+The ADR specified eviction "during chirp building". Implementation puts TTL
+filtering in `sync_self_services()` instead — which is called before every
+chirp, so the effect is identical. This keeps the chirp builder pure (it just
+serialises `self_entry` without filtering).
+
+### Retry and resilience (not in ADR)
+
+The implementation adds retry behaviour not described in the ADR:
+
+- **mDNS announce**: Retries every 10s if Koi is unreachable at boot, with
+  shutdown-awareness at each retry boundary.
+- **Moss registration**: Tracks a `moss_registered` flag. If the initial PUT
+  fails (e.g. stone not ready), the heartbeat loop retries every 30s and logs
+  recovery when it succeeds.
+- **Stone failover in heartbeat**: The heartbeat re-resolves
+  `state.tended_endpoint()` on every tick, so if the orchestrator switches
+  stones, the new Moss endpoint is picked up automatically. (The ADR listed
+  this as Phase 4 polish; it was trivial to include in Phase 1.)
+
+### proxy_port in AppState
+
+The ADR didn't mention that `proxy_port` was not yet stored in the
+orchestrator's `AppState`. It was only available as a CLI arg. Implementation
+adds `proxy_port: u16` to `AppState` and threads it through `AppState::new()`.
+
+### Lantern crate impact
+
+The ADR listed affected crates as orchestrator, Moss, and garden-common. The
+`garden-lantern` crate also constructs `TopologyEntry` literals (in
+`domain/registration.rs`) and needed the `gateways: Vec::new()` field added.
+
+### Phased implementation collapsed
+
+The ADR proposed 4 implementation phases (mDNS only → Moss API → Wire together
+→ Polish). The actual implementation was done as a single atomic pass: all
+crate changes in one commit. The phased approach was designed for incremental
+testability, but since all code was written in one session, atomicity was
+preferred to avoid intermediate broken states.
+
+### `gateways` field placement in TopologyEntry
+
+The ADR showed the `gateways` field after `services`. Implementation places it
+after `tags` at the end of the struct, which is more natural since `tags` was
+the previous last field and `gateways` has the same
+`#[serde(default, skip_serializing_if)]` pattern.
+
+---
+
 ## Open Questions
 
 1. **Gateway name**: Should the mDNS name be configurable? Default
@@ -644,10 +740,11 @@ returns `http://ollama-orchestrator.local:21434`.
    different stones, `find_services` returns both. Caller picks. Is this
    sufficient, or should there be an election?
 
-3. **Category for gateway entries**: Raw Ollama instances use category "ai"
-   (from manifest). The gateway should use the same category so
-   `rake find --category ai` finds it. Confirm: hardcode "ai" or derive from
-   manifest?
+3. ~~**Category for gateway entries**~~: **Resolved** — hardcoded "ai" for
+   gateway entries in `find_services()`. The orchestrator only fronts Ollama
+   today, which is always category "ai". If the gateway concept generalises to
+   other offerings, the category should be derived from the offering manifest
+   instead.
 
 4. **`--raw` flag on rake**: Should this be a general `--no-gateway` flag, or
    specific to the offering? Lean toward general: `rake find ollama --raw`
@@ -660,12 +757,16 @@ returns `http://ollama-orchestrator.local:21434`.
 - **Koi mDNS API**: `POST /v1/mdns/announce`, `PUT /v1/mdns/heartbeat/{id}`,
   `DELETE /v1/mdns/unregister/{id}` — see Koi `docs/reference/http-api.md`
 - **Chirp wire format**: `TopologyEntry` in `src/common/src/types/topology.rs`
+- **GatewayRegistration**: `src/common/src/types.rs` (after `StoneStatus`)
 - **Service entry**: `TopologyServiceEntry` in `src/common/src/types.rs:713`
-- **Service discovery**: `find_services()` in `src/moss/src/domain/service_discovery.rs:421`
-- **Connection resolution**: `resolve_connection()` in `src/moss/src/domain/connection.rs:289`
-- **Offering manifest**: `src/moss/embedded/manifests/sw/ai/ollama.frontmatter.json`
+- **Service discovery**: `find_services()` in `src/moss/src/domain/service_discovery.rs`
+- **Connection resolution**: `resolve_connection()` in `src/moss/src/domain/connection.rs`
+- **Moss gateway API**: `src/moss/src/api/v1/gateway.rs`
+- **Moss AppState gateways**: `src/moss/src/app_state.rs` (gateways field + sync_self_services)
+- **Orchestrator gateway infra**: `src/orchestrators/ollama/src/infra/gateway.rs`
+- **Orchestrator gateway task**: `src/orchestrators/ollama/src/tasks/gateway_announce.rs`
 - **Orchestrator main**: `src/orchestrators/ollama/src/main.rs`
-- **Orchestrator discovery**: `src/orchestrators/ollama/src/tasks/discovery.rs`
+- **Self IP detection**: `garden_common::infra::network::get_local_ip()`
 - **ORCH-0002**: Routing safety net (fitness scores used in routing)
 - **ORCH-0003**: Fitness profiler (benchmark system)
 - **TOPO-0001**: Chirp protocol (UDP topology broadcasts)

@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use zen_garden_ollama_orchestrator::api::{benchmark_api, dashboard, health, management, proxy};
+use zen_garden_ollama_orchestrator::api::{benchmark_api, dashboard, extension, health, management, proxy};
 use zen_garden_ollama_orchestrator::infra::{ollama_client::OllamaClient, persistence};
 use zen_garden_ollama_orchestrator::tasks;
 use zen_garden_ollama_orchestrator::AppState;
@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
         cli.offering_name.clone(),
         cli.koi_endpoint.clone(),
         cli.stone.clone(),
+        cli.proxy_port,
         cli.data_dir.clone(),
         config,
         shutdown.clone(),
@@ -165,6 +166,11 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
+    let gateway_handle = tokio::spawn(tasks::gateway_announce::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
+
     // ── Proxy Server (:11434) ────────────────────────────────────
     let proxy_state = proxy::ProxyState {
         app: state.clone(),
@@ -172,6 +178,8 @@ async fn main() -> Result<()> {
     };
 
     let proxy_router = Router::new()
+        .route("/v1/models", axum::routing::get(extension::get_models))
+        .route("/v1/stones", axum::routing::get(extension::get_stones))
         .fallback(proxy::proxy_handler)
         .with_state(proxy_state);
 
@@ -275,6 +283,7 @@ async fn main() -> Result<()> {
         let _ = snapshot_handle.await;
         let _ = metrics_proc_handle.await;
         let _ = placement_handle.await;
+        let _ = gateway_handle.await;
     })
     .await
     .ok();

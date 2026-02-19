@@ -803,6 +803,42 @@ impl std::fmt::Display for StoneStatus {
 // TopologyEntry is defined in types::topology and re-exported from lib.rs.
 // Do not duplicate it here — see types/topology.rs for the canonical definition.
 
+/// A registered gateway — an orchestrator that fronts an offering.
+///
+/// Stored in-memory by Moss, included in chirp payloads, and used by
+/// service discovery to resolve connection endpoints.
+/// See: ORCH-0004 for the full gateway announcement design.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayRegistration {
+    /// Offering FQN, e.g. "ollama:orchestrator"
+    pub fqn: String,
+
+    /// The offering(s) this gateway handles, e.g. ["ollama"]
+    pub handler_for: Vec<String>,
+
+    /// Self-reported hostname (registered via Koi mDNS)
+    pub hostname: String,
+
+    /// Self-reported IP address
+    pub ip: String,
+
+    /// Proxy port (e.g. 21434)
+    pub port: u16,
+
+    /// Protocol for URI construction
+    pub protocol: String,
+
+    /// URI template for connection resolution, e.g. "http://{host}:{port}"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri_template: Option<String>,
+
+    /// Identifier of the registering process
+    pub source: String,
+
+    /// When this registration was created/last refreshed
+    pub registered_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Stone goodbye payload - sent when stone is shutting down gracefully
 ///
 /// Enables immediate offline marking instead of waiting for chirp timeout.

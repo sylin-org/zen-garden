@@ -75,6 +75,7 @@ pub fn register_stone(
             discovered_at: now,
             last_seen: now,
             tags: Vec::new(),
+            gateways: Vec::new(),
         };
 
         topology.stones.insert(cache_key, entry);

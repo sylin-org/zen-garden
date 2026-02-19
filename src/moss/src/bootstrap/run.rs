@@ -87,6 +87,7 @@ pub async fn run(
         discovered_at: chrono::Utc::now(),
         last_seen: chrono::Utc::now(),
         tags: Vec::new(), // Compiled from NotificationRegistry
+        gateways: Vec::new(), // ORCH-0004: populated by gateway API
     }));
     tracing::debug!("Self topology entry initialized (health=starting)");
 
@@ -609,6 +610,7 @@ pub async fn run(
         tools_cache: tools_cache.clone(),
         tools_tx: tools_tx.clone(),
         self_entry: self_entry.clone(),
+        gateways: Arc::new(RwLock::new(HashMap::new())),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
         pond: pond_state,
@@ -1015,6 +1017,7 @@ pub async fn run(
                                 discovered_at: chrono::Utc::now(),
                                 last_seen: chrono::Utc::now(),
                                 tags: vec![], // mDNS doesn't provide tags
+                                gateways: vec![], // mDNS doesn't provide gateways
                             };
                             crate::domain::topology::upsert_from_chirp_dirty(
                                 &topology_cache_for_mdns,
@@ -1091,6 +1094,7 @@ pub async fn run(
                         discovered_at: chrono::Utc::now(),
                         last_seen: chrono::Utc::now(),
                         tags: vec![],
+                        gateways: vec![],
                     };
                     crate::domain::topology::upsert_from_chirp_dirty(
                         &state.topology_cache,

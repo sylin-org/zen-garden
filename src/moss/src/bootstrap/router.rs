@@ -126,6 +126,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::services::find_services_v1),
         )
         .route(
+            "/api/v1/garden/gateway/{offering}",
+            put(api::v1::gateway::put_gateway).delete(api::v1::gateway::delete_gateway),
+        )
+        .route(
             "/api/v1/garden/tools",
             get(api::v1::tools::list_garden_tools_v1),
         )
@@ -611,6 +615,10 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/garden/services",
             get(api::v1::services::find_services_v1),
+        )
+        .route(
+            "/api/v1/garden/gateway/{offering}",
+            put(api::v1::gateway::put_gateway).delete(api::v1::gateway::delete_gateway),
         )
         .route(
             "/api/v1/garden/tools",

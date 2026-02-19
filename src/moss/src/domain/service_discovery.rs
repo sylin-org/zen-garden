@@ -426,6 +426,97 @@ pub async fn find_services(
     let start = std::time::Instant::now();
     let mut all_services = Vec::new();
 
+    // ── Gateway check (ORCH-0004) ────────────────────────────────
+    // Gateways appear first (structural priority — routed endpoint before raw).
+
+    // Check local gateway registrations
+    {
+        let gateways = state.gateways.read().await;
+        for (offering, gw) in gateways.iter() {
+            if !matches_criteria(
+                criteria,
+                &gw.fqn,
+                offering,
+                "ai",
+                &["orchestrator".to_string()],
+                &[],
+            ) {
+                continue;
+            }
+
+            let conn = connection::resolve_connection(
+                &gw.hostname,
+                &format!("http://{}:{}", gw.ip, gw.port),
+                gw.port,
+                &gw.protocol,
+                gw.uri_template.as_deref(),
+            );
+
+            all_services.push(FoundService {
+                offering_id: String::new(),
+                name: gw.fqn.clone(),
+                offering: offering.clone(),
+                category: "ai".to_string(),
+                tags: vec!["orchestrator".to_string()],
+                status: garden_common::SERVICE_RUNNING.to_string(),
+                stone: StoneRef {
+                    id: state.stone_id.clone(),
+                    name: state.stone_name.clone(),
+                    endpoint: state.self_entry.read().await.address.http_base(),
+                },
+                connection: conn,
+                sub_capabilities: vec![],
+            });
+        }
+    }
+
+    // Check topology cache for remote gateways (skip self — already covered above)
+    {
+        let stones = topology::get_online_stones(&state.topology_cache).await;
+        for stone in &stones {
+            if stone.stone_id == state.stone_id {
+                continue;
+            }
+            for gw in &stone.gateways {
+                let primary_offering = gw.handler_for.first().map(|s| s.as_str()).unwrap_or("");
+                if !matches_criteria(
+                    criteria,
+                    &gw.fqn,
+                    primary_offering,
+                    "ai",
+                    &["orchestrator".to_string()],
+                    &[],
+                ) {
+                    continue;
+                }
+
+                let conn = connection::resolve_connection(
+                    &gw.hostname,
+                    &format!("http://{}:{}", gw.ip, gw.port),
+                    gw.port,
+                    &gw.protocol,
+                    gw.uri_template.as_deref(),
+                );
+
+                all_services.push(FoundService {
+                    offering_id: String::new(),
+                    name: gw.fqn.clone(),
+                    offering: primary_offering.to_string(),
+                    category: "ai".to_string(),
+                    tags: vec!["orchestrator".to_string()],
+                    status: garden_common::SERVICE_RUNNING.to_string(),
+                    stone: StoneRef {
+                        id: stone.stone_id.clone(),
+                        name: stone.stone_name.clone(),
+                        endpoint: stone.address.http_base(),
+                    },
+                    connection: conn,
+                    sub_capabilities: vec![],
+                });
+            }
+        }
+    }
+
     // 1. Search local stone first (zero latency)
     let local_services = find_local_services(criteria, state).await;
     all_services.extend(local_services);

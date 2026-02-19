@@ -43,6 +43,8 @@ pub struct AppState {
     pub koi_endpoint: String,
     /// Explicit stone override (`--stone` / `GARDEN_STONE`). Skips discovery.
     pub explicit_stone: Option<String>,
+    /// Proxy port (Ollama-compatible endpoint, e.g. 21434).
+    pub proxy_port: u16,
     /// Currently tended stone (bound via discovery or explicit).
     pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
 
@@ -96,6 +98,7 @@ impl AppState {
         offering_name: String,
         koi_endpoint: String,
         explicit_stone: Option<String>,
+        proxy_port: u16,
         data_dir: String,
         config: RouterConfig,
         shutdown: CancellationToken,
@@ -111,6 +114,7 @@ impl AppState {
             offering_name,
             koi_endpoint,
             explicit_stone,
+            proxy_port,
             tended_stone: Arc::new(RwLock::new(None)),
             instances: Arc::new(RwLock::new(HashMap::new())),
             models: Arc::new(RwLock::new(HashMap::new())),

@@ -46,6 +46,10 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
                 continue;
             }
 
+            // Refresh self_entry before chirping — this evicts expired gateways
+            // (TTL=60s) and ensures we never broadcast stale registrations.
+            state.sync_self_services(false).await;
+
             // Read current self topology entry
             let entry = state.self_entry.read().await.clone();
 

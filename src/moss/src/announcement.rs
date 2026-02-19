@@ -204,6 +204,7 @@ mod tests {
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
             tags: vec![],
+            gateways: vec![],
         };
 
         let entry2 = entry1.clone();
@@ -229,6 +230,7 @@ mod tests {
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
             tags: vec![],
+            gateways: vec![],
         };
 
         let hash1 = calculate_state_hash(&entry);
@@ -254,6 +256,7 @@ mod tests {
             discovered_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
             tags: vec![],
+            gateways: vec![],
         };
 
         let hash1 = calculate_state_hash(&entry);

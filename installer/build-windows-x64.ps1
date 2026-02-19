@@ -80,35 +80,10 @@ Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { 
 Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'fast-release' })" -ForegroundColor Cyan
 Write-Host ""
 
-# Clean Windows Cargo cache to ensure version update
-Write-Host "Cleaning Cargo cache for version update..." -ForegroundColor DarkGray
-$targetProfiles = @("fast-release", "release", "debug")
-foreach ($profile in $targetProfiles) {
-    $profileDir = Join-Path $WORKSPACE_ROOT "target-windows-x64\x86_64-pc-windows-msvc\$profile"
-    if (Test-Path $profileDir) {
-        # 1. Final binaries
-        Get-ChildItem $profileDir -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-        
-        # 2. Build outputs
-        $buildDir = Join-Path $profileDir "build"
-        if (Test-Path $buildDir) {
-            Get-ChildItem $buildDir -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        
-        # 3. Incremental cache
-        $incrementalDir = Join-Path $profileDir "incremental"
-        if (Test-Path $incrementalDir) {
-            Get-ChildItem $incrementalDir -Filter "garden*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        
-        # 4. Fingerprints
-        $fingerprintDir = Join-Path $profileDir ".fingerprint"
-        if (Test-Path $fingerprintDir) {
-            Get-ChildItem $fingerprintDir -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-Write-Host ""
+# Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
+# so Cargo automatically re-runs build scripts and recompiles affected crates when the
+# build number changes. No manual cache cleaning needed — incremental compilation works.
+# The Cargo.toml version update below also triggers Cargo fingerprint invalidation.
 
 # Update Cargo.toml files with version
 Write-Host "Updating Cargo.toml files..." -ForegroundColor DarkGray

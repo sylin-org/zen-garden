@@ -283,15 +283,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Failed to create container" }
     }
 
-    # Clean cached garden binaries to force version update
+    # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
+    # so Cargo automatically re-runs build scripts and recompiles affected crates when the
+    # build number changes. No manual cache cleaning needed — incremental compilation works.
     # x86 uses a separate target dir (target-linux-x86/) to avoid glibc conflicts
     # with the x64 builder which uses target-linux-x64/ and a different base image.
-    Write-Host "  -> Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-    $targetBase = "/build/target-linux-x86/$RUST_TARGET"
-    docker exec $CONTAINER_NAME sh -c "rm -f $targetBase/debug/garden-* $targetBase/release/garden-* $targetBase/fast-release/garden-*" 2>$null | Out-Null
-    docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/build/garden-* $targetBase/release/build/garden-* $targetBase/fast-release/build/garden-*" 2>$null | Out-Null
-    docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/incremental/garden* $targetBase/release/incremental/garden* $targetBase/fast-release/incremental/garden*" 2>$null | Out-Null
-    docker exec $CONTAINER_NAME sh -c "rm -rf $targetBase/debug/.fingerprint/garden-* $targetBase/release/.fingerprint/garden-* $targetBase/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
 
     # Execute build with separate target directory
     docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x86 -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs

@@ -112,6 +112,13 @@ New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
 $buildErrors = @()
 $builtPlatforms = @()
 
+# TODO: Parallel builds — Linux Docker and Windows native use different target dirs
+# and could run simultaneously. Prerequisites:
+#   1. Move Cargo.toml version update from build-windows-x64.ps1 into this script
+#   2. Build Lantern frontend once here (it's platform-independent)
+#   3. Launch Linux as Start-Job, run Windows in foreground, Wait-Job for Linux
+# Estimated savings: ~40-50% wall time for full builds.
+
 # Build Linux
 if (-not $SkipLinux) {
     Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
@@ -154,6 +161,7 @@ if (-not $SkipWindows) {
             -Tier $Tier `
             -DebugBuild:$DebugBuild `
             -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
+            -SkipTests `
             -Jobs $Jobs
         
         if ($LASTEXITCODE -ne 0) {

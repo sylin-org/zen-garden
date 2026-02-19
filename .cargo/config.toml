@@ -5,8 +5,10 @@
 incremental = true
 
 # Linux: Use mold linker (much faster than default ld)
-# NOTE: Commented out - Docker build container uses its own linker config
-# For local Linux builds, uncomment and install: apt install clang mold
+# NOTE: Do NOT enable here — this config is mounted into all Docker containers
+# (including x86 cross-compilation where it breaks host build scripts).
+# The x64 Docker build passes mold config via env vars in compile-linux-x64.ps1.
+# For native Linux builds, uncomment and install: apt install clang mold
 # [target.x86_64-unknown-linux-gnu]
 # linker = "clang"
 # rustflags = ["-C", "link-arg=-fuse-ld=mold"]

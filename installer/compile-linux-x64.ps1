@@ -176,6 +176,12 @@ if ($UseDocker) {
         Write-Host "Build Container:" -ForegroundColor Yellow
         Write-Host "  $(if ($ForceRebuild) { 'Rebuilding' } else { 'Creating' }) image: $IMAGE_NAME"
         
+        if ($ForceRebuild) {
+            # Remove existing container so it gets recreated from the new image
+            Write-Host "  Removing old container..." -ForegroundColor DarkGray
+            docker rm -f zen-builder-linux-x64 2>$null | Out-Null
+        }
+        
         Push-Location $WORKSPACE_ROOT
         try {
             docker build -f Dockerfile.linux-x64 -t $IMAGE_NAME . --quiet
@@ -340,20 +346,14 @@ if ($UseDocker) {
             Write-Host ""
         }
         
-        # Clean build artifacts to force version update
-        # (Cargo cache doesn't detect CARGO_BUILD_NUMBER changes)
-        # Must clean:
-        # 1. Final binaries in target-linux-x64/{profile}/
-        # 2. Build script outputs in target-linux-x64/{profile}/build/garden-*/
-        # 3. Incremental cache in target-linux-x64/{profile}/incremental/garden*/
-        Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-        docker exec $containerName sh -c "rm -f /build/target-linux-x64/debug/garden-* /build/target-linux-x64/release/garden-* /build/target-linux-x64/fast-release/garden-*" 2>$null | Out-Null
-        docker exec $containerName sh -c "rm -rf /build/target-linux-x64/debug/build/garden-* /build/target-linux-x64/release/build/garden-* /build/target-linux-x64/fast-release/build/garden-*" 2>$null | Out-Null
-        docker exec $containerName sh -c "rm -rf /build/target-linux-x64/debug/incremental/garden* /build/target-linux-x64/release/incremental/garden* /build/target-linux-x64/fast-release/incremental/garden*" 2>$null | Out-Null
-        docker exec $containerName sh -c "rm -rf /build/target-linux-x64/debug/.fingerprint/garden-* /build/target-linux-x64/release/.fingerprint/garden-* /build/target-linux-x64/fast-release/.fingerprint/garden-*" 2>$null | Out-Null
+        # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
+        # so Cargo automatically re-runs build scripts and recompiles affected crates when the
+        # build number changes. No manual cache cleaning needed — incremental compilation works.
 
         # Execute build with isolated target directory
-        docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x64 $containerName $buildArgs
+        # Mold linker: clang+mold are installed in the Docker image (Dockerfile.linux-x64).
+        # Passed as env vars here (not .cargo/config.toml) to avoid affecting x86 cross-compilation.
+        docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x64 -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang -e "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" $containerName $buildArgs
         
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
         
@@ -454,27 +454,9 @@ else {
 
     Push-Location $WORKSPACE_ROOT
     try {
-        # Clean build artifacts to force version update (native path)
-        Write-Host "  → Cleaning cached binaries to ensure version update..." -ForegroundColor DarkGray
-        $targetProfileDirs = @("debug", "release", "fast-release")
-        foreach ($profileDir in $targetProfileDirs) {
-            $targetPath = Join-Path (Join-Path $WORKSPACE_ROOT "target-linux-x64") $profileDir
-            if (Test-Path $targetPath) {
-                Get-ChildItem $targetPath -Filter "garden-*" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-                $buildPath = Join-Path $targetPath "build"
-                if (Test-Path $buildPath) {
-                    Get-ChildItem $buildPath -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-                }
-                $incrementalPath = Join-Path $targetPath "incremental"
-                if (Test-Path $incrementalPath) {
-                    Get-ChildItem $incrementalPath -Filter "garden*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-                }
-                $fingerprintPath = Join-Path $targetPath ".fingerprint"
-                if (Test-Path $fingerprintPath) {
-                    Get-ChildItem $fingerprintPath -Filter "garden-*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
+        # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
+        # so Cargo automatically re-runs build scripts and recompiles affected crates when the
+        # build number changes. No manual cache cleaning needed — incremental compilation works.
 
         foreach ($target in $buildTargets) {
             Write-Host "  → Building $target..."

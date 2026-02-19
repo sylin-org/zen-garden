@@ -56,6 +56,10 @@ split-debuginfo = "packed" # Reduce linker work on incremental builds
 [profile.dev.package."*"]
 opt-level = 2
 
+# Optimize build scripts and proc-macros in dev (serde, clap derive run faster)
+[profile.dev.build-override]
+opt-level = 3
+
 [profile.release]
 strip = true      # Remove symbols for smaller binaries
 lto = true        # Link-time optimization (full - slowest, smallest)

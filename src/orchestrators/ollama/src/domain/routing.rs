@@ -3,7 +3,12 @@
 //! Core principle: route to the **lowest VRAM tier** that can serve the
 //! model. Overflow goes up, never down. Within a tier, pick the instance
 //! with the lowest queue depth.
+//!
+//! Safety net: if no tier has enough VRAM, fall back to all tiers
+//! (highest-first in degraded mode). A model installed on a stone is
+//! always routable — the user explicitly chose to install it.
 
+use super::fitness::GpuMatrix;
 use super::types::{
     ModelInfo, OllamaInstance, RoutingDecision, RoutingError, Tier,
 };
@@ -13,17 +18,22 @@ use std::collections::HashMap;
 ///
 /// The algorithm:
 /// 1. Look up the model's VRAM requirement.
-/// 2. Find all tiers with enough VRAM (sorted ascending).
-/// 3. In the lowest viable tier, pick the instance with the model available
-///    and the lowest queue depth.
+/// 2. Find preferred tiers with enough VRAM (sorted ascending).
+/// 3. In the lowest preferred tier, pick the instance with the model
+///    available — sorted by **fitness score** (advisory) then queue depth.
 /// 4. If all instances in that tier are saturated, escalate to the next tier.
-/// 5. Escalation = overflow; never route DOWN to a smaller tier.
+/// 5. **Safety net**: if no tier has enough VRAM, fall back to ALL tiers
+///    (highest-first). A model installed on a stone is always routable —
+///    the user explicitly chose to install it.
+/// 6. Only returns error if no instance has the model at all, all
+///    instances are busy, or no healthy instances exist.
 pub fn select_instance(
     model: &str,
     instances: &HashMap<String, OllamaInstance>,
     models: &HashMap<String, ModelInfo>,
     tiers: &[Tier],
     max_queue: u32,
+    fitness: Option<&GpuMatrix>,
 ) -> Result<RoutingDecision, RoutingError> {
     // Do we have any healthy instances at all?
     let any_healthy = instances.values().any(|i| i.health.is_routable());
@@ -31,11 +41,11 @@ pub fn select_instance(
         return Err(RoutingError::NoHealthyInstances);
     }
 
-    // Look up model VRAM requirement
-    let vram_needed = models
+    // Look up model VRAM requirement.
+    // `None` = model has never been loaded so we have no real measurement.
+    let vram_needed: Option<u64> = models
         .get(model)
-        .map(|m| m.vram_estimate_bytes)
-        .unwrap_or(0);
+        .and_then(|m| m.vram_bytes);
 
     // If model is completely unknown, try to find it on any instance
     let model_exists = instances
@@ -46,19 +56,36 @@ pub fn select_instance(
         return Err(RoutingError::ModelNotFound(model.to_string()));
     }
 
-    // Find viable tiers (VRAM >= needed), already sorted ascending
-    let viable_tiers: Vec<&Tier> = tiers.iter().filter(|t| t.vram_bytes >= vram_needed).collect();
+    // Find preferred tiers (VRAM >= needed), already sorted ascending.
+    // When VRAM requirement is unknown (None), every tier is viable —
+    // the model is on the instance so Ollama already loaded it successfully.
+    //
+    // Safety net: if no tier has enough VRAM, fall back to ALL tiers
+    // (highest-first). A model that exists on a stone MUST be routable —
+    // the user explicitly installed it, so we honour that decision.
+    let (preferred, fallback): (Vec<&Tier>, Vec<&Tier>) = match vram_needed {
+        Some(needed) => {
+            let pref: Vec<&Tier> = tiers.iter().filter(|t| t.vram_bytes >= needed).collect();
+            let fb: Vec<&Tier> = tiers.iter().filter(|t| t.vram_bytes < needed).rev().collect();
+            (pref, fb)
+        }
+        None => (tiers.iter().collect(), vec![]),
+    };
+
+    // Chain preferred tiers first, then fallback (degraded) tiers.
+    let viable_tiers: Vec<&Tier> = preferred.iter().chain(fallback.iter()).copied().collect();
 
     if viable_tiers.is_empty() {
-        return Err(RoutingError::NoViableTier {
+        // No tiers defined at all — every instance is ungrouped.
+        return Err(RoutingError::AllInstancesBusy {
             model: model.to_string(),
-            vram_needed,
         });
     }
 
+    let preferred_count = preferred.len();
     let lowest_tier_vram = tiers.first().map(|t| t.vram_bytes).unwrap_or(0);
 
-    // Try each tier from lowest to highest
+    // Try each tier: preferred (lowest-first), then fallback (highest-first)
     for (tier_idx, tier) in viable_tiers.iter().enumerate() {
         // Find healthy instances in this tier that have the model
         let mut candidates: Vec<&OllamaInstance> = tier
@@ -74,8 +101,19 @@ pub fn select_instance(
             continue;
         }
 
-        // Sort by queue depth (ascending)
-        candidates.sort_by_key(|i| i.queue_depth);
+        // Sort by fitness score (descending) then queue depth (ascending).
+        // Fitness is advisory: Fast > Degraded > Unknown > Vetoed,
+        // but a Vetoed instance still receives traffic if it's the only
+        // candidate (ORCH-0002 safety net).
+        candidates.sort_by(|a, b| {
+            let fa = fitness
+                .and_then(|f| f.fitness_score(model, &a.endpoint))
+                .unwrap_or(25); // Unknown score when no fitness data
+            let fb = fitness
+                .and_then(|f| f.fitness_score(model, &b.endpoint))
+                .unwrap_or(25);
+            fb.cmp(&fa).then(a.queue_depth.cmp(&b.queue_depth))
+        });
 
         // Pick the least-loaded instance (respect max_queue if set)
         let best = if max_queue > 0 {
@@ -88,13 +126,19 @@ pub fn select_instance(
         };
 
         if let Some(inst) = best {
+            let is_degraded = tier_idx >= preferred_count;
             return Ok(RoutingDecision {
                 target_endpoint: inst.endpoint.clone(),
                 stone_name: inst.stone_name.clone(),
                 model_name: model.to_string(),
-                tier_label: tier.label.clone(),
-                was_overflow: tier_idx > 0,
-                lease_acquired: tier.vram_bytes > lowest_tier_vram && vram_needed > lowest_tier_vram,
+                tier_label: if is_degraded {
+                    format!("{}(degraded)", tier.label)
+                } else {
+                    tier.label.clone()
+                },
+                was_overflow: tier_idx > 0 && !is_degraded,
+                lease_acquired: tier.vram_bytes > lowest_tier_vram
+                    && vram_needed.unwrap_or(0) > lowest_tier_vram,
             });
         }
     }
@@ -151,8 +195,9 @@ mod tests {
             family: None,
             families: vec![],
             capabilities: vec![],
+            format: None,
             size_disk: 0,
-            vram_estimate_bytes: vram_gb * GIB,
+            vram_bytes: Some(vram_gb * GIB),
         }
     }
 
@@ -182,7 +227,7 @@ mod tests {
         ];
 
         // m7b should route to 8G tier
-        let decision = select_instance("m7b", &instances, &models, &tiers, 0).unwrap();
+        let decision = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
         assert_eq!(decision.target_endpoint, "a");
         assert!(!decision.was_overflow);
     }
@@ -214,7 +259,7 @@ mod tests {
         ];
 
         // m70b needs 20G, only viable tier is 24G
-        let decision = select_instance("m70b", &instances, &models, &tiers, 0).unwrap();
+        let decision = select_instance("m70b", &instances, &models, &tiers, 0, None).unwrap();
         assert_eq!(decision.target_endpoint, "b");
     }
 
@@ -236,7 +281,98 @@ mod tests {
             instance_endpoints: vec!["a".into(), "b".into()],
         }];
 
-        let decision = select_instance("m7b", &instances, &models, &tiers, 0).unwrap();
+        let decision = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
         assert_eq!(decision.target_endpoint, "b"); // lower queue depth
+    }
+
+    #[test]
+    fn safety_net_routes_oversized_model() {
+        // Model needs 48G but only 8G and 24G tiers exist.
+        // The 24G stone has the model installed — must be honoured.
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m48b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m48b", model("m48b", 48))]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        let tiers = vec![
+            Tier {
+                vram_bytes: 8 * GIB,
+                label: "8G".into(),
+                instance_endpoints: vec!["a".into()],
+            },
+            Tier {
+                vram_bytes: 24 * GIB,
+                label: "24G".into(),
+                instance_endpoints: vec!["b".into()],
+            },
+        ];
+
+        // Previously would have returned NoViableTier — now routes via fallback.
+        let decision = select_instance("m48b", &instances, &models, &tiers, 0, None).unwrap();
+        assert_eq!(decision.target_endpoint, "b");
+        assert!(decision.tier_label.contains("degraded"));
+    }
+
+    #[test]
+    fn fitness_prefers_faster_stone() {
+        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict, Capability};
+
+        // Two 8G stones, both have "m7b", both idle (queue=0).
+        // Stone "a" is Vetoed, stone "b" is Fast → routing should prefer "b".
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b", model("m7b", 4))]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        let tiers = vec![Tier {
+            vram_bytes: 8 * GIB,
+            label: "8G".into(),
+            instance_endpoints: vec!["a".into(), "b".into()],
+        }];
+
+        let matrix = GpuMatrix {
+            generated_at: Some(chrono::Utc::now()),
+            entries: vec![
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s1".into(),
+                    endpoint: "a".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Vetoed,
+                    median_tps: 0.5,
+                    cold_start_ms: 100_000,
+                },
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s2".into(),
+                    endpoint: "b".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Fast,
+                    median_tps: 25.0,
+                    cold_start_ms: 3_000,
+                },
+            ],
+        };
+
+        // With fitness data, should prefer "b" (Fast) over "a" (Vetoed)
+        let decision = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
+        assert_eq!(decision.target_endpoint, "b");
+
+        // Without fitness, both are equally loaded — deterministic order from sort
+        // (but the important thing is that it still works)
+        let decision2 = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
+        assert!(decision2.target_endpoint == "a" || decision2.target_endpoint == "b");
     }
 }

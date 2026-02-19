@@ -2,8 +2,28 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-20
+
+- **BREAKING**: Fitness profiler: replaced flat FitnessMatrix/BenchmarkProgress with hierarchical BenchmarkRun tree
+- **BREAKING**: Fitness profiler: `fitness_matrix` and `benchmark_progress` merged into single `benchmark_run` state
+- **BREAKING**: Snapshot `fitness`/`benchmark` fields replaced with single `benchmark` object (BenchmarkRun tree)
+- Fitness profiler: rich SSE notifications at every phase (started/planned/stone/test/sample/completed)
+- Fitness profiler: crash recovery — in-progress runs marked as failed on restart, partial matrix synthesised
+- Fitness profiler: full run persisted to fitness.json after each test (survives reload/restart)
+- Dashboard: benchmark UI reads from unified BenchmarkRun tree with live per-stone/per-test progress
+- Dashboard: SSE benchmark events rendered as human-readable activity log messages
+
 ## 2026-02-19
 
+- **BREAKING**: Routing safety net — models always routable if installed on any stone, NoViableTier error removed
+- **BREAKING**: Orchestrator: Removed all VRAM heuristics — `vram_bytes` is `Option<u64>` (real `/api/ps` data or null)
+- **BREAKING**: Orchestrator: Deleted `ModelInfo::estimate_vram()` — no more guessing from parameter counts
+- **BREAKING**: Orchestrator: `ModelInfo.format` field uses real Ollama data instead of hardcoded "gguf"
+- Orchestrator: Stones with unknown VRAM (0) excluded from feasibility, placement, and routing pools
+- Orchestrator: Models with unknown VRAM excluded from demand-weighted placement bin-packing
+- Orchestrator: Feasibility endpoint reports `null` for unknown VRAM instead of "fits everywhere"
+- Orchestrator: SSE tool events with missing stone_name or port are dropped (no "unknown" fallback)
+- Orchestrator: Used real VRAM from topology chirp data instead of hardcoded 8 GiB
 - Ollama Orchestrator: Shared Snapshot Space — dashboard reads pre-built JSON via watch channel (zero locks)
 - Ollama Orchestrator: Fixed self-deadlock in proxy (instances.read → sync_queue_depths → instances.write)
 - Ollama Orchestrator: Metrics channel — proxy sends fire-and-forget events via mpsc, dedicated processor task

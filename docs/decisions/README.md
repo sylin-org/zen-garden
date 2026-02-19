@@ -80,6 +80,14 @@ canonical: true
   - **Status**: Proposed (2026-02-16)
   - **Rationale**: Cross-stone state transfer via harvest/collect/plant phases, reusing ceremony + harvest infrastructure
   - **Impact**: Replicas sync from primaries, seed-bank fallback, `garden-rake replant` CLI
+- **[ORCH-0002](ORCH-0002-routing-safety-net.md)**: Routing Safety Net — Never Refuse an Installed Model
+  - **Status**: Accepted (2026-02-18)
+  - **Rationale**: Removed `NoViableTier` error; models on a stone are always routable via degraded fallback
+  - **Impact**: No false rejections, degraded-tier labelling, future fitness data is advisory-only
+- **[ORCH-0003](ORCH-0003-fitness-profiler.md)**: Fitness Profiler — Model Benchmark System
+  - **Status**: Accepted (2026-02-18)
+  - **Rationale**: Empirical per-model per-stone benchmarking with verdict thresholds (Fast/Degraded/Vetoed)
+  - **Impact**: Advisory routing scores, dashboard fitness matrix, persistent results
 
 ### Offerings (Services)
 - **[OFFER-0001](OFFER-0001-taxonomy.md)**: Offering Taxonomy

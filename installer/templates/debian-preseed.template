@@ -60,15 +60,27 @@ d-i partman-lvm/confirm_nooverwrite boolean true
 # Works on: eMMC (mmcblk*), NVMe (nvme*), SATA/SCSI (sd*), virtio (vd*)
 #
 # Guard layers (any one is sufficient):
-#   1. Skip devices with removable=1 in sysfs
-#   2. Skip devices whose sysfs path contains /usb
-#   3. Skip devices carrying a .zen-garden-sentinel file (Zen Garden convention)
+#   1. Skip the boot medium (resolved from /proc/mounts /cdrom entry)
+#   2. Skip devices with removable=1 in sysfs
+#   3. Skip devices whose sysfs path contains /usb
+#   4. Skip non-boot devices carrying a .zen-garden-sentinel file
+#
+# Layer 1 is the most reliable for the installer USB because the d-i already
+# mounts it at /cdrom, so a second mount attempt (for sentinel check) would
+# fail silently.  Layers 2-4 catch other attached Zen Garden media.
 d-i partman/early_command string \
     DISK=""; \
+    BOOT_PART=$(awk '$2=="/cdrom"{print $1}' /proc/mounts | head -n1); \
+    BOOT_NAME=$(basename "$BOOT_PART" 2>/dev/null); \
+    [ -n "$BOOT_NAME" ] && echo "Stone installer: boot medium is $BOOT_NAME" >> /var/log/syslog; \
     mkdir -p /tmp/_zg_chk; \
     for b in /sys/block/*; do \
         d="$(basename "$b")"; \
         case "$d" in loop*|ram*|sr*|fd*) continue ;; esac; \
+        case "$BOOT_NAME" in ${d}|${d}[0-9]*|${d}p[0-9]*) \
+            echo "Stone installer: skipping /dev/$d (boot medium)" >> /var/log/syslog; \
+            continue ;; \
+        esac; \
         [ -r "$b/removable" ] && [ "$(cat "$b/removable")" = "1" ] && continue; \
         readlink -f "$b" | grep -q '/usb' && continue; \
         _sentinel=0; \

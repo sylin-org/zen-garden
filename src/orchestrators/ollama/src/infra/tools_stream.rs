@@ -125,11 +125,7 @@ fn parse_upsert(data: &str) -> Option<ToolEvent> {
 fn parse_remove(data: &str) -> Option<ToolEvent> {
     let json: serde_json::Value = serde_json::from_str(data).ok()?;
     let stone_id = json.get("stone_id")?.as_str()?.to_string();
-    let stone_name = json
-        .get("stone_name")
-        .and_then(|s| s.as_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let stone_name = json.get("stone_name")?.as_str()?.to_string();
     Some(ToolEvent::OllamaRemoved {
         stone_id,
         stone_name,
@@ -144,11 +140,7 @@ fn extract_ollama_tool(tool: &serde_json::Value) -> Option<ToolEvent> {
     }
 
     let stone_id = tool.get("stone_id")?.as_str()?.to_string();
-    let stone_name = tool
-        .get("stone_name")
-        .and_then(|s| s.as_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let stone_name = tool.get("stone_name")?.as_str()?.to_string();
 
     let connection = tool.get("connection")?;
     let ip = connection
@@ -157,8 +149,7 @@ fn extract_ollama_tool(tool: &serde_json::Value) -> Option<ToolEvent> {
         .and_then(|v| v.as_str())?;
     let port = connection
         .get("port")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(11434);
+        .and_then(|v| v.as_u64())?;
 
     let protocol = connection
         .get("protocol")

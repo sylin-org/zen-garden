@@ -92,6 +92,10 @@ async fn proxy_inference(
         let mut instances = state.app.instances.read().await.clone();
         let models = state.app.models.read().await.clone();
         let tiers = state.app.tiers.read().await.clone();
+        let gpu_matrix = {
+            let run = state.app.benchmark_run.read().await;
+            run.gpu_matrix.clone()
+        };
 
         // Patch live queue depths from atomics (brief lock, then drop)
         {
@@ -103,7 +107,12 @@ async fn proxy_inference(
             }
         }
 
-        routing::select_instance(&model, &instances, &models, &tiers, 64)
+        let fitness_ref = if gpu_matrix.entries.is_empty() {
+            None
+        } else {
+            Some(&gpu_matrix)
+        };
+        routing::select_instance(&model, &instances, &models, &tiers, 64, fitness_ref)
     };
 
     let decision = match decision {
@@ -396,7 +405,7 @@ async fn proxy_merged_tags(state: &ProxyState) -> Result<Response, StatusCode> {
                             "families": info.families,
                             "parameter_size": info.parameter_size,
                             "quantization_level": info.quantization_level,
-                            "format": "gguf",
+                            "format": info.format,
                         }
                     }),
                 );

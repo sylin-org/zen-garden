@@ -33,7 +33,7 @@ docker rm -f %CONTAINER% >nul 2>&1
 echo [2/2] Starting container...
 docker run -d ^
     --name %CONTAINER% ^
-    -p 11434:11434 ^
+    -p 21434:21434 ^
     -p 7190:7190 ^
     -e KOI_ENDPOINT=http://host.docker.internal:5641 ^
     -v zen-garden-ollama-data:/data ^
@@ -43,5 +43,5 @@ docker run -d ^
 echo.
 echo  Container started: %CONTAINER%
 echo  Dashboard: http://localhost:7190
-echo  Proxy:     http://localhost:11434
+echo  Proxy:     http://localhost:21434
 echo.

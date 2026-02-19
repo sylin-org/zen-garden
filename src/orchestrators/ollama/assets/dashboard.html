@@ -206,7 +206,13 @@ body {
   background: rgba(196,176,96,0.15); color: var(--accent-hopeful);
   border-color: rgba(196,176,96,0.3);
 }
+/* ── Dormant Stone (no VRAM data yet) ───────────────────── */
+.stone-card.dormant { opacity: 0.45; filter: grayscale(0.6); }
+.stone-card.dormant .dot { background: var(--accent-muted); box-shadow: none; animation: none; }
 
+/* ── Sortable Headers ───────────────────────────────────── */
+.sortable { cursor: pointer; user-select: none; }
+.sortable:hover { color: var(--accent-sage); }
 /* ── Tiers Section ────────────────────────────────────────── */
 .tier-card {
   border-left: 3px solid var(--accent-sage);
@@ -222,7 +228,7 @@ body {
 /* ── Models Section ───────────────────────────────────────── */
 .model-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr;
+  grid-template-columns: 2fr 0.8fr 0.6fr 0.6fr 1fr 1fr;
   gap: 0.5rem; align-items: center;
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--vellum-border);
@@ -235,6 +241,20 @@ body {
 .model-row .model-detail {
   font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
 }
+
+/* ── Capability Badges ────────────────────────────────────── */
+.cap-badges { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+.cap-badge {
+  font-family: var(--font-mono); font-size: 0.55rem;
+  padding: 0.1rem 0.35rem; border-radius: 2px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  border: 1px solid;
+}
+.cap-badge.completion  { color: var(--accent-sage); border-color: rgba(132,165,157,0.3); background: rgba(132,165,157,0.08); }
+.cap-badge.embedding   { color: #7ea8be; border-color: rgba(126,168,190,0.3); background: rgba(126,168,190,0.08); }
+.cap-badge.vision      { color: var(--accent-hopeful); border-color: rgba(196,176,96,0.3); background: rgba(196,176,96,0.08); }
+.cap-badge.tools       { color: var(--accent-clay); border-color: rgba(212,163,115,0.3); background: rgba(212,163,115,0.08); }
+.cap-badge.thinking    { color: #b07aa1; border-color: rgba(176,122,161,0.3); background: rgba(176,122,161,0.08); }
 
 /* ── Metrics Section ──────────────────────────────────────── */
 .metric-card { text-align: center; padding: 1.25rem; }
@@ -366,6 +386,124 @@ body {
   border-bottom: 1px solid rgba(128,128,128,0.05);
 }
 .log-time { color: var(--stone-400); white-space: nowrap; }
+
+/* ── Fitness / Benchmark ──────────────────────────────────── */
+.fitness-controls {
+  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.fitness-select {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  padding: 0.4rem 0.6rem; border: 1px solid var(--vellum-border);
+  background: transparent; color: var(--stone-900);
+  border-radius: 2px; cursor: pointer;
+}
+.fitness-progress {
+  margin-bottom: 0.75rem;
+}
+.fitness-progress-bar {
+  height: 6px; background: var(--vellum-border); border-radius: 3px;
+  overflow: hidden; margin-top: 0.35rem;
+}
+.fitness-progress-fill {
+  height: 100%; background: var(--accent-sage); border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.fitness-progress-label {
+  font-family: var(--font-mono); font-size: 0.65rem; color: var(--stone-400);
+}
+.fitness-matrix {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-mono); font-size: 0.7rem;
+}
+.fitness-matrix th {
+  text-align: center; padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--vellum-border);
+  font-weight: 500; font-size: 0.6rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--stone-400);
+}
+.fitness-matrix th.col-model,
+.fitness-matrix th.col-cap { text-align: left; }
+.fitness-matrix td {
+  padding: 0.25rem 0.5rem; border-bottom: 1px solid rgba(128,128,128,0.05);
+  white-space: nowrap;
+}
+.fitness-matrix .model-cell {
+  font-weight: 500; vertical-align: top;
+  border-bottom: 1px solid var(--vellum-border);
+}
+.fitness-matrix .cap-cell { padding-left: 0; }
+.fitness-matrix tr.model-first-row .model-cell { padding-top: 0.5rem; }
+.fitness-matrix tr.model-last-row td { border-bottom: 1px solid var(--vellum-border); }
+.fitness-matrix .stone-header {
+  min-width: 7rem; text-align: center;
+  border-bottom: 3px solid var(--stone-hdr-color, var(--vellum-border));
+}
+.fitness-matrix .stone-subtitle {
+  display: block; font-size: 0.5rem; font-weight: 400;
+  color: var(--stone-400); letter-spacing: 0.02em;
+  margin-top: 0.15rem; text-transform: none;
+}
+.verdict-cell {
+  border-radius: 2px; position: relative;
+  cursor: default; padding: 0.15rem 0.35rem;
+}
+.verdict-inner {
+  display: grid; grid-template-columns: auto 1fr; align-items: center;
+  gap: 0.3rem;
+}
+.verdict-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.verdict-fast .verdict-dot { background: #6b8e23; }
+.verdict-degraded .verdict-dot { background: #b09830; }
+.verdict-vetoed .verdict-dot { background: var(--accent-red); }
+.verdict-unknown .verdict-dot { background: var(--stone-400); }
+.verdict-stats {
+  font-size: 0.65rem; color: var(--stone-600);
+  text-align: left;
+}
+.verdict-pending {
+  color: var(--stone-400);
+}
+.verdict-pending .verdict-dot {
+  background: var(--stone-400); opacity: 0.3;
+}
+.verdict-running .verdict-dot {
+  background: var(--accent-sage);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+.verdict-skipped { color: var(--stone-400); }
+.verdict-skipped .verdict-dot { background: var(--stone-400); opacity: 0.15; }
+.verdict-error .verdict-dot { background: var(--accent-red); }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.verdict-best {
+  background: rgba(107, 142, 35, 0.08);
+}
+.verdict-best .verdict-stats {
+  color: var(--stone-700);
+  font-weight: 600;
+}
+.verdict-cell[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 4px); left: 50%;
+  transform: translateX(-50%); white-space: nowrap;
+  background: #292524; color: #e7e5e4;
+  font-size: 0.6rem; padding: 0.25rem 0.5rem; border-radius: 3px;
+  z-index: 10; pointer-events: none;
+  font-family: var(--font-mono);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+.fitness-legend {
+  display: flex; gap: 1rem; align-items: center;
+  font-family: var(--font-mono); font-size: 0.6rem;
+  color: var(--stone-400); margin-top: 0.5rem;
+}
+.fitness-legend .legend-item { display: flex; align-items: center; gap: 0.25rem; }
+.fitness-empty { font-size: 0.75rem; color: var(--stone-400); font-family: var(--font-mono); }
 </style>
 </head>
 <body>
@@ -386,7 +524,7 @@ body {
     <div class="identity">
       <h1 id="routerName">Ollama Orchestrator</h1>
       <div class="role">zen-garden.ollama.orchestrator</div>
-      <div class="endpoint" id="routerEndpoint">:11434 proxy — :7190 dashboard</div>
+      <div class="endpoint" id="routerEndpoint">:21434 proxy — :7190 dashboard</div>
     </div>
     <div class="glance">
       <div><span class="stat-big" id="stoneCount">0</span></div>
@@ -413,7 +551,7 @@ body {
     <div class="section-title">Models</div>
     <div class="card" id="modelsCard">
       <div class="model-row" style="font-weight:600; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400);">
-        <div>Name</div><div>VRAM</div><div>Available On</div><div>Loaded On</div>
+        <div class="sortable" onclick="sortModels('name')">Name <span id="sortNameIcon">▲</span></div><div class="sortable" onclick="sortModels('size')">Size <span id="sortSizeIcon"></span></div><div>Spec</div><div>Capabilities</div><div>Available On</div><div>Loaded On</div>
       </div>
       <div id="modelsBody"></div>
       <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--vellum-border);">
@@ -424,6 +562,48 @@ body {
         </div>
         <div id="mgmtStatus" class="mono muted" style="font-size:0.7rem; margin-top:0.75rem;"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ── Fitness ───────────────────────────────────────────── -->
+  <section id="fitnessSection">
+    <div class="section-title">Fitness</div>
+    <div class="card" id="fitnessPanelSetup">
+      <div class="fitness-controls">
+        <select class="fitness-select" id="benchScope">
+          <option value="full">All Stones</option>
+        </select>
+        <label class="mono" style="font-size:0.7rem; display:flex; align-items:center; gap:0.3rem;">
+          <input type="checkbox" id="benchSync" /> Sync models first
+        </label>
+        <label class="mono" style="font-size:0.7rem; display:flex; align-items:center; gap:0.3rem;">
+          <input type="checkbox" id="benchWipe" checked /> Wipe previous results
+        </label>
+        <button class="action-btn" id="benchRunBtn" onclick="startBenchmark()">Run Benchmark</button>
+      </div>
+    </div>
+    <div class="card hidden" id="fitnessPanelRunning">
+      <div class="fitness-progress">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span class="fitness-progress-label" id="benchProgressLabel">Starting…</span>
+          <span class="fitness-progress-label" id="benchProgressPct"></span>
+        </div>
+        <div class="fitness-progress-bar"><div class="fitness-progress-fill" id="benchProgressFill" style="width:0%"></div></div>
+        <div class="mono muted" style="font-size:0.6rem; margin-top:0.35rem;" id="benchCurrent"></div>
+        <div class="mono muted" style="font-size:0.6rem; margin-top:0.2rem;" id="benchPerStone"></div>
+      </div>
+      <div style="margin-top:0.5rem;">
+        <button class="action-btn" onclick="cancelBenchmark()">Cancel</button>
+      </div>
+    </div>
+    <div class="card hidden" id="fitnessPanelResults">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+        <span class="mono muted" style="font-size:0.65rem;" id="fitnessTimestamp"></span>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="action-btn" id="wipeAllBtn" onclick="wipeFitness('all')">Reset All</button>
+        </div>
+      </div>
+      <div id="fitnessMatrixContainer"></div>
     </div>
   </section>
 
@@ -530,6 +710,7 @@ body {
 // ── State ──────────────────────────────────────────────────────
 let state = null;
 let settings = { auto_pull_mode: 'sync', delete_on_idle: false, metrics_enabled: true };
+let modelSort = { field: 'name', dir: 'asc' };
 let jobs = [];
 let connected = true;
 let activityRing = [];
@@ -593,7 +774,17 @@ function connectSSE() {
   es.onmessage = (ev) => {
     try {
       const data = JSON.parse(ev.data);
-      addActivity(data.event_type || 'event', data.data || '');
+      const type = data.event_type || 'event';
+      let payload = {};
+      try { payload = JSON.parse(data.data || '{}'); } catch (_) {}
+
+      // Benchmark events → activity log with rich messages
+      if (type.startsWith('benchmark.')) {
+        const msg = benchmarkEventMessage(type, payload);
+        if (msg) addActivity('benchmark', msg);
+      } else {
+        addActivity(type, data.data || '');
+      }
     } catch (_) {
       addActivity('event', ev.data);
     }
@@ -628,6 +819,9 @@ function render() {
   // Models
   renderModels(state.models || []);
 
+  // Fitness / Benchmark
+  renderBenchmark(state.benchmark || {}, state.stones || []);
+
   // Metrics
   renderMetrics(state.metrics || {});
 
@@ -645,18 +839,31 @@ function renderStones(stones) {
   }
   stones.forEach(s => {
     const healthClass = s.healthy ? '' : (s.health === 'Profiling' ? 'profiling' : 'unhealthy');
+    const dormant = s.vram_total_mb === 0;
     const loaded = (s.models_loaded || []).map(m => m.name || m);
-    const available = s.models_available || [];
+    // Sort tags: loaded first, then by global demand rank, then alpha
+    const topModels = (state.metrics || {}).top_models || [];
+    const modelRank = new Map();
+    topModels.forEach(([name], i) => modelRank.set(name, i));
+    const available = [...(s.models_available || [])].sort((a, b) => {
+      const al = loaded.includes(a) ? 0 : 1;
+      const bl = loaded.includes(b) ? 0 : 1;
+      if (al !== bl) return al - bl;
+      const ar = modelRank.has(a) ? modelRank.get(a) : 999;
+      const br = modelRank.has(b) ? modelRank.get(b) : 999;
+      if (ar !== br) return ar - br;
+      return a.localeCompare(b);
+    });
     const queuePct = Math.min((s.queue_depth || 0) / 8 * 100, 100);
 
     const color = stoneColor(s.stone_name);
-    let html = `<div class="card stone-card" style="--stone-color:${color}">
+    let html = `<div class="card stone-card${dormant ? ' dormant' : ''}" style="--stone-color:${color}">
       <div class="stone-header">
         <span class="dot ${healthClass}"></span>
         <span class="stone-name">${esc(s.stone_name)}</span>
       </div>
       <div class="stone-meta">
-        <div>${esc(s.gpu_name || 'GPU')} · ${s.vram_budget_mb || '?'} MB VRAM</div>
+        <div>${esc(s.gpu_name || 'GPU')} · ${s.vram_budget_mb != null ? s.vram_budget_mb : '?'} MB VRAM</div>
         <div>${esc(s.endpoint)}</div>
         <div>Queue: ${s.queue_depth || 0}${s.lease ? ' · Lease: ' + esc(s.lease.model) + ' (' + s.lease.remaining_secs + 's)' : ''}${s.tokens_per_sec != null ? ' · gen <span class="gold">' + s.tokens_per_sec.toFixed(1) + ' tok/s</span>' : ''}${s.tokens_per_sec_cumulative != null ? ' <span class="muted">(avg ' + s.tokens_per_sec_cumulative.toFixed(1) + ')</span>' : ''}${s.tokens_per_sec_roundtrip != null ? ' · e2e <span class="gold">' + s.tokens_per_sec_roundtrip.toFixed(1) + ' tok/s</span>' : ''}${s.tokens_per_sec_cumulative_roundtrip != null ? ' <span class="muted">(avg ' + s.tokens_per_sec_cumulative_roundtrip.toFixed(1) + ')</span>' : ''}</div>
       </div>
@@ -689,22 +896,51 @@ function renderTiers(tiers) {
 }
 
 // ── Models ─────────────────────────────────────────────────────
+function sortModels(field) {
+  if (modelSort.field === field) {
+    modelSort.dir = modelSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    modelSort.field = field;
+    modelSort.dir = 'asc';
+  }
+  if (state) renderModels(state.models || []);
+}
+
 function renderModels(models) {
   const body = document.getElementById('modelsBody');
   const section = document.getElementById('modelsSection');
   if (!models.length) { section.classList.add('hidden'); return; }
   section.classList.remove('hidden');
+  const sorted = [...models].sort((a, b) => {
+    let cmp;
+    if (modelSort.field === 'size') {
+      cmp = (a.size_disk_mb || 0) - (b.size_disk_mb || 0);
+    } else {
+      cmp = (a.name || '').localeCompare(b.name || '');
+    }
+    return modelSort.dir === 'asc' ? cmp : -cmp;
+  });
+  const ni = document.getElementById('sortNameIcon');
+  const si = document.getElementById('sortSizeIcon');
+  if (ni) ni.textContent = modelSort.field === 'name' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
+  if (si) si.textContent = modelSort.field === 'size' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
   body.innerHTML = '';
-  models.forEach(m => {
+  sorted.forEach(m => {
     const availDots = (m.on_stones || []).map(s =>
       `<span class="stone-dot" title="${esc(s)}" style="--dot-color:${stoneColor(s)}; background:${stoneColor(s)}"></span>`
     ).join('') || '—';
     const loadedDots = (m.loaded_on || []).map(s =>
       `<span class="stone-dot loaded" title="${esc(s)}" style="--dot-color:${stoneColor(s)}; background:${stoneColor(s)}"></span>`
     ).join('') || '—';
+    const caps = (m.capabilities || []).map(c =>
+      `<span class="cap-badge ${esc(c)}">${esc(c)}</span>`
+    ).join('') || '—';
+    const spec = [m.parameter_size, m.quantization_level].filter(Boolean).join(' / ') || '—';
     body.innerHTML += `<div class="model-row">
       <div class="model-name">${esc(m.name)}</div>
-      <div class="model-detail">${m.vram_estimate_mb ? m.vram_estimate_mb + ' MB' : '—'}</div>
+      <div class="model-detail">${m.size_disk_mb != null ? m.size_disk_mb + ' MB' : '—'}</div>
+      <div class="model-detail">${esc(spec)}</div>
+      <div class="model-detail"><span class="cap-badges">${caps}</span></div>
       <div class="model-detail"><span class="stone-dots">${availDots}</span></div>
       <div class="model-detail"><span class="stone-dots">${loadedDots}</span></div>
     </div>`;
@@ -902,6 +1138,424 @@ function renderJobs() {
       <span class="muted">${elapsed}</span>
     </div>`;
   }).join('');
+}
+
+// ── Fitness / Benchmark ─────────────────────────────────────────
+function renderBenchmark(run, stones) {
+  const setupPanel  = document.getElementById('fitnessPanelSetup');
+  const runPanel    = document.getElementById('fitnessPanelRunning');
+  const resultPanel = document.getElementById('fitnessPanelResults');
+
+  // Populate scope selector with current stones
+  const sel = document.getElementById('benchScope');
+  const prev = sel.value;
+  const opts = ['<option value="full">All Stones</option>'];
+  stones.forEach(s => {
+    opts.push(`<option value="stone:${esc(s.stone_name)}">${esc(s.stone_name)}</option>`);
+  });
+  sel.innerHTML = opts.join('');
+  if (prev) sel.value = prev;
+  if (!sel.value) sel.value = 'full';
+
+  const status = run.status || 'idle';
+  const stoneReports = run.stones || [];
+  const matrix = run.gpu_matrix || {};
+  const entries = matrix.entries || [];
+
+  // ── Phase: Running ──
+  if (status === 'running') {
+    setupPanel.classList.add('hidden');
+    runPanel.classList.remove('hidden');
+    document.getElementById('benchRunBtn').disabled = true;
+
+    // Compute progress from the tree
+    let done = 0, total = 0;
+    stoneReports.forEach(sr => {
+      (sr.tests || []).forEach(t => {
+        total++;
+        if (t.status === 'done' || t.status === 'error' || t.status === 'skipped') done++;
+      });
+    });
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    document.getElementById('benchProgressLabel').textContent =
+      `Benchmarking… ${done} / ${total}`;
+    document.getElementById('benchProgressPct').textContent = pct + '%';
+    document.getElementById('benchProgressFill').style.width = pct + '%';
+
+    // Current activity: find the running test
+    let currentLabel = '';
+    for (const sr of stoneReports) {
+      if (sr.status !== 'testing') continue;
+      const running = (sr.tests || []).find(t => t.status === 'running');
+      if (running) {
+        currentLabel = `${sr.stone_name}: ${running.model} (${running.capability})`;
+        break;
+      }
+    }
+    document.getElementById('benchCurrent').textContent = currentLabel;
+
+    // Per-stone progress
+    const parts = stoneReports.map(sr => {
+      const tests = sr.tests || [];
+      const sDone = tests.filter(t => t.status === 'done' || t.status === 'error' || t.status === 'skipped').length;
+      const icon = sr.status === 'done' ? '✓' : sr.status === 'testing' ? '▸' : sr.status === 'pending' ? '○' : '·';
+      return `${icon} ${sr.stone_name}: ${sDone}/${tests.length}`;
+    });
+    document.getElementById('benchPerStone').textContent = parts.join('  ·  ');
+  } else {
+    setupPanel.classList.remove('hidden');
+    runPanel.classList.add('hidden');
+    document.getElementById('benchRunBtn').disabled = false;
+
+    // Show error on the running panel if failed
+    if (status === 'failed' || status === 'cancelled') {
+      const msg = status === 'cancelled' ? 'Benchmark cancelled'
+                : run.error ? 'Error: ' + run.error
+                : 'Benchmark failed';
+      document.getElementById('benchCurrent').textContent = msg;
+    }
+  }
+
+  // ── Phase: Results ──
+  // Prefer stoneReports (live + final); fall back to gpu_matrix for older data
+  const hasLiveData = stoneReports.length > 0 && stoneReports.some(sr => (sr.tests || []).length > 0);
+  const hasMatrixData = entries.length > 0;
+
+  if (hasLiveData || hasMatrixData) {
+    resultPanel.classList.remove('hidden');
+    const ts = matrix.generated_at;
+    document.getElementById('fitnessTimestamp').textContent =
+      ts ? 'Last run: ' + new Date(ts).toLocaleString() : '';
+
+    const html = hasLiveData
+      ? buildLiveMatrix(stoneReports, entries)
+      : buildFinalMatrix(stoneReports, entries);
+    document.getElementById('fitnessMatrixContainer').innerHTML = html;
+  } else {
+    resultPanel.classList.add('hidden');
+    document.getElementById('fitnessMatrixContainer').innerHTML = '';
+  }
+}
+
+// ── Shared table helpers ──────────────────────────────────────────
+const CAP_LABEL = { generate: 'Completion', embed: 'Embedding', vision: 'Vision' };
+const CAP_CLASS = { generate: 'completion', embed: 'embedding', vision: 'vision' };
+const CAP_ORDER = ['generate', 'embed', 'vision'];
+
+function buildStoneHeaders(stoneNames, stoneInfo) {
+  let html = '<th class="col-model">Model</th><th class="col-cap">Capability</th>';
+  stoneNames.forEach(sn => {
+    const c = stoneColor(sn);
+    const info = stoneInfo.get(sn);
+    let subtitle = '';
+    if (info && info.gpu) {
+      const gpu = info.gpu.replace(/^(NVIDIA GeForce|AMD Radeon)\s*/i, '');
+      const vram = info.vram_mb >= 1024 ? Math.round(info.vram_mb / 1024) + 'GB'
+                 : info.vram_mb > 0 ? info.vram_mb + 'MB' : '';
+      subtitle = vram ? `${esc(gpu)} · ${vram}` : esc(gpu);
+    }
+    html += `<th class="stone-header" style="--stone-hdr-color:${c}; color:${c}">${esc(sn)}`;
+    if (subtitle) html += `<span class="stone-subtitle">${subtitle}</span>`;
+    html += '</th>';
+  });
+  return html;
+}
+
+function buildLegend(stoneNames) {
+  let html = '<div class="fitness-legend">';
+  html += '<span class="legend-item"><span class="verdict-dot" style="background:#6b8e23"></span> Fast</span>';
+  html += '<span class="legend-item"><span class="verdict-dot" style="background:#b09830"></span> Degraded</span>';
+  html += '<span class="legend-item"><span class="verdict-dot" style="background:var(--accent-red)"></span> Vetoed</span>';
+  html += '<span class="legend-item"><span class="verdict-dot" style="background:var(--stone-400);opacity:0.3"></span> Pending</span>';
+  html += '<span style="color:var(--stone-400)">tok/s · cold</span>';
+  html += '</div>';
+  html += '<div style="margin-top:0.75rem; display:flex; gap:0.5rem; flex-wrap:wrap;">';
+  stoneNames.forEach(sn => {
+    html += `<button class="action-btn" style="font-size:0.6rem; padding:0.3rem 0.6rem;" onclick="wipeFitness('stone:${esc(sn)}')">Reset ${esc(sn)}</button>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderResultCell(verdict, medianTps, coldMs, cap, isBest) {
+  const v = (verdict || 'unknown').toLowerCase();
+  let cls = 'verdict-cell verdict-' + v;
+  if (isBest) cls += ' verdict-best';
+  const tps = (medianTps || 0).toFixed(1);
+  const cold = (coldMs / 1000).toFixed(1);
+  const tip = cap === 'embed'
+    ? `${v} · cold start ${cold}s`
+    : `${v} · ${tps} tok/s · cold start ${cold}s`;
+  const inner = cap === 'embed'
+    ? `<span class="verdict-dot"></span><span class="verdict-stats">${cold}s</span>`
+    : `<span class="verdict-dot"></span><span class="verdict-stats">${tps} · ${cold}s</span>`;
+  return `<td class="${cls}" data-tip="${esc(tip)}"><div class="verdict-inner">${inner}</div></td>`;
+}
+
+/// Score a result for best-stone comparison.
+/// Higher is better.  Verdict rank dominates, then TPS, then cold (inverted).
+function bestStoneScore(verdict, medianTps, coldMs, cap) {
+  const vRank = { fast: 3, degraded: 2, vetoed: 1 };
+  const vr = vRank[(verdict || '').toLowerCase()] || 0;
+  const tps = medianTps || 0;
+  const cold = coldMs || 999999;
+  // Embed has no TPS — rank by verdict then cold start only.
+  if (cap === 'embed') return vr * 1e9 + (1e6 - cold);
+  return vr * 1e9 + tps * 1e4 + (1e6 - cold);
+}
+
+/// Given an array of {stone, verdict, medianTps, coldMs} pick best stone name.
+function findBestStone(results, cap) {
+  if (results.length === 0) return null;
+  let best = null, bestScore = -Infinity;
+  for (const r of results) {
+    const s = bestStoneScore(r.verdict, r.medianTps, r.coldMs, cap);
+    if (s > bestScore) { bestScore = s; best = r.stone; }
+  }
+  return best;
+}
+
+function renderStatusCell(testStatus, errMsg) {
+  switch (testStatus) {
+    case 'running':
+      return '<td class="verdict-cell verdict-running"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats" style="color:var(--accent-sage)">running</span></div></td>';
+    case 'error':
+      return `<td class="verdict-cell verdict-error" data-tip="${esc(errMsg || 'error')}"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats" style="color:var(--accent-red)">error</span></div></td>`;
+    case 'skipped':
+      return '<td class="verdict-cell verdict-skipped"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats">skip</span></div></td>';
+    default: // pending
+      return '<td class="verdict-cell verdict-pending"><div class="verdict-inner"><span class="verdict-dot"></span></div></td>';
+  }
+}
+
+function buildModelRows(modelNames, capsFn, cellFn) {
+  let html = '';
+  modelNames.forEach(model => {
+    const modelCaps = capsFn(model);
+    if (!modelCaps.length) return;
+    modelCaps.forEach((cap, capIdx) => {
+      const isFirst = capIdx === 0;
+      const isLast = capIdx === modelCaps.length - 1;
+      const cls = [];
+      if (isFirst) cls.push('model-first-row');
+      if (isLast) cls.push('model-last-row');
+      html += `<tr class="${cls.join(' ')}">`;
+      if (isFirst) html += `<td class="model-cell" rowspan="${modelCaps.length}">${esc(model)}</td>`;
+      html += `<td class="cap-cell"><span class="cap-badge ${CAP_CLASS[cap]}">${CAP_LABEL[cap]}</span></td>`;
+      html += cellFn(model, cap);
+      html += '</tr>';
+    });
+  });
+  return html;
+}
+
+// ── Live matrix (from stoneReports during/after a run) ──────────
+function buildLiveMatrix(stoneReports, matrixEntries) {
+  const stoneNames = stoneReports.map(sr => sr.stone_name).sort();
+  const stoneInfo = new Map();
+  stoneReports.forEach(sr => {
+    stoneInfo.set(sr.stone_name, { gpu: sr.gpu_model || '', vram_mb: sr.vram_mb || 0 });
+  });
+
+  const testLookup = new Map();
+  stoneReports.forEach(sr => {
+    (sr.tests || []).forEach(t => {
+      testLookup.set(`${t.model}|${sr.stone_name}|${t.capability}`, t);
+    });
+  });
+
+  const matrixLookup = new Map();
+  (matrixEntries || []).forEach(e => {
+    matrixLookup.set(`${e.model}|${e.stone_name}|${e.capability}`, e);
+  });
+
+  const modelSet = new Set();
+  stoneReports.forEach(sr => (sr.tests || []).forEach(t => modelSet.add(t.model)));
+  const modelNames = [...modelSet].sort();
+
+  let html = '<table class="fitness-matrix"><thead><tr>';
+  html += buildStoneHeaders(stoneNames, stoneInfo);
+  html += '</tr></thead><tbody>';
+  html += buildModelRows(modelNames,
+    model => CAP_ORDER.filter(cap => stoneNames.some(sn => testLookup.has(`${model}|${sn}|${cap}`))),
+    (model, cap) => {
+      // Collect completed results across stones for best-stone detection
+      const results = [];
+      stoneNames.forEach(sn => {
+        const t = testLookup.get(`${model}|${sn}|${cap}`);
+        if (t && t.status === 'done' && t.summary) {
+          results.push({ stone: sn, verdict: t.summary.verdict, medianTps: t.summary.median_tps, coldMs: t.summary.cold_start_ms });
+        } else if (t && t.status === 'done') {
+          const me = matrixLookup.get(`${model}|${sn}|${cap}`);
+          if (me) results.push({ stone: sn, verdict: me.verdict, medianTps: me.median_tps, coldMs: me.cold_start_ms });
+        }
+      });
+      const bestStone = findBestStone(results, cap);
+
+      let cells = '';
+      stoneNames.forEach(sn => {
+        const t = testLookup.get(`${model}|${sn}|${cap}`);
+        if (!t) { cells += '<td class="verdict-cell verdict-unknown">—</td>'; return; }
+        if (t.status === 'done' && t.summary) {
+          cells += renderResultCell(t.summary.verdict, t.summary.median_tps, t.summary.cold_start_ms, cap, sn === bestStone);
+        } else if (t.status === 'done') {
+          const me = matrixLookup.get(`${model}|${sn}|${cap}`);
+          if (me) cells += renderResultCell(me.verdict, me.median_tps, me.cold_start_ms, cap, sn === bestStone);
+          else cells += renderStatusCell('done');
+        } else {
+          cells += renderStatusCell(t.status, t.error);
+        }
+      });
+      return cells;
+    }
+  );
+  html += '</tbody></table>';
+  html += buildLegend(stoneNames);
+  return html;
+}
+
+// ── Final matrix (from gpu_matrix.entries only — legacy compat) ──
+function buildFinalMatrix(stoneReports, entries) {
+  const stoneNames = [...new Set(entries.map(e => e.stone_name))].sort();
+  const modelNames = [...new Set(entries.map(e => e.model))].sort();
+  const lookup = new Map();
+  entries.forEach(e => lookup.set(`${e.model}|${e.stone_name}|${e.capability}`, e));
+
+  const stoneInfo = new Map();
+  stoneReports.forEach(sr => stoneInfo.set(sr.stone_name, { gpu: sr.gpu_model || '', vram_mb: sr.vram_mb || 0 }));
+
+  let html = '<table class="fitness-matrix"><thead><tr>';
+  html += buildStoneHeaders(stoneNames, stoneInfo);
+  html += '</tr></thead><tbody>';
+  html += buildModelRows(modelNames,
+    model => CAP_ORDER.filter(cap => stoneNames.some(sn => lookup.has(`${model}|${sn}|${cap}`))),
+    (model, cap) => {
+      const results = [];
+      stoneNames.forEach(sn => {
+        const e = lookup.get(`${model}|${sn}|${cap}`);
+        if (e) results.push({ stone: sn, verdict: e.verdict, medianTps: e.median_tps, coldMs: e.cold_start_ms });
+      });
+      const bestStone = findBestStone(results, cap);
+
+      let cells = '';
+      stoneNames.forEach(sn => {
+        const e = lookup.get(`${model}|${sn}|${cap}`);
+        if (e) cells += renderResultCell(e.verdict, e.median_tps, e.cold_start_ms, cap, sn === bestStone);
+        else cells += '<td class="verdict-cell verdict-unknown">—</td>';
+      });
+      return cells;
+    }
+  );
+  html += '</tbody></table>';
+  html += buildLegend(stoneNames);
+  return html;
+}
+
+async function startBenchmark() {
+  const scope = document.getElementById('benchScope').value;
+  const sync = document.getElementById('benchSync').checked;
+  const wipeChecked = document.getElementById('benchWipe').checked;
+  const wipe = wipeChecked ? (scope === 'full' ? 'all' : scope) : null;
+  const btn = document.getElementById('benchRunBtn');
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/benchmark/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, sync, wipe }),
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      btn.disabled = false;
+      addActivity('benchmark', 'Error: ' + (data.error || 'unknown'));
+    } else {
+      addActivity('benchmark', 'Benchmark started (' + scope + ')');
+    }
+  } catch (e) {
+    btn.disabled = false;
+    addActivity('benchmark', 'Failed to start: ' + e.message);
+  }
+}
+
+async function cancelBenchmark() {
+  try {
+    await fetch('/api/benchmark/cancel', { method: 'POST' });
+    addActivity('benchmark', 'Benchmark cancelled');
+  } catch (e) {
+    addActivity('benchmark', 'Cancel failed: ' + e.message);
+  }
+}
+
+async function wipeFitness(scope) {
+  // Wipe by starting with zero work + wipe flag
+  const wipe = scope;
+  // We use the start endpoint with an empty scope that won't match anything,
+  // but actually we just send a start with wipe. The benchmark will run 0 items if stones are empty.
+  // Better: just POST start with the matching scope + wipe and it'll do a quick run.
+  // Actually the cleanest approach: start a benchmark with the same scope + wipe, it will wipe then re-bench.
+  // But the user wants just reset. Let's confirm.
+  const btn = event.target;
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = '1';
+    btn.classList.add('confirming');
+    btn.textContent = btn.textContent.replace('Reset', 'Confirm reset');
+    setTimeout(() => {
+      delete btn.dataset.confirm;
+      btn.classList.remove('confirming');
+      btn.textContent = btn.textContent.replace('Confirm reset ', 'Reset ');
+    }, 3000);
+    return;
+  }
+  delete btn.dataset.confirm;
+  btn.classList.remove('confirming');
+  // Wipe: start a benchmark run that immediately wipes and does nothing (scope=full, wipe=all/stone)
+  // The simplest way: POST to start with wipe, the benchmark will wipe then run (which is fine)
+  // Actually we want wipe-only. We need a dedicated endpoint or a flag.
+  // For now: use start with wipe + the original scope — it wipes then benchmarks again.
+  // The user said "reset" which likely means wipe + re-benchmark.
+  try {
+    const resp = await fetch('/api/benchmark/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scope: scope === 'all' ? 'full' : scope,
+        sync: false,
+        wipe: wipe,
+      }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      addActivity('benchmark', 'Reset & re-benchmark (' + scope + ')');
+    } else {
+      addActivity('benchmark', 'Reset failed: ' + (data.error || 'unknown'));
+    }
+  } catch (e) {
+    addActivity('benchmark', 'Reset failed: ' + e.message);
+  }
+}
+
+// ── Benchmark Event Messages ────────────────────────────────────
+function benchmarkEventMessage(type, p) {
+  switch (type) {
+    case 'benchmark.started':     return `Started (${p.scope || 'full'})`;
+    case 'benchmark.planned':     return `${p.total} tests across ${(p.stones||[]).length} stones`;
+    case 'benchmark.wipe':        return `Wiped previous results (${p.scope || 'all'})`;
+    case 'benchmark.stone.start': return `Stone ${p.stone} (${(p.index||0)+1}/${p.of})`;
+    case 'benchmark.stone.done':  return `Stone ${p.stone}: ${p.status}`;
+    case 'benchmark.sync.start':  return `Syncing ${(p.models||[]).length} model(s) to ${p.stone}`;
+    case 'benchmark.pull':        return `Pulling ${p.model} → ${p.stone}`;
+    case 'benchmark.pull.done':   return `Pulled ${p.model} → ${p.stone}`;
+    case 'benchmark.pull.error':  return `Pull failed: ${p.model} → ${p.stone}: ${p.error}`;
+    case 'benchmark.sync.done':   return `Sync complete for ${p.stone}`;
+    case 'benchmark.test.start':  return p.description || `${p.model} (${p.capability})`;
+    case 'benchmark.test.done':   return `${p.model} ${p.capability}: ${p.verdict} (${p.tps} tok/s, ${p.cold_start_ms}ms cold)`;
+    case 'benchmark.test.error':  return `${p.model} ${p.capability}: ${p.error}`;
+    case 'benchmark.sample':      return null; // too noisy for the log
+    case 'benchmark.completed':   return `Completed — ${p.results} results`;
+    case 'benchmark.cancelled':   return 'Cancelled';
+    case 'benchmark.failed':      return `Failed: ${p.error || 'unknown'}`;
+    default:                      return type;
+  }
 }
 
 // ── Activity Log ───────────────────────────────────────────────

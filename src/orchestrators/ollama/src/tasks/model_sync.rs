@@ -31,7 +31,8 @@ async fn sync_models(state: &AppState, client: &OllamaClient) {
     let sync_targets = {
         let instances = state.instances.read().await;
         let config = state.config.read().await;
-        policy::models_needing_sync(&instances, &config)
+        let models = state.models.read().await;
+        policy::models_needing_sync(&instances, &config, &models)
     };
 
     if sync_targets.is_empty() {

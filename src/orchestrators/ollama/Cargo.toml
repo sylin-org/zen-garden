@@ -31,6 +31,9 @@ serde.workspace = true
 serde_json.workspace = true
 toml = "0.8"
 
+# Base64 (vision benchmark images)
+base64 = "0.22"
+
 # Streaming
 bytes = "1"
 futures-util = "0.3"

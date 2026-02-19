@@ -3,6 +3,7 @@
 //! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
 //! Mutation goes through methods that acquire write locks.
 
+use crate::domain::fitness::BenchmarkRun;
 use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
 use crate::domain::tiering;
@@ -78,6 +79,12 @@ pub struct AppState {
     // ── Placement ──
     pub placement: Arc<RwLock<PlacementPlan>>,
 
+    // ── Fitness ──
+    /// Full benchmark run state (tree: run → stones → tests → samples).
+    pub benchmark_run: Arc<RwLock<BenchmarkRun>>,
+    /// Cancel token for a running benchmark (None when idle).
+    pub benchmark_cancel: Arc<RwLock<Option<CancellationToken>>>,
+
     // ── Lifecycle ──
     pub shutdown: CancellationToken,
     pub start_time: Instant,
@@ -117,6 +124,8 @@ impl AppState {
             snapshot_rx,
             metrics_tx,
             placement: Arc::new(RwLock::new(PlacementPlan::default())),
+            benchmark_run: Arc::new(RwLock::new(BenchmarkRun::idle())),
+            benchmark_cancel: Arc::new(RwLock::new(None)),
             shutdown,
             start_time: Instant::now(),
             data_dir,
@@ -185,6 +194,55 @@ impl AppState {
             inst.models_available = models_available;
             inst.models_loaded = models_loaded;
             inst.last_profiled = Instant::now();
+        }
+    }
+
+    /// Merge hardware data into an existing instance (partial update).
+    ///
+    /// Only updates VRAM and GPU name when the new values are meaningful
+    /// (non-zero VRAM, non-None GPU).  Recalculates VRAM budget and
+    /// recomputes tiers if anything changed.
+    pub async fn update_instance_hw(
+        &self,
+        endpoint: &str,
+        vram_total_bytes: u64,
+        gpu_name: Option<String>,
+    ) {
+        let stone_name = {
+            let mut reg = self.instances.write().await;
+            if let Some(inst) = reg.get_mut(endpoint) {
+                let mut changed = false;
+                if vram_total_bytes > 0 && inst.vram_total_bytes != vram_total_bytes {
+                    inst.vram_total_bytes = vram_total_bytes;
+                    changed = true;
+                }
+                if let Some(ref name) = gpu_name {
+                    if inst.gpu_name.as_deref() != Some(name) {
+                        inst.gpu_name = Some(name.clone());
+                        changed = true;
+                    }
+                }
+                if changed {
+                    Some(inst.stone_name.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        // Update budget and recompute tiers outside the write lock
+        if let Some(stone_name) = stone_name {
+            let budget = self.vram_budget_for(&stone_name, vram_total_bytes).await;
+            {
+                let mut reg = self.instances.write().await;
+                if let Some(inst) = reg.get_mut(endpoint) {
+                    inst.vram_budget_bytes = budget;
+                }
+            }
+            self.recompute_tiers().await;
+            self.emit_event("registry.updated", "{}").await;
         }
     }
 

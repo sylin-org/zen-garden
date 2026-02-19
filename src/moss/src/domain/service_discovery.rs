@@ -478,7 +478,7 @@ async fn find_services_in_topology_cache(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
-    let stones = topology::get_all_stones(&state.topology_cache).await;
+    let stones = topology::get_online_stones(&state.topology_cache).await;
     let mut results = Vec::new();
 
     for stone in stones {
@@ -569,7 +569,7 @@ async fn find_remote_services(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
-    let stones = topology::get_all_stones(&state.topology_cache).await;
+    let stones = topology::get_online_stones(&state.topology_cache).await;
     let mut results = Vec::new();
 
     // Query each remote stone in parallel

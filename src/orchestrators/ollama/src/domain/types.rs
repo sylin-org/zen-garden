@@ -56,6 +56,8 @@ pub enum JobKind {
     InstanceProfile { endpoint: String, stone_name: String },
     /// On-demand discovery pull (model was requested but unknown).
     OnDemandPull { model: String },
+    /// Fitness benchmark run.
+    Benchmark { scope: String, stones: Vec<String> },
 }
 
 impl JobKind {
@@ -67,6 +69,7 @@ impl JobKind {
             Self::ModelSync { .. } => "sync",
             Self::InstanceProfile { .. } => "profile",
             Self::OnDemandPull { .. } => "on-demand",
+            Self::Benchmark { .. } => "benchmark",
         }
     }
 
@@ -78,6 +81,7 @@ impl JobKind {
             Self::ModelSync { model, .. } => model,
             Self::InstanceProfile { stone_name, .. } => stone_name,
             Self::OnDemandPull { model, .. } => model,
+            Self::Benchmark { scope, .. } => scope,
         }
     }
 }
@@ -163,32 +167,13 @@ pub struct ModelInfo {
     pub family: Option<String>,
     pub families: Vec<String>,
     pub capabilities: Vec<String>,
+    /// Model format as reported by Ollama (e.g. "gguf").
+    pub format: Option<String>,
     pub size_disk: u64,
-    /// Best-known VRAM estimate in bytes.
-    /// Authoritative when sourced from `size_vram` (loaded model).
-    /// Estimated from parameter_count + quantization otherwise.
-    pub vram_estimate_bytes: u64,
-}
-
-impl ModelInfo {
-    /// Estimate VRAM from parameter count and quantization level.
-    /// Formula: params × bits_per_weight / 8, plus ~10 % overhead for KV cache.
-    pub fn estimate_vram(parameter_count: u64, quant: Option<&str>) -> u64 {
-        let bits = match quant {
-            Some(q) if q.starts_with("Q2") => 2.5,
-            Some(q) if q.starts_with("Q3") => 3.5,
-            Some(q) if q.starts_with("Q4") => 4.5,
-            Some(q) if q.starts_with("Q5") => 5.5,
-            Some(q) if q.starts_with("Q6") => 6.5,
-            Some(q) if q.starts_with("Q8") => 8.0,
-            Some(q) if q.contains("F16") || q.contains("f16") => 16.0,
-            Some(q) if q.contains("F32") || q.contains("f32") => 32.0,
-            _ => 4.5, // default Q4 assumption
-        };
-        let raw = (parameter_count as f64 * bits / 8.0) as u64;
-        // 10% overhead for KV cache + runtime
-        raw + raw / 10
-    }
+    /// Authoritative VRAM usage in bytes, sourced **only** from `/api/ps`
+    /// (`size_vram` field) when the model is loaded.  `None` means the model
+    /// has never been observed in VRAM — no guessing, no heuristics.
+    pub vram_bytes: Option<u64>,
 }
 
 // ── Tiers ────────────────────────────────────────────────────────
@@ -246,8 +231,6 @@ pub struct RoutingDecision {
 pub enum RoutingError {
     /// Model is unknown to the router.
     ModelNotFound(String),
-    /// Model exists but no tier has enough VRAM.
-    NoViableTier { model: String, vram_needed: u64 },
     /// All instances with capacity are fully busy.
     AllInstancesBusy { model: String },
     /// No healthy instances available at all.
@@ -258,9 +241,6 @@ impl std::fmt::Display for RoutingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ModelNotFound(m) => write!(f, "model '{m}' not found in any instance"),
-            Self::NoViableTier { model, vram_needed } => {
-                write!(f, "no tier with enough VRAM for '{model}' (needs {vram_needed} bytes)")
-            }
             Self::AllInstancesBusy { model } => write!(f, "all instances busy for '{model}'"),
             Self::NoHealthyInstances => write!(f, "no healthy Ollama instances"),
         }
@@ -450,6 +430,17 @@ pub struct OllamaPullProgress {
     pub digest: Option<String>,
     pub total: Option<u64>,
     pub completed: Option<u64>,
+}
+
+/// Response from `POST /api/embed`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OllamaEmbedResponse {
+    #[serde(default)]
+    pub total_duration: u64,
+    #[serde(default)]
+    pub load_duration: u64,
+    #[serde(default)]
+    pub prompt_eval_count: u64,
 }
 
 // ── Metric Events (proxy → metrics processor channel) ────────────

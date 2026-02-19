@@ -31,11 +31,16 @@ const WINDOWS_SERVICE_DESCRIPTION: &str =
     "Zen Garden stone orchestration daemon \u{2014} manages container services, \
      storage, and companions";
 
-/// Firewall rule names (Windows)
+/// Firewall rule-name prefix (shared between install-time and runtime rules).
 #[cfg(target_os = "windows")]
-const FIREWALL_RULE_HTTP: &str = "Zen Garden Moss HTTP (TCP)";
+const FIREWALL_RULE_PREFIX: &str = "Zen Garden";
+
+/// Legacy rule names from pre-v0.2 installs (cleaned up during install/uninstall).
 #[cfg(target_os = "windows")]
-const FIREWALL_RULE_MDNS: &str = "Zen Garden Moss mDNS (UDP)";
+const LEGACY_FIREWALL_RULES: &[&str] = &[
+    "Zen Garden Moss HTTP (TCP)",
+    "Zen Garden Moss mDNS (UDP)",
+];
 
 /// Install Zen Garden as a system service.
 ///

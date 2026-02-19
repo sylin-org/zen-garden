@@ -23,6 +23,9 @@ use crate::infra::tools_stream::{self, ToolEvent};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+/// How often to re-query the topology to catch stones the SSE stream missed.
+const TOPOLOGY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Run the discovery loop. Resolves a stone, queries topology for all Ollama
 /// instances, then subscribes to the Tools API for ongoing changes.
 /// Reconnects and re-discovers on failure.
@@ -56,14 +59,22 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                     tracing::info!(
                         stone = %topo_stone.stone_name,
                         endpoint = %endpoint,
+                        vram_mb = topo_stone.vram_total_bytes / 1_048_576,
+                        gpu = ?topo_stone.gpu_name,
                         "discovered Ollama instance via topology"
                     );
                     let state = state.clone();
                     let client = client.clone();
                     let stone_id = topo_stone.stone_id.clone();
                     let stone_name = topo_stone.stone_name.clone();
+                    let vram_total = topo_stone.vram_total_bytes;
+                    let gpu_name = topo_stone.gpu_name.clone();
                     tokio::spawn(async move {
-                        profile_instance(state, client, stone_id, stone_name, endpoint).await;
+                        profile_instance(
+                            state, client, stone_id, stone_name, endpoint,
+                            vram_total, gpu_name,
+                        )
+                        .await;
                     });
                 }
             }
@@ -72,15 +83,26 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
             }
         }
 
-        // ── Phase 3: Tools API stream — real-time updates ────────
+        // ── Phase 3: SSE stream + periodic topology refresh ──────
         //
-        // After the topology seeds the initial set, the SSE stream keeps the
-        // orchestrator in sync: new Ollama instances (tool.upsert), removals
-        // (tool.remove), and heartbeats.
-        tracing::info!(endpoint = %stone_endpoint, "subscribing to Tools API stream");
+        // The SSE stream provides real-time events, but may not reliably
+        // deliver all Ollama discoveries.  A parallel topology poll every
+        // 30 s catches new stones and merges HW data updates.
+        tracing::info!(endpoint = %stone_endpoint, "subscribing to Tools API stream + topology refresh");
 
         let state_clone = state.clone();
         let client_clone = client.clone();
+
+        // Spawn periodic topology refresh alongside the SSE stream
+        let refresh_handle = {
+            let state = state.clone();
+            let client = client.clone();
+            let endpoint = stone_endpoint.clone();
+            let shutdown = shutdown.clone();
+            tokio::spawn(async move {
+                topology_refresh_loop(endpoint, state, client, shutdown).await;
+            })
+        };
 
         let result = tools_stream::subscribe_tools_stream(
             &stone_endpoint,
@@ -94,12 +116,32 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                         tracing::info!(
                             stone = %stone_name,
                             endpoint = %endpoint,
-                            "discovered Ollama instance"
+                            "SSE: discovered Ollama instance, fetching HW caps"
                         );
                         let state = state_clone.clone();
                         let client = client_clone.clone();
                         tokio::spawn(async move {
-                            profile_instance(state, client, stone_id, stone_name, endpoint).await;
+                            // Derive stone IP from the Ollama endpoint so we
+                            // can query the Moss API for real HW capabilities.
+                            let stone_ip = endpoint
+                                .trim_start_matches("http://")
+                                .split(':')
+                                .next()
+                                .unwrap_or("")
+                                .to_string();
+                            let (vram_total, gpu_name) =
+                                stone_discovery::fetch_stone_hw(&stone_ip).await;
+                            tracing::info!(
+                                stone = %stone_name,
+                                vram_mb = vram_total / 1_048_576,
+                                gpu = ?gpu_name,
+                                "SSE: fetched HW capabilities"
+                            );
+                            profile_instance(
+                                state, client, stone_id, stone_name, endpoint,
+                                vram_total, gpu_name,
+                            )
+                            .await;
                         });
                     }
                     ToolEvent::OllamaRemoved {
@@ -129,11 +171,12 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
         )
         .await;
 
-        // ── Phase 3: Stream ended — prepare for reconnect ───────
+        // ── Stream ended — stop refresh loop and prepare for reconnect ─
         match result {
             Ok(()) => tracing::warn!("tools stream ended normally, will re-discover"),
             Err(e) => tracing::warn!(error = %e, "tools stream error, will re-discover"),
         }
+        refresh_handle.abort();
 
         // Clear tending so we re-discover (the stone may have gone away)
         state.clear_tending().await;
@@ -142,6 +185,87 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(5)) => {}
             _ = shutdown.cancelled() => return,
+        }
+    }
+}
+
+/// Periodically re-query the topology to catch stones the SSE stream missed.
+///
+/// For each topology stone:
+/// - **New** (not in AppState) → profile and register it.
+/// - **Existing with stale HW** (VRAM was 0 or GPU unknown) → merge real HW data.
+/// - **Existing and current** → skip.
+async fn topology_refresh_loop(
+    stone_endpoint: String,
+    state: AppState,
+    client: OllamaClient,
+    shutdown: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(TOPOLOGY_REFRESH_INTERVAL) => {}
+            _ = shutdown.cancelled() => return,
+        }
+
+        match stone_discovery::query_topology_ollama(&stone_endpoint).await {
+            Ok(ollama_stones) => {
+                for topo_stone in &ollama_stones {
+                    let endpoint = topo_stone.ollama_endpoint();
+
+                    let (known, needs_hw_update) = {
+                        let instances = state.instances.read().await;
+                        match instances.get(&endpoint) {
+                            Some(inst) => {
+                                let stale = (inst.vram_total_bytes == 0
+                                    && topo_stone.vram_total_bytes > 0)
+                                    || (inst.gpu_name.is_none()
+                                        && topo_stone.gpu_name.is_some());
+                                (true, stale)
+                            }
+                            None => (false, false),
+                        }
+                    };
+
+                    if known && needs_hw_update {
+                        tracing::info!(
+                            stone = %topo_stone.stone_name,
+                            vram_mb = topo_stone.vram_total_bytes / 1_048_576,
+                            gpu = ?topo_stone.gpu_name,
+                            "topology refresh: merging HW data"
+                        );
+                        state
+                            .update_instance_hw(
+                                &endpoint,
+                                topo_stone.vram_total_bytes,
+                                topo_stone.gpu_name.clone(),
+                            )
+                            .await;
+                    } else if !known {
+                        tracing::info!(
+                            stone = %topo_stone.stone_name,
+                            endpoint = %endpoint,
+                            vram_mb = topo_stone.vram_total_bytes / 1_048_576,
+                            "topology refresh: new Ollama stone, profiling"
+                        );
+                        let state = state.clone();
+                        let client = client.clone();
+                        let stone_id = topo_stone.stone_id.clone();
+                        let stone_name = topo_stone.stone_name.clone();
+                        let vram_total = topo_stone.vram_total_bytes;
+                        let gpu_name = topo_stone.gpu_name.clone();
+                        tokio::spawn(async move {
+                            profile_instance(
+                                state, client, stone_id, stone_name, endpoint,
+                                vram_total, gpu_name,
+                            )
+                            .await;
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "topology refresh failed");
+            }
         }
     }
 }
@@ -263,35 +387,27 @@ async fn profile_instance(
     stone_id: String,
     stone_name: String,
     endpoint: String,
+    topology_vram_bytes: u64,
+    topology_gpu_name: Option<String>,
 ) {
-    tracing::info!(stone = %stone_name, endpoint = %endpoint, "profiling instance");
+    tracing::info!(
+        stone = %stone_name,
+        endpoint = %endpoint,
+        topology_vram_mb = topology_vram_bytes / 1_048_576,
+        "profiling instance"
+    );
 
     let profile = client.full_profile(&endpoint).await;
 
     match profile {
         Ok((models_available, models_loaded, model_infos, version)) => {
-            let vram_budget = state.vram_budget_for(&stone_name, 0).await;
+            // Use the real VRAM reported by the stone's hardware detection
+            // (propagated via chirp → topology). Fall back to config budget.
+            let vram_total = topology_vram_bytes;
 
-            // Try to get VRAM total from loaded models
-            let vram_total = if !models_loaded.is_empty() {
-                // Use the total VRAM consumption as a floor + some headroom
-                let used: u64 = models_loaded.iter().map(|m| m.size_vram).sum();
-                // We know the GPU has at least this much VRAM. Add 20% headroom guess.
-                used + used / 5
-            } else {
-                // No models loaded — can't determine VRAM from Ollama alone.
-                // Default to 8 GiB as conservative estimate; user can override via config.
-                8 * 1_073_741_824
-            };
+            let vram_budget = state.vram_budget_for(&stone_name, vram_total).await;
 
-            let vram_budget = if vram_budget > 0 {
-                vram_budget
-            } else {
-                vram_total
-            };
-
-            // Get GPU name from stone portrait if possible
-            let gpu_name = get_gpu_name_from_stone(&stone_name).await;
+            let gpu_name = topology_gpu_name;
 
             let instance = OllamaInstance {
                 stone_id,
@@ -326,54 +442,49 @@ async fn profile_instance(
                 error = %e,
                 "failed to profile instance"
             );
-            // Register as unhealthy so we can retry later
-            let instance = OllamaInstance {
-                stone_id,
-                stone_name,
-                endpoint,
-                ollama_version: None,
-                gpu_name: None,
-                vram_total_bytes: 0,
-                vram_budget_bytes: 0,
-                health: InstanceHealth::Unhealthy {
-                    since: Instant::now(),
-                    reason: e.to_string(),
-                },
-                models_loaded: vec![],
-                models_available: vec![],
-                queue_depth: 0,
-                last_seen: Instant::now(),
-                last_profiled: Instant::now(),
+            // If the stone already exists in the registry, preserve its
+            // hardware data and just mark it unhealthy.  Only create a
+            // minimal placeholder when this is a genuinely new stone.
+            let already_exists = {
+                let instances = state.instances.read().await;
+                instances.contains_key(&endpoint)
             };
-            state.upsert_instance(instance).await;
+            if already_exists {
+                state
+                    .set_instance_health(
+                        &endpoint,
+                        InstanceHealth::Unhealthy {
+                            since: Instant::now(),
+                            reason: e.to_string(),
+                        },
+                    )
+                    .await;
+            } else {
+                // New stone we've never seen — register with topology HW
+                // data so we don't lose the VRAM/GPU info.
+                let vram_budget = state.vram_budget_for(&stone_name, topology_vram_bytes).await;
+                let instance = OllamaInstance {
+                    stone_id,
+                    stone_name,
+                    endpoint,
+                    ollama_version: None,
+                    gpu_name: topology_gpu_name,
+                    vram_total_bytes: topology_vram_bytes,
+                    vram_budget_bytes: vram_budget,
+                    health: InstanceHealth::Unhealthy {
+                        since: Instant::now(),
+                        reason: e.to_string(),
+                    },
+                    models_loaded: vec![],
+                    models_available: vec![],
+                    queue_depth: 0,
+                    last_seen: Instant::now(),
+                    last_profiled: Instant::now(),
+                };
+                state.upsert_instance(instance).await;
+            }
         }
     }
 }
 
-/// Try to get GPU name from the stone's portrait API.
-async fn get_gpu_name_from_stone(stone_name: &str) -> Option<String> {
-    let endpoint = format!("http://{stone_name}.local:7185");
-    let url = format!("{endpoint}/api/v1/stone/portrait");
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .ok()?;
-
-    let resp = client.get(&url).send().await.ok()?;
-    let json: serde_json::Value = resp.json().await.ok()?;
-
-    // Look for GPU info in the portrait response
-    json.get("foundation")
-        .and_then(|f| f.get("gpu"))
-        .and_then(|g| g.get("name"))
-        .and_then(|n| n.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            // Alternative: look in capabilities
-            json.get("identity")
-                .and_then(|i| i.get("ai"))
-                .and_then(|a| a.as_str())
-                .map(|s| s.to_string())
-        })
-}

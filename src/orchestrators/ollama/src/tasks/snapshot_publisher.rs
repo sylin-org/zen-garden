@@ -47,6 +47,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let config = state.config.read().await;
     let placement = state.placement.read().await;
     let depths = state.queue_depths.read().await;
+    let bench_run = state.benchmark_run.read().await;
 
     // Pre-compute per-stone tok/s (generation + roundtrip)
     let tps_gen = metrics.tokens_per_sec_by_stone(300);
@@ -116,8 +117,9 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
                 "parameter_size": m.parameter_size,
                 "quantization_level": m.quantization_level,
                 "family": m.family,
+                "format": m.format,
                 "capabilities": m.capabilities,
-                "vram_estimate_mb": m.vram_estimate_bytes / 1_048_576,
+                "vram_mb": m.vram_bytes.map(|v| v / 1_048_576),
                 "size_disk_mb": m.size_disk / 1_048_576,
                 "on_stones": on_stones,
                 "loaded_on": loaded_on,
@@ -178,5 +180,6 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
             "delete_on_idle": config.features.delete_on_idle,
             "metrics_enabled": config.features.metrics_enabled,
         },
+        "benchmark": &*bench_run,
     })
 }

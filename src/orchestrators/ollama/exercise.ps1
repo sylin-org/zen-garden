@@ -10,7 +10,7 @@
 # models first (fast), then LLMs.
 
 param(
-    [string]$Proxy = "http://localhost:11434",
+    [string]$Proxy = "http://localhost:21434",
     [string]$Dashboard = "http://localhost:7190",
     [int]$Rounds = 5,
     [int]$DelayMs = 500

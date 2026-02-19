@@ -2,7 +2,7 @@
 //!
 //! Pure decision functions — no I/O. The caller executes the decision.
 
-use super::types::{AutoPullMode, OllamaInstance, RouterConfig};
+use super::types::{AutoPullMode, ModelInfo, OllamaInstance, RouterConfig};
 use std::collections::HashMap;
 
 /// Determine which models need syncing across a tier.
@@ -14,6 +14,7 @@ use std::collections::HashMap;
 pub fn models_needing_sync(
     instances: &HashMap<String, OllamaInstance>,
     config: &RouterConfig,
+    models: &HashMap<String, ModelInfo>,
 ) -> Vec<(String, Vec<String>)> {
     match config.features.auto_pull_mode {
         AutoPullMode::Off => return vec![],
@@ -44,9 +45,19 @@ pub fn models_needing_sync(
             .collect();
 
         for model in all_models {
+            // VRAM gate: skip models too large for the target stone.
+            let model_size = models.get(model).map(|m| m.size_disk).unwrap_or(0);
+            if model_size == 0 {
+                continue;
+            }
+
             let missing_on: Vec<String> = peers
                 .iter()
-                .filter(|i| !i.models_available.iter().any(|m| m == model))
+                .filter(|i| {
+                    !i.models_available.iter().any(|m| m == model)
+                        && i.vram_total_bytes > 0
+                        && model_size <= i.vram_total_bytes
+                })
                 .map(|i| i.endpoint.clone())
                 .collect();
 

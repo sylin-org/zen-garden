@@ -622,7 +622,13 @@ fn display_topology_compact(
     let mut has_linux = false;
 
     for stone in &displayable {
-        health_counts.add(&stone.health);
+        // Offline stones always count as dormant regardless of last-known health
+        let effective_health = if stone.status == garden_common::StoneStatus::Offline {
+            garden_common::VITALITY_DORMANT
+        } else {
+            &stone.health
+        };
+        health_counts.add(effective_health);
         let is_tended = tended_stone_name
             .map(|t| t.eq_ignore_ascii_case(&stone.stone_name))
             .unwrap_or(false);
@@ -654,6 +660,13 @@ fn display_topology_compact(
         let is_tended = tended_stone_name
             .map(|t| t.eq_ignore_ascii_case(&stone.stone_name))
             .unwrap_or(false);
+
+        // Offline stones always render as dormant
+        let effective_health = if stone.status == garden_common::StoneStatus::Offline {
+            garden_common::VITALITY_DORMANT
+        } else {
+            &stone.health
+        };
 
         let os_str = caps
             .runtime
@@ -687,7 +700,7 @@ fn display_topology_compact(
 
         print_stone_row(
             &stone.stone_name,
-            &stone.health,
+            effective_health,
             is_tended,
             os_str,
             cores,

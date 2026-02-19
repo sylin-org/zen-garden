@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::{FIREWALL_RULE_HTTP, FIREWALL_RULE_MDNS};
+use super::{FIREWALL_RULE_PREFIX, LEGACY_FIREWALL_RULES};
 use super::{WINDOWS_DISPLAY_NAME, WINDOWS_SERVICE_DESCRIPTION, WINDOWS_SERVICE_NAME};
 
 const SERVICE_STOP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -222,62 +222,72 @@ fn register_service(install_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup_firewall(exe_path: &Path) -> anyhow::Result<()> {
-    let http_port = garden_common::constants::MOSS_HTTP;
-    let mdns_port = garden_common::constants::DISCOVERY_UDP;
+/// Collect all firewall ports needed by Moss + embedded Koi capabilities.
+fn all_firewall_ports() -> Vec<koi_common::firewall::FirewallPort> {
+    use koi_common::firewall::{FirewallPort, FirewallProtocol};
+    use std::collections::HashSet;
 
-    let fw_http = create_firewall_rule(FIREWALL_RULE_HTTP, "TCP", http_port, exe_path);
-    let fw_mdns = create_firewall_rule(FIREWALL_RULE_MDNS, "UDP", mdns_port, exe_path);
+    // Build an equivalent KoiConfig to query its firewall_ports().
+    // This mirrors the builder chain in bootstrap/run.rs.
+    let koi_config = koi_embedded::KoiConfig {
+        http_enabled: true,
+        http_port: garden_common::constants::KOI_HTTP,
+        mdns_enabled: true,
+        dns_enabled: true,
+        ..Default::default()
+    };
 
-    if fw_http && fw_mdns {
-        println!(
-            "  Firewall rules set (TCP {}, UDP {})",
-            http_port, mdns_port
-        );
+    let mut ports = koi_config.firewall_ports();
+
+    // Moss's own ports
+    ports.push(FirewallPort::new(
+        "Discovery",
+        FirewallProtocol::Udp,
+        garden_common::constants::DISCOVERY_UDP,
+    ));
+    ports.push(FirewallPort::new(
+        "HTTP API",
+        FirewallProtocol::Tcp,
+        garden_common::constants::MOSS_HTTP,
+    ));
+
+    // Deduplicate by (protocol, port)
+    let mut seen = HashSet::new();
+    ports
+        .into_iter()
+        .filter(|p| seen.insert((p.protocol, p.port)))
+        .collect()
+}
+
+fn setup_firewall(_exe_path: &Path) -> anyhow::Result<()> {
+    // Clean up legacy rule names from pre-v0.2 installs
+    for legacy in LEGACY_FIREWALL_RULES {
+        let _ = Command::new("netsh")
+            .args(["advfirewall", "firewall", "delete", "rule"])
+            .arg(format!("name={legacy}"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    let ports = all_firewall_ports();
+    let count = koi_common::firewall::ensure_firewall_rules(FIREWALL_RULE_PREFIX, &ports);
+
+    if count == ports.len() {
+        let summary: Vec<_> = ports
+            .iter()
+            .map(|p| format!("{} {} ({})", p.protocol.as_str(), p.port, p.name))
+            .collect();
+        println!("  Firewall rules set ({})", summary.join(", "));
     } else {
-        if !fw_http {
-            println!(
-                "  Warning: could not set firewall rule for TCP {}",
-                http_port
-            );
-        }
-        if !fw_mdns {
-            println!(
-                "  Warning: could not set firewall rule for UDP {}",
-                mdns_port
-            );
-        }
+        println!(
+            "  Firewall: {}/{} rules set (some may need manual setup)",
+            count,
+            ports.len()
+        );
     }
 
     Ok(())
-}
-
-fn create_firewall_rule(name: &str, protocol: &str, port: u16, exe_path: &Path) -> bool {
-    // Delete first for idempotency
-    let _ = Command::new("netsh")
-        .args(["advfirewall", "firewall", "delete", "rule"])
-        .arg(format!("name={name}"))
-        .output();
-
-    let result = Command::new("netsh")
-        .args(["advfirewall", "firewall", "add", "rule"])
-        .arg(format!("name={name}"))
-        .args(["dir=in", "action=allow"])
-        .arg(format!("protocol={protocol}"))
-        .arg(format!("localport={port}"))
-        .arg(format!("program={}", exe_path.display()))
-        .output();
-
-    matches!(result, Ok(output) if output.status.success())
-}
-
-fn remove_firewall_rule(name: &str) -> bool {
-    let result = Command::new("netsh")
-        .args(["advfirewall", "firewall", "delete", "rule"])
-        .arg(format!("name={name}"))
-        .output();
-
-    matches!(result, Ok(output) if output.status.success())
 }
 
 // ── Service lifecycle helpers ────────────────────────────────────────
@@ -354,11 +364,31 @@ pub fn uninstall_platform() -> anyhow::Result<()> {
         println!("  Service not found, cleaning up remaining files...");
     }
 
-    // Remove firewall rules
-    let rm_http = remove_firewall_rule(FIREWALL_RULE_HTTP);
-    let rm_mdns = remove_firewall_rule(FIREWALL_RULE_MDNS);
-    if rm_http || rm_mdns {
-        println!("  Firewall rules removed.");
+    // Remove firewall rules (current names + legacy)
+    let ports = all_firewall_ports();
+    let mut removed = 0usize;
+    for port in &ports {
+        let rule_name = koi_common::firewall::firewall_rule_name(FIREWALL_RULE_PREFIX, port);
+        let result = Command::new("netsh")
+            .args(["advfirewall", "firewall", "delete", "rule"])
+            .arg(format!("name={rule_name}"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if matches!(result, Ok(s) if s.success()) {
+            removed += 1;
+        }
+    }
+    for legacy in LEGACY_FIREWALL_RULES {
+        let _ = Command::new("netsh")
+            .args(["advfirewall", "firewall", "delete", "rule"])
+            .arg(format!("name={legacy}"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    if removed > 0 {
+        println!("  Firewall rules removed ({removed} rules).");
     }
 
     // Remove binaries from install directory

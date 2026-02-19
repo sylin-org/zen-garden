@@ -134,12 +134,11 @@ async fn reconcile_instance(
                         let details = tag.and_then(|t| t.details.as_ref());
                         let param_count = show.parameter_count();
                         let quant = details.and_then(|d| d.quantization_level.as_deref());
-                        let vram_estimate = param_count
-                            .map(|c| {
-                                crate::domain::types::ModelInfo::estimate_vram(c, quant)
-                            })
-                            .unwrap_or_else(|| tag.map(|t| t.size).unwrap_or(0));
+                        let format = details.and_then(|d| d.format.clone());
 
+                        // vram_bytes = None for a newly appeared model that
+                        // is not yet loaded.  It will be set to a real value
+                        // when Ollama loads it (ModelLoaded drift).
                         state
                             .upsert_model(crate::domain::types::ModelInfo {
                                 name: model_name.clone(),
@@ -152,8 +151,9 @@ async fn reconcile_instance(
                                     .map(|d| d.families.clone())
                                     .unwrap_or_default(),
                                 capabilities: show.capabilities,
+                                format,
                                 size_disk: tag.map(|t| t.size).unwrap_or(0),
-                                vram_estimate_bytes: vram_estimate,
+                                vram_bytes: None,
                             })
                             .await;
                     }
@@ -172,7 +172,7 @@ async fn reconcile_instance(
                     // Update authoritative VRAM in model registry
                     let mut models = state.models.write().await;
                     if let Some(info) = models.get_mut(model_name.as_str()) {
-                        info.vram_estimate_bytes = *size_vram;
+                        info.vram_bytes = Some(*size_vram);
                     }
                 }
                 reconciliation::RegistryDrift::ModelUnloaded {
@@ -188,7 +188,7 @@ async fn reconcile_instance(
                     tracing::info!(stone = %stone_name, model = %model_name, new_vram = new_vram, "VRAM usage changed");
                     let mut models = state.models.write().await;
                     if let Some(info) = models.get_mut(model_name.as_str()) {
-                        info.vram_estimate_bytes = *new_vram;
+                        info.vram_bytes = Some(*new_vram);
                     }
                 }
             }

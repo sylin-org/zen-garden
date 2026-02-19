@@ -118,8 +118,9 @@ pub type ShutdownCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> 
 /// 1. SIGTERM/SIGINT arrives → signal handler cancels `shutdown_token`
 /// 2. Token cancellation cascades to: server (graceful_shutdown), SSE streams,
 ///    all background tasks, watchdog, drain deadline
-/// 3. Server drains in-flight requests (8s deadline)
-/// 4. Goodbye announcement, sd_notify STOPPING, process::exit(0)
+/// 3. Goodbye announcement sent (3x UDP for reliability) — peers stop routing
+/// 4. Server drains in-flight requests (8s deadline)
+/// 5. Topology flush, sd_notify STOPPING, process::exit(0)
 ///
 /// Admin/deploy shutdowns call `shutdown_token.cancel()` directly — same cascade.
 #[allow(clippy::too_many_arguments)]
@@ -224,6 +225,25 @@ pub async fn run(
     // Clone console for shutdown events
     let shutdown_console = console.clone();
 
+    // ── Goodbye + flush: fire BEFORE drain so peers learn early ─────
+    // The goodbye tells other stones to stop routing to us, which is
+    // exactly what we want while draining in-flight HTTP requests.
+    // Topology flush ensures on-disk state is current before the server
+    // stops accepting new connections.
+    //
+    // This runs inside a task gated on token cancellation so it doesn't
+    // block the server's normal operation, but fires as soon as shutdown
+    // is requested — giving peers maximum notice time.
+    let goodbye_token = shutdown_token.child_token();
+    let goodbye_callback = shutdown_callback;
+    tokio::spawn(async move {
+        goodbye_token.cancelled().await;
+        if let Some(callback) = goodbye_callback {
+            tracing::info!("Shutdown triggered — sending goodbye + flushing topology");
+            callback().await;
+        }
+    });
+
     // Drain with a deadline. The timer starts only AFTER the token is cancelled.
     // Without this gate, the timer races against the server's entire lifetime
     // and kills the process N seconds after startup.
@@ -251,12 +271,6 @@ pub async fn run(
 
     if drained_cleanly {
         tracing::info!("All connections drained cleanly");
-    }
-
-    // Send goodbye announcement after drain (non-blocking — hard watchdog is ticking)
-    if let Some(callback) = shutdown_callback {
-        tracing::info!("Sending goodbye announcement before shutdown");
-        callback().await;
     }
 
     shutdown_console.emit(ConsoleEvent::new(

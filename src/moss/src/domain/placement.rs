@@ -99,8 +99,8 @@ pub async fn recommend_placement(
     // 1. Evaluate tended stone first (zero latency)
     let local_candidate = score_local_stone(&request.offering, &local_offering, state).await?;
 
-    // 2. Get peer stones from topology cache
-    let peer_stones = topology::get_all_stones(&state.topology_cache).await;
+    // 2. Get peer stones from topology cache (online only — offline stones are unreachable)
+    let peer_stones = topology::get_online_stones(&state.topology_cache).await;
     tracing::debug!(
         peer_count = peer_stones.len(),
         "Discovered {} peer stones from topology cache",

@@ -220,16 +220,15 @@ pub async fn check_feasibility(
     let instances = state.app.instances.read().await;
     let models = state.app.models.read().await;
 
-    let vram_needed = models
+    let vram_needed: Option<u64> = models
         .get(model.as_str())
-        .map(|m| m.vram_estimate_bytes)
-        .unwrap_or(0);
+        .and_then(|m| m.vram_bytes);
 
     let feasible: Vec<serde_json::Value> = instances
         .values()
-        .filter(|i| i.health.is_routable())
+        .filter(|i| i.health.is_routable() && i.vram_total_bytes > 0)
         .map(|i| {
-            let fits = vram_needed == 0 || i.vram_budget_bytes >= vram_needed;
+            let fits = vram_needed.map(|needed| i.vram_budget_bytes >= needed);
             let has_it = i.models_available.iter().any(|m| m == model);
             json!({
                 "stone_name": i.stone_name,
@@ -243,7 +242,7 @@ pub async fn check_feasibility(
 
     Json(json!({
         "model": model,
-        "vram_needed_mb": vram_needed / 1_048_576,
+        "vram_needed_mb": vram_needed.map(|v| v / 1_048_576),
         "instances": feasible,
     }))
 }

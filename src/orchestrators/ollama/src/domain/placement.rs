@@ -34,13 +34,21 @@ pub fn compute_placement(
     let mut ranked: Vec<(&String, &f64)> = demand_shares.iter().collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Compute ideal replica count per model
+    // Compute ideal replica count per model.
+    // Models whose VRAM has never been measured are skipped — we cannot
+    // safely bin-pack something whose size is unknown.
     let mut ideal_replicas: Vec<(String, usize, u64)> = Vec::new();
     for (model_name, share) in &ranked {
-        let vram = models
-            .get(model_name.as_str())
-            .map(|m| m.vram_estimate_bytes)
-            .unwrap_or(0);
+        let vram = match models.get(model_name.as_str()).and_then(|m| m.vram_bytes) {
+            Some(v) => v,
+            None => {
+                tracing::debug!(
+                    model = %model_name,
+                    "skipping model from placement — VRAM never measured"
+                );
+                continue;
+            }
+        };
         let replicas = ((**share * num_stones as f64).round() as usize).clamp(1, num_stones);
         ideal_replicas.push((model_name.to_string(), replicas, vram));
     }
@@ -170,8 +178,9 @@ mod tests {
             family: None,
             families: vec![],
             capabilities: vec![],
+            format: None,
             size_disk: 0,
-            vram_estimate_bytes: vram_gb * GIB,
+            vram_bytes: Some(vram_gb * GIB),
         }
     }
 

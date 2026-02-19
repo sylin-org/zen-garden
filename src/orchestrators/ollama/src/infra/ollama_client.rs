@@ -191,6 +191,95 @@ impl OllamaClient {
         self.get_tags(endpoint).await.is_ok()
     }
 
+    // ── Benchmarking ─────────────────────────────────────────────
+
+    /// Benchmark timeout: if inference takes > 2 min for 80 tokens, it's Vetoed.
+    const BENCH_TIMEOUT: Duration = Duration::from_secs(120);
+    /// Embed benchmark timeout.
+    const EMBED_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// Run a non-streaming generate request and return timing data.
+    ///
+    /// Used by the fitness profiler to measure cold-start and tok/s.
+    pub async fn benchmark_generate(
+        &self,
+        endpoint: &str,
+        model: &str,
+        prompt: &str,
+        num_predict: u32,
+    ) -> Result<OllamaInferenceFinal> {
+        let url = format!("{endpoint}/api/generate");
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Self::BENCH_TIMEOUT)
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": prompt,
+                "stream": false,
+                "options": { "num_predict": num_predict }
+            }))
+            .send()
+            .await
+            .context("generate request timed out or unreachable")?
+            .error_for_status()
+            .context("generate returned HTTP error")?;
+        resp.json().await.context("generate response parse failed")
+    }
+
+    /// Run a non-streaming generate request with base64 images (vision).
+    pub async fn benchmark_generate_vision(
+        &self,
+        endpoint: &str,
+        model: &str,
+        prompt: &str,
+        images_b64: &[String],
+        num_predict: u32,
+    ) -> Result<OllamaInferenceFinal> {
+        let url = format!("{endpoint}/api/generate");
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Self::BENCH_TIMEOUT)
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": prompt,
+                "images": images_b64,
+                "stream": false,
+                "options": { "num_predict": num_predict }
+            }))
+            .send()
+            .await
+            .context("vision request timed out or unreachable")?
+            .error_for_status()
+            .context("vision returned HTTP error")?;
+        resp.json().await.context("vision response parse failed")
+    }
+
+    /// Run an embed request and return timing data.
+    pub async fn benchmark_embed(
+        &self,
+        endpoint: &str,
+        model: &str,
+        input: &str,
+    ) -> Result<OllamaEmbedResponse> {
+        let url = format!("{endpoint}/api/embed");
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Self::EMBED_TIMEOUT)
+            .json(&serde_json::json!({
+                "model": model,
+                "input": input
+            }))
+            .send()
+            .await
+            .context("embed request timed out or unreachable")?
+            .error_for_status()
+            .context("embed returned HTTP error")?;
+        resp.json().await.context("embed response parse failed")
+    }
+
     // ── Full Instance Profiling ──────────────────────────────────
 
     /// Profile an Ollama instance: tags + ps + version + show per model.
@@ -260,16 +349,12 @@ impl OllamaClient {
             let details = tag.details.as_ref();
             let quant = details.and_then(|d| d.quantization_level.as_deref());
             let param_size = details.and_then(|d| d.parameter_size.clone());
+            let format = details.and_then(|d| d.format.clone());
 
-            // VRAM: authoritative from /api/ps, else estimate from params
-            let vram_estimate = if let Some(&vram) = loaded_vram.get(name.as_str()) {
-                vram
-            } else if let Some(count) = param_count {
-                ModelInfo::estimate_vram(count, quant)
-            } else {
-                // Fallback: disk size is a rough proxy
-                tag.size
-            };
+            // VRAM: authoritative from /api/ps ONLY.  If the model is not
+            // currently loaded we do NOT guess — vram_bytes stays None until
+            // an actual load provides a real measurement.
+            let vram_bytes = loaded_vram.get(name.as_str()).copied();
 
             model_infos.push(ModelInfo {
                 name: name.clone(),
@@ -279,8 +364,9 @@ impl OllamaClient {
                 family: details.and_then(|d| d.family.clone()),
                 families: details.map(|d| d.families.clone()).unwrap_or_default(),
                 capabilities,
+                format,
                 size_disk: tag.size,
-                vram_estimate_bytes: vram_estimate,
+                vram_bytes,
             });
         }
 

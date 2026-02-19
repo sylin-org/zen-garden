@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use zen_garden_ollama_orchestrator::api::{dashboard, health, management, proxy};
+use zen_garden_ollama_orchestrator::api::{benchmark_api, dashboard, health, management, proxy};
 use zen_garden_ollama_orchestrator::infra::{ollama_client::OllamaClient, persistence};
 use zen_garden_ollama_orchestrator::tasks;
 use zen_garden_ollama_orchestrator::AppState;
@@ -33,7 +33,8 @@ struct Cli {
     offering_name: String,
 
     /// Proxy port (Ollama-compatible endpoint).
-    #[arg(long, env = "ROUTER_PROXY_PORT", default_value = "11434")]
+    /// Default 21434 avoids collision with local Ollama on 11434.
+    #[arg(long, env = "ROUTER_PROXY_PORT", default_value = "21434")]
     proxy_port: u16,
 
     /// Dashboard port (management UI + API).
@@ -94,6 +95,13 @@ async fn main() -> Result<()> {
     );
     // Load any cached tending state from a previous run
     state.load_tending().await;
+
+    // Load persisted benchmark run from fitness.json
+    let bench_run = zen_garden_ollama_orchestrator::tasks::benchmark::load(&cli.data_dir).await;
+    if !bench_run.gpu_matrix.entries.is_empty() {
+        tracing::info!(results = bench_run.gpu_matrix.entries.len(), "restored gpu matrix");
+    }
+    *state.benchmark_run.write().await = bench_run;
 
     // Restore persisted metrics from /metrics folder
     let persisted = persistence::load_metrics(&cli.data_dir).await;
@@ -211,7 +219,28 @@ async fn main() -> Result<()> {
             "/api/management/feasibility",
             axum::routing::get(management::check_feasibility),
         )
-        .with_state(mgmt_state);
+        .with_state(mgmt_state)
+        // Benchmark API (needs BenchmarkState with client)
+        .route(
+            "/api/benchmark/start",
+            axum::routing::post(benchmark_api::start_benchmark),
+        )
+        .route(
+            "/api/benchmark/cancel",
+            axum::routing::post(benchmark_api::cancel_benchmark),
+        )
+        .route(
+            "/api/benchmark/results",
+            axum::routing::get(benchmark_api::get_results),
+        )
+        .route(
+            "/api/benchmark/export",
+            axum::routing::get(benchmark_api::export_fitness),
+        )
+        .with_state(benchmark_api::BenchmarkState {
+            app: state.clone(),
+            client: client.clone(),
+        });
 
     let dashboard_addr = SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));
     let dashboard_listener = tokio::net::TcpListener::bind(dashboard_addr).await?;

@@ -173,11 +173,12 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
             let age = now.signed_duration_since(entry.last_seen);
             if age > offline_threshold {
                 entry.status = StoneStatus::Offline;
+                entry.health = garden_common::VITALITY_DORMANT.to_string();
                 marked_offline += 1;
                 tracing::debug!(
                     stone_name = %entry.stone_name,
                     last_seen = %entry.last_seen,
-                    "Stone marked offline"
+                    "Stone marked offline (stale)"
                 );
             }
         }
@@ -269,6 +270,10 @@ pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
     if let Some(entry) = map.get_mut(stone_id) {
         if entry.status != StoneStatus::Offline {
             entry.status = StoneStatus::Offline;
+            // Set health to dormant so UI (observe) renders consistently.
+            // The last-known health is no longer meaningful once the stone
+            // stops responding — "dormant" is the garden metaphor for sleeping.
+            entry.health = garden_common::VITALITY_DORMANT.to_string();
             tracing::info!(
                 stone_name = %entry.stone_name,
                 "Stone marked offline (goodbye received)"

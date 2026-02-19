@@ -338,6 +338,19 @@ pub async fn run(
             .events(|event| {
                 tracing::debug!(?event, "koi event");
             })
+            .extra_firewall_ports(vec![
+                koi_embedded::FirewallPort::new(
+                    "Discovery",
+                    koi_embedded::FirewallProtocol::Udp,
+                    garden_common::constants::DISCOVERY_UDP,
+                ),
+                koi_embedded::FirewallPort::new(
+                    "HTTP API",
+                    koi_embedded::FirewallProtocol::Tcp,
+                    garden_common::constants::MOSS_HTTP,
+                ),
+            ])
+            .ensure_firewall_rules("Zen Garden")
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build Koi embedded: {}", e))?;
 

@@ -2,6 +2,15 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-22
+
+- Fixed orchestrator gateway announcing fabricated hostname instead of host's real DNS name
+- Added ADR FIREFLY-0003: T-Display Diorama — presence protocol extensions, GPU/IO metrics, serial protocol, firmware architecture
+- Implemented FIREFLY-0003: ESP32 T-Display Diorama across full stack (presence types, GPU metrics, serial commands, event dispatch, firmware, installer)
+- Added `pond drain` command (destroy CA); fixed `pond remove` to map to untrust
+- Fixed service discovery: skip self in topology cache (duplicate results), correct category in chirps (fixes `tcp://` fallback)
+- SearXNG: added connection.protocol=http to frontmatter (fixes protocol inference)
+
 ## 2026-02-21
 
 - Orchestrator: `Blocked` verdict — hard routing block for models that error during benchmark (score=0, not overridable)

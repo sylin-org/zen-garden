@@ -4,5 +4,9 @@
   "category": "search",
   "tags": ["search", "metasearch", "privacy", "web"],
   "ports": [8080],
-  "volumes": ["searxng-data"]
+  "volumes": ["searxng-data"],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
 }

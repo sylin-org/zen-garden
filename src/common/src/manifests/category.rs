@@ -177,15 +177,19 @@ pub fn load_categories<P: AsRef<Path>>(
 /// Returns a static reference for subsequent calls.
 pub fn get_category_registry() -> &'static CategoryRegistry {
     CATEGORY_REGISTRY.get_or_init(|| {
-        // Try common manifest locations:
-        // 1. Runtime extracted location
-        // 2. Dev paths (relative to cargo workspace)
-        let paths = [
+        // Try runtime manifests dir first (production path),
+        // then common dev locations as fallback.
+        let runtime_dir = crate::manifests::runtime_manifests_dir();
+        let mut paths: Vec<&str> = Vec::new();
+        // Leak the runtime dir string so we can use it as &str in the static context
+        let runtime_ref: &str = Box::leak(runtime_dir.into_boxed_str());
+        paths.push(runtime_ref);
+        paths.extend_from_slice(&[
             ".zen-garden/manifests",
             "src/moss/embedded/manifests",
             "../moss/embedded/manifests",
             "../../moss/embedded/manifests",
-        ];
+        ]);
 
         for path in paths {
             if let Ok(registry) = load_categories(path) {

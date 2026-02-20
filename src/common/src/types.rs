@@ -756,6 +756,11 @@ impl TopologyServiceEntry {
     }
 
     /// Create from Offering
+    ///
+    /// Note: `Offering` does not carry its manifest category, so `category`
+    /// is set to the offering name as a placeholder. Callers that have access
+    /// to the offerings index should patch the category afterward
+    /// (see `AppState::sync_self_services`).
     pub fn from_offering(offering: &Offering) -> Self {
         Self {
             offering_id: offering.offering_id.clone(),

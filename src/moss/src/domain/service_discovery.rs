@@ -573,6 +573,11 @@ async fn find_services_in_topology_cache(
     let mut results = Vec::new();
 
     for stone in stones {
+        // Skip self — local services are already covered by find_local_services
+        if stone.stone_id == state.stone_id {
+            continue;
+        }
+
         // Skip if no services (stone hasn't chirped yet or has none)
         if stone.services.is_empty() {
             continue;

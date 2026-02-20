@@ -1,4 +1,4 @@
-﻿//! Discovery task: find a stone via Koi, query topology for all Ollama
+//! Discovery task: find a stone via Koi, query topology for all Ollama
 //! instances, then subscribe to the Tools API SSE stream for real-time
 //! adds/removes.
 //!
@@ -71,8 +71,7 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                     let gpu_name = topo_stone.gpu_name.clone();
                     tokio::spawn(async move {
                         profile_instance(
-                            state, client, stone_id, stone_name, endpoint,
-                            vram_total, gpu_name,
+                            state, client, stone_id, stone_name, endpoint, vram_total, gpu_name,
                         )
                         .await;
                     });
@@ -104,71 +103,67 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
             })
         };
 
-        let result = tools_stream::subscribe_tools_stream(
-            &stone_endpoint,
-            |event| {
-                match event {
-                    ToolEvent::OllamaDiscovered {
-                        stone_id,
-                        stone_name,
-                        endpoint,
-                    } => {
+        let result = tools_stream::subscribe_tools_stream(&stone_endpoint, |event| {
+            match event {
+                ToolEvent::OllamaDiscovered {
+                    stone_id,
+                    stone_name,
+                    endpoint,
+                } => {
+                    tracing::info!(
+                        stone = %stone_name,
+                        endpoint = %endpoint,
+                        "SSE: discovered Ollama instance, fetching HW caps"
+                    );
+                    let state = state_clone.clone();
+                    let client = client_clone.clone();
+                    tokio::spawn(async move {
+                        // Derive stone IP from the Ollama endpoint so we
+                        // can query the Moss API for real HW capabilities.
+                        let stone_ip = endpoint
+                            .trim_start_matches("http://")
+                            .split(':')
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
+                        let (vram_total, gpu_name) =
+                            stone_discovery::fetch_stone_hw(&stone_ip).await;
                         tracing::info!(
                             stone = %stone_name,
-                            endpoint = %endpoint,
-                            "SSE: discovered Ollama instance, fetching HW caps"
+                            vram_mb = vram_total / 1_048_576,
+                            gpu = ?gpu_name,
+                            "SSE: fetched HW capabilities"
                         );
-                        let state = state_clone.clone();
-                        let client = client_clone.clone();
-                        tokio::spawn(async move {
-                            // Derive stone IP from the Ollama endpoint so we
-                            // can query the Moss API for real HW capabilities.
-                            let stone_ip = endpoint
-                                .trim_start_matches("http://")
-                                .split(':')
-                                .next()
-                                .unwrap_or("")
-                                .to_string();
-                            let (vram_total, gpu_name) =
-                                stone_discovery::fetch_stone_hw(&stone_ip).await;
-                            tracing::info!(
-                                stone = %stone_name,
-                                vram_mb = vram_total / 1_048_576,
-                                gpu = ?gpu_name,
-                                "SSE: fetched HW capabilities"
-                            );
-                            profile_instance(
-                                state, client, stone_id, stone_name, endpoint,
-                                vram_total, gpu_name,
-                            )
-                            .await;
-                        });
-                    }
-                    ToolEvent::OllamaRemoved {
-                        stone_id: _,
-                        stone_name,
-                    } => {
-                        tracing::info!(stone = %stone_name, "Ollama instance removed");
-                        let state = state_clone.clone();
-                        tokio::spawn(async move {
-                            let endpoint = {
-                                let instances = state.instances.read().await;
-                                instances
-                                    .values()
-                                    .find(|i| i.stone_name == stone_name)
-                                    .map(|i| i.endpoint.clone())
-                            };
-                            if let Some(ep) = endpoint {
-                                state.remove_instance(&ep).await;
-                            }
-                        });
-                    }
-                    ToolEvent::Heartbeat => {
-                        tracing::trace!("tools stream heartbeat");
-                    }
+                        profile_instance(
+                            state, client, stone_id, stone_name, endpoint, vram_total, gpu_name,
+                        )
+                        .await;
+                    });
                 }
-            },
-        )
+                ToolEvent::OllamaRemoved {
+                    stone_id: _,
+                    stone_name,
+                } => {
+                    tracing::info!(stone = %stone_name, "Ollama instance removed");
+                    let state = state_clone.clone();
+                    tokio::spawn(async move {
+                        let endpoint = {
+                            let instances = state.instances.read().await;
+                            instances
+                                .values()
+                                .find(|i| i.stone_name == stone_name)
+                                .map(|i| i.endpoint.clone())
+                        };
+                        if let Some(ep) = endpoint {
+                            state.remove_instance(&ep).await;
+                        }
+                    });
+                }
+                ToolEvent::Heartbeat => {
+                    tracing::trace!("tools stream heartbeat");
+                }
+            }
+        })
         .await;
 
         // ── Stream ended — stop refresh loop and prepare for reconnect ─
@@ -218,8 +213,7 @@ async fn topology_refresh_loop(
                             Some(inst) => {
                                 let stale = (inst.vram_total_bytes == 0
                                     && topo_stone.vram_total_bytes > 0)
-                                    || (inst.gpu_name.is_none()
-                                        && topo_stone.gpu_name.is_some());
+                                    || (inst.gpu_name.is_none() && topo_stone.gpu_name.is_some());
                                 (true, stale)
                             }
                             None => (false, false),
@@ -255,8 +249,7 @@ async fn topology_refresh_loop(
                         let gpu_name = topo_stone.gpu_name.clone();
                         tokio::spawn(async move {
                             profile_instance(
-                                state, client, stone_id, stone_name, endpoint,
-                                vram_total, gpu_name,
+                                state, client, stone_id, stone_name, endpoint, vram_total, gpu_name,
                             )
                             .await;
                         });
@@ -361,7 +354,10 @@ async fn resolve_stone(state: &AppState, shutdown: &CancellationToken) -> Option
                         return Some(endpoint);
                     }
                 }
-                tracing::warn!("discovered {} stone(s) but none are healthy, retrying in 10s", stones.len());
+                tracing::warn!(
+                    "discovered {} stone(s) but none are healthy, retrying in 10s",
+                    stones.len()
+                );
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(10)) => continue,
                     _ = shutdown.cancelled() => return None,
@@ -462,7 +458,9 @@ async fn profile_instance(
             } else {
                 // New stone we've never seen — register with topology HW
                 // data so we don't lose the VRAM/GPU info.
-                let vram_budget = state.vram_budget_for(&stone_name, topology_vram_bytes).await;
+                let vram_budget = state
+                    .vram_budget_for(&stone_name, topology_vram_bytes)
+                    .await;
                 let instance = OllamaInstance {
                     stone_id,
                     stone_name,
@@ -486,5 +484,3 @@ async fn profile_instance(
         }
     }
 }
-
-

@@ -1,4 +1,4 @@
-﻿//! Reconciliation task: periodic polling of all Ollama instances
+//! Reconciliation task: periodic polling of all Ollama instances
 //! to detect model drift (manual pulls/deletes/evictions).
 
 use crate::app_state::AppState;
@@ -55,10 +55,8 @@ async fn reconcile_instance(
     stone_name: &str,
 ) {
     // Fetch fresh state from Ollama
-    let (tags_result, ps_result) = tokio::join!(
-        client.get_tags(endpoint),
-        client.get_ps(endpoint),
-    );
+    let (tags_result, ps_result) =
+        tokio::join!(client.get_tags(endpoint), client.get_ps(endpoint),);
 
     let tags = match tags_result {
         Ok(t) => t,
@@ -88,10 +86,7 @@ async fn reconcile_instance(
 
     // If we got here, the instance is healthy
     state
-        .set_instance_health(
-            endpoint,
-            crate::domain::types::InstanceHealth::Healthy,
-        )
+        .set_instance_health(endpoint, crate::domain::types::InstanceHealth::Healthy)
         .await;
 
     let fresh_available: Vec<String> = tags.models.iter().map(|t| t.name.clone()).collect();
@@ -124,9 +119,7 @@ async fn reconcile_instance(
 
         for drift in &drifts {
             match drift {
-                reconciliation::RegistryDrift::ModelAppeared {
-                    model_name, ..
-                } => {
+                reconciliation::RegistryDrift::ModelAppeared { model_name, .. } => {
                     tracing::info!(stone = %stone_name, model = %model_name, "model appeared (pulled outside router)");
                     // Profile the new model
                     if let Ok(show) = client.show_model(endpoint, model_name).await {
@@ -143,13 +136,10 @@ async fn reconcile_instance(
                             .upsert_model(crate::domain::types::ModelInfo {
                                 name: model_name.clone(),
                                 parameter_count: param_count,
-                                parameter_size: details
-                                    .and_then(|d| d.parameter_size.clone()),
+                                parameter_size: details.and_then(|d| d.parameter_size.clone()),
                                 quantization_level: quant.map(|s| s.to_string()),
                                 family: details.and_then(|d| d.family.clone()),
-                                families: details
-                                    .map(|d| d.families.clone())
-                                    .unwrap_or_default(),
+                                families: details.map(|d| d.families.clone()).unwrap_or_default(),
                                 capabilities: show.capabilities,
                                 format,
                                 size_disk: tag.map(|t| t.size).unwrap_or(0),
@@ -158,9 +148,7 @@ async fn reconcile_instance(
                             .await;
                     }
                 }
-                reconciliation::RegistryDrift::ModelDisappeared {
-                    model_name, ..
-                } => {
+                reconciliation::RegistryDrift::ModelDisappeared { model_name, .. } => {
                     tracing::info!(stone = %stone_name, model = %model_name, "model disappeared (deleted outside router)");
                 }
                 reconciliation::RegistryDrift::ModelLoaded {
@@ -175,9 +163,7 @@ async fn reconcile_instance(
                         info.vram_bytes = Some(*size_vram);
                     }
                 }
-                reconciliation::RegistryDrift::ModelUnloaded {
-                    model_name, ..
-                } => {
+                reconciliation::RegistryDrift::ModelUnloaded { model_name, .. } => {
                     tracing::debug!(stone = %stone_name, model = %model_name, "model unloaded from VRAM");
                 }
                 reconciliation::RegistryDrift::VramChanged {
@@ -202,6 +188,8 @@ async fn reconcile_instance(
         state.emit_event("registry.reconciled", "{}").await;
     } else {
         // No drift — just update last_seen and load state
-        state.update_instance_models(endpoint, fresh_available, fresh_loaded).await;
+        state
+            .update_instance_models(endpoint, fresh_available, fresh_loaded)
+            .await;
     }
 }

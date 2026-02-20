@@ -1,4 +1,4 @@
-﻿//! Registry reconciliation: detect drift between the router's model
+//! Registry reconciliation: detect drift between the router's model
 //! registry and the actual state of Ollama instances.
 //!
 //! Pure logic — takes snapshots and produces diffs. The I/O (polling
@@ -143,18 +143,18 @@ mod tests {
     fn detects_new_model() {
         let inst = empty_instance("ep", &["a"], vec![]);
         let drifts = diff_instance(&inst, &["a".into(), "b".into()], &[]);
-        assert!(drifts
-            .iter()
-            .any(|d| matches!(d, RegistryDrift::ModelAppeared { model_name, .. } if model_name == "b")));
+        assert!(drifts.iter().any(
+            |d| matches!(d, RegistryDrift::ModelAppeared { model_name, .. } if model_name == "b")
+        ));
     }
 
     #[test]
     fn detects_removed_model() {
         let inst = empty_instance("ep", &["a", "b"], vec![]);
         let drifts = diff_instance(&inst, &["a".into()], &[]);
-        assert!(drifts
-            .iter()
-            .any(|d| matches!(d, RegistryDrift::ModelDisappeared { model_name, .. } if model_name == "b")));
+        assert!(drifts.iter().any(
+            |d| matches!(d, RegistryDrift::ModelDisappeared { model_name, .. } if model_name == "b")
+        ));
     }
 
     #[test]

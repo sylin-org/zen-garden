@@ -1,4 +1,4 @@
-﻿//! Dashboard: serves the single-page HTML dashboard and its data endpoints.
+//! Dashboard: serves the single-page HTML dashboard and its data endpoints.
 
 use crate::app_state::AppState;
 use crate::infra::events::dashboard_sse_stream;
@@ -56,7 +56,10 @@ pub async fn post_settings(
     // Persist to disk
     if let Err(e) = crate::infra::persistence::save_config(&state.data_dir, &new_config).await {
         tracing::warn!(error = %e, "failed to persist config");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        );
     }
 
     state.emit_event("config.updated", "{}").await;

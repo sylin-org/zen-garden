@@ -1,4 +1,4 @@
-﻿//! Core domain types for the Ollama Orchestrator.
+//! Core domain types for the Ollama Orchestrator.
 //!
 //! Pure data structures — no I/O, no async. Every type here can be
 //! tested with simple unit tests.
@@ -12,22 +12,17 @@ use serde::{Deserialize, Serialize};
 // ── Auto-Pull Mode ──────────────────────────────────────────────
 
 /// Three-way auto-pull policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoPullMode {
     /// No automatic model management. Unknown model → 404.
     Off,
     /// Replicate models across stones in the same tier. Unknown model → 404.
+    #[default]
     Sync,
     /// Sync + pull unknown models on demand. Unknown → 404 immediately,
     /// but a background job checks viability and pulls if feasible.
     OnDemand,
-}
-
-impl Default for AutoPullMode {
-    fn default() -> Self {
-        Self::Sync
-    }
 }
 
 impl std::fmt::Display for AutoPullMode {
@@ -53,7 +48,10 @@ pub enum JobKind {
     /// Syncing a model across tier peers.
     ModelSync { model: String, targets: Vec<String> },
     /// Profiling a newly discovered instance.
-    InstanceProfile { endpoint: String, stone_name: String },
+    InstanceProfile {
+        endpoint: String,
+        stone_name: String,
+    },
     /// On-demand discovery pull (model was requested but unknown).
     OnDemandPull { model: String },
     /// Fitness benchmark run.
@@ -207,7 +205,10 @@ impl Lease {
 
     /// Extend the lease with adaptive decay (+25%, cap at 5 min).
     pub fn extend(&mut self) {
-        let new_dur = self.duration.mul_f64(1.25).min(std::time::Duration::from_secs(300));
+        let new_dur = self
+            .duration
+            .mul_f64(1.25)
+            .min(std::time::Duration::from_secs(300));
         self.duration = new_dur;
         self.granted_at = Instant::now();
     }
@@ -244,7 +245,10 @@ impl std::fmt::Display for RoutingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ModelNotFound(m) => write!(f, "model '{m}' not found in any instance"),
-            Self::ModelBlocked(m) => write!(f, "model '{m}' is blocked on all available stones (benchmark errors)"),
+            Self::ModelBlocked(m) => write!(
+                f,
+                "model '{m}' is blocked on all available stones (benchmark errors)"
+            ),
             Self::AllInstancesBusy { model } => write!(f, "all instances busy for '{model}'"),
             Self::NoHealthyInstances => write!(f, "no healthy Ollama instances"),
         }
@@ -254,7 +258,7 @@ impl std::fmt::Display for RoutingError {
 // ── Configuration ────────────────────────────────────────────────
 
 /// Router configuration persisted as TOML.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RouterConfig {
     #[serde(default)]
     pub features: FeatureConfig,
@@ -288,15 +292,6 @@ impl Default for FeatureConfig {
             auto_pull_mode: AutoPullMode::default(),
             delete_on_idle: false,
             metrics_enabled: true,
-        }
-    }
-}
-
-impl Default for RouterConfig {
-    fn default() -> Self {
-        Self {
-            features: FeatureConfig::default(),
-            stones: HashMap::new(),
         }
     }
 }

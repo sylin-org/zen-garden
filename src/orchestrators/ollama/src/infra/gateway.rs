@@ -124,6 +124,37 @@ impl KoiMdnsClient {
 
         Ok(())
     }
+
+    /// Query Koi for the host machine's mDNS hostname (e.g. "stone-azure-pool.local").
+    pub async fn get_hostname(&self) -> Result<String> {
+        let url = format!("{}/v1/host", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .context("Koi host info request failed")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Koi host info failed ({}): {}", status, body);
+        }
+
+        let data: HostInfoResponse = resp
+            .json()
+            .await
+            .context("Failed to parse Koi host info response")?;
+
+        Ok(data.hostname_fqdn)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct HostInfoResponse {
+    #[allow(dead_code)]
+    hostname: String,
+    hostname_fqdn: String,
 }
 
 // ─── Moss Gateway Client ────────────────────────────────────────
@@ -162,6 +193,12 @@ pub struct GatewayParams {
     pub protocol: String,
     pub uri_template: Option<String>,
     pub source: String,
+}
+
+impl Default for MossGatewayClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MossGatewayClient {

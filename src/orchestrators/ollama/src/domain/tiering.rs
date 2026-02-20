@@ -1,4 +1,4 @@
-﻿//! Auto-tiering: compute VRAM tiers from discovered hardware.
+//! Auto-tiering: compute VRAM tiers from discovered hardware.
 //!
 //! Tiers are emergent — computed from the set of distinct VRAM budgets
 //! across all healthy instances. No predefined "small/medium/large" bins.
@@ -87,10 +87,7 @@ mod tests {
 
     #[test]
     fn single_tier() {
-        let instances = vec![
-            make_instance("a", 8, true),
-            make_instance("b", 8, true),
-        ];
+        let instances = vec![make_instance("a", 8, true), make_instance("b", 8, true)];
         let tiers = compute_tiers(&instances);
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].label, "8G");
@@ -113,10 +110,7 @@ mod tests {
 
     #[test]
     fn unhealthy_excluded() {
-        let instances = vec![
-            make_instance("a", 8, true),
-            make_instance("b", 24, false),
-        ];
+        let instances = vec![make_instance("a", 8, true), make_instance("b", 24, false)];
         let tiers = compute_tiers(&instances);
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].label, "8G");

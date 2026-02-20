@@ -33,7 +33,7 @@ pub fn models_needing_sync(
 
     let mut sync_targets = Vec::new();
 
-    for (_tier, peers) in &tier_groups {
+    for peers in tier_groups.values() {
         if peers.len() < 2 {
             continue;
         }

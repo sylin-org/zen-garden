@@ -1,4 +1,4 @@
-﻿//! Fitness benchmark runner.
+//! Fitness benchmark runner.
 //!
 //! Single `BenchmarkRun` tree: options → stones → tests → samples.
 //! Persisted after every test completes.  Rich SSE notifications let the
@@ -63,11 +63,26 @@ const EMBED_INPUTS: &[&str] = &[
 ];
 
 const VISION_IMAGES: &[(&str, &[u8])] = &[
-    ("simple object", include_bytes!("../../assets/benchmark/01-simple-object.jpg")),
-    ("outdoor scene", include_bytes!("../../assets/benchmark/02-outdoor-scene.jpg")),
-    ("text in image", include_bytes!("../../assets/benchmark/03-text-in-image.jpg")),
-    ("chart or diagram", include_bytes!("../../assets/benchmark/04-chart-or-diagram.jpg")),
-    ("technical diagram", include_bytes!("../../assets/benchmark/05-technical-diagram.jpg")),
+    (
+        "simple object",
+        include_bytes!("../../assets/benchmark/01-simple-object.jpg"),
+    ),
+    (
+        "outdoor scene",
+        include_bytes!("../../assets/benchmark/02-outdoor-scene.jpg"),
+    ),
+    (
+        "text in image",
+        include_bytes!("../../assets/benchmark/03-text-in-image.jpg"),
+    ),
+    (
+        "chart or diagram",
+        include_bytes!("../../assets/benchmark/04-chart-or-diagram.jpg"),
+    ),
+    (
+        "technical diagram",
+        include_bytes!("../../assets/benchmark/05-technical-diagram.jpg"),
+    ),
 ];
 
 const VISION_PROMPT: &str = "Describe what you see in this image in detail.";
@@ -159,16 +174,26 @@ async fn run_benchmark(
         };
     }
 
-    notify(&state, "benchmark.started", &serde_json::json!({
-        "id": &run_id, "scope": &scope_label, "sync": sync
-    })).await;
+    notify(
+        &state,
+        "benchmark.started",
+        &serde_json::json!({
+            "id": &run_id, "scope": &scope_label, "sync": sync
+        }),
+    )
+    .await;
 
     // ── Step 1: Apply wipe (on the previous run's gpu_matrix) ────
     if let Some(ref wipe_scope) = wipe {
         tracing::info!(?wipe_scope, "wiping previous results");
-        notify(&state, "benchmark.wipe", &serde_json::json!({
-            "scope": format!("{wipe_scope:?}")
-        })).await;
+        notify(
+            &state,
+            "benchmark.wipe",
+            &serde_json::json!({
+                "scope": format!("{wipe_scope:?}")
+            }),
+        )
+        .await;
         // Wipe only affects the gpu_matrix from a prior run; the new run
         // starts with an empty stones vec anyway.  We clear the old matrix
         // so routing stops using stale data during the run.
@@ -193,13 +218,15 @@ async fn run_benchmark(
                         BenchmarkScope::Stone(name) => i.stone_name == *name,
                     }
             })
-            .map(|i| (
-                i.endpoint.clone(),
-                i.stone_name.clone(),
-                i.gpu_name.clone().unwrap_or_else(|| "Unknown GPU".into()),
-                i.vram_total_bytes / 1_048_576,
-                i.models_available.clone(),
-            ))
+            .map(|i| {
+                (
+                    i.endpoint.clone(),
+                    i.stone_name.clone(),
+                    i.gpu_name.clone().unwrap_or_else(|| "Unknown GPU".into()),
+                    i.vram_total_bytes / 1_048_576,
+                    i.models_available.clone(),
+                )
+            })
             .collect()
     };
 
@@ -211,10 +238,17 @@ async fn run_benchmark(
         run.completed_at = Some(Utc::now());
         drop(run);
         persist(&state).await;
-        state.fail_job(&job_id, "no healthy stones matched scope").await;
-        notify(&state, "benchmark.failed", &serde_json::json!({
-            "error": "No healthy stones matched scope"
-        })).await;
+        state
+            .fail_job(&job_id, "no healthy stones matched scope")
+            .await;
+        notify(
+            &state,
+            "benchmark.failed",
+            &serde_json::json!({
+                "error": "No healthy stones matched scope"
+            }),
+        )
+        .await;
         return;
     }
 
@@ -236,8 +270,7 @@ async fn run_benchmark(
                 // Universal VRAM gate: skip models that won't fit.
                 // Both size_disk and vram are always known; treat zero
                 // as corrupt data and skip defensively.
-                if vram_bytes == 0 || model_info.size_disk == 0
-                    || model_info.size_disk > vram_bytes
+                if vram_bytes == 0 || model_info.size_disk == 0 || model_info.size_disk > vram_bytes
                 {
                     tracing::debug!(
                         stone = %stone_name, model = %model_info.name,
@@ -277,10 +310,15 @@ async fn run_benchmark(
                 Some(format!("{total} tests across {} stones", stone_names.len())),
             )
             .await;
-        notify(&state, "benchmark.planned", &serde_json::json!({
-            "total": total, "completed": completed,
-            "stones": stone_names,
-        })).await;
+        notify(
+            &state,
+            "benchmark.planned",
+            &serde_json::json!({
+                "total": total, "completed": completed,
+                "stones": stone_names,
+            }),
+        )
+        .await;
     }
 
     // ── Step 4: Per-stone parallel execution ───────────────────
@@ -290,7 +328,9 @@ async fn run_benchmark(
     let stone_count = targets.len();
     let mut handles = Vec::with_capacity(stone_count);
 
-    for (stone_idx, (endpoint, stone_name, _gpu, _vram, available)) in targets.into_iter().enumerate() {
+    for (stone_idx, (endpoint, stone_name, _gpu, _vram, available)) in
+        targets.into_iter().enumerate()
+    {
         let state = state.clone();
         let client = client.clone();
         let cancel = cancel.clone();
@@ -309,16 +349,29 @@ async fn run_benchmark(
                     sr.status = StoneStatus::Testing;
                 }
             }
-            notify(&state, "benchmark.stone.start", &serde_json::json!({
-                "stone": &stone_name,
-                "index": stone_idx,
-                "of": stone_count,
-            })).await;
+            notify(
+                &state,
+                "benchmark.stone.start",
+                &serde_json::json!({
+                    "stone": &stone_name,
+                    "index": stone_idx,
+                    "of": stone_count,
+                }),
+            )
+            .await;
 
             let stone_err = run_stone(
-                &state, &client, &endpoint, &stone_name, &available,
-                &all_models, sync, &cancel, &job_id,
-            ).await;
+                &state,
+                &client,
+                &endpoint,
+                &stone_name,
+                &available,
+                &all_models,
+                sync,
+                &cancel,
+                &job_id,
+            )
+            .await;
 
             // Mark stone done or error
             {
@@ -336,12 +389,17 @@ async fn run_benchmark(
             }
             persist(&state).await;
 
-            notify(&state, "benchmark.stone.done", &serde_json::json!({
-                "stone": &stone_name,
-                "status": if cancel.is_cancelled() { "cancelled" }
-                          else if stone_err.is_some() { "error" }
-                          else { "done" },
-            })).await;
+            notify(
+                &state,
+                "benchmark.stone.done",
+                &serde_json::json!({
+                    "stone": &stone_name,
+                    "status": if cancel.is_cancelled() { "cancelled" }
+                              else if stone_err.is_some() { "error" }
+                              else { "done" },
+                }),
+            )
+            .await;
         }));
     }
 
@@ -379,17 +437,27 @@ async fn run_benchmark(
         drop(run);
         tracing::info!(results = matrix_count, "fitness benchmark completed");
         state
-            .update_job(&job_id, JobStatus::Running, Some(format!("{matrix_count} results")))
+            .update_job(
+                &job_id,
+                JobStatus::Running,
+                Some(format!("{matrix_count} results")),
+            )
             .await;
         state.complete_job(&job_id).await;
-        notify(&state, "benchmark.completed", &serde_json::json!({
-            "results": matrix_count, "completed": done, "total": total,
-        })).await;
+        notify(
+            &state,
+            "benchmark.completed",
+            &serde_json::json!({
+                "results": matrix_count, "completed": done, "total": total,
+            }),
+        )
+        .await;
     }
 }
 
 // ── Per-Stone Runner ─────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn run_stone(
     state: &AppState,
     client: &OllamaClient,
@@ -407,7 +475,10 @@ async fn run_stone(
     let test_keys: Vec<(String, Capability)> = {
         let run = state.benchmark_run.read().await;
         let sr = run.stones.iter().find(|s| s.stone_name == stone_name)?;
-        sr.tests.iter().map(|t| (t.model.clone(), t.capability)).collect()
+        sr.tests
+            .iter()
+            .map(|t| (t.model.clone(), t.capability))
+            .collect()
     };
 
     // ── Phase 1: Sync — pull all missing models before any tests ──
@@ -426,24 +497,39 @@ async fn run_stone(
                 count = models_to_pull.len(),
                 "syncing missing models before benchmark"
             );
-            notify(state, "benchmark.sync.start", &serde_json::json!({
-                "stone": stone_name,
-                "models": &models_to_pull,
-            })).await;
+            notify(
+                state,
+                "benchmark.sync.start",
+                &serde_json::json!({
+                    "stone": stone_name,
+                    "models": &models_to_pull,
+                }),
+            )
+            .await;
 
             for model_name in &models_to_pull {
                 if cancel.is_cancelled() {
                     return None;
                 }
-                notify(state, "benchmark.pull", &serde_json::json!({
-                    "stone": stone_name, "model": model_name,
-                })).await;
+                notify(
+                    state,
+                    "benchmark.pull",
+                    &serde_json::json!({
+                        "stone": stone_name, "model": model_name,
+                    }),
+                )
+                .await;
                 match pull_model_and_wait(client, endpoint, model_name).await {
                     Ok(()) => {
                         tracing::info!(stone = %stone_name, model = %model_name, "pulled model");
-                        notify(state, "benchmark.pull.done", &serde_json::json!({
-                            "stone": stone_name, "model": model_name,
-                        })).await;
+                        notify(
+                            state,
+                            "benchmark.pull.done",
+                            &serde_json::json!({
+                                "stone": stone_name, "model": model_name,
+                            }),
+                        )
+                        .await;
                     }
                     Err(e) => {
                         tracing::warn!(stone = %stone_name, model = %model_name, error = %e, "pull failed");
@@ -455,16 +541,26 @@ async fn run_stone(
                             }
                         }
                         persist(state).await;
-                        notify(state, "benchmark.pull.error", &serde_json::json!({
-                            "stone": stone_name, "model": model_name,
-                            "error": format!("{e}"),
-                        })).await;
+                        notify(
+                            state,
+                            "benchmark.pull.error",
+                            &serde_json::json!({
+                                "stone": stone_name, "model": model_name,
+                                "error": format!("{e}"),
+                            }),
+                        )
+                        .await;
                     }
                 }
             }
-            notify(state, "benchmark.sync.done", &serde_json::json!({
-                "stone": stone_name,
-            })).await;
+            notify(
+                state,
+                "benchmark.sync.done",
+                &serde_json::json!({
+                    "stone": stone_name,
+                }),
+            )
+            .await;
         }
     }
 
@@ -480,7 +576,11 @@ async fn run_stone(
         {
             let run = state.benchmark_run.read().await;
             if let Some(sr) = run.stones.iter().find(|s| s.stone_name == stone_name) {
-                if let Some(test) = sr.tests.iter().find(|t| t.model == model_name && t.capability == capability) {
+                if let Some(test) = sr
+                    .tests
+                    .iter()
+                    .find(|t| t.model == model_name && t.capability == capability)
+                {
                     if test.status == TestStatus::Error {
                         continue;
                     }
@@ -491,7 +591,14 @@ async fn run_stone(
         let on_stone = available_models.iter().any(|m| m == model_name);
         if !on_stone && !sync {
             // Not on stone and not syncing → skip
-            set_test_status(state, stone_name, model_name, capability, TestStatus::Skipped).await;
+            set_test_status(
+                state,
+                stone_name,
+                model_name,
+                capability,
+                TestStatus::Skipped,
+            )
+            .await;
             continue;
         }
 
@@ -501,36 +608,50 @@ async fn run_stone(
         }
 
         // Mark test as running
-        set_test_status(state, stone_name, &model_name, capability, TestStatus::Running).await;
+        set_test_status(
+            state,
+            stone_name,
+            model_name,
+            capability,
+            TestStatus::Running,
+        )
+        .await;
         let desc = format!("{model_name} ({capability}) on {stone_name}");
-        notify(state, "benchmark.test.start", &serde_json::json!({
-            "stone": stone_name, "model": &model_name,
-            "capability": capability.to_string(), "description": &desc,
-        })).await;
+        notify(
+            state,
+            "benchmark.test.start",
+            &serde_json::json!({
+                "stone": stone_name, "model": &model_name,
+                "capability": capability.to_string(), "description": &desc,
+            }),
+        )
+        .await;
 
         // Update job progress
         {
             let run = state.benchmark_run.read().await;
             let (done, total) = run.progress();
             state
-                .update_job(job_id, JobStatus::Running, Some(format!("{done}/{total}: {desc}")))
+                .update_job(
+                    job_id,
+                    JobStatus::Running,
+                    Some(format!("{done}/{total}: {desc}")),
+                )
                 .await;
         }
 
         // Unload model for cold-start measurement
-        let _ = client.unload_model(endpoint, &model_name).await;
+        let _ = client.unload_model(endpoint, model_name).await;
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Run the benchmark
         let result = match capability {
             Capability::Generate => {
-                bench_generate(client, endpoint, stone_name, &model_name, state).await
+                bench_generate(client, endpoint, stone_name, model_name, state).await
             }
-            Capability::Embed => {
-                bench_embed(client, endpoint, stone_name, &model_name, state).await
-            }
+            Capability::Embed => bench_embed(client, endpoint, stone_name, model_name, state).await,
             Capability::Vision => {
-                bench_vision(client, endpoint, stone_name, &model_name, state).await
+                bench_vision(client, endpoint, stone_name, model_name, state).await
             }
         };
 
@@ -540,12 +661,22 @@ async fn run_stone(
                 let summary_info = {
                     let mut run = state.benchmark_run.write().await;
                     if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
-                        if let Some(test) = sr.tests.iter_mut().find(|t| t.model == model_name && t.capability == capability) {
+                        if let Some(test) = sr
+                            .tests
+                            .iter_mut()
+                            .find(|t| t.model == model_name && t.capability == capability)
+                        {
                             test.summarise();
                             test.status = TestStatus::Done;
-                            test.summary.as_ref().map(|s| (s.verdict, s.median_tps, s.cold_start_ms))
-                        } else { None }
-                    } else { None }
+                            test.summary
+                                .as_ref()
+                                .map(|s| (s.verdict, s.median_tps, s.cold_start_ms))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 };
                 persist(state).await;
                 if let Some((verdict, tps, cold)) = summary_info {
@@ -555,13 +686,18 @@ async fn run_stone(
                         cold_ms = cold, tps = format!("{:.1}", tps),
                         "benchmark result"
                     );
-                    notify(state, "benchmark.test.done", &serde_json::json!({
-                        "stone": stone_name, "model": &model_name,
-                        "capability": capability.to_string(),
-                        "verdict": verdict.to_string(),
-                        "tps": (tps * 10.0).round() / 10.0,
-                        "cold_start_ms": cold,
-                    })).await;
+                    notify(
+                        state,
+                        "benchmark.test.done",
+                        &serde_json::json!({
+                            "stone": stone_name, "model": &model_name,
+                            "capability": capability.to_string(),
+                            "verdict": verdict.to_string(),
+                            "tps": (tps * 10.0).round() / 10.0,
+                            "cold_start_ms": cold,
+                        }),
+                    )
+                    .await;
                 }
             }
             Err(e) => {
@@ -578,8 +714,13 @@ async fn run_stone(
                     );
                     let summary_info = {
                         let mut run = state.benchmark_run.write().await;
-                        if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
-                            if let Some(test) = sr.tests.iter_mut().find(|t| t.model == model_name && t.capability == capability) {
+                        if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name)
+                        {
+                            if let Some(test) = sr
+                                .tests
+                                .iter_mut()
+                                .find(|t| t.model == model_name && t.capability == capability)
+                            {
                                 test.summary = Some(TestSummary {
                                     median_tps: 0.0,
                                     cold_start_ms: 999_999,
@@ -589,31 +730,45 @@ async fn run_stone(
                                 test.status = TestStatus::Done;
                                 test.error = Some("timed out".into());
                                 Some((Verdict::Vetoed, 0.0_f64, 999_999_u64))
-                            } else { None }
-                        } else { None }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     };
                     persist(state).await;
                     if let Some((verdict, tps, cold)) = summary_info {
-                        notify(state, "benchmark.test.done", &serde_json::json!({
-                            "stone": stone_name, "model": &model_name,
-                            "capability": capability.to_string(),
-                            "verdict": verdict.to_string(),
-                            "tps": tps,
-                            "cold_start_ms": cold,
-                            "note": "timed out",
-                        })).await;
+                        notify(
+                            state,
+                            "benchmark.test.done",
+                            &serde_json::json!({
+                                "stone": stone_name, "model": &model_name,
+                                "capability": capability.to_string(),
+                                "verdict": verdict.to_string(),
+                                "tps": tps,
+                                "cold_start_ms": cold,
+                                "note": "timed out",
+                            }),
+                        )
+                        .await;
                     }
                 } else {
                     tracing::warn!(
                         stone = %stone_name, model = %model_name,
                         mode = %capability, error = %msg, "benchmark failed"
                     );
-                    set_test_error(state, stone_name, &model_name, capability, &msg).await;
+                    set_test_error(state, stone_name, model_name, capability, &msg).await;
                     persist(state).await;
-                    notify(state, "benchmark.test.error", &serde_json::json!({
-                        "stone": stone_name, "model": &model_name,
-                        "capability": capability.to_string(), "error": &msg,
-                    })).await;
+                    notify(
+                        state,
+                        "benchmark.test.error",
+                        &serde_json::json!({
+                            "stone": stone_name, "model": &model_name,
+                            "capability": capability.to_string(), "error": &msg,
+                        }),
+                    )
+                    .await;
                 }
             }
         }
@@ -645,20 +800,32 @@ async fn bench_generate(
         };
         let total_ms = resp.total_duration / 1_000_000;
 
-        add_sample(state, stone_name, model, Capability::Generate, Sample {
-            prompt_index: i as u32,
-            cold_start_ms: cold_ms,
-            tokens_per_second: tps,
-            total_duration_ms: total_ms,
-            error: None,
-        }).await;
+        add_sample(
+            state,
+            stone_name,
+            model,
+            Capability::Generate,
+            Sample {
+                prompt_index: i as u32,
+                cold_start_ms: cold_ms,
+                tokens_per_second: tps,
+                total_duration_ms: total_ms,
+                error: None,
+            },
+        )
+        .await;
 
-        notify(state, "benchmark.sample", &serde_json::json!({
-            "stone": stone_name, "model": model,
-            "capability": "generate", "index": i,
-            "of": GENERATE_PROMPTS.len(),
-            "tps": (tps * 10.0).round() / 10.0,
-        })).await;
+        notify(
+            state,
+            "benchmark.sample",
+            &serde_json::json!({
+                "stone": stone_name, "model": model,
+                "capability": "generate", "index": i,
+                "of": GENERATE_PROMPTS.len(),
+                "tps": (tps * 10.0).round() / 10.0,
+            }),
+        )
+        .await;
     }
     Ok(())
 }
@@ -676,19 +843,31 @@ async fn bench_embed(
         let cold_ms = resp.load_duration / 1_000_000;
         let total_ms = resp.total_duration / 1_000_000;
 
-        add_sample(state, stone_name, model, Capability::Embed, Sample {
-            prompt_index: i as u32,
-            cold_start_ms: cold_ms,
-            tokens_per_second: 0.0,
-            total_duration_ms: total_ms,
-            error: None,
-        }).await;
+        add_sample(
+            state,
+            stone_name,
+            model,
+            Capability::Embed,
+            Sample {
+                prompt_index: i as u32,
+                cold_start_ms: cold_ms,
+                tokens_per_second: 0.0,
+                total_duration_ms: total_ms,
+                error: None,
+            },
+        )
+        .await;
 
-        notify(state, "benchmark.sample", &serde_json::json!({
-            "stone": stone_name, "model": model,
-            "capability": "embed", "index": i,
-            "of": EMBED_INPUTS.len(),
-        })).await;
+        notify(
+            state,
+            "benchmark.sample",
+            &serde_json::json!({
+                "stone": stone_name, "model": model,
+                "capability": "embed", "index": i,
+                "of": EMBED_INPUTS.len(),
+            }),
+        )
+        .await;
     }
     Ok(())
 }
@@ -719,20 +898,32 @@ async fn bench_vision(
         };
         let total_ms = resp.total_duration / 1_000_000;
 
-        add_sample(state, stone_name, model, Capability::Vision, Sample {
-            prompt_index: i as u32,
-            cold_start_ms: cold_ms,
-            tokens_per_second: tps,
-            total_duration_ms: total_ms,
-            error: None,
-        }).await;
+        add_sample(
+            state,
+            stone_name,
+            model,
+            Capability::Vision,
+            Sample {
+                prompt_index: i as u32,
+                cold_start_ms: cold_ms,
+                tokens_per_second: tps,
+                total_duration_ms: total_ms,
+                error: None,
+            },
+        )
+        .await;
 
-        notify(state, "benchmark.sample", &serde_json::json!({
-            "stone": stone_name, "model": model,
-            "capability": "vision", "index": i,
-            "of": VISION_IMAGES.len(),
-            "tps": (tps * 10.0).round() / 10.0,
-        })).await;
+        notify(
+            state,
+            "benchmark.sample",
+            &serde_json::json!({
+                "stone": stone_name, "model": model,
+                "capability": "vision", "index": i,
+                "of": VISION_IMAGES.len(),
+                "tps": (tps * 10.0).round() / 10.0,
+            }),
+        )
+        .await;
     }
     Ok(())
 }
@@ -742,9 +933,7 @@ async fn bench_vision(
 fn capabilities_to_test(model: &ModelInfo) -> Vec<Capability> {
     let mut modes = Vec::new();
 
-    if model.capabilities.is_empty()
-        || model.capabilities.iter().any(|c| c == "completion")
-    {
+    if model.capabilities.is_empty() || model.capabilities.iter().any(|c| c == "completion") {
         modes.push(Capability::Generate);
     }
 
@@ -774,7 +963,11 @@ async fn add_sample(
 ) {
     let mut run = state.benchmark_run.write().await;
     if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
-        if let Some(test) = sr.tests.iter_mut().find(|t| t.model == model && t.capability == capability) {
+        if let Some(test) = sr
+            .tests
+            .iter_mut()
+            .find(|t| t.model == model && t.capability == capability)
+        {
             test.samples.push(sample);
         }
     }
@@ -789,7 +982,11 @@ async fn set_test_status(
 ) {
     let mut run = state.benchmark_run.write().await;
     if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
-        if let Some(test) = sr.tests.iter_mut().find(|t| t.model == model && t.capability == capability) {
+        if let Some(test) = sr
+            .tests
+            .iter_mut()
+            .find(|t| t.model == model && t.capability == capability)
+        {
             test.status = status;
         }
     }
@@ -804,7 +1001,11 @@ async fn set_test_error(
 ) {
     let mut run = state.benchmark_run.write().await;
     if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
-        if let Some(test) = sr.tests.iter_mut().find(|t| t.model == model && t.capability == capability) {
+        if let Some(test) = sr
+            .tests
+            .iter_mut()
+            .find(|t| t.model == model && t.capability == capability)
+        {
             test.status = TestStatus::Error;
             test.error = Some(error.to_string());
         }
@@ -813,11 +1014,7 @@ async fn set_test_error(
 
 // ── Yield to Traffic ─────────────────────────────────────────────
 
-async fn yield_to_traffic(
-    state: &AppState,
-    endpoint: &str,
-    cancel: &CancellationToken,
-) -> bool {
+async fn yield_to_traffic(state: &AppState, endpoint: &str, cancel: &CancellationToken) -> bool {
     let start = std::time::Instant::now();
     loop {
         let counter = state.queue_counter(endpoint).await;
@@ -871,7 +1068,9 @@ pub async fn load(data_dir: &str) -> BenchmarkRun {
             Ok(mut run) => {
                 // Crash recovery: if a run was in progress, mark it failed
                 if run.is_running() {
-                    tracing::warn!("found in-progress benchmark run — marking as failed (crash recovery)");
+                    tracing::warn!(
+                        "found in-progress benchmark run — marking as failed (crash recovery)"
+                    );
                     run.status = RunStatus::Failed;
                     run.error = Some("interrupted by restart".into());
                     run.completed_at = Some(Utc::now());
@@ -900,11 +1099,7 @@ pub async fn load(data_dir: &str) -> BenchmarkRun {
 
 // ── Model Pull Helper ────────────────────────────────────────────
 
-async fn pull_model_and_wait(
-    client: &OllamaClient,
-    endpoint: &str,
-    model: &str,
-) -> Result<()> {
+async fn pull_model_and_wait(client: &OllamaClient, endpoint: &str, model: &str) -> Result<()> {
     use futures_util::StreamExt;
     let stream = client.pull_model(endpoint, model).await?;
     tokio::pin!(stream);

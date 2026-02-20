@@ -1,4 +1,4 @@
-﻿//! Stone discovery via Koi mDNS HTTP API.
+//! Stone discovery via Koi mDNS HTTP API.
 //!
 //! The orchestrator never assumes a local Moss is running. Instead, it queries
 //! Koi's mDNS capability to browse for `_moss._tcp` services on the network.
@@ -366,16 +366,14 @@ pub async fn query_topology_ollama(stone_endpoint: &str) -> Result<Vec<TopologyO
         .error_for_status()
         .with_context(|| format!("topology endpoint status from {url}"))?;
 
-    let topo: TopologyResponse = response
-        .json()
-        .await
-        .context("parse topology response")?;
+    let topo: TopologyResponse = response.json().await.context("parse topology response")?;
 
     let mut results = Vec::new();
     for entry in &topo.data {
-        let has_ollama = entry.services.iter().any(|s| {
-            s.offering == "ollama" && s.status == "running"
-        });
+        let has_ollama = entry
+            .services
+            .iter()
+            .any(|s| s.offering == "ollama" && s.status == "running");
         if has_ollama {
             // Extract VRAM and GPU name from chirp capabilities
             let (vram_total_bytes, gpu_name) = match &entry.capabilities {

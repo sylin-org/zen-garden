@@ -1,4 +1,4 @@
-﻿//! Shared application state for all HTTP handlers and background tasks.
+//! Shared application state for all HTTP handlers and background tasks.
 //!
 //! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
 //! Mutation goes through methods that acquire write locks.
@@ -94,6 +94,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         offering_name: String,
         koi_endpoint: String,
@@ -320,7 +321,8 @@ impl AppState {
 
         self.emit_event(
             "job.created",
-            &serde_json::json!({"id": &id, "kind": kind.label(), "subject": kind.subject()}).to_string(),
+            &serde_json::json!({"id": &id, "kind": kind.label(), "subject": kind.subject()})
+                .to_string(),
         )
         .await;
         id

@@ -1,4 +1,4 @@
-﻿//! Ollama-compatible proxy endpoints.
+//! Ollama-compatible proxy endpoints.
 //!
 //! The core of the router: accepts Ollama API requests on :11434,
 //! extracts the model name, routes to the optimal instance, and
@@ -6,7 +6,9 @@
 
 use crate::app_state::AppState;
 use crate::domain::routing;
-use crate::domain::types::{AutoPullMode, JobKind, JobStatus, MetricEvent, OllamaInferenceFinal, RoutingError};
+use crate::domain::types::{
+    AutoPullMode, JobKind, JobStatus, MetricEvent, OllamaInferenceFinal, RoutingError,
+};
 use crate::infra::ollama_client::OllamaClient;
 use axum::{
     body::Body,
@@ -45,20 +47,16 @@ pub async fn proxy_handler(
     // Dispatch based on path
     match (method.clone(), path.as_str()) {
         // ── Root health probe (Ollama clients expect "Ollama is running") ──
-        (Method::GET, "/") => {
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "text/plain; charset=utf-8")
-                .body(Body::from("Ollama is running"))
-                .unwrap())
-        }
-        (Method::HEAD, "/") => {
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "text/plain; charset=utf-8")
-                .body(Body::empty())
-                .unwrap())
-        }
+        (Method::GET, "/") => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from("Ollama is running"))
+            .unwrap()),
+        (Method::HEAD, "/") => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::empty())
+            .unwrap()),
 
         // ── Inference endpoints (routed) ──
         (Method::POST, "/api/generate" | "/api/chat" | "/api/embed" | "/api/embeddings") => {
@@ -70,11 +68,21 @@ pub async fn proxy_handler(
         (Method::GET, "/api/ps") => proxy_merged_ps(&state).await,
 
         // ── Pass-through endpoints (routed to specific instance) ──
-        (Method::POST, "/api/show") => proxy_routed(&state, &path, method, &headers, body_bytes).await,
-        (Method::POST, "/api/pull") => proxy_routed(&state, &path, method, &headers, body_bytes).await,
-        (Method::DELETE, "/api/delete") => proxy_routed(&state, &path, method, &headers, body_bytes).await,
-        (Method::POST, "/api/copy") => proxy_routed(&state, &path, method, &headers, body_bytes).await,
-        (Method::POST, "/api/create") => proxy_routed(&state, &path, method, &headers, body_bytes).await,
+        (Method::POST, "/api/show") => {
+            proxy_routed(&state, &path, method, &headers, body_bytes).await
+        }
+        (Method::POST, "/api/pull") => {
+            proxy_routed(&state, &path, method, &headers, body_bytes).await
+        }
+        (Method::DELETE, "/api/delete") => {
+            proxy_routed(&state, &path, method, &headers, body_bytes).await
+        }
+        (Method::POST, "/api/copy") => {
+            proxy_routed(&state, &path, method, &headers, body_bytes).await
+        }
+        (Method::POST, "/api/create") => {
+            proxy_routed(&state, &path, method, &headers, body_bytes).await
+        }
 
         // ── Version (router's own) ──
         (Method::GET, "/api/version") => {
@@ -200,7 +208,9 @@ async fn proxy_inference(
                     },
                 )
                 .await;
-            let _ = state.app.metrics_tx.send(MetricEvent::Error { stone: stone_name.clone() });
+            let _ = state.app.metrics_tx.send(MetricEvent::Error {
+                stone: stone_name.clone(),
+            });
             let body = serde_json::json!({"error": format!("upstream error: {e}")});
             return Ok((StatusCode::BAD_GATEWAY, axum::Json(body)).into_response());
         }
@@ -216,15 +226,28 @@ async fn proxy_inference(
         {
             let reg = state.app.instances.read().await;
             if let Some(inst) = reg.get(target) {
-                let avail: Vec<String> = inst.models_available.iter()
-                    .filter(|m| m.as_str() != model).cloned().collect();
-                let loaded = inst.models_loaded.iter()
-                    .filter(|m| m.name != model).cloned().collect();
+                let avail: Vec<String> = inst
+                    .models_available
+                    .iter()
+                    .filter(|m| m.as_str() != model)
+                    .cloned()
+                    .collect();
+                let loaded = inst
+                    .models_loaded
+                    .iter()
+                    .filter(|m| m.name != model)
+                    .cloned()
+                    .collect();
                 drop(reg);
-                state.app.update_instance_models(target, avail, loaded).await;
+                state
+                    .app
+                    .update_instance_models(target, avail, loaded)
+                    .await;
             }
         }
-        let _ = state.app.metrics_tx.send(MetricEvent::Error { stone: stone_name.clone() });
+        let _ = state.app.metrics_tx.send(MetricEvent::Error {
+            stone: stone_name.clone(),
+        });
         let body = serde_json::json!({"error": format!("model '{model}' not found")});
         return Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response());
     }
@@ -232,15 +255,21 @@ async fn proxy_inference(
     // Propagate non-OK status
     if !status.is_success() {
         counter.fetch_sub(1, Ordering::Relaxed);
-        let _ = state.app.metrics_tx.send(MetricEvent::Error { stone: stone_name.clone() });
-        let status_code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let _ = state.app.metrics_tx.send(MetricEvent::Error {
+            stone: stone_name.clone(),
+        });
+        let status_code =
+            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let text = response.text().await.unwrap_or_default();
         return Ok((status_code, text).into_response());
     }
 
     if stream_disabled {
         // Non-streaming: read full response, extract metrics, forward
-        let response_bytes = response.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+        let response_bytes = response
+            .bytes()
+            .await
+            .map_err(|_| StatusCode::BAD_GATEWAY)?;
         counter.fetch_sub(1, Ordering::Relaxed);
 
         // Extract metrics from the response
@@ -308,9 +337,7 @@ async fn proxy_inference(
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "upstream stream error");
-                        let _ = tx
-                            .send(Err(std::io::Error::new(std::io::ErrorKind::Other, e)))
-                            .await;
+                        let _ = tx.send(Err(std::io::Error::other(e))).await;
                         break;
                     }
                 }
@@ -514,10 +541,9 @@ async fn on_demand_pull_job(app: AppState, client: OllamaClient, model: String) 
                 let mut last_status = String::new();
                 while let Some(chunk) = stream.next().await {
                     if let Ok(bytes) = chunk {
-                        if let Ok(progress) =
-                            serde_json::from_slice::<crate::domain::types::OllamaPullProgress>(
-                                &bytes,
-                            )
+                        if let Ok(progress) = serde_json::from_slice::<
+                            crate::domain::types::OllamaPullProgress,
+                        >(&bytes)
                         {
                             last_status = progress.status;
                         }

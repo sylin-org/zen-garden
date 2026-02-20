@@ -1,4 +1,4 @@
-﻿//! Gateway announcement task — ORCH-0004.
+//! Gateway announcement task — ORCH-0004.
 //!
 //! Two-registration model:
 //! 1. Register mDNS name with Koi (hostname becomes resolvable)
@@ -42,7 +42,10 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         txt.insert("garden-offering".to_string(), OFFERING.to_string());
         txt.insert("garden-role".to_string(), "orchestrator".to_string());
 
-        match koi.announce(MDNS_NAME, state.proxy_port, MDNS_LEASE_SECS, txt).await {
+        match koi
+            .announce(MDNS_NAME, state.proxy_port, MDNS_LEASE_SECS, txt)
+            .await
+        {
             Ok(id) => {
                 tracing::info!(
                     mdns_id = %id,
@@ -83,9 +86,24 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         }
     };
 
-    // ── Phase 3: Detect self IP ──────────────────────────────────
+    // ── Phase 3: Resolve host identity via Koi ─────────────────────
     let self_ip = garden_common::infra::network::get_local_ip();
-    let hostname = format!("{}.local", MDNS_NAME);
+    let hostname = match koi.get_hostname().await {
+        Ok(h) => {
+            tracing::info!(hostname = %h, "Gateway: resolved host DNS name via Koi");
+            h
+        }
+        Err(e) => {
+            // Fallback: use MDNS_NAME (matches the Koi mDNS registration)
+            let fallback = format!("{}.local", MDNS_NAME);
+            tracing::warn!(
+                error = %e,
+                fallback = %fallback,
+                "Gateway: failed to resolve host DNS name, using mDNS service name"
+            );
+            fallback
+        }
+    };
 
     let gw_params = GatewayParams {
         fqn: format!("{}:orchestrator", OFFERING),
@@ -100,7 +118,10 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
 
     // ── Phase 4: Register gateway with Moss ──────────────────────
     let mut moss_registered = false;
-    match moss_gw.register(&stone_endpoint, OFFERING, &gw_params).await {
+    match moss_gw
+        .register(&stone_endpoint, OFFERING, &gw_params)
+        .await
+    {
         Ok(resp) => {
             tracing::info!(
                 lease_id = %resp.lease_id,

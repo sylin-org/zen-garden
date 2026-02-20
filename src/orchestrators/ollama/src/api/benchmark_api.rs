@@ -1,4 +1,4 @@
-﻿//! Benchmark API endpoints.
+//! Benchmark API endpoints.
 //!
 //! HTTP handlers for starting, cancelling, and querying fitness benchmarks.
 //! Mounted on the dashboard server, not the proxy.
@@ -71,9 +71,9 @@ pub async fn start_benchmark(
     let wipe = match req.wipe.as_deref() {
         None => None,
         Some("all") => Some(WipeScope::All),
-        Some(s) if s.starts_with("stone:") => {
-            Some(WipeScope::Stone(s.strip_prefix("stone:").unwrap().to_string()))
-        }
+        Some(s) if s.starts_with("stone:") => Some(WipeScope::Stone(
+            s.strip_prefix("stone:").unwrap().to_string(),
+        )),
         Some(s) => {
             return Json(json!({
                 "ok": false,

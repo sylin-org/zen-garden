@@ -1,4 +1,4 @@
-﻿//! HTTP client for Ollama API operations.
+//! HTTP client for Ollama API operations.
 //!
 //! Encapsulates all direct communication with Ollama instances.
 //! Every method is fallible and includes timeouts.
@@ -18,6 +18,12 @@ const SHOW_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone)]
 pub struct OllamaClient {
     http: Client,
+}
+
+impl Default for OllamaClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OllamaClient {
@@ -116,10 +122,7 @@ impl OllamaClient {
             }
         }
 
-        builder
-            .send()
-            .await
-            .context("forward request to Ollama")
+        builder.send().await.context("forward request to Ollama")
     }
 
     // ── Model Management ─────────────────────────────────────────
@@ -318,8 +321,11 @@ impl OllamaClient {
             .collect();
 
         // Build a map of loaded model VRAM for authoritative values
-        let loaded_vram: std::collections::HashMap<&str, u64> =
-            ps.models.iter().map(|m| (m.name.as_str(), m.size_vram)).collect();
+        let loaded_vram: std::collections::HashMap<&str, u64> = ps
+            .models
+            .iter()
+            .map(|m| (m.name.as_str(), m.size_vram))
+            .collect();
 
         // Step 2: deep model profiles (parallel, one per model)
         let mut model_infos = Vec::new();

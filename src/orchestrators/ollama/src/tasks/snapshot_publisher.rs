@@ -1,4 +1,4 @@
-﻿//! Snapshot publisher: builds a read-only dashboard snapshot every 2 seconds.
+//! Snapshot publisher: builds a read-only dashboard snapshot every 2 seconds.
 //!
 //! The dashboard reads from the `watch` channel (lock-free on the HTTP path),
 //! ensuring the request handler never competes for locks with the proxy or
@@ -149,7 +149,10 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
                 .get(ep)
                 .map(|i| i.stone_name.clone())
                 .unwrap_or_else(|| ep.clone());
-            assignments_by_stone.entry(name).or_default().push(model.clone());
+            assignments_by_stone
+                .entry(name)
+                .or_default()
+                .push(model.clone());
         }
     }
 

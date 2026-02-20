@@ -1,4 +1,4 @@
-﻿//! Model management API endpoints.
+//! Model management API endpoints.
 //!
 //! These are called by the dashboard UI for multi-stone model operations.
 //! Pull and delete operations now create background jobs and return immediately.
@@ -6,11 +6,7 @@
 use crate::app_state::AppState;
 use crate::domain::types::{JobKind, JobStatus};
 use crate::infra::ollama_client::OllamaClient;
-use axum::{
-    extract::State,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -101,9 +97,7 @@ pub async fn pull_model(
         }
 
         let successes = results.iter().filter(|(_, ok)| *ok).count();
-        if successes == results.len() {
-            app.complete_job(&job_id).await;
-        } else if successes > 0 {
+        if successes > 0 {
             app.complete_job(&job_id).await;
         } else {
             app.fail_job(&job_id, "pull failed on all instances").await;
@@ -220,9 +214,7 @@ pub async fn check_feasibility(
     let instances = state.app.instances.read().await;
     let models = state.app.models.read().await;
 
-    let vram_needed: Option<u64> = models
-        .get(model.as_str())
-        .and_then(|m| m.vram_bytes);
+    let vram_needed: Option<u64> = models.get(model.as_str()).and_then(|m| m.vram_bytes);
 
     let feasible: Vec<serde_json::Value> = instances
         .values()

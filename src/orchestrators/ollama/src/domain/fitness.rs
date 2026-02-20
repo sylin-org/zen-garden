@@ -1,4 +1,4 @@
-﻿//! Fitness profiler domain types.
+//! Fitness profiler domain types.
 //!
 //! A single `BenchmarkRun` tree captures everything: user options, per-stone
 //! hardware, per-model test suites with raw samples, and a synthesised
@@ -221,7 +221,8 @@ impl TestSuite {
         }
         let cold_start_ms = ok.first().map(|s| s.cold_start_ms).unwrap_or(0);
         let median_tps = median_f64(&ok.iter().map(|s| s.tokens_per_second).collect::<Vec<_>>());
-        let median_duration_ms = median_u64(&ok.iter().map(|s| s.total_duration_ms).collect::<Vec<_>>());
+        let median_duration_ms =
+            median_u64(&ok.iter().map(|s| s.total_duration_ms).collect::<Vec<_>>());
         let verdict = Verdict::compute(self.capability, cold_start_ms, median_tps);
         self.summary = Some(TestSummary {
             median_tps,
@@ -250,7 +251,12 @@ impl StoneReport {
     pub fn completed(&self) -> usize {
         self.tests
             .iter()
-            .filter(|t| matches!(t.status, TestStatus::Done | TestStatus::Skipped | TestStatus::Error))
+            .filter(|t| {
+                matches!(
+                    t.status,
+                    TestStatus::Done | TestStatus::Skipped | TestStatus::Error
+                )
+            })
             .count()
     }
     pub fn total(&self) -> usize {
@@ -383,7 +389,9 @@ impl BenchmarkRun {
             stone.tests.clear();
             stone.status = StoneStatus::Pending;
         }
-        self.gpu_matrix.entries.retain(|e| e.stone_name != stone_name);
+        self.gpu_matrix
+            .entries
+            .retain(|e| e.stone_name != stone_name);
         self.gpu_matrix.generated_at = Some(Utc::now());
     }
 }
@@ -448,18 +456,39 @@ mod tests {
 
     #[test]
     fn compute_verdict_generate() {
-        assert_eq!(Verdict::compute(Capability::Generate, 5_000, 10.0), Verdict::Fast);
-        assert_eq!(Verdict::compute(Capability::Generate, 50_000, 3.0), Verdict::Degraded);
-        assert_eq!(Verdict::compute(Capability::Generate, 100_000, 0.5), Verdict::Vetoed);
+        assert_eq!(
+            Verdict::compute(Capability::Generate, 5_000, 10.0),
+            Verdict::Fast
+        );
+        assert_eq!(
+            Verdict::compute(Capability::Generate, 50_000, 3.0),
+            Verdict::Degraded
+        );
+        assert_eq!(
+            Verdict::compute(Capability::Generate, 100_000, 0.5),
+            Verdict::Vetoed
+        );
         // Zero tok/s means output was never produced — hard block.
-        assert_eq!(Verdict::compute(Capability::Generate, 100_000, 0.0), Verdict::Blocked);
+        assert_eq!(
+            Verdict::compute(Capability::Generate, 100_000, 0.0),
+            Verdict::Blocked
+        );
     }
 
     #[test]
     fn compute_verdict_embed() {
-        assert_eq!(Verdict::compute(Capability::Embed, 2_000, 0.0), Verdict::Fast);
-        assert_eq!(Verdict::compute(Capability::Embed, 15_000, 0.0), Verdict::Degraded);
-        assert_eq!(Verdict::compute(Capability::Embed, 45_000, 0.0), Verdict::Vetoed);
+        assert_eq!(
+            Verdict::compute(Capability::Embed, 2_000, 0.0),
+            Verdict::Fast
+        );
+        assert_eq!(
+            Verdict::compute(Capability::Embed, 15_000, 0.0),
+            Verdict::Degraded
+        );
+        assert_eq!(
+            Verdict::compute(Capability::Embed, 45_000, 0.0),
+            Verdict::Vetoed
+        );
     }
 
     #[test]
@@ -504,7 +533,10 @@ mod tests {
             error: Some("CUDA OOM".into()),
         });
         suite.summarise();
-        let s = suite.summary.as_ref().expect("should produce a summary even when all samples error");
+        let s = suite
+            .summary
+            .as_ref()
+            .expect("should produce a summary even when all samples error");
         assert_eq!(s.verdict, Verdict::Blocked);
         assert_eq!(s.median_tps, 0.0);
     }

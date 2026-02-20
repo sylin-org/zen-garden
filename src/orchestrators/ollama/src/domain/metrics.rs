@@ -1,4 +1,4 @@
-﻿//! In-memory metrics engine with ring-buffer response times.
+//! In-memory metrics engine with ring-buffer response times.
 //!
 //! All mutation happens through `record_*` methods. The flush task
 //! periodically snapshots the state to JSON on disk.
@@ -72,10 +72,7 @@ impl MetricsEngine {
 
         *self.per_model.entry(model.to_string()).or_default() += 1;
 
-        let stone = self
-            .per_stone
-            .entry(stone_name.to_string())
-            .or_default();
+        let stone = self.per_stone.entry(stone_name.to_string()).or_default();
         stone.requests += 1;
         stone.tokens_in += tokens_in;
         stone.tokens_out += tokens_out;
@@ -86,8 +83,13 @@ impl MetricsEngine {
         if self.stone_throughput.len() >= THROUGHPUT_RING_CAPACITY {
             self.stone_throughput.pop_front();
         }
-        self.stone_throughput
-            .push_back((Instant::now(), stone_name.to_string(), tokens_out, eval_duration_ns, duration_ns));
+        self.stone_throughput.push_back((
+            Instant::now(),
+            stone_name.to_string(),
+            tokens_out,
+            eval_duration_ns,
+            duration_ns,
+        ));
 
         // Ring buffer
         if self.response_times.len() >= RING_CAPACITY {
@@ -134,7 +136,11 @@ impl MetricsEngine {
 
     /// Top models by request count.
     pub fn top_models(&self, n: usize) -> Vec<(String, u64)> {
-        let mut sorted: Vec<_> = self.per_model.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut sorted: Vec<_> = self
+            .per_model
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
         sorted.truncate(n);
         sorted
@@ -178,7 +184,9 @@ impl MetricsEngine {
             per_model: self.per_model.clone(),
             started_at: Some(
                 chrono::Utc::now()
-                    .checked_sub_signed(chrono::Duration::from_std(self.started_at.elapsed()).unwrap_or_default())
+                    .checked_sub_signed(
+                        chrono::Duration::from_std(self.started_at.elapsed()).unwrap_or_default(),
+                    )
                     .unwrap_or_else(chrono::Utc::now)
                     .to_rfc3339(),
             ),
@@ -304,7 +312,14 @@ impl MetricsEngine {
                 eval_duration_ns,
             } => {
                 self.record_demand(&model);
-                self.record_request(&stone, &model, tokens_in, tokens_out, duration_ns, eval_duration_ns);
+                self.record_request(
+                    &stone,
+                    &model,
+                    tokens_in,
+                    tokens_out,
+                    duration_ns,
+                    eval_duration_ns,
+                );
             }
             MetricEvent::Error { stone } => {
                 self.record_error(&stone);

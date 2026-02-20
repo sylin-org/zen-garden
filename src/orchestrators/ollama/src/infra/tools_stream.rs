@@ -1,4 +1,4 @@
-﻿//! SSE client for the Moss Tools API stream.
+//! SSE client for the Moss Tools API stream.
 //!
 //! Subscribes to `GET /api/v1/garden/tools/stream` and filters in-memory
 //! for Ollama offerings (matching `tool_fqid` or aliases starting with
@@ -39,9 +39,7 @@ pub async fn subscribe_tools_stream(
     mut on_event: impl FnMut(ToolEvent),
 ) -> Result<()> {
     // TODO: Re-add `?tool_fqid=offering:ollama` once Moss alias-aware filtering is deployed.
-    let url = format!(
-        "{stone_endpoint}/api/v1/garden/tools/stream"
-    );
+    let url = format!("{stone_endpoint}/api/v1/garden/tools/stream");
 
     tracing::info!(url = %url, "connecting to Tools API stream");
 
@@ -147,9 +145,7 @@ fn extract_ollama_tool(tool: &serde_json::Value) -> Option<ToolEvent> {
         .get("ip")
         .or_else(|| connection.get("hostname"))
         .and_then(|v| v.as_str())?;
-    let port = connection
-        .get("port")
-        .and_then(|v| v.as_u64())?;
+    let port = connection.get("port").and_then(|v| v.as_u64())?;
 
     let protocol = connection
         .get("protocol")

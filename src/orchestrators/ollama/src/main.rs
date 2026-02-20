@@ -1,4 +1,4 @@
-﻿//! Ollama Orchestrator (zen-garden.ollama.orchestrator)
+//! Ollama Orchestrator (zen-garden.ollama.orchestrator)
 //!
 //! Bootstrap only: CLI parsing, logging, state init, spawn tasks, serve HTTP.
 //! All business logic lives in `domain/`, I/O in `infra/`, HTTP in `api/`.
@@ -10,7 +10,9 @@ use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use zen_garden_ollama_orchestrator::api::{benchmark_api, dashboard, extension, health, management, proxy};
+use zen_garden_ollama_orchestrator::api::{
+    benchmark_api, dashboard, extension, health, management, proxy,
+};
 use zen_garden_ollama_orchestrator::infra::{ollama_client::OllamaClient, persistence};
 use zen_garden_ollama_orchestrator::tasks;
 use zen_garden_ollama_orchestrator::AppState;
@@ -29,7 +31,11 @@ struct Cli {
     stone: Option<String>,
 
     /// Offering name (for identification in the garden).
-    #[arg(long, env = "GARDEN_OFFERING_NAME", default_value = "zen-garden.ollama.orchestrator")]
+    #[arg(
+        long,
+        env = "GARDEN_OFFERING_NAME",
+        default_value = "zen-garden.ollama.orchestrator"
+    )]
     offering_name: String,
 
     /// Proxy port (Ollama-compatible endpoint).
@@ -76,10 +82,8 @@ async fn main() -> Result<()> {
     let config = persistence::load_config(&cli.data_dir).await;
 
     // ── Channels (Shared Snapshot Space) ────────────────────────
-    let (snapshot_tx, snapshot_rx) =
-        tokio::sync::watch::channel(serde_json::json!({}));
-    let (metrics_tx, metrics_rx) =
-        tokio::sync::mpsc::unbounded_channel();
+    let (snapshot_tx, snapshot_rx) = tokio::sync::watch::channel(serde_json::json!({}));
+    let (metrics_tx, metrics_rx) = tokio::sync::mpsc::unbounded_channel();
 
     // ── Shared State ─────────────────────────────────────────────
     let shutdown = CancellationToken::new();
@@ -100,7 +104,10 @@ async fn main() -> Result<()> {
     // Load persisted benchmark run from fitness.json
     let bench_run = zen_garden_ollama_orchestrator::tasks::benchmark::load(&cli.data_dir).await;
     if !bench_run.gpu_matrix.entries.is_empty() {
-        tracing::info!(results = bench_run.gpu_matrix.entries.len(), "restored gpu matrix");
+        tracing::info!(
+            results = bench_run.gpu_matrix.entries.len(),
+            "restored gpu matrix"
+        );
     }
     *state.benchmark_run.write().await = bench_run;
 
@@ -137,10 +144,7 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
-    let metrics_handle = tokio::spawn(tasks::metrics_flush::run(
-        state.clone(),
-        shutdown.clone(),
-    ));
+    let metrics_handle = tokio::spawn(tasks::metrics_flush::run(state.clone(), shutdown.clone()));
 
     let model_sync_handle = tokio::spawn(tasks::model_sync::run(
         state.clone(),
@@ -201,8 +205,7 @@ async fn main() -> Result<()> {
         // Settings
         .route(
             "/api/settings",
-            axum::routing::get(dashboard::get_settings)
-                .post(dashboard::post_settings),
+            axum::routing::get(dashboard::get_settings).post(dashboard::post_settings),
         )
         // Metrics
         .route(

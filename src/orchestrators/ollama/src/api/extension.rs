@@ -1,4 +1,4 @@
-﻿//! Extension API (`/v1/`) — garden-aware orchestrator endpoints.
+//! Extension API (`/v1/`) — garden-aware orchestrator endpoints.
 //!
 //! Read-only endpoints that expose richer data than the Ollama-compatible
 //! `/api/*` surface.  Safe for any client; no side effects.
@@ -7,11 +7,7 @@
 //! which Ollama will never claim — zero collision risk.
 
 use crate::api::proxy::ProxyState;
-use axum::{
-    extract::State,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 

@@ -1,4 +1,4 @@
-﻿//! Routing algorithm: select the optimal Ollama instance for a request.
+//! Routing algorithm: select the optimal Ollama instance for a request.
 //!
 //! Core principle: route to the **lowest VRAM tier** that can serve the
 //! model. Overflow goes up, never down. Within a tier, pick the instance
@@ -9,9 +9,7 @@
 //! always routable — the user explicitly chose to install it.
 
 use super::fitness::GpuMatrix;
-use super::types::{
-    ModelInfo, OllamaInstance, RoutingDecision, RoutingError, Tier,
-};
+use super::types::{ModelInfo, OllamaInstance, RoutingDecision, RoutingError, Tier};
 use std::collections::HashMap;
 
 /// Select the best instance for a model request.
@@ -43,9 +41,7 @@ pub fn select_instance(
 
     // Look up model VRAM requirement.
     // `None` = model has never been loaded so we have no real measurement.
-    let vram_needed: Option<u64> = models
-        .get(model)
-        .and_then(|m| m.vram_bytes);
+    let vram_needed: Option<u64> = models.get(model).and_then(|m| m.vram_bytes);
 
     // If model is completely unknown, try to find it on any instance
     let model_exists = instances
@@ -66,7 +62,11 @@ pub fn select_instance(
     let (preferred, fallback): (Vec<&Tier>, Vec<&Tier>) = match vram_needed {
         Some(needed) => {
             let pref: Vec<&Tier> = tiers.iter().filter(|t| t.vram_bytes >= needed).collect();
-            let fb: Vec<&Tier> = tiers.iter().filter(|t| t.vram_bytes < needed).rev().collect();
+            let fb: Vec<&Tier> = tiers
+                .iter()
+                .filter(|t| t.vram_bytes < needed)
+                .rev()
+                .collect();
             (pref, fb)
         }
         None => (tiers.iter().collect(), vec![]),
@@ -93,9 +93,7 @@ pub fn select_instance(
             .instance_endpoints
             .iter()
             .filter_map(|ep| instances.get(ep.as_str()))
-            .filter(|i| {
-                i.health.is_routable() && i.models_available.iter().any(|m| m == model)
-            })
+            .filter(|i| i.health.is_routable() && i.models_available.iter().any(|m| m == model))
             .collect();
 
         if candidates.is_empty() {
@@ -109,10 +107,14 @@ pub fn select_instance(
             candidates.retain(|i| {
                 // Keep candidate unless ALL its fitness entries for this model are Blocked.
                 // (A model may have multiple capabilities; blocked in one doesn't block all.)
-                let dominated = f.entries.iter()
+                let dominated = f
+                    .entries
+                    .iter()
                     .filter(|e| e.model == model && e.endpoint == i.endpoint)
                     .all(|e| e.verdict.is_blocked());
-                let has_entries = f.entries.iter()
+                let has_entries = f
+                    .entries
+                    .iter()
                     .any(|e| e.model == model && e.endpoint == i.endpoint);
                 // Only block if we have fitness data AND all entries are Blocked.
                 !(has_entries && dominated)
@@ -264,11 +266,10 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m70b", model("m70b", 20))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let models: HashMap<String, ModelInfo> = [("m70b", model("m70b", 20))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
 
         let tiers = vec![
             Tier {
@@ -294,11 +295,10 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 3));
         instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 1));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -318,11 +318,10 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m48b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m48b", model("m48b", 48))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let models: HashMap<String, ModelInfo> = [("m48b", model("m48b", 48))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
 
         let tiers = vec![
             Tier {
@@ -345,7 +344,7 @@ mod tests {
 
     #[test]
     fn fitness_prefers_faster_stone() {
-        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict, Capability};
+        use crate::domain::fitness::{Capability, GpuMatrix, GpuMatrixEntry, Verdict};
 
         // Two 8G stones, both have "m7b", both idle (queue=0).
         // Stone "a" is Vetoed, stone "b" is Fast → routing should prefer "b".
@@ -353,11 +352,10 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -392,7 +390,8 @@ mod tests {
         };
 
         // With fitness data, should prefer "b" (Fast) over "a" (Vetoed)
-        let decision = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
         assert_eq!(decision.target_endpoint, "b");
 
         // Without fitness, both are equally loaded — deterministic order from sort
@@ -403,17 +402,16 @@ mod tests {
 
     #[test]
     fn blocked_candidates_filtered_returns_model_blocked() {
-        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict, Capability};
+        use crate::domain::fitness::{Capability, GpuMatrix, GpuMatrixEntry, Verdict};
 
         // Single stone has "m7b" but is Blocked on both capabilities.
         let mut instances = HashMap::new();
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -423,18 +421,16 @@ mod tests {
 
         let matrix = GpuMatrix {
             generated_at: Some(chrono::Utc::now()),
-            entries: vec![
-                GpuMatrixEntry {
-                    model: "m7b".into(),
-                    capability: Capability::Generate,
-                    stone_name: "s1".into(),
-                    endpoint: "a".into(),
-                    gpu_model: "RTX 3060".into(),
-                    verdict: Verdict::Blocked,
-                    median_tps: 0.0,
-                    cold_start_ms: 0,
-                },
-            ],
+            entries: vec![GpuMatrixEntry {
+                model: "m7b".into(),
+                capability: Capability::Generate,
+                stone_name: "s1".into(),
+                endpoint: "a".into(),
+                gpu_model: "RTX 3060".into(),
+                verdict: Verdict::Blocked,
+                median_tps: 0.0,
+                cold_start_ms: 0,
+            }],
         };
 
         let result = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix));
@@ -447,18 +443,17 @@ mod tests {
 
     #[test]
     fn blocked_on_one_stone_routes_to_other() {
-        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict, Capability};
+        use crate::domain::fitness::{Capability, GpuMatrix, GpuMatrixEntry, Verdict};
 
         // Two stones: "a" is Blocked, "b" is Fast → should route to "b".
         let mut instances = HashMap::new();
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -492,7 +487,8 @@ mod tests {
             ],
         };
 
-        let decision = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
         assert_eq!(decision.target_endpoint, "b");
     }
 }

@@ -1,4 +1,4 @@
-﻿//! Configuration and metrics persistence.
+//! Configuration and metrics persistence.
 //!
 //! - `router-config.toml` — user settings (TOML, human-editable).
 //! - `metrics/` — per-stone and summary data (JSON, machine-generated).
@@ -180,8 +180,12 @@ pub async fn load_metrics(data_dir: &str) -> MetricsSnapshot {
                                 tokens_in: v["tokens_in"].as_u64().unwrap_or_default(),
                                 tokens_out: v["tokens_out"].as_u64().unwrap_or_default(),
                                 errors: v["errors"].as_u64().unwrap_or_default(),
-                                total_duration_ns: v["total_duration_ns"].as_u64().unwrap_or_default(),
-                                eval_duration_ns: v["eval_duration_ns"].as_u64().unwrap_or_default(),
+                                total_duration_ns: v["total_duration_ns"]
+                                    .as_u64()
+                                    .unwrap_or_default(),
+                                eval_duration_ns: v["eval_duration_ns"]
+                                    .as_u64()
+                                    .unwrap_or_default(),
                             };
                             snapshot.per_stone.insert(name, sm);
                         }

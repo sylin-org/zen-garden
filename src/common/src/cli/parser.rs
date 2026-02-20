@@ -187,8 +187,16 @@ mod tests {
     /// Test fixture: minimal zen verbs for parser behavior tests
     fn zen() -> HashSet<&'static str> {
         [
-            "offer", "observe", "watch", "borrow", "capabilities", "rest",
-            "wake", "status", "adopt", "release",
+            "offer",
+            "observe",
+            "watch",
+            "borrow",
+            "capabilities",
+            "rest",
+            "wake",
+            "status",
+            "adopt",
+            "release",
         ]
         .into_iter()
         .collect()

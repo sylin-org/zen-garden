@@ -135,11 +135,23 @@ impl SseEvent {
             StoneEvent::LoadUpdated {
                 cpu_percent,
                 memory_percent,
+                disk_percent,
+                io_percent,
+                gpu_percent,
+                gpu_active,
+                net_rx_bytes_per_sec,
+                net_tx_bytes_per_sec,
                 ..
             } => {
                 let payload = StoneLoadUpdatedPayload {
                     cpu_percent: *cpu_percent,
                     memory_percent: *memory_percent,
+                    disk_percent: *disk_percent,
+                    io_percent: *io_percent,
+                    gpu_percent: *gpu_percent,
+                    gpu_active: *gpu_active,
+                    net_rx_bytes_per_sec: *net_rx_bytes_per_sec,
+                    net_tx_bytes_per_sec: *net_tx_bytes_per_sec,
                 };
                 serde_json::to_value(payload).ok()
             }

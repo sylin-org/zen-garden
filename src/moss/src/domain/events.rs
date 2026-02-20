@@ -413,10 +413,16 @@ pub enum StoneEvent {
         memory_percent: f64,
         timestamp: DateTime<Utc>,
     },
-    /// Stone load updated
+    /// Stone load updated (FIREFLY-0003: extended with disk, io, gpu, network)
     LoadUpdated {
         cpu_percent: f64,
         memory_percent: f64,
+        disk_percent: f64,
+        io_percent: f64,
+        gpu_percent: f64,
+        gpu_active: bool,
+        net_rx_bytes_per_sec: u64,
+        net_tx_bytes_per_sec: u64,
         timestamp: DateTime<Utc>,
     },
     /// Network became ready (valid LAN IP detected)
@@ -479,10 +485,25 @@ impl StoneEvent {
         }
     }
 
-    pub fn load_updated(cpu_percent: f64, memory_percent: f64) -> Self {
+    pub fn load_updated(
+        cpu_percent: f64,
+        memory_percent: f64,
+        disk_percent: f64,
+        io_percent: f64,
+        gpu_percent: f64,
+        gpu_active: bool,
+        net_rx_bytes_per_sec: u64,
+        net_tx_bytes_per_sec: u64,
+    ) -> Self {
         Self::LoadUpdated {
             cpu_percent,
             memory_percent,
+            disk_percent,
+            io_percent,
+            gpu_percent,
+            gpu_active,
+            net_rx_bytes_per_sec,
+            net_tx_bytes_per_sec,
             timestamp: Utc::now(),
         }
     }

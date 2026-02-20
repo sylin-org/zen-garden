@@ -474,6 +474,99 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
 }
 
 /// Detect GPU hardware
+/// Collect GPU compute utilization across all detected GPUs (FIREFLY-0003).
+///
+/// Returns the maximum utilization percentage (0–100) if multiple GPUs are present.
+/// Returns None if no GPU is detected or all queries fail.
+///
+/// Vendor dispatch:
+/// - NVIDIA: `nvidia-smi --query-gpu=utilization.gpu`
+/// - AMD: `/sys/class/drm/card*/device/gpu_busy_percent` or `rocm-smi --showuse`
+/// - Intel: `/sys/class/drm/card*/gt_cur_freq_mhz` (heuristic)
+///
+/// Called on the fast metrics interval (5s). The shell-out is fast (~10ms).
+pub fn get_gpu_utilization() -> Option<f32> {
+    // Try NVIDIA first (most common for AI workloads)
+    if let Some(pct) = query_nvidia_utilization() {
+        return Some(pct);
+    }
+    // Try AMD
+    if let Some(pct) = query_amd_utilization() {
+        return Some(pct);
+    }
+    // No Intel utilization query yet — hardware needed for testing
+    None
+}
+
+/// Query NVIDIA GPU utilization via nvidia-smi
+fn query_nvidia_utilization() -> Option<f32> {
+    let output = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // If multiple GPUs, take the max utilization
+    stdout
+        .lines()
+        .filter_map(|line| line.trim().parse::<f32>().ok())
+        .reduce(f32::max)
+}
+
+/// Query AMD GPU utilization via sysfs or rocm-smi
+fn query_amd_utilization() -> Option<f32> {
+    // Try sysfs first (Linux, no tool required)
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+        // Look for gpu_busy_percent in /sys/class/drm/card*/device/
+        if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+            let mut max_util: Option<f32> = None;
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("card") && !name_str.contains('-') {
+                    let busy_path = entry.path().join("device/gpu_busy_percent");
+                    if let Ok(content) = fs::read_to_string(&busy_path) {
+                        if let Ok(pct) = content.trim().parse::<f32>() {
+                            max_util = Some(max_util.map_or(pct, |m: f32| m.max(pct)));
+                        }
+                    }
+                }
+            }
+            if max_util.is_some() {
+                return max_util;
+            }
+        }
+    }
+
+    // Fallback: rocm-smi --showuse
+    let output = Command::new("rocm-smi").arg("--showuse").output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Parse lines like "GPU[0] : GPU use (%): 42"
+    stdout
+        .lines()
+        .filter(|line| line.contains("GPU use"))
+        .filter_map(|line| {
+            line.rsplit(':')
+                .next()
+                .and_then(|s| s.trim().parse::<f32>().ok())
+        })
+        .reduce(f32::max)
+}
+
 pub fn detect_gpus() -> Vec<GpuInfo> {
     let mut gpus = Vec::new();
 

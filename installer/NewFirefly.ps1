@@ -8,6 +8,7 @@
     Supported devices:
     - Waveshare RP2040-Matrix: 5x5 RGB LED matrix (CircuitPython)
     - ESP8266 NodeMCU + OLED: 128x64 SSD1306 display (MicroPython)
+    - ESP32 T-Display: 135x240 ST7789 TFT (MicroPython) [FIREFLY-0003]
 
     Auto-detects connected hardware and applies appropriate firmware.
 
@@ -18,7 +19,7 @@
     .\NewFirefly.ps1
 
 .NOTES
-    Requires: Windows 10/11, Python (for ESP8266), Internet connection
+    Requires: Windows 10/11, Python (for ESP8266/ESP32), Internet connection
     Author: Zen Garden Team
 #>
 
@@ -55,6 +56,18 @@ $script:Config = @{
             @{Local="micropython\firefly_oled.mpy"; Remote="firefly_oled.mpy"}
             @{Local="micropython\main.py"; Remote="main.py"}
             @{Local="etc\esp8266\profont_10.mpy"; Remote="profont_10.mpy"}
+        )
+    }
+
+    # FIREFLY-0003: ESP32 T-Display (TENSTAR / LilyGO TTGO)
+    ESP32 = @{
+        # MicroPython v1.20.0 firmware with st7789 C driver + vga1_8x8 font (russhughes build)
+        # Pre-compiled specifically for T-Display ESP32 (135x240, correct SPI pinout)
+        MicroPythonUrl = "https://raw.githubusercontent.com/russhughes/st7789_mpy/master/firmware/T-DISPLAY-ESP32/firmware.bin"
+        Resources      = @(
+            @{Local="micropython\tdisplay\boot.py"; Remote="boot.py"}
+            @{Local="micropython\tdisplay\diorama.py"; Remote="diorama.py"}
+            @{Local="micropython\tdisplay\main.py"; Remote="main.py"}
         )
     }
 }
@@ -152,8 +165,11 @@ function Get-ConnectedDevices {
 
         # VID/PID takes priority; fall back to friendly-name heuristics.
         if ($vendorId -eq "2E8A" -or $vendorId -eq "239A") { $type = "RP2040" }
+        # FIREFLY-0003: CH9102 (PID 55D4) = ESP32 T-Display, CH340 (PID 7523) = ESP8266
+        elseif ($vendorId -eq "1A86" -and $productId -eq "55D4") { $type = "ESP32" }
         elseif ($vendorId -eq "1A86" -and $productId -eq "7523") { $type = "ESP8266" }
         elseif ($p.Name -match 'RP2|CircuitPython|Board CDC') { $type = "RP2040" }
+        elseif ($p.Name -match 'CH9102') { $type = "ESP32" }
         elseif ($p.Name -match 'CH340|CH34') { $type = "ESP8266" }
 
         if ($type -and $com) {
@@ -690,6 +706,120 @@ function Invoke-ESP8266Handler {
 }
 #endregion
 
+#region ESP32 T-Display Handler (FIREFLY-0003)
+function Install-ESP32Runtime {
+    param([string]$Port)
+    Initialize-Cache
+
+    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+
+    # Ensure esptool is available
+    $esptoolCheck = & $pythonCmd -m esptool version 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step "Installing esptool..." "..."
+        & $pythonCmd -m pip install esptool --quiet
+    }
+
+    # Download ESP32 MicroPython firmware with st7789 driver
+    $fwPath = Join-Path $script:Config.CacheDir "micropython-esp32-st7789.bin"
+    if (-not (Test-Path $fwPath) -or (Get-Item $fwPath).Length -lt 500KB) {
+        Write-Step "Downloading ESP32 MicroPython + st7789..." "..."
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $script:Config.ESP32.MicroPythonUrl -OutFile $fwPath -UseBasicParsing
+    } else {
+        Write-Step "ESP32 MicroPython found in cache" "OK"
+    }
+
+    # Erase flash
+    Write-Step "Erasing ESP32 flash..." "..."
+    & $pythonCmd -m esptool --chip esp32 --port $Port erase_flash 2>&1 | Out-Null
+    Start-Sleep -Seconds 2
+
+    # Flash firmware
+    Write-Step "Flashing ESP32 MicroPython..." "..."
+    & $pythonCmd -m esptool --chip esp32 --port $Port --baud 460800 write_flash -z 0x1000 $fwPath 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step "Flash failed" "FAIL"
+        return
+    }
+    Write-Step "ESP32 MicroPython flashed" "OK"
+}
+
+function Install-ESP32Resources {
+    param([string]$Port)
+
+    # Ensure mpremote is available
+    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    $mpCheck = & $pythonCmd -m mpremote version 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step "Installing mpremote..." "..."
+        & $pythonCmd -m pip install mpremote --quiet
+    }
+
+    $firmwareDir = $script:Config.FirmwareDir
+    foreach ($res in $script:Config.ESP32.Resources) {
+        $localPath = Join-Path $firmwareDir $res.Local
+        $remoteName = $res.Remote
+
+        if (-not (Test-Path $localPath)) {
+            Write-Step "Missing: $localPath" "FAIL"
+            continue
+        }
+
+        # Strip UTF-8 BOM if present — MicroPython cannot parse files with BOM
+        $fileBytes = [System.IO.File]::ReadAllBytes($localPath)
+        if ($fileBytes.Length -ge 3 -and $fileBytes[0] -eq 0xEF -and $fileBytes[1] -eq 0xBB -and $fileBytes[2] -eq 0xBF) {
+            $uploadPath = Join-Path $script:Config.CacheDir $remoteName
+            [System.IO.File]::WriteAllBytes($uploadPath, $fileBytes[3..($fileBytes.Length - 1)])
+        } else {
+            $uploadPath = $localPath
+        }
+
+        Write-Step "Uploading $remoteName..." "..."
+        & $pythonCmd -m mpremote connect $Port cp $uploadPath ":$remoteName" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Step "Uploaded $remoteName" "OK"
+        } else {
+            Write-Step "Failed to upload $remoteName" "FAIL"
+        }
+    }
+}
+
+function Invoke-ESP32Handler {
+    param($Device)
+    Write-Step "Handling ESP32 T-Display..." "..."
+
+    $port = $Device["ComPort"]
+    if (-not $port) {
+        Write-Step "No COM port found" "FAIL"
+        return
+    }
+
+    Write-Step "Erasing and flashing MicroPython..." "..."
+    Install-ESP32Runtime -Port $port
+    Write-Step "Waiting for reboot..." "WAIT"
+    Start-Sleep -Seconds 5
+
+    Install-ESP32Resources -Port $port
+
+    # Reset to start firmware
+    Write-Step "Starting firmware..." "..."
+    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    & $pythonCmd -m mpremote connect $Port reset 2>&1 | Out-Null
+    Start-Sleep -Seconds 5
+
+    Write-Panel -Title "ESP32 T-Display Firefly Ready!" -Color "Green" -Lines @(
+        "Installation complete."
+        ""
+        "Device: ESP32 T-Display (FIREFLY-0003)"
+        "Port: $port"
+        "Display: ST7789 135x240 TFT"
+        ""
+        "Diorama firmware is running!"
+    )
+}
+#endregion
+
 #region Main
 # Single-device flow: detect, pick first supported device, install/test.
 function Invoke-DeviceHandler {
@@ -698,6 +828,7 @@ function Invoke-DeviceHandler {
     switch ($Device["Type"]) {
         "RP2040"  { Invoke-RP2040Handler -Device $Device }
         "ESP8266" { Invoke-ESP8266Handler -Device $Device }
+        "ESP32"   { Invoke-ESP32Handler -Device $Device }
         default   { Write-Step "Unknown device type: $($Device['Type'])" "FAIL" }
     }
 }
@@ -715,6 +846,7 @@ function Main {
             ""
             "1. RP2040-Matrix: Hold BOOT + plug USB"
             "2. ESP8266-OLED: Just plug in USB"
+            "3. ESP32 T-Display: Just plug in USB"
         )
         return
     }

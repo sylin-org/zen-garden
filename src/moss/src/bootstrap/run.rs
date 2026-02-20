@@ -632,6 +632,8 @@ pub async fn run(
         // Cached metrics - populated by background tasks, read-only for endpoints
         candidates_cache: Arc::new(RwLock::new(Vec::new())),
         network_metrics_cache: Arc::new(RwLock::new(None)),
+        // FIREFLY-0003: GPU utilization cache
+        gpu_utilization: Arc::new(RwLock::new(None)),
         // Notification registry - subsystems set/clear, chirp compiles to tags
         notifications: Arc::new(garden_common::NotificationRegistry::new()),
         // Log broadcast channel (for live SSE log streaming)

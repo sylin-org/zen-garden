@@ -3,6 +3,7 @@
 //! Subscribes to Moss presence stream and updates animation context.
 //! For RP2040 Matrix: Events override the baseline animation temporarily.
 //! For ESP8266 OLED: Events send direct display commands.
+//! For ESP32 T-Display: Events send compact serial commands (FIREFLY-0003).
 
 use std::sync::Arc;
 
@@ -14,35 +15,69 @@ use tokio::sync::RwLock;
 use crate::animation::{AnimationContext, Health, Override};
 use crate::oled;
 use crate::serial::{FireflyConnection, FireflyDeviceType};
+use crate::tdisplay;
 
 /// Presence snapshot from Moss
 #[derive(Debug, Deserialize)]
-struct PresenceSnapshot {
-    stone: StoneState,
+pub(crate) struct PresenceSnapshot {
+    pub(crate) stone: StoneState,
     #[serde(default)]
-    offerings: Vec<OfferingState>,
+    pub(crate) offerings: Vec<OfferingState>,
 }
 
 #[derive(Debug, Deserialize)]
-struct StoneState {
+pub(crate) struct StoneState {
     #[serde(default)]
-    name: String,
+    pub(crate) name: String,
     #[serde(default)]
-    health: String,
+    pub(crate) health: String,
     #[serde(default)]
-    cpu_percent: f64,
+    pub(crate) cpu_percent: f64,
     #[serde(default)]
-    memory_percent: f64,
+    pub(crate) memory_percent: f64,
     #[serde(default)]
-    uptime_seconds: u64,
+    pub(crate) disk_percent: f64,
+    #[serde(default)]
+    pub(crate) uptime_seconds: u64,
+    // FIREFLY-0003: Extended fields for T-Display diorama
+    #[serde(default)]
+    pub(crate) io_percent: f64,
+    #[serde(default)]
+    pub(crate) gpu_percent: f64,
+    #[serde(default)]
+    pub(crate) gpu_active: bool,
+    #[serde(default)]
+    pub(crate) has_gpu: bool,
+    #[serde(default)]
+    pub(crate) is_lantern: bool,
+    #[serde(default)]
+    pub(crate) has_cricket: bool,
+    #[serde(default)]
+    pub(crate) pond_active: bool,
+    #[serde(default)]
+    pub(crate) hour: f64,
+    #[serde(default)]
+    pub(crate) net_rx_bytes_per_sec: u64,
+    #[serde(default)]
+    pub(crate) net_tx_bytes_per_sec: u64,
+    #[serde(default)]
+    pub(crate) seed_bank: Option<SeedBankSummary>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OfferingState {
+pub(crate) struct SeedBankSummary {
+    pub(crate) name: String,
+    pub(crate) used_gb: u64,
+    pub(crate) total_gb: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OfferingState {
+    pub(crate) name: String,
     #[allow(dead_code)]
-    name: String,
-    #[allow(dead_code)]
-    status: String,
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) health: String,
 }
 
 /// Service event payload
@@ -191,6 +226,11 @@ impl EventHandler for FireflyEventHandler {
                         self.send_oled_snapshot(&snapshot);
                     }
 
+                    // For T-Display: Send full JSON push (FIREFLY-0003)
+                    if device_type == FireflyDeviceType::Esp32TDisplay {
+                        let _ = tdisplay::send_snapshot(&self.connection, &snapshot);
+                    }
+
                     // For Matrix: Update animation context
                     let mut ctx = self.context.write().await;
 
@@ -243,6 +283,11 @@ impl EventHandler for FireflyEventHandler {
                         FireflyDeviceType::Esp8266Oled => {
                             self.send_oled_wipe_in(&evt.service.to_uppercase(), "STARTED");
                         }
+                        FireflyDeviceType::Esp32TDisplay => {
+                            let _ = self.connection.with_device(|s| {
+                                s.tdisplay_service_started(&evt.service, "healthy")
+                            });
+                        }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;
                             ctx.has_services = true;
@@ -261,6 +306,11 @@ impl EventHandler for FireflyEventHandler {
                         FireflyDeviceType::Esp8266Oled => {
                             self.send_oled_wipe_out(&evt.service.to_uppercase(), "STOPPED");
                         }
+                        FireflyDeviceType::Esp32TDisplay => {
+                            let _ = self.connection.with_device(|s| {
+                                s.tdisplay_service_stopped(&evt.service)
+                            });
+                        }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;
                             ctx.trigger_override(Override::ServiceStopped);
@@ -277,6 +327,13 @@ impl EventHandler for FireflyEventHandler {
                     // For OLED: Send health command
                     if device_type == FireflyDeviceType::Esp8266Oled {
                         self.send_oled_health(&evt.health);
+                    }
+
+                    // For T-Display: Send health command (FIREFLY-0003)
+                    if device_type == FireflyDeviceType::Esp32TDisplay {
+                        let _ = self.connection.with_device(|s| {
+                            s.tdisplay_health(&evt.health)
+                        });
                     }
 
                     let mut ctx = self.context.write().await;
@@ -307,6 +364,20 @@ impl EventHandler for FireflyEventHandler {
                         );
                     }
 
+                    // For T-Display: Send incremental load update (FIREFLY-0003)
+                    if device_type == FireflyDeviceType::Esp32TDisplay {
+                        let _ = self.connection.with_device(|s| {
+                            s.tdisplay_load(
+                                evt.cpu_percent as u8,
+                                evt.memory_percent as u8,
+                                evt.disk_percent as u8,
+                                evt.io_percent as u8,
+                                evt.gpu_percent as u8,
+                                evt.gpu_active,
+                            )
+                        });
+                    }
+
                     let mut ctx = self.context.write().await;
                     ctx.load = ((evt.cpu_percent + evt.memory_percent) / 200.0) as f32;
                     ctx.load = ctx.load.clamp(0.0, 1.0);
@@ -317,12 +388,18 @@ impl EventHandler for FireflyEventHandler {
 
             // Stone tended - sparkle override / pulse
             event_types::STONE_TENDED => {
-                if let Ok(_evt) = serde_json::from_str::<TendedEvent>(&event.data) {
+                if let Ok(evt) = serde_json::from_str::<TendedEvent>(&event.data) {
                     tracing::info!("Stone tended - showing appreciation");
 
                     match device_type {
                         FireflyDeviceType::Esp8266Oled => {
                             self.send_oled_wipe_in("ZEN GARDEN", "TENDING");
+                        }
+                        FireflyDeviceType::Esp32TDisplay => {
+                            let by = evt.by.as_deref().unwrap_or("unknown");
+                            let _ = self.connection.with_device(|s| {
+                                s.tdisplay_tended(by, "")
+                            });
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;
@@ -337,6 +414,10 @@ impl EventHandler for FireflyEventHandler {
                 #[derive(Deserialize)]
                 struct StorageEvent {
                     name: String,
+                    #[serde(default)]
+                    used_gb: u64,
+                    #[serde(default)]
+                    total_gb: u64,
                 }
                 if let Ok(evt) = serde_json::from_str::<StorageEvent>(&event.data) {
                     tracing::info!(name = %evt.name, "Seed bank detected");
@@ -344,6 +425,11 @@ impl EventHandler for FireflyEventHandler {
                     match device_type {
                         FireflyDeviceType::Esp8266Oled => {
                             self.send_oled_wipe_in("SEED BANK", "CONNECTED");
+                        }
+                        FireflyDeviceType::Esp32TDisplay => {
+                            let _ = self.connection.with_device(|s| {
+                                s.tdisplay_seed_bank_detected(&evt.name, evt.used_gb, evt.total_gb)
+                            });
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;
@@ -366,6 +452,11 @@ impl EventHandler for FireflyEventHandler {
                     match device_type {
                         FireflyDeviceType::Esp8266Oled => {
                             self.send_oled_wipe_out("SEED BANK", "REMOVED");
+                        }
+                        FireflyDeviceType::Esp32TDisplay => {
+                            let _ = self.connection.with_device(|s| {
+                                s.tdisplay_seed_bank_removed()
+                            });
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;

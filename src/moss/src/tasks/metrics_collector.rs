@@ -17,7 +17,9 @@ use tokio::time::interval;
 use crate::infra::storage::SeedBankRegistry;
 use crate::AppState;
 use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_interval};
-use garden_common::metrics::system::{get_fast_metrics, get_network_metrics, get_storage_metrics};
+use garden_common::metrics::system::{
+    get_fast_metrics, get_gpu_utilization, get_network_metrics, get_storage_metrics,
+};
 #[cfg(target_os = "linux")]
 use garden_common::storage::StorageDetectedInfo;
 #[cfg(target_os = "linux")]
@@ -143,6 +145,15 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     let network = get_network_metrics();
                     let mut cache = state.network_metrics_cache.write().await;
                     *cache = Some(network);
+                }
+
+                // FIREFLY-0003: Update GPU utilization (fast - shell out to nvidia-smi/rocm-smi)
+                {
+                    let gpu_util = tokio::task::spawn_blocking(get_gpu_utilization)
+                        .await
+                        .unwrap_or(None);
+                    let mut cache = state.gpu_utilization.write().await;
+                    *cache = gpu_util;
                 }
             }
 

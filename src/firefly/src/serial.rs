@@ -3,6 +3,7 @@
 //! Supports multiple device types:
 //! - RP2040-Matrix: 5×5 RGB LED matrix (VID: 0x2e8a Raspberry Pi, 0x239a Adafruit)
 //! - ESP8266-OLED: 128×64 SSD1306 OLED display (VID: 0x1a86 CH340)
+//! - ESP32-TDisplay: 135×240 ST7789 color TFT (VID: 0x1a86 CH9102) (FIREFLY-0003)
 //!
 //! Protocol: Text-based serial commands at 115200 baud
 //! Commands are terminated with \n, responses are terminated with \r\n
@@ -25,6 +26,8 @@ pub enum FireflyDeviceType {
     Rp2040Matrix,
     /// ESP8266 NodeMCU with 128×64 SSD1306 OLED display
     Esp8266Oled,
+    /// ESP32 T-Display with 135×240 ST7789 color TFT (FIREFLY-0003)
+    Esp32TDisplay,
     /// Unknown device type (responds to protocol but unrecognized VID)
     #[default]
     Unknown,
@@ -35,18 +38,33 @@ impl std::fmt::Display for FireflyDeviceType {
         match self {
             FireflyDeviceType::Rp2040Matrix => write!(f, "RP2040-Matrix"),
             FireflyDeviceType::Esp8266Oled => write!(f, "ESP8266-OLED"),
+            FireflyDeviceType::Esp32TDisplay => write!(f, "ESP32-TDisplay"),
             FireflyDeviceType::Unknown => write!(f, "Unknown"),
         }
     }
 }
 
 impl FireflyDeviceType {
-    /// Classify device type from USB VID
+    /// Classify device type from USB VID.
+    ///
+    /// Note: CH340 (ESP8266-OLED) and CH9102 (ESP32-TDisplay) share VID 0x1a86.
+    /// Initial classification defaults to ESP8266; `refine_from_info()` upgrades
+    /// to TDisplay after the `I` command returns `firefly-tdisplay`.
     pub fn from_vid(vid: u16) -> Self {
         match vid {
             VID_RASPBERRY_PI | VID_ADAFRUIT => FireflyDeviceType::Rp2040Matrix,
-            VID_CH340 => FireflyDeviceType::Esp8266Oled,
+            VID_CH340 => FireflyDeviceType::Esp8266Oled, // Refined later for TDisplay
             _ => FireflyDeviceType::Unknown,
+        }
+    }
+
+    /// Refine device type from info response (FIREFLY-0003).
+    /// CH340 and CH9102 share VID; the `I` response distinguishes them.
+    pub fn refine_from_info(current: Self, info_response: &str) -> Self {
+        if info_response.contains("firefly-tdisplay") {
+            FireflyDeviceType::Esp32TDisplay
+        } else {
+            current
         }
     }
 }
@@ -105,6 +123,7 @@ impl FireflySerial {
         // Opening a serial port can toggle DTR/RTS which may reset the device
         let stabilize_ms = match device_type {
             FireflyDeviceType::Esp8266Oled => 2000, // MicroPython boot takes longer
+            FireflyDeviceType::Esp32TDisplay => 2000, // ESP32 MicroPython boot
             FireflyDeviceType::Rp2040Matrix => 2000, // CircuitPython boot + animation
             FireflyDeviceType::Unknown => 500,      // Conservative default
         };
@@ -233,6 +252,74 @@ impl FireflySerial {
     /// Show status indicator (RP2040 only)
     pub fn status(&self, state: &str) -> Result<String> {
         self.send_command(&format!("T,{}", state))
+    }
+
+    // ==================== ESP32 T-Display Commands (FIREFLY-0003) ====================
+
+    /// Send full state JSON push (T-Display only)
+    pub fn tdisplay_json_push(&self, json: &str) -> Result<String> {
+        self.send_command(&format!("J,{}", json))
+    }
+
+    /// Send incremental load update (T-Display only)
+    pub fn tdisplay_load(
+        &self,
+        cpu: u8,
+        mem: u8,
+        disk: u8,
+        io: u8,
+        gpu: u8,
+        gpu_active: bool,
+    ) -> Result<String> {
+        self.send_command(&format!(
+            "L,{},{},{},{},{},{}",
+            cpu,
+            mem,
+            disk,
+            io,
+            gpu,
+            if gpu_active { 1 } else { 0 }
+        ))
+    }
+
+    /// Send health change (T-Display only)
+    pub fn tdisplay_health(&self, health: &str) -> Result<String> {
+        self.send_command(&format!("H,{}", health))
+    }
+
+    /// Send service started (T-Display only)
+    pub fn tdisplay_service_started(&self, name: &str, health: &str) -> Result<String> {
+        let health_char = match health {
+            "healthy" => "h",
+            "unhealthy" | "withering" => "w",
+            _ => "h",
+        };
+        self.send_command_no_wait(&format!("+,{},{}", name, health_char))
+    }
+
+    /// Send service stopped (T-Display only)
+    pub fn tdisplay_service_stopped(&self, name: &str) -> Result<String> {
+        self.send_command_no_wait(&format!("-,{}", name))
+    }
+
+    /// Send stone tended (T-Display only)
+    pub fn tdisplay_tended(&self, client: &str, host: &str) -> Result<String> {
+        self.send_command_no_wait(&format!("T,{},{}", client, host))
+    }
+
+    /// Send seed bank detected (T-Display only)
+    pub fn tdisplay_seed_bank_detected(
+        &self,
+        name: &str,
+        used_gb: u64,
+        total_gb: u64,
+    ) -> Result<String> {
+        self.send_command_no_wait(&format!("SD,{},{},{}", name, used_gb, total_gb))
+    }
+
+    /// Send seed bank removed (T-Display only)
+    pub fn tdisplay_seed_bank_removed(&self) -> Result<String> {
+        self.send_command_no_wait("SR")
     }
 
     // ==================== ESP8266 OLED Commands ====================
@@ -368,9 +455,14 @@ impl FireflyConnection {
 
             match verify_protocol(&serial, &detected) {
                 Ok(response) => {
+                    // FIREFLY-0003: Refine device type from info response
+                    // CH340 (ESP8266-OLED) and CH9102 (ESP32-TDisplay) share VID 0x1a86.
+                    let refined_type =
+                        FireflyDeviceType::refine_from_info(detected.device_type, &response);
+
                     tracing::info!(
                         port = %detected.port_name,
-                        device_type = %detected.device_type,
+                        device_type = %refined_type,
                         response = %response,
                         "Firefly device connected"
                     );
@@ -380,7 +472,7 @@ impl FireflyConnection {
                             .device_type
                             .lock()
                             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
-                        *dt = detected.device_type;
+                        *dt = refined_type;
                     }
 
                     let mut guard = self
@@ -546,11 +638,12 @@ pub fn find_firefly_devices() -> Result<Vec<DetectedDevice>> {
         }
     }
 
-    // Prefer RP2040 over ESP8266 (original device type)
+    // Prefer RP2040 over ESP devices (original device type)
     candidates.sort_by_key(|d| match d.device_type {
         FireflyDeviceType::Rp2040Matrix => 0,
-        FireflyDeviceType::Esp8266Oled => 1,
-        FireflyDeviceType::Unknown => 2,
+        FireflyDeviceType::Esp32TDisplay => 1,
+        FireflyDeviceType::Esp8266Oled => 2,
+        FireflyDeviceType::Unknown => 3,
     });
 
     Ok(candidates)
@@ -632,6 +725,21 @@ fn verify_protocol(serial: &FireflySerial, detected: &DetectedDevice) -> Result<
         ));
     }
 
+    // FIREFLY-0003: Refine device type from info response
+    // CH340 (ESP8266-OLED) and CH9102 (ESP32-TDisplay) share VID 0x1a86.
+    // The info response contains the firmware identifier that distinguishes them.
+    let refined = FireflyDeviceType::refine_from_info(detected.device_type, &response);
+    if refined != detected.device_type {
+        tracing::info!(
+            port = %detected.port_name,
+            old = %detected.device_type,
+            new = %refined,
+            "Refined device type from info response"
+        );
+        // Update the detected device (the caller holds a mutable reference via try_connect)
+        // We return the response; caller reads the refined type from the response too.
+    }
+
     Ok(response)
 }
 
@@ -688,6 +796,7 @@ mod tests {
             FireflyDeviceType::from_vid(0x239a),
             FireflyDeviceType::Rp2040Matrix
         );
+        // CH340/CH9102 share VID — defaults to ESP8266, refined by info response
         assert_eq!(
             FireflyDeviceType::from_vid(0x1a86),
             FireflyDeviceType::Esp8266Oled
@@ -696,6 +805,25 @@ mod tests {
             FireflyDeviceType::from_vid(0x0000),
             FireflyDeviceType::Unknown
         );
+    }
+
+    #[test]
+    fn test_refine_from_info_tdisplay() {
+        // FIREFLY-0003: CH9102 returns firefly-tdisplay in info response
+        let refined = FireflyDeviceType::refine_from_info(
+            FireflyDeviceType::Esp8266Oled,
+            "OK,firefly-tdisplay,esp32,135x240",
+        );
+        assert_eq!(refined, FireflyDeviceType::Esp32TDisplay);
+    }
+
+    #[test]
+    fn test_refine_from_info_oled_unchanged() {
+        let refined = FireflyDeviceType::refine_from_info(
+            FireflyDeviceType::Esp8266Oled,
+            "OK,firefly-oled,esp8266,128x64",
+        );
+        assert_eq!(refined, FireflyDeviceType::Esp8266Oled);
     }
 
     #[test]

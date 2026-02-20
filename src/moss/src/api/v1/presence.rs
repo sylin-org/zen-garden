@@ -10,6 +10,7 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
+use chrono::Timelike;
 use futures_util::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
@@ -19,7 +20,8 @@ use crate::domain::StoneEvent;
 use crate::infra::SseEvent;
 use crate::AppState;
 use garden_common::presence::{
-    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneState,
+    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot,
+    SeedBankSummary, StoneState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +157,52 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
         }
     };
 
+    // FIREFLY-0003: GPU utilization
+    let gpu_percent = {
+        let gpu = state.gpu_utilization.read().await;
+        gpu.unwrap_or(0.0) as f64
+    };
+    let gpu_active = gpu_percent > 10.0;
+
+    // FIREFLY-0003: Network rates
+    let (net_rx, net_tx) = {
+        let network = state.network_metrics_cache.read().await;
+        network
+            .as_ref()
+            .map(|n| (n.rx_bytes_per_sec.unwrap_or(0), n.tx_bytes_per_sec.unwrap_or(0)))
+            .unwrap_or((0, 0))
+    };
+
+    // FIREFLY-0003: Capability flags
+    let has_gpu = {
+        let caps = state.capabilities.read().await;
+        caps.as_ref()
+            .map(|c| !c.hardware.gpus.is_empty())
+            .unwrap_or(false)
+    };
+
+    let has_cricket = state
+        .companion_registry
+        .get("cricket")
+        .await
+        .is_some();
+
+    // FIREFLY-0003: Seed bank summary (only if one is plugged in)
+    let seed_bank = {
+        let banks = state.seed_banks.read().await;
+        banks.values().next().map(|b| SeedBankSummary {
+            name: b.name.clone(),
+            used_gb: b.storage.used_bytes / 1_073_741_824,
+            total_gb: b.storage.capacity_bytes / 1_073_741_824,
+        })
+    };
+
+    // FIREFLY-0003: Local time as decimal hour
+    let hour = {
+        let now = chrono::Local::now();
+        now.hour() as f64 + (now.minute() as f64 / 60.0)
+    };
+
     let health = compute_health(cpu_percent, memory_percent);
 
     PresenceSnapshot {
@@ -165,7 +213,20 @@ async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             memory_percent,
             disk_percent,
             uptime_seconds: uptime,
-            pond_active: false, // Pond security not yet implemented
+            pond_active: state
+                .pond_active
+                .load(std::sync::atomic::Ordering::Relaxed),
+            // FIREFLY-0003 fields
+            io_percent: 0.0, // Placeholder until I/O collection is implemented
+            gpu_percent,
+            net_rx_bytes_per_sec: net_rx,
+            net_tx_bytes_per_sec: net_tx,
+            has_gpu,
+            gpu_active,
+            is_lantern: false, // TODO: detect from offerings
+            has_cricket,
+            hour,
+            seed_bank,
         },
         offerings,
         timestamp: chrono::Utc::now(),

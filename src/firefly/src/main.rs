@@ -16,6 +16,7 @@ mod events;
 mod handler;
 mod oled;
 mod serial;
+mod tdisplay;
 
 use animation::{start_animation, AnimationContext};
 use events::FireflyEventHandler;
@@ -241,7 +242,9 @@ async fn main() -> Result<()> {
                         tracing::info!("Firefly device reconnected");
                         // Clear display on reconnect for clean slate
                         let _ = conn_for_retry.with_device(|serial| serial.clear());
-                        if conn_for_retry.device_type() == FireflyDeviceType::Esp8266Oled {
+
+                        let device_type = conn_for_retry.device_type();
+                        if device_type == FireflyDeviceType::Esp8266Oled {
                             let (stone_name, health, cpu, memory, uptime) = {
                                 let ctx = ctx_for_retry.read().await;
                                 (
@@ -264,6 +267,36 @@ async fn main() -> Result<()> {
                             } else {
                                 tracing::debug!(
                                     "Firefly reconnected but no cached stone name available"
+                                );
+                            }
+                        } else if device_type == FireflyDeviceType::Esp32TDisplay {
+                            // T-Display: Send cached state as compact JSON
+                            let ctx = ctx_for_retry.read().await;
+                            if let Some(name) = &ctx.stone_name {
+                                let json = serde_json::json!({
+                                    "n": name,
+                                    "h": ctx.health_label,
+                                    "c": ctx.cpu_percent,
+                                    "m": ctx.memory_percent,
+                                    "d": 0,
+                                    "i": 0,
+                                    "g": 0,
+                                    "ga": 0,
+                                    "up": ctx.uptime_seconds,
+                                    "sv": ctx.offering_count,
+                                    "hg": 0,
+                                    "il": 0,
+                                    "hc": 0,
+                                    "pa": 0,
+                                    "hr": 12,
+                                });
+                                let json_str = json.to_string();
+                                let _ = conn_for_retry.with_device(|serial| {
+                                    serial.tdisplay_json_push(&json_str)
+                                });
+                            } else {
+                                tracing::debug!(
+                                    "T-Display reconnected but no cached stone name available"
                                 );
                             }
                         }
@@ -373,6 +406,7 @@ fn list_ports() -> Result<()> {
                 let device_tag = match device_type {
                     FireflyDeviceType::Rp2040Matrix => " [RP2040-Matrix]",
                     FireflyDeviceType::Esp8266Oled => " [ESP8266-OLED]",
+                    FireflyDeviceType::Esp32TDisplay => " [ESP32-TDisplay]",
                     FireflyDeviceType::Unknown => "",
                 };
 
@@ -423,6 +457,17 @@ async fn test_mode(port_override: Option<String>) -> Result<()> {
             ("BLINK,2", "Blink animation"),
             ("PULSE,2", "Pulse animation"),
             ("R", "Refresh display"),
+        ],
+        FireflyDeviceType::Esp32TDisplay => vec![
+            ("I", "Get device info"),
+            ("C", "Clear display"),
+            ("J,{\"n\":\"STONE-TEST\",\"h\":\"thriving\",\"c\":42,\"m\":65,\"d\":30,\"i\":5,\"g\":0,\"ga\":0,\"up\":3600,\"sv\":2,\"hg\":0,\"il\":0,\"hc\":0,\"pa\":0,\"hr\":14}", "JSON push snapshot"),
+            ("L,55,70,40,10,80,1", "Load update"),
+            ("H,withering", "Health: withering"),
+            ("+,lantern,h", "Service started"),
+            ("-,lantern", "Service stopped"),
+            ("T,admin,local", "Stone tended"),
+            ("H,thriving", "Health: thriving"),
         ],
         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => vec![
             ("I", "Get device info"),
@@ -484,6 +529,15 @@ fn probe_device(port_override: Option<String>) -> Result<()> {
             match detected.device_type {
                 FireflyDeviceType::Esp8266Oled => {
                     // OK,firefly-oled,esp8266,128x64,...
+                    if parts.len() >= 4 {
+                        println!();
+                        println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
+                        println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
+                        println!("  Display:  {}", parts.get(3).unwrap_or(&"unknown"));
+                    }
+                }
+                FireflyDeviceType::Esp32TDisplay => {
+                    // OK,firefly-tdisplay,esp32,135x240,...
                     if parts.len() >= 4 {
                         println!();
                         println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));

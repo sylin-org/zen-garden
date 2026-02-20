@@ -331,7 +331,10 @@ pub async fn route(
                     passphrase: opt(sub, "passphrase"),
                     totp: opt(sub, "totp"),
                 },
-                Some(("remove", _)) => PondActionType::Remove,
+                Some(("drain", _)) => PondActionType::Remove,
+                Some(("remove", sub)) => PondActionType::Untrust {
+                    stone_name: req(sub, "stone")?,
+                },
                 Some(("untrust", sub)) => PondActionType::Untrust {
                     stone_name: req(sub, "stone")?,
                 },
@@ -342,7 +345,7 @@ pub async fn route(
                     name: opt(sub, "name"),
                 },
                 _ => anyhow::bail!(
-                    "Usage: garden-rake pond <init|status|invite|join|enroll|trust|unlock|remove|untrust|promote|rename>"
+                    "Usage: garden-rake pond <init|status|invite|join|enroll|trust|unlock|drain|remove|untrust|promote|rename>"
                 ),
             };
             Inv::remote(

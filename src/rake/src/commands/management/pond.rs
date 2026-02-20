@@ -6,7 +6,8 @@
 //! - invite: Generate TOTP invitation for enrollment
 //! - join: Join pond with TOTP code
 //! - unlock: Unlock pond CA after restart
-//! - remove: Drain pond (destroy CA)
+//! - drain: Drain pond (destroy CA)
+//! - remove: Remove a stone from the pond (alias for untrust)
 //! - untrust: Revoke a stone from pond
 //! - promote: Promote this stone to standby CA
 //! - rename: Rename the pond (decorative)

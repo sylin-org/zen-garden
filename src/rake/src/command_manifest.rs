@@ -1513,7 +1513,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         description: "Manage pond security network",
         long_description: "Manage multi-stone pond security network.\n\n\
             Pond security enables encrypted trust relationships between stones.\n\
-            Subcommands: init, status, invite, join, remove, untrust.\n\
+            Subcommands: init, status, invite, join, drain, remove, untrust.\n\
             Phase 3b feature - implementation pending.",
         remote_capable: true,
         args: vec![at_arg_global()],
@@ -1583,6 +1583,12 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                     ArgSpec::option("totp", "TOTP code for two-factor unlock")
                         .zen("--totp <code>"),
                 ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "drain",
+                description: "Drain pond (destroy CA and all certificates)",
+                args: vec![],
                 subcommands: vec![],
             },
             SubDef {
@@ -1742,11 +1748,11 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         name: "lift",
         zen_name: "lift",
         zen_aliases: &[],
-        normative_name: Some("pond untrust / pond remove"),
+        normative_name: Some("pond untrust / pond drain"),
         category: CommandCategory::Pond,
         description: "Remove stone from pond",
-        long_description: "Remove a stone from pond or remove entire pond from stone.\n\n\
-            Can remove specific stone (untrust) or remove keystone (destroy pond).\n\
+        long_description: "Remove a stone from pond or drain entire pond.\n\n\
+            Can remove specific stone (untrust) or drain keystone (destroy pond).\n\
             Phase 3b feature - implementation pending.",
         remote_capable: true,
         args: vec![
@@ -1765,9 +1771,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 normative_syntax: Some("garden-rake pond untrust stone-02"),
             },
             CommandExample {
-                description: "Remove pond from stone (leave pond)",
+                description: "Drain pond (destroy CA)",
                 zen_syntax: Some("garden-rake lift keystone"),
-                normative_syntax: Some("garden-rake pond remove"),
+                normative_syntax: Some("garden-rake pond drain"),
             },
             CommandExample {
                 description: "Untrust stone from specific keystone",

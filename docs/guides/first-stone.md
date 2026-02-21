@@ -97,18 +97,13 @@
 # Navigate to zen-garden installer directory
 cd zen-garden\installer
 
-# Create bootable Stone USB
-.\NewStone-linux-x64.ps1 -UsbDrive "E:" -StoneName "blue-stone" -Offering mongodb,redis
-
-# Parameters:
-#   -UsbDrive      : Drive letter of USB (will be formatted)
-#   -StoneName     : Hostname for Stone (lowercase, hyphens allowed)
-#   -Offering      : Optional pre-install services (comma-separated)
+# Create bootable Stone USB - run as admin
+.\NewStone-linux-x64.ps1 
 ```
 
 **What the script does:**
 
-1. Downloads Debian 12 net-install ISO
+1. Downloads Debian 13 net-install ISO
 2. Creates preseed configuration (automated installation)
 3. Injects garden-moss Debian package
 4. Configures systemd service (auto-start on boot)

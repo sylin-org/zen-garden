@@ -975,14 +975,14 @@ async fn refresh_component(
     if normalized_component == "moss" {
         println!("\u{23f3} Moss is restarting...");
         println!("   (This may take a few seconds)");
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
         let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
-        for attempt in 1..=5 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        for attempt in 1..=12 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
             match client
                 .get(&health_url)
-                .timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(5))
                 .send()
                 .await
             {
@@ -991,7 +991,7 @@ async fn refresh_component(
                     return Ok(());
                 }
                 _ => {
-                    if attempt < 5 {
+                    if attempt < 12 {
                         print!(".");
                         std::io::Write::flush(&mut std::io::stdout()).ok();
                     }

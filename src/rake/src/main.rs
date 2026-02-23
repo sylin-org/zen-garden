@@ -7,7 +7,7 @@ use garden_common::ui::rendering as ui;
 use garden_rake::cli_build::{
     build_clap_app, count_verbosity, extract_global_flags, normalize_zen_to_clap, AliasIndex,
 };
-use garden_rake::command_manifest::{self, MANIFEST};
+use garden_rake::command_manifest::MANIFEST;
 use garden_rake::commands;
 use garden_rake::enrollment;
 
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
 async fn async_main() -> anyhow::Result<()> {
     // Validate command manifest in debug builds
     #[cfg(debug_assertions)]
-    command_manifest::validate_manifest();
+    garden_rake::command_manifest::validate_manifest();
 
     // Pre-parse for zen syntax (before Clap)
     let raw_args: Vec<String> = std::env::args().skip(1).collect();

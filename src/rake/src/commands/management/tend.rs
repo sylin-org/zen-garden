@@ -59,7 +59,7 @@ impl Command for TendCommand {
                     match ctx
                         .client
                         .get(&health_url)
-                        .timeout(Duration::from_millis(200))
+                        .timeout(Duration::from_secs(5))
                         .send()
                         .await
                     {
@@ -106,7 +106,7 @@ impl Command for TendCommand {
                             match ctx
                                 .client
                                 .get(&health_url)
-                                .timeout(Duration::from_secs(3))
+                                .timeout(Duration::from_secs(5))
                                 .send()
                                 .await
                             {
@@ -207,7 +207,7 @@ impl Command for TendCommand {
                     match ctx
                         .client
                         .get(&health_url)
-                        .timeout(Duration::from_secs(3))
+                        .timeout(Duration::from_secs(8))
                         .send()
                         .await
                     {
@@ -246,7 +246,7 @@ impl Command for TendCommand {
                     match ctx
                         .client
                         .get(&health_url)
-                        .timeout(Duration::from_secs(3))
+                        .timeout(Duration::from_secs(5))
                         .send()
                         .await
                     {

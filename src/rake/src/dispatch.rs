@@ -264,12 +264,12 @@ pub async fn resolve_endpoint(
     }
 }
 
-/// Check if a stone is reachable (quick health check)
+/// Check if a stone is reachable (health check — generous timeout for slow x86 hardware)
 async fn is_stone_reachable(client: &reqwest::Client, endpoint: &str) -> bool {
     let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
     match client
         .get(&health_url)
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(5))
         .send()
         .await
     {
@@ -300,7 +300,7 @@ async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
             let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
             let health_status = if let Ok(health_resp) = client
                 .get(&health_url)
-                .timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(5))
                 .send()
                 .await
             {

@@ -4,6 +4,29 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-22
 
+- Dashboard Models: added per-model request counter, sortable Requests column, and Reset Counters button
+- Dashboard Models: added per-row Remove button to delete a model from all stones
+- Advisor: fall back to disk-size VRAM estimate when `/api/ps` measurement unavailable
+- Added topology advisor: computes optimal model placement + parallelism per GPU (WFD + water-fill)
+- Advisor runs on topology changes (reactive) and every 5 min (periodic), surfaced in dashboard snapshot
+- Orchestrator detects `OLLAMA_NUM_PARALLEL` from each stone's Moss service env and surfaces it in dashboard
+- Added Moss endpoint `GET /api/v1/stone/services/{service}/env` to expose container environment vars
+- Benchmark now records Blocked verdict for Ollama memory/resource 500s instead of generic error
+- Ollama orchestrator now captures response body on HTTP errors instead of discarding it via `.error_for_status()`
+- Enriched `MetricEvent::Error` with model, status_code, and reason fields for better diagnostics
+- **BREAKING**: Replaced `replicable: bool` with `CoordinationMode` enum (`Independent` default, `Elected` opt-in) — stateless services no longer participate in Primary/Dormant election (ADR ORCH-0006)
+- Fixed auto-adoption skipping compatibility check, allowing ollama-cpu on GPU-equipped stones
+
+## 2026-02-21
+
+- Added `has_gpu` and `has_ai_runtime` boolean conditions to compatibility engine — uses same hardware detection as `observe`
+- Replaced fragile `ai_present_any` rule in ollama-cpu manifest with simple `has_gpu: true`
+- Fixed orchestration tick loop ignoring CoordinationMode — Independent offerings with stale state triggered endless elections
+
+## 2026-02-20
+
+- Fixed x86 stone unreachable from rake: HTTP client timeouts too aggressive for slow hardware (200ms–3s → 5–8s)
+- Hardened systemd unit: TimeoutStartSec=300, EXTEND_TIMEOUT_USEC during Docker retries
 - Fixed orchestrator gateway announcing fabricated hostname instead of host's real DNS name
 - Added ADR FIREFLY-0003: T-Display Diorama — presence protocol extensions, GPU/IO metrics, serial protocol, firmware architecture
 - Implemented FIREFLY-0003: ESP32 T-Display Diorama across full stack (presence types, GPU metrics, serial commands, event dispatch, firmware, installer)

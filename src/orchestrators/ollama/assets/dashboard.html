@@ -1135,9 +1135,17 @@ function renderAdvisor(advisor) {
     const kvMb = Math.round(g.vram_kv_reserved / 1048576);
     const headMb = Math.round(g.vram_headroom / 1048576);
     const totalMb = Math.round(g.vram_bytes / 1048576);
-    const usedPct = totalMb > 0 ? Math.round(g.vram_used / g.vram_bytes * 100) : 0;
     const kvPct = totalMb > 0 ? Math.round(g.vram_kv_reserved / g.vram_bytes * 100) : 0;
-    const models = (g.models || []).map(m => `<span class="model-tag">${esc(m)}</span>`).join(' ') || '<span class="muted">none</span>';
+    const mList = g.models || [];
+    const modelTags = mList.map(m => `<span class="model-tag">${esc(m.name)}</span>`).join(' ') || '<span class="muted">none</span>';
+
+    // Per-model VRAM segments with 1px separators
+    const modelSegs = mList.map((m, i) => {
+      const pct = totalMb > 0 ? (m.vram_bytes / g.vram_bytes * 100) : 0;
+      const mMb = Math.round(m.vram_bytes / 1048576);
+      const sep = i > 0 ? 'border-left:1px solid var(--bg-base);' : '';
+      return `<div style="width:${pct}%;background:var(--accent-sage);${sep}" title="${esc(m.name)}: ${mMb} MB"></div>`;
+    }).join('');
 
     return `<div class="card">
       <div style="font-weight:600; margin-bottom:0.4rem;">${esc(g.gpu_label)}</div>
@@ -1145,9 +1153,9 @@ function renderAdvisor(advisor) {
         Parallelism: <span class="gold">${g.recommended_parallel}</span>
         <span class="muted" style="margin-left:0.5rem; font-size:0.65rem;">${esc(g.parallel_reason)}</span>
       </div>
-      <div style="display:flex; gap:0.25rem; margin-bottom:0.4rem;">${models}</div>
+      <div style="display:flex; gap:0.25rem; margin-bottom:0.4rem;">${modelTags}</div>
       <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; background:var(--vellum-border); margin-bottom:0.3rem;">
-        <div style="width:${usedPct}%; background:var(--accent-sage);" title="Models: ${usedMb} MB"></div>
+        ${modelSegs}
         <div style="width:${kvPct}%; background:var(--accent-gold);" title="KV cache: ${kvMb} MB"></div>
       </div>
       <div class="mono muted" style="font-size:0.65rem;">

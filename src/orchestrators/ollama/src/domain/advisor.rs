@@ -83,14 +83,22 @@ impl TopologyAdvice {
     }
 }
 
+/// A model placed on a GPU, with its VRAM footprint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ModelPlacement {
+    pub name: String,
+    /// VRAM consumed by this model's weights (bytes).
+    pub vram_bytes: u64,
+}
+
 /// Recommendation for a single GPU.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GpuAdvice {
     pub gpu_id: String,
     pub gpu_label: String,
     pub vram_bytes: u64,
-    /// Models recommended for this GPU (by name).
-    pub models: Vec<String>,
+    /// Models recommended for this GPU, with per-model VRAM.
+    pub models: Vec<ModelPlacement>,
     /// Recommended parallelism value.
     pub recommended_parallel: u32,
     /// VRAM consumed by placed models (bytes).
@@ -260,7 +268,10 @@ pub fn advise_topology(gpus: &[GpuSlot], models: &[ModelSlot]) -> TopologyAdvice
             gpu_id: gpu.id.clone(),
             gpu_label: gpu.label.clone(),
             vram_bytes: gpu.vram_bytes,
-            models: gpu_models.iter().map(|m| m.name.clone()).collect(),
+            models: gpu_models.iter().map(|m| ModelPlacement {
+                name: m.name.clone(),
+                vram_bytes: m.vram_bytes,
+            }).collect(),
             recommended_parallel: recommended,
             vram_used,
             vram_kv_reserved: kv_reserved,
@@ -467,7 +478,8 @@ mod tests {
         let advice = advise_topology(&gpus, &models);
         assert_eq!(advice.gpus.len(), 1);
         let g = &advice.gpus[0];
-        assert_eq!(g.models, vec!["nomic-embed-text"]);
+        assert_eq!(g.models.len(), 1);
+        assert_eq!(g.models[0].name, "nomic-embed-text");
         // With ~11.5 GB free and 80 MB KV, parallelism should be high
         assert!(
             g.recommended_parallel >= 8,
@@ -483,7 +495,8 @@ mod tests {
 
         let advice = advise_topology(&gpus, &models);
         let g = &advice.gpus[0];
-        assert_eq!(g.models, vec!["llama3:8b"]);
+        assert_eq!(g.models.len(), 1);
+        assert_eq!(g.models[0].name, "llama3:8b");
         // Chat model: capped at 4 max
         assert!(
             g.recommended_parallel <= 4,
@@ -510,12 +523,12 @@ mod tests {
         let embed_gpu = advice
             .gpus
             .iter()
-            .find(|g| g.models.contains(&"nomic-embed-text".to_string()))
+            .find(|g| g.models.iter().any(|m| m.name == "nomic-embed-text"))
             .expect("embed model should be placed");
         let chat_gpu = advice
             .gpus
             .iter()
-            .find(|g| g.models.contains(&"llama3:8b".to_string()))
+            .find(|g| g.models.iter().any(|m| m.name == "llama3:8b"))
             .expect("chat model should be placed");
 
         // Embed GPU should have higher parallelism than chat GPU

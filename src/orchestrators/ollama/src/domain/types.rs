@@ -114,10 +114,14 @@ pub struct OllamaInstance {
     pub stone_id: String,
     pub stone_name: String,
     pub endpoint: String, // e.g. "http://192.168.1.50:11434"
+    pub moss_endpoint: Option<String>, // e.g. "http://192.168.1.50:7185"
     pub ollama_version: Option<String>,
     pub gpu_name: Option<String>,
     pub vram_total_bytes: u64,
     pub vram_budget_bytes: u64,
+    /// Ollama's configured `OLLAMA_NUM_PARALLEL` (concurrent request slots).
+    /// `None` means Ollama is using its default (auto-detect).
+    pub num_parallel: Option<u32>,
     pub health: InstanceHealth,
     pub models_loaded: Vec<LoadedModel>,
     pub models_available: Vec<String>,
@@ -459,7 +463,15 @@ pub enum MetricEvent {
         eval_duration_ns: u64,
     },
     /// Failed request.
-    Error { stone: String },
+    Error {
+        stone: String,
+        /// Model involved, if known.
+        model: Option<String>,
+        /// HTTP status code from Ollama, if applicable (e.g. 500, 503).
+        status_code: Option<u16>,
+        /// Short reason (e.g. "upstream error", "model not found").
+        reason: Option<String>,
+    },
 }
 
 // ── Placement ────────────────────────────────────────────────────

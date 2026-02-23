@@ -12,6 +12,30 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use std::time::Duration;
 
+/// Maximum bytes of error body to include in diagnostics.
+const ERROR_BODY_MAX: usize = 512;
+
+/// Check response status, preserving the response body on error.
+async fn check_status(resp: reqwest::Response, label: &str) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let body_summary = if body.len() > ERROR_BODY_MAX {
+        format!("{}…", &body[..ERROR_BODY_MAX])
+    } else {
+        body
+    };
+    tracing::warn!(
+        label = %label,
+        status = %status,
+        body = %body_summary,
+        "upstream HTTP error"
+    );
+    anyhow::bail!("{label} HTTP {status}: {body_summary}")
+}
+
 /// Events from the Tools API stream relevant to the router.
 #[derive(Debug, Clone)]
 pub enum ToolEvent {
@@ -53,9 +77,8 @@ pub async fn subscribe_tools_stream(
         .header("Accept", "text/event-stream")
         .send()
         .await
-        .with_context(|| format!("connect to Tools API stream at {url}"))?
-        .error_for_status()
-        .with_context(|| format!("Tools API stream status from {url}"))?;
+        .with_context(|| format!("connect to Tools API stream at {url}"))?;
+    let response = check_status(response, "Tools API stream").await?;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();

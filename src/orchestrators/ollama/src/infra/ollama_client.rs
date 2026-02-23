@@ -9,6 +9,35 @@ use bytes::Bytes;
 use reqwest::Client;
 use std::time::Duration;
 
+/// Maximum bytes of error body to include in diagnostics.
+const ERROR_BODY_MAX: usize = 512;
+
+/// Check response status, preserving the response body on error.
+///
+/// Unlike [`reqwest::Response::error_for_status()`] which discards the body,
+/// this reads the upstream response text (Ollama often returns JSON like
+/// `{"error":"out of memory"}`) and folds it into the [`anyhow::Error`]
+/// context so operators can diagnose 4xx/5xx failures.
+async fn check_status(resp: reqwest::Response, label: &str) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let body_summary = if body.len() > ERROR_BODY_MAX {
+        format!("{}…", &body[..ERROR_BODY_MAX])
+    } else {
+        body
+    };
+    tracing::warn!(
+        label = %label,
+        status = %status,
+        body = %body_summary,
+        "upstream HTTP error"
+    );
+    anyhow::bail!("{label} HTTP {status}: {body_summary}")
+}
+
 /// Timeout for discovery/profiling queries.
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for model show queries (per model).
@@ -48,9 +77,8 @@ impl OllamaClient {
             .timeout(PROFILE_TIMEOUT)
             .send()
             .await
-            .context("GET /api/tags")?
-            .error_for_status()
-            .context("GET /api/tags status")?;
+            .context("GET /api/tags")?;
+        let resp = check_status(resp, "GET /api/tags").await?;
         resp.json().await.context("parse /api/tags")
     }
 
@@ -63,9 +91,8 @@ impl OllamaClient {
             .timeout(PROFILE_TIMEOUT)
             .send()
             .await
-            .context("GET /api/ps")?
-            .error_for_status()
-            .context("GET /api/ps status")?;
+            .context("GET /api/ps")?;
+        let resp = check_status(resp, "GET /api/ps").await?;
         resp.json().await.context("parse /api/ps")
     }
 
@@ -79,9 +106,8 @@ impl OllamaClient {
             .json(&serde_json::json!({"model": model}))
             .send()
             .await
-            .context("POST /api/show")?
-            .error_for_status()
-            .context("POST /api/show status")?;
+            .context("POST /api/show")?;
+        let resp = check_status(resp, "POST /api/show").await?;
         resp.json().await.context("parse /api/show")
     }
 
@@ -94,9 +120,8 @@ impl OllamaClient {
             .timeout(PROFILE_TIMEOUT)
             .send()
             .await
-            .context("GET /api/version")?
-            .error_for_status()
-            .context("GET /api/version status")?;
+            .context("GET /api/version")?;
+        let resp = check_status(resp, "GET /api/version").await?;
         resp.json().await.context("parse /api/version")
     }
 
@@ -140,52 +165,51 @@ impl OllamaClient {
             .json(&serde_json::json!({"model": model, "stream": true}))
             .send()
             .await
-            .context("POST /api/pull")?
-            .error_for_status()
-            .context("POST /api/pull status")?;
+            .context("POST /api/pull")?;
+        let resp = check_status(resp, "POST /api/pull").await?;
         Ok(resp.bytes_stream())
     }
 
     /// Delete a model on a specific instance.
     pub async fn delete_model(&self, endpoint: &str, model: &str) -> Result<()> {
         let url = format!("{endpoint}/api/delete");
-        self.http
+        let resp = self
+            .http
             .delete(&url)
             .json(&serde_json::json!({"model": model}))
             .timeout(PROFILE_TIMEOUT)
             .send()
             .await
-            .context("DELETE /api/delete")?
-            .error_for_status()
-            .context("DELETE /api/delete status")?;
+            .context("DELETE /api/delete")?;
+        check_status(resp, "DELETE /api/delete").await?;
         Ok(())
     }
 
     /// Load a model into VRAM (empty prompt trick).
     pub async fn load_model(&self, endpoint: &str, model: &str) -> Result<()> {
         let url = format!("{endpoint}/api/generate");
-        self.http
+        let resp = self
+            .http
             .post(&url)
             .json(&serde_json::json!({"model": model, "stream": false}))
             .send()
             .await
-            .context("load model")?
-            .error_for_status()
-            .context("load model status")?;
+            .context("load model")?;
+        check_status(resp, "load model").await?;
         Ok(())
     }
 
     /// Unload a model from VRAM (keep_alive: 0 trick).
     pub async fn unload_model(&self, endpoint: &str, model: &str) -> Result<()> {
         let url = format!("{endpoint}/api/generate");
-        self.http
+        let resp = self
+            .http
             .post(&url)
             .json(&serde_json::json!({"model": model, "keep_alive": 0, "stream": false}))
             .send()
             .await
-            .context("unload model")?
-            .error_for_status()
-            .context("unload model status")?;
+            .context("unload model")?;
+        check_status(resp, "unload model").await?;
         Ok(())
     }
 
@@ -224,9 +248,8 @@ impl OllamaClient {
             }))
             .send()
             .await
-            .context("generate request timed out or unreachable")?
-            .error_for_status()
-            .context("generate returned HTTP error")?;
+            .context("generate request timed out or unreachable")?;
+        let resp = check_status(resp, "benchmark generate").await?;
         resp.json().await.context("generate response parse failed")
     }
 
@@ -253,9 +276,8 @@ impl OllamaClient {
             }))
             .send()
             .await
-            .context("vision request timed out or unreachable")?
-            .error_for_status()
-            .context("vision returned HTTP error")?;
+            .context("vision request timed out or unreachable")?;
+        let resp = check_status(resp, "benchmark vision").await?;
         resp.json().await.context("vision response parse failed")
     }
 
@@ -277,9 +299,8 @@ impl OllamaClient {
             }))
             .send()
             .await
-            .context("embed request timed out or unreachable")?
-            .error_for_status()
-            .context("embed returned HTTP error")?;
+            .context("embed request timed out or unreachable")?;
+        let resp = check_status(resp, "benchmark embed").await?;
         resp.json().await.context("embed response parse failed")
     }
 

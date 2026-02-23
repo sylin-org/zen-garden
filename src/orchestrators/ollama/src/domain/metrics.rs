@@ -146,6 +146,11 @@ impl MetricsEngine {
         sorted
     }
 
+    /// Reset only per-model request counters.
+    pub fn reset_model_counters(&mut self) {
+        self.per_model.clear();
+    }
+
     /// Reset all counters.
     pub fn reset(&mut self) {
         self.requests_total = 0;
@@ -321,7 +326,16 @@ impl MetricsEngine {
                     eval_duration_ns,
                 );
             }
-            MetricEvent::Error { stone } => {
+            MetricEvent::Error { stone, model, status_code, reason } => {
+                if let Some(ref m) = model {
+                    tracing::debug!(
+                        stone = %stone,
+                        model = %m,
+                        status_code = ?status_code,
+                        reason = ?reason,
+                        "recording error metric"
+                    );
+                }
                 self.record_error(&stone);
             }
         }

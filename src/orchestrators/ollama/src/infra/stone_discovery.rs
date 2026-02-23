@@ -18,6 +18,30 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
 
+/// Maximum bytes of error body to include in diagnostics.
+const ERROR_BODY_MAX: usize = 512;
+
+/// Check response status, preserving the response body on error.
+async fn check_status(resp: reqwest::Response, label: &str) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let body_summary = if body.len() > ERROR_BODY_MAX {
+        format!("{}…", &body[..ERROR_BODY_MAX])
+    } else {
+        body
+    };
+    tracing::warn!(
+        label = %label,
+        status = %status,
+        body = %body_summary,
+        "upstream HTTP error"
+    );
+    anyhow::bail!("{label} HTTP {status}: {body_summary}")
+}
+
 /// A stone discovered on the network.
 #[derive(Debug, Clone)]
 pub struct DiscoveredStone {
@@ -148,9 +172,8 @@ pub async fn discover_stones(koi_endpoint: &str) -> Result<Vec<DiscoveredStone>>
         .header("Accept", "text/event-stream")
         .send()
         .await
-        .context("connect to Koi mDNS discover")?
-        .error_for_status()
-        .context("Koi mDNS discover status")?;
+        .context("connect to Koi mDNS discover")?;
+    let response = check_status(response, "Koi mDNS discover").await?;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -222,9 +245,8 @@ pub async fn subscribe_stones(
         .header("Accept", "text/event-stream")
         .send()
         .await
-        .context("connect to Koi mDNS subscribe")?
-        .error_for_status()
-        .context("Koi mDNS subscribe status")?;
+        .context("connect to Koi mDNS subscribe")?;
+    let response = check_status(response, "Koi mDNS subscribe").await?;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -330,6 +352,11 @@ impl TopologyOllamaStone {
     pub fn ollama_endpoint(&self) -> String {
         format!("http://{}:11434", self.ip)
     }
+
+    /// Moss API endpoint: `http://{ip}:{moss_port}`.
+    pub fn moss_endpoint(&self) -> String {
+        format!("http://{}:{}", self.ip, self.moss_port)
+    }
 }
 
 /// Query the topology endpoint on a tended stone and return all stones that
@@ -362,9 +389,8 @@ pub async fn query_topology_ollama(stone_endpoint: &str) -> Result<Vec<TopologyO
         .get(&url)
         .send()
         .await
-        .with_context(|| format!("connect to topology endpoint at {url}"))?
-        .error_for_status()
-        .with_context(|| format!("topology endpoint status from {url}"))?;
+        .with_context(|| format!("connect to topology endpoint at {url}"))?;
+    let response = check_status(response, "topology query").await?;
 
     let topo: TopologyResponse = response.json().await.context("parse topology response")?;
 
@@ -462,4 +488,50 @@ pub async fn fetch_stone_hw(stone_ip: &str) -> (u64, Option<String>) {
     let gpu_name = caps.hardware.gpus.first().map(|g| g.model.clone());
 
     (vram_mb * 1_048_576, gpu_name)
+}
+
+/// Fetch environment variables for a service from a stone's Moss API.
+///
+/// Queries `GET /api/v1/stone/services/{service_name}/env` and returns
+/// the key-value map.  Returns an empty map on any error (unreachable
+/// stone, service not found, or Moss version that lacks this endpoint).
+pub async fn fetch_service_env(
+    moss_endpoint: &str,
+    service_name: &str,
+) -> std::collections::HashMap<String, String> {
+    #[derive(Deserialize)]
+    struct EnvResponse {
+        data: std::collections::HashMap<String, String>,
+    }
+
+    let url = format!(
+        "{}/api/v1/stone/services/{}/env",
+        moss_endpoint.trim_end_matches('/'),
+        service_name
+    );
+
+    let client = match Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!(url = %url, error = %e, "could not fetch service env");
+            return std::collections::HashMap::new();
+        }
+    };
+
+    match resp.json::<EnvResponse>().await {
+        Ok(parsed) => parsed.data,
+        Err(e) => {
+            tracing::debug!(url = %url, error = %e, "could not parse service env response");
+            std::collections::HashMap::new()
+        }
+    }
 }

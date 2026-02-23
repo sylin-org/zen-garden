@@ -210,6 +210,9 @@ async fn proxy_inference(
                 .await;
             let _ = state.app.metrics_tx.send(MetricEvent::Error {
                 stone: stone_name.clone(),
+                model: Some(model.clone()),
+                status_code: None,
+                reason: Some(format!("connection error: {e}")),
             });
             let body = serde_json::json!({"error": format!("upstream error: {e}")});
             return Ok((StatusCode::BAD_GATEWAY, axum::Json(body)).into_response());
@@ -247,6 +250,9 @@ async fn proxy_inference(
         }
         let _ = state.app.metrics_tx.send(MetricEvent::Error {
             stone: stone_name.clone(),
+            model: Some(model.clone()),
+            status_code: Some(404),
+            reason: Some("model not found".into()),
         });
         let body = serde_json::json!({"error": format!("model '{model}' not found")});
         return Ok((StatusCode::NOT_FOUND, axum::Json(body)).into_response());
@@ -255,12 +261,22 @@ async fn proxy_inference(
     // Propagate non-OK status
     if !status.is_success() {
         counter.fetch_sub(1, Ordering::Relaxed);
-        let _ = state.app.metrics_tx.send(MetricEvent::Error {
-            stone: stone_name.clone(),
-        });
         let status_code =
             StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let text = response.text().await.unwrap_or_default();
+        tracing::warn!(
+            stone = %stone_name,
+            model = %model,
+            status = %status_code,
+            body = %text,
+            "Ollama returned non-success status"
+        );
+        let _ = state.app.metrics_tx.send(MetricEvent::Error {
+            stone: stone_name.clone(),
+            model: Some(model.clone()),
+            status_code: Some(status.as_u16()),
+            reason: if text.is_empty() { None } else { Some(text.clone()) },
+        });
         return Ok((status_code, text).into_response());
     }
 

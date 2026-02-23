@@ -706,53 +706,37 @@ async fn run_stone(
                     || msg.contains("deadline has elapsed")
                     || msg.contains("operation timed out");
 
+                // Ollama reports resource exhaustion as HTTP 500 with
+                // messages like "model requires more system memory …" or
+                // "model failed to load … resource limitations".  These
+                // are hard constraints — the model physically cannot run
+                // on this stone — so we record Blocked (not Vetoed).
+                let is_resource_limit = msg.contains("requires more system memory")
+                    || msg.contains("requires more memory")
+                    || msg.contains("out of memory")
+                    || (msg.contains("resource limitation") || msg.contains("failed to load"));
+
                 if is_timeout {
                     // Timeout → record as Vetoed with synthetic summary.
                     tracing::info!(
                         stone = %stone_name, model = %model_name,
                         mode = %capability, "benchmark timed out — recording as Vetoed"
                     );
-                    let summary_info = {
-                        let mut run = state.benchmark_run.write().await;
-                        if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name)
-                        {
-                            if let Some(test) = sr
-                                .tests
-                                .iter_mut()
-                                .find(|t| t.model == model_name && t.capability == capability)
-                            {
-                                test.summary = Some(TestSummary {
-                                    median_tps: 0.0,
-                                    cold_start_ms: 999_999,
-                                    median_duration_ms: 999_999,
-                                    verdict: Verdict::Vetoed,
-                                });
-                                test.status = TestStatus::Done;
-                                test.error = Some("timed out".into());
-                                Some((Verdict::Vetoed, 0.0_f64, 999_999_u64))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
-                    persist(state).await;
-                    if let Some((verdict, tps, cold)) = summary_info {
-                        notify(
-                            state,
-                            "benchmark.test.done",
-                            &serde_json::json!({
-                                "stone": stone_name, "model": &model_name,
-                                "capability": capability.to_string(),
-                                "verdict": verdict.to_string(),
-                                "tps": tps,
-                                "cold_start_ms": cold,
-                                "note": "timed out",
-                            }),
-                        )
-                        .await;
-                    }
+                    record_synthetic_verdict(
+                        state, stone_name, model_name, capability,
+                        Verdict::Vetoed, "timed out",
+                    ).await;
+                } else if is_resource_limit {
+                    // Resource exhaustion → record as Blocked.
+                    tracing::info!(
+                        stone = %stone_name, model = %model_name,
+                        mode = %capability, error = %msg,
+                        "model cannot load on this stone — recording as Blocked"
+                    );
+                    record_synthetic_verdict(
+                        state, stone_name, model_name, capability,
+                        Verdict::Blocked, &msg,
+                    ).await;
                 } else {
                     tracing::warn!(
                         stone = %stone_name, model = %model_name,
@@ -1009,6 +993,62 @@ async fn set_test_error(
             test.status = TestStatus::Error;
             test.error = Some(error.to_string());
         }
+    }
+}
+
+/// Record a synthetic verdict (Vetoed, Blocked, etc.) when the actual
+/// benchmark cannot complete — e.g. timeout, OOM, or resource exhaustion.
+///
+/// Creates a `TestSummary` with sentinel values so the GPU matrix still
+/// gets an entry for this (model, stone) pair, and the router knows not
+/// to route traffic there.
+async fn record_synthetic_verdict(
+    state: &AppState,
+    stone_name: &str,
+    model_name: &str,
+    capability: Capability,
+    verdict: Verdict,
+    note: &str,
+) {
+    let summary_info = {
+        let mut run = state.benchmark_run.write().await;
+        if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
+            if let Some(test) = sr
+                .tests
+                .iter_mut()
+                .find(|t| t.model == model_name && t.capability == capability)
+            {
+                test.summary = Some(TestSummary {
+                    median_tps: 0.0,
+                    cold_start_ms: 999_999,
+                    median_duration_ms: 999_999,
+                    verdict,
+                });
+                test.status = TestStatus::Done;
+                test.error = Some(note.to_string());
+                Some((verdict, 0.0_f64, 999_999_u64))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    persist(state).await;
+    if let Some((v, tps, cold)) = summary_info {
+        notify(
+            state,
+            "benchmark.test.done",
+            &serde_json::json!({
+                "stone": stone_name, "model": model_name,
+                "capability": capability.to_string(),
+                "verdict": v.to_string(),
+                "tps": tps,
+                "cold_start_ms": cold,
+                "note": note,
+            }),
+        )
+        .await;
     }
 }
 

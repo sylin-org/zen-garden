@@ -82,6 +82,16 @@ pub async fn post_metrics_reset(State(state): State<AppState>) -> impl IntoRespo
     Json(json!({"status": "ok"}))
 }
 
+/// `POST /api/metrics/model-counters/reset` — reset per-model request counters only.
+pub async fn post_model_counters_reset(State(state): State<AppState>) -> impl IntoResponse {
+    {
+        let mut metrics = state.metrics.write().await;
+        metrics.reset_model_counters();
+    }
+    state.emit_event("metrics.reset", "{}").await;
+    Json(json!({"status": "ok"}))
+}
+
 /// `GET /api/jobs` — current and recent jobs.
 pub async fn get_jobs(State(state): State<AppState>) -> impl IntoResponse {
     let jobs = state.jobs.read().await;

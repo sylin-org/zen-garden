@@ -46,7 +46,6 @@ body {
   color: var(--stone-900);
   background: var(--bg-base);
   min-height: 100vh;
-  display: flex; justify-content: center;
   padding: 3rem 1.5rem;
   line-height: 1.6;
   background-image:
@@ -228,7 +227,7 @@ body {
 /* ── Models Section ───────────────────────────────────────── */
 .model-row {
   display: grid;
-  grid-template-columns: 2fr 0.8fr 0.6fr 0.6fr 1fr 1fr;
+  grid-template-columns: 2fr 0.8fr 0.6fr 0.6fr 1fr 1fr 0.6fr 0.4fr;
   gap: 0.5rem; align-items: center;
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--vellum-border);
@@ -338,6 +337,11 @@ body {
 .action-btn:hover { border-color: var(--accent-sage); color: var(--accent-sage); }
 .action-btn.confirming { border-color: var(--accent-clay); color: var(--accent-clay); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.action-btn.btn-danger:hover { border-color: #c05050; color: #c05050; }
+.action-btn.btn-small {
+  font-size: 0.55rem; padding: 0.2rem 0.5rem;
+  letter-spacing: 0.08em;
+}
 
 /* ── Model Management ─────────────────────────────────────── */
 .mgmt-bar {
@@ -459,7 +463,7 @@ body {
 .verdict-degraded .verdict-dot { background: #b09830; }
 .verdict-vetoed .verdict-dot { background: var(--accent-red); }
 .verdict-blocked .verdict-dot { background: #8b0000; }
-.verdict-blocked .verdict-stats { color: #8b0000; }
+.verdict-blocked .verdict-stats { color: var(--stone-600); }
 .verdict-unknown .verdict-dot { background: var(--stone-400); }
 .verdict-stats {
   font-size: 0.65rem; color: var(--stone-600);
@@ -506,6 +510,54 @@ body {
 }
 .fitness-legend .legend-item { display: flex; align-items: center; gap: 0.25rem; }
 .fitness-empty { font-size: 0.75rem; color: var(--stone-400); font-family: var(--font-mono); }
+
+/* ── Side Nav ──────────────────────────────────────────────── */
+.page-layout {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.side-nav {
+  position: sticky;
+  top: 2rem;
+  align-self: flex-start;
+  width: 140px;
+  flex-shrink: 0;
+  padding-top: 1rem;
+  margin-right: 1.5rem;
+}
+
+.side-nav a {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--stone-400);
+  text-decoration: none;
+  padding: 0.35rem 0.6rem;
+  border-left: 2px solid transparent;
+  transition: var(--transition-soft);
+  white-space: nowrap;
+}
+
+.side-nav a:hover {
+  color: var(--stone-900);
+}
+
+.side-nav a.active {
+  color: var(--accent-sage);
+  border-left-color: var(--accent-sage);
+}
+
+.side-nav a.nav-hidden {
+  display: none;
+}
+
+@media (max-width: 1200px) {
+  .side-nav { display: none; }
+}
 </style>
 </head>
 <body>
@@ -518,6 +570,21 @@ body {
 
 <!-- Connection banner -->
 <div class="connection-banner" id="banner">Connection lost — retrying…</div>
+
+<div class="page-layout">
+
+<nav class="side-nav" id="sideNav">
+  <a href="#stonesSection" data-nav="stonesSection">Stones</a>
+  <a href="#tiersSection" data-nav="tiersSection">Tiers</a>
+  <a href="#modelsSection" data-nav="modelsSection">Models</a>
+  <a href="#fitnessSection" data-nav="fitnessSection">Fitness</a>
+  <a href="#placementSection" data-nav="placementSection">Placement</a>
+  <a href="#advisorSection" data-nav="advisorSection">Advisor</a>
+  <a href="#jobsSection" data-nav="jobsSection">Jobs</a>
+  <a href="#metricsSection" data-nav="metricsSection">Metrics</a>
+  <a href="#settingsSection" data-nav="settingsSection">Settings</a>
+  <a href="#activitySection" data-nav="activitySection">Activity</a>
+</nav>
 
 <div class="container">
 
@@ -553,7 +620,7 @@ body {
     <div class="section-title">Models</div>
     <div class="card" id="modelsCard">
       <div class="model-row" style="font-weight:600; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400);">
-        <div class="sortable" onclick="sortModels('name')">Name <span id="sortNameIcon">▲</span></div><div class="sortable" onclick="sortModels('size')">Size <span id="sortSizeIcon"></span></div><div>Spec</div><div>Capabilities</div><div>Available On</div><div>Loaded On</div>
+        <div class="sortable" onclick="sortModels('name')">Name <span id="sortNameIcon">▲</span></div><div class="sortable" onclick="sortModels('size')">Size <span id="sortSizeIcon"></span></div><div>Spec</div><div>Capabilities</div><div>Available On</div><div>Loaded On</div><div class="sortable" onclick="sortModels('requests')">Requests <span id="sortReqIcon"></span></div><div></div>
       </div>
       <div id="modelsBody"></div>
       <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--vellum-border);">
@@ -561,6 +628,7 @@ body {
           <input class="mgmt-input" id="pullModelInput" placeholder="model name (e.g. llama3.2:3b)" />
           <button class="action-btn" id="pullBtn" onclick="pullModel()">Pull</button>
           <button class="action-btn" id="deleteBtn" onclick="deleteModel()">Delete</button>
+          <button class="action-btn" onclick="resetModelCounters()">Reset Counters</button>
         </div>
         <div id="mgmtStatus" class="mono muted" style="font-size:0.7rem; margin-top:0.75rem;"></div>
       </div>
@@ -628,6 +696,14 @@ body {
     </div>
   </section>
 
+  <!-- ── Advisor ─────────────────────────────────────────── -->
+  <section id="advisorSection" class="hidden">
+    <div class="section-title">Topology Advisor</div>
+    <div id="advisorReasoning" class="card" style="margin-bottom:0.75rem;"></div>
+    <div id="advisorGrid" class="grid-2"></div>
+    <div id="advisorMeta" class="mono muted" style="font-size:0.6rem; margin-top:0.5rem; padding:0 0.25rem;"></div>
+  </section>
+
   <!-- ── Jobs ──────────────────────────────────────────────── -->
   <section id="jobsSection">
     <div class="section-title">Jobs</div>
@@ -665,7 +741,7 @@ body {
   </section>
 
   <!-- ── Settings ──────────────────────────────────────────── -->
-  <section>
+  <section id="settingsSection">
     <div class="section-title">Settings</div>
     <div class="card">
       <div class="setting-row">
@@ -688,7 +764,7 @@ body {
   </section>
 
   <!-- ── Activity ──────────────────────────────────────────── -->
-  <section>
+  <section id="activitySection">
     <div class="section-title">Activity</div>
     <div class="card">
       <div class="activity-log" id="activityLog"></div>
@@ -706,6 +782,7 @@ body {
     </span>
   </footer>
 
+</div>
 </div>
 
 <script>
@@ -829,6 +906,9 @@ function render() {
 
   // Placement
   renderPlacement(state.placement || {}, state.demand || {});
+
+  // Advisor
+  renderAdvisor(state.advisor || {});
 }
 
 // ── Stones ─────────────────────────────────────────────────────
@@ -917,6 +997,8 @@ function renderModels(models) {
     let cmp;
     if (modelSort.field === 'size') {
       cmp = (a.size_disk_mb || 0) - (b.size_disk_mb || 0);
+    } else if (modelSort.field === 'requests') {
+      cmp = (a.request_count || 0) - (b.request_count || 0);
     } else {
       cmp = (a.name || '').localeCompare(b.name || '');
     }
@@ -924,8 +1006,10 @@ function renderModels(models) {
   });
   const ni = document.getElementById('sortNameIcon');
   const si = document.getElementById('sortSizeIcon');
+  const ri = document.getElementById('sortReqIcon');
   if (ni) ni.textContent = modelSort.field === 'name' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
   if (si) si.textContent = modelSort.field === 'size' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
+  if (ri) ri.textContent = modelSort.field === 'requests' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
   body.innerHTML = '';
   sorted.forEach(m => {
     const availDots = (m.on_stones || []).map(s =>
@@ -938,6 +1022,7 @@ function renderModels(models) {
       `<span class="cap-badge ${esc(c)}">${esc(c)}</span>`
     ).join('') || '—';
     const spec = [m.parameter_size, m.quantization_level].filter(Boolean).join(' / ') || '—';
+    const reqCount = m.request_count || 0;
     body.innerHTML += `<div class="model-row">
       <div class="model-name">${esc(m.name)}</div>
       <div class="model-detail">${m.size_disk_mb != null ? m.size_disk_mb + ' MB' : '—'}</div>
@@ -945,6 +1030,8 @@ function renderModels(models) {
       <div class="model-detail"><span class="cap-badges">${caps}</span></div>
       <div class="model-detail"><span class="stone-dots">${availDots}</span></div>
       <div class="model-detail"><span class="stone-dots">${loadedDots}</span></div>
+      <div class="model-detail">${formatNum(reqCount)}</div>
+      <div><button class="action-btn btn-small btn-danger" onclick="deleteModelByName('${esc(m.name)}')">Remove</button></div>
     </div>`;
   });
 }
@@ -1019,6 +1106,62 @@ function renderPlacement(placement, demand) {
   timeEl.textContent = placement.computed_at
     ? 'Last computed: ' + new Date(placement.computed_at).toLocaleTimeString()
     : '';
+}
+
+// ── Advisor ────────────────────────────────────────────────────
+function renderAdvisor(advisor) {
+  const section = document.getElementById('advisorSection');
+  const gpus = advisor.gpus || [];
+  const reasoning = advisor.reasoning || [];
+  if (!gpus.length && !reasoning.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  // Reasoning block
+  const reasoningEl = document.getElementById('advisorReasoning');
+  if (reasoning.length) {
+    reasoningEl.innerHTML = reasoning.map(r => {
+      const isWarning = r.includes('⚠') || r.includes('→') || r.includes('cannot fit');
+      const cls = isWarning ? 'clay' : (r.includes('looks reasonable') ? 'sage' : '');
+      return `<div class="mono ${cls}" style="font-size:0.75rem; padding:0.2rem 0;">${esc(r)}</div>`;
+    }).join('');
+  } else {
+    reasoningEl.innerHTML = '<span class="muted mono" style="font-size:0.75rem;">No recommendations</span>';
+  }
+
+  // Per-GPU cards
+  const grid = document.getElementById('advisorGrid');
+  grid.innerHTML = gpus.map(g => {
+    const usedMb = Math.round(g.vram_used / 1048576);
+    const kvMb = Math.round(g.vram_kv_reserved / 1048576);
+    const headMb = Math.round(g.vram_headroom / 1048576);
+    const totalMb = Math.round(g.vram_bytes / 1048576);
+    const usedPct = totalMb > 0 ? Math.round(g.vram_used / g.vram_bytes * 100) : 0;
+    const kvPct = totalMb > 0 ? Math.round(g.vram_kv_reserved / g.vram_bytes * 100) : 0;
+    const models = (g.models || []).map(m => `<span class="model-tag">${esc(m)}</span>`).join(' ') || '<span class="muted">none</span>';
+
+    return `<div class="card">
+      <div style="font-weight:600; margin-bottom:0.4rem;">${esc(g.gpu_label)}</div>
+      <div class="mono" style="font-size:0.75rem; margin-bottom:0.5rem;">
+        Parallelism: <span class="gold">${g.recommended_parallel}</span>
+        <span class="muted" style="margin-left:0.5rem; font-size:0.65rem;">${esc(g.parallel_reason)}</span>
+      </div>
+      <div style="display:flex; gap:0.25rem; margin-bottom:0.4rem;">${models}</div>
+      <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; background:var(--vellum-border); margin-bottom:0.3rem;">
+        <div style="width:${usedPct}%; background:var(--accent-sage);" title="Models: ${usedMb} MB"></div>
+        <div style="width:${kvPct}%; background:var(--accent-gold);" title="KV cache: ${kvMb} MB"></div>
+      </div>
+      <div class="mono muted" style="font-size:0.65rem;">
+        Models ${usedMb} MB · KV ${kvMb} MB · Free ${headMb} MB
+      </div>
+    </div>`;
+  }).join('');
+
+  // Metadata
+  const meta = document.getElementById('advisorMeta');
+  const parts = [];
+  if (advisor.computed_at) parts.push('Computed: ' + new Date(advisor.computed_at).toLocaleTimeString());
+  if (advisor.trigger) parts.push('Trigger: ' + advisor.trigger);
+  meta.textContent = parts.join(' · ');
 }
 
 // ── Settings ───────────────────────────────────────────────────
@@ -1116,6 +1259,39 @@ async function deleteModel() {
     status.textContent = 'Delete failed: ' + e.message;
   }
   document.getElementById('deleteBtn').disabled = false;
+}
+
+async function deleteModelByName(model) {
+  if (!confirm('Remove "' + model + '" from ALL stones?')) return;
+  const status = document.getElementById('mgmtStatus');
+  status.textContent = 'Deleting ' + model + '…';
+  try {
+    const resp = await fetch('/api/management/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    const data = await resp.json();
+    if (data.job_id) {
+      status.textContent = 'Delete job queued (' + data.job_id + ')';
+      addActivity('delete', model + ': job started');
+      refreshJobs();
+    } else if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+    }
+  } catch (e) {
+    status.textContent = 'Delete failed: ' + e.message;
+  }
+}
+
+async function resetModelCounters() {
+  try {
+    await fetch('/api/metrics/model-counters/reset', { method: 'POST' });
+    addActivity('reset', 'model request counters cleared');
+    document.getElementById('mgmtStatus').textContent = 'Request counters reset.';
+  } catch (e) {
+    document.getElementById('mgmtStatus').textContent = 'Reset failed: ' + e.message;
+  }
 }
 
 // ── Jobs ───────────────────────────────────────────────────────
@@ -1286,7 +1462,7 @@ function renderResultCell(verdict, medianTps, coldMs, cap, isBest) {
   if (isBest) cls += ' verdict-best';
   // Blocked: show explicit label instead of meaningless 0.0 stats.
   if (v === 'blocked') {
-    return `<td class="${cls}" data-tip="blocked — model errors on this stone"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats" style="color:#8b0000">blocked</span></div></td>`;
+    return `<td class="${cls}" data-tip="blocked — model errors on this stone"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats">blocked</span></div></td>`;
   }
   const tps = (medianTps || 0).toFixed(1);
   const cold = (coldMs / 1000).toFixed(1);
@@ -1610,6 +1786,50 @@ function formatDuration(secs) {
   if (m > 0) return m + 'm';
   return secs + 's';
 }
+
+// ── Side Nav: scroll spy + visibility sync ─────────────────────
+(function initSideNav() {
+  const nav = document.getElementById('sideNav');
+  if (!nav) return;
+  const links = nav.querySelectorAll('a[data-nav]');
+  const sectionIds = Array.from(links).map(a => a.dataset.nav);
+
+  // Sync nav link visibility with section hidden state
+  function syncNavVisibility() {
+    links.forEach(a => {
+      const sec = document.getElementById(a.dataset.nav);
+      if (sec && sec.classList.contains('hidden')) {
+        a.classList.add('nav-hidden');
+      } else {
+        a.classList.remove('nav-hidden');
+      }
+    });
+  }
+
+  // Highlight the nav link closest to the current scroll position
+  function updateActiveLink() {
+    let current = '';
+    for (const id of sectionIds) {
+      const sec = document.getElementById(id);
+      if (!sec || sec.classList.contains('hidden')) continue;
+      const rect = sec.getBoundingClientRect();
+      if (rect.top <= 120) current = id;
+    }
+    links.forEach(a => {
+      a.classList.toggle('active', a.dataset.nav === current);
+    });
+  }
+
+  window.addEventListener('scroll', updateActiveLink, { passive: true });
+  // Re-sync visibility every time state updates (MutationObserver on hidden class)
+  const observer = new MutationObserver(syncNavVisibility);
+  sectionIds.forEach(id => {
+    const sec = document.getElementById(id);
+    if (sec) observer.observe(sec, { attributes: true, attributeFilter: ['class'] });
+  });
+  syncNavVisibility();
+  updateActiveLink();
+})();
 </script>
 </body>
 </html>

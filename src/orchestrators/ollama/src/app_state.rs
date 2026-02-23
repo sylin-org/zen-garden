@@ -4,6 +4,7 @@
 //! Mutation goes through methods that acquire write locks.
 
 use crate::domain::fitness::BenchmarkRun;
+use crate::domain::advisor::TopologyAdvice;
 use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
 use crate::domain::tiering;
@@ -81,6 +82,10 @@ pub struct AppState {
     // ── Placement ──
     pub placement: Arc<RwLock<PlacementPlan>>,
 
+    // ── Advisor ──
+    /// Topology recommendation (cold T=0 + periodic refresh).
+    pub advisor: Arc<RwLock<TopologyAdvice>>,
+
     // ── Fitness ──
     /// Full benchmark run state (tree: run → stones → tests → samples).
     pub benchmark_run: Arc<RwLock<BenchmarkRun>>,
@@ -129,6 +134,7 @@ impl AppState {
             snapshot_rx,
             metrics_tx,
             placement: Arc::new(RwLock::new(PlacementPlan::default())),
+            advisor: Arc::new(RwLock::new(TopologyAdvice::empty())),
             benchmark_run: Arc::new(RwLock::new(BenchmarkRun::idle())),
             benchmark_cancel: Arc::new(RwLock::new(None)),
             shutdown,

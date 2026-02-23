@@ -1,4 +1,5 @@
-﻿pub mod fitness;
+﻿pub mod advisor;
+pub mod fitness;
 pub mod lease;
 pub mod metrics;
 pub mod placement;

@@ -175,6 +175,11 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
+    let advisor_handle = tokio::spawn(tasks::advisor::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
+
     // ── Proxy Server (:11434) ────────────────────────────────────
     let proxy_state = proxy::ProxyState {
         app: state.clone(),
@@ -211,6 +216,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/metrics/reset",
             axum::routing::post(dashboard::post_metrics_reset),
+        )
+        .route(
+            "/api/metrics/model-counters/reset",
+            axum::routing::post(dashboard::post_model_counters_reset),
         )
         // Jobs
         .route("/api/jobs", axum::routing::get(dashboard::get_jobs))
@@ -287,6 +296,7 @@ async fn main() -> Result<()> {
         let _ = metrics_proc_handle.await;
         let _ = placement_handle.await;
         let _ = gateway_handle.await;
+        let _ = advisor_handle.await;
     })
     .await
     .ok();

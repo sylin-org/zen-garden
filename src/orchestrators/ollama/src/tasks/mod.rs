@@ -1,4 +1,5 @@
-﻿pub mod benchmark;
+﻿pub mod advisor;
+pub mod benchmark;
 pub mod discovery;
 pub mod gateway_announce;
 pub mod health_check;

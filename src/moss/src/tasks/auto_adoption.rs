@@ -11,7 +11,10 @@
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
 use crate::domain::connection;
-use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, DetectionOrchestrator};
+use crate::domain::{
+    evaluate_compatibility, get_current_compat_capabilities, CompatibilityDecision,
+    ConnectivityOrchestrator, ConnectivityStatus, DetectionOrchestrator,
+};
 use crate::infra::config::AdoptionConfig;
 use crate::AppState;
 use garden_common::{OfferingMode, ServiceHealthStatus};
@@ -213,6 +216,24 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             // Try detection
             match orchestrator.detect(manifest).await {
                 Ok(result) if result.detected && result.stable => {
+                    // ── Compatibility gate ────────────────────────────
+                    // Check hardware compatibility rules before adopting.
+                    // e.g. ollama-cpu must NOT be adopted on GPU-equipped stones.
+                    if let Some(rules) = &manifest.compatibility {
+                        let cached_caps = state.capabilities.read().await;
+                        let caps = get_current_compat_capabilities(cached_caps.as_ref());
+                        if let CompatibilityDecision::Fail { reason, .. } =
+                            evaluate_compatibility(rules, &caps)
+                        {
+                            tracing::info!(
+                                offering = %manifest.name,
+                                reason = %reason,
+                                "Skipping auto-adoption: compatibility check failed"
+                            );
+                            continue;
+                        }
+                    }
+
                     tracing::info!(
                         offering = %manifest.name,
                         version = ?result.version,

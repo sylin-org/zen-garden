@@ -124,24 +124,65 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 }
             }
 
-            // Port reconciliation: detect if Docker port bindings differ from registry
+            // Port reconciliation: detect if Docker port bindings differ from registry.
+            // Prefer the port matching the existing registry port (the manifest's primary
+            // port), so multi-port services don't randomly switch to a secondary port.
             if new_status == OfferingStatus::Running {
                 if let Ok(docker_ports) = state.docker.get_container_ports(&name).await {
-                    if let Some((actual_host_port, _)) = docker_ports.first() {
-                        let mut offerings = state.offerings.write().await;
-                        if let Some(offering) =
-                            offerings.iter_mut().find(|o| o.offering_id == offering_id)
-                        {
-                            if offering.location.port != *actual_host_port {
+                    let mut offerings = state.offerings.write().await;
+                    if let Some(offering) =
+                        offerings.iter_mut().find(|o| o.offering_id == offering_id)
+                    {
+                        let current_port = offering.location.port;
+                        // Pick the Docker port matching the registry's known primary port;
+                        // only fall back to first if the primary isn't in the Docker list.
+                        let best_port = docker_ports
+                            .iter()
+                            .find(|(h, _)| *h == current_port)
+                            .or(docker_ports.first())
+                            .map(|(h, _)| *h);
+
+                        if let Some(actual_host_port) = best_port {
+                            if offering.location.port != actual_host_port {
                                 tracing::info!(
                                     offering = %name,
                                     registry_port = offering.location.port,
-                                    docker_port = *actual_host_port,
+                                    docker_port = actual_host_port,
                                     "Port mismatch detected, updating registry"
                                 );
-                                offering.location.port = *actual_host_port;
+                                offering.location.port = actual_host_port;
                                 state_changed = true;
                             }
+                        }
+                    }
+                }
+            }
+
+            // Protocol reconciliation: ensure the protocol matches the manifest/category
+            // definition. Corrects stale "tcp" entries from before protocol inference was
+            // wired into installation (self-heal on upgrade).
+            if new_status == OfferingStatus::Running {
+                if let Some(template) = state.manifest_registry.get_offering(&name) {
+                    let expected_protocol =
+                        crate::domain::connection::infer_protocol_from_manifest_metadata(
+                            &name,
+                            &template.category,
+                            template.connection.as_ref(),
+                        );
+
+                    let mut offerings = state.offerings.write().await;
+                    if let Some(offering) =
+                        offerings.iter_mut().find(|o| o.offering_id == offering_id)
+                    {
+                        if offering.location.protocol != expected_protocol {
+                            tracing::info!(
+                                offering = %name,
+                                old_protocol = %offering.location.protocol,
+                                new_protocol = %expected_protocol,
+                                "Protocol mismatch detected, updating registry"
+                            );
+                            offering.location.protocol = expected_protocol;
+                            state_changed = true;
                         }
                     }
                 }

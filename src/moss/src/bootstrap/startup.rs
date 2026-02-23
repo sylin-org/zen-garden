@@ -58,6 +58,23 @@ pub async fn connect_docker(
             Err(e) if retries < config.max_retries => {
                 retries += 1;
 
+                // MOSS-0004: Tell systemd we're still starting up (extends watchdog)
+                // This prevents TimeoutStartSec from killing us during Docker retries
+                #[cfg(target_os = "linux")]
+                {
+                    let extend_usec = (config.retry_delay_secs * 2 * 1_000_000).to_string();
+                    let _ = sd_notify::notify(
+                        false,
+                        &[
+                            sd_notify::NotifyState::Status("Waiting for Docker daemon..."),
+                            sd_notify::NotifyState::Custom(&format!(
+                                "EXTEND_TIMEOUT_USEC={}",
+                                extend_usec
+                            )),
+                        ],
+                    );
+                }
+
                 console.emit(ConsoleEvent::new(
                     EventCategory::Docker,
                     EventStatus::Retry,

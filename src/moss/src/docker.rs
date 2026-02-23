@@ -506,16 +506,16 @@ impl DockerManager {
         ));
         full_env.push(format!("GARDEN_OFFERING_NAME={}", name));
 
-        // KOI-0001: Configure extra_hosts so containers can resolve the host by name,
-        // and point container DNS at the host's Koi DNS server.
+        // KOI-0001: Configure extra_hosts so containers can resolve the host by name.
         let extra_hosts = vec![format!("host.docker.internal:{}", host_ip)];
-        let dns_servers = vec![host_ip.clone()];
+        // TODO(KOI): Re-enable once Koi DNS server is running on the host.
+        // let dns_servers = vec![host_ip.clone(), "8.8.8.8".to_string()];
 
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
             binds: Some(binds),
             extra_hosts: Some(extra_hosts),
-            dns: Some(dns_servers),
+            // dns: Some(dns_servers),
             restart_policy: Some(bollard::models::RestartPolicy {
                 name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                 maximum_retry_count: None,

@@ -208,6 +208,10 @@ if ($UseDocker) {
     # Determine parallel jobs (Docker container typically sees host CPUs)
     $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
+    # Determine which binaries to build (needed before Lantern frontend check)
+    $defaultTargets = @("garden-moss", "garden-lantern", "garden-rake", "garden-cricket", "garden-firefly")
+    $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
+
     # Build Lantern frontend (on host, before Docker cargo build)
     if ($buildTargets -contains "garden-lantern") {
         $frontendDir = Join-Path $WORKSPACE_ROOT "src/lantern/frontend"

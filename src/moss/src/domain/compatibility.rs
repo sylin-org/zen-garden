@@ -23,6 +23,8 @@ pub struct CompatCheckCapabilities {
     pub os_family: String,
 
     // GPU/AI capabilities
+    pub has_gpu: bool,
+    pub gpu_count: usize,
     pub has_cuda: bool,
     pub has_rocm: bool,
     pub has_directml: bool,
@@ -105,6 +107,8 @@ fn build_from_cached(caps: &HardwareCapabilities) -> CompatCheckCapabilities {
             .as_ref()
             .map(|r| r.os.clone())
             .unwrap_or_else(|| std::env::consts::OS.to_string()),
+        has_gpu: !gpus.is_empty(),
+        gpu_count: gpus.len(),
         has_cuda: has_runtime("cuda"),
         has_rocm: has_runtime("rocm"),
         has_directml: has_runtime("directml"),
@@ -146,6 +150,8 @@ fn build_from_live_detection() -> CompatCheckCapabilities {
         architecture: Some(architecture),
         total_memory_mb,
         os_family: std::env::consts::OS.to_string(),
+        has_gpu: !gpus.is_empty(),
+        gpu_count: gpus.len(),
         has_cuda: has_runtime("cuda"),
         has_rocm: has_runtime("rocm"),
         has_directml: has_runtime("directml"),
@@ -288,6 +294,20 @@ pub fn evaluate_compatibility(
             matches &= ok;
         }
 
+        // Hardware GPU presence (simple boolean — same detection as `observe`)
+        if let Some(gpu_required) = condition.has_gpu {
+            matches &= capabilities.has_gpu == gpu_required;
+        }
+
+        // AI runtime presence (any toolkit: CUDA, ROCm, DirectML, OpenVINO)
+        if let Some(ai_required) = condition.has_ai_runtime {
+            let has_any_runtime = capabilities.has_cuda
+                || capabilities.has_rocm
+                || capabilities.has_directml
+                || capabilities.has_openvino;
+            matches &= has_any_runtime == ai_required;
+        }
+
         // AI/GPU capability checks
         if let Some(requires_ai_any) = &condition.requires_ai_any {
             // Match if ANY of the specified runtimes are present (OR logic)
@@ -425,6 +445,8 @@ mod tests {
             architecture: Some("x86_64".into()),
             total_memory_mb: Some(16384),
             os_family: "linux".into(),
+            has_gpu: false,
+            gpu_count: 0,
             has_cuda: false,
             has_rocm: false,
             has_directml: false,
@@ -455,6 +477,8 @@ mod tests {
                     ai_present_any: Some(vec!["cuda".into(), "rocm".into()]),
                     vram_mb_less_than: None,
                     vram_mb_at_least: None,
+                    has_gpu: None,
+                    has_ai_runtime: None,
                 },
                 reason: "GPU detected".into(),
                 suggestion: Some("Use ollama instead".into()),
@@ -471,6 +495,8 @@ mod tests {
             architecture: Some("x86_64".into()),
             total_memory_mb: Some(16384),
             os_family: "linux".into(),
+            has_gpu: true,
+            gpu_count: 1,
             has_cuda: true,
             has_rocm: false,
             has_directml: false,
@@ -487,6 +513,8 @@ mod tests {
             architecture: Some("x86_64".into()),
             total_memory_mb: Some(8192),
             os_family: "linux".into(),
+            has_gpu: false,
+            gpu_count: 0,
             has_cuda: false,
             has_rocm: false,
             has_directml: false,
@@ -518,5 +546,91 @@ mod tests {
         let header = vec![0u8; 20];
         let result = validate_binary_architecture(&header);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_has_gpu_blocks_cpu_only_offering() {
+        // Simulates ollama-cpu.compatibility.yaml: has_gpu: true → deny
+        let rules = garden_common::CompatibilityRules {
+            version: "1.0".to_string(),
+            compatibility_rules: vec![garden_common::CompatibilityRule {
+                name: "gpu-present-use-ollama".into(),
+                condition: garden_common::RuleCondition {
+                    processor_models: None,
+                    processor_patterns: None,
+                    cpu_features_missing: None,
+                    architectures: None,
+                    memory_mb_less_than: None,
+                    os_family: None,
+                    os_family_not: None,
+                    requires_ai_any: None,
+                    requires_ai_all: None,
+                    ai_present_any: None,
+                    vram_mb_less_than: None,
+                    vram_mb_at_least: None,
+                    has_gpu: Some(true),
+                    has_ai_runtime: None,
+                },
+                reason: "GPU detected".into(),
+                suggestion: Some("Use ollama instead".into()),
+                fallback: None,
+                warn_only: false,
+            }],
+            post_install_healthcheck: None,
+        };
+
+        // Windows GPU stone (DirectML only, no CUDA toolkit) → should FAIL
+        let win_gpu_caps = CompatCheckCapabilities {
+            cpu_model: Some("Intel i7".into()),
+            cpu_features: Some(vec!["avx2".into()]),
+            architecture: Some("x86_64".into()),
+            total_memory_mb: Some(65536),
+            os_family: "windows".into(),
+            has_gpu: true,
+            gpu_count: 1,
+            has_cuda: false,
+            has_rocm: false,
+            has_directml: true,
+            has_openvino: false,
+            gpu_vram_total_mb: 23552,
+        };
+        let result = evaluate_compatibility(&rules, &win_gpu_caps);
+        assert!(matches!(result, CompatibilityDecision::Fail { .. }));
+
+        // Linux GPU stone (CUDA) → should FAIL
+        let linux_gpu_caps = CompatCheckCapabilities {
+            cpu_model: Some("AMD Ryzen 9".into()),
+            cpu_features: Some(vec!["avx2".into()]),
+            architecture: Some("x86_64".into()),
+            total_memory_mb: Some(32768),
+            os_family: "linux".into(),
+            has_gpu: true,
+            gpu_count: 2,
+            has_cuda: true,
+            has_rocm: false,
+            has_directml: false,
+            has_openvino: false,
+            gpu_vram_total_mb: 16384,
+        };
+        let result = evaluate_compatibility(&rules, &linux_gpu_caps);
+        assert!(matches!(result, CompatibilityDecision::Fail { .. }));
+
+        // CPU-only thin client → should PASS
+        let cpu_caps = CompatCheckCapabilities {
+            cpu_model: Some("Intel Celeron J4105".into()),
+            cpu_features: Some(vec!["sse4_2".into()]),
+            architecture: Some("x86_64".into()),
+            total_memory_mb: Some(8192),
+            os_family: "linux".into(),
+            has_gpu: false,
+            gpu_count: 0,
+            has_cuda: false,
+            has_rocm: false,
+            has_directml: false,
+            has_openvino: false,
+            gpu_vram_total_mb: 0,
+        };
+        let result = evaluate_compatibility(&rules, &cpu_caps);
+        assert!(matches!(result, CompatibilityDecision::Pass));
     }
 }

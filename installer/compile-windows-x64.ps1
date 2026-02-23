@@ -228,6 +228,21 @@ try {
     # Copy binaries from target-windows-x64 to dist/windows-x64/
     $srcDir = Join-Path $WORKSPACE_ROOT "target-windows-x64\x86_64-pc-windows-msvc\$buildProfile"
 
+    # Kill any running dist executables before copying (Windows locks running .exe files)
+    foreach ($target in $buildTargets) {
+        $destPath = "$WINDOWS_X64_DIR\$target.exe"
+        if (Test-Path $destPath) {
+            $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                try { $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($destPath) } catch { $false }
+            }
+            foreach ($proc in $procs) {
+                Write-Host "  ⚠ Killing $($proc.ProcessName) (PID $($proc.Id)) — file is locked" -ForegroundColor Yellow
+                $proc | Stop-Process -Force
+                Start-Sleep -Milliseconds 200
+            }
+        }
+    }
+
     foreach ($target in $buildTargets) {
         $srcPath = "$srcDir\$target.exe"
         if (Test-Path $srcPath) {

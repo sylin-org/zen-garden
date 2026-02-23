@@ -1043,6 +1043,57 @@ pub async fn stream_service_logs_v1(
     Ok(Sse::new(log_stream).keep_alive(KeepAlive::default()))
 }
 
+/// GET /api/v1/services/:service/env - Get service environment variables
+///
+/// Returns environment variables for a running Docker-managed service.
+/// Adopted services return an empty map (env is managed by the host OS).
+pub async fn get_service_env_v1(
+    State(state): State<AppState>,
+    Path(service): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let service_name = normalize_service_name(&service)?;
+
+    // Check if service exists in registry
+    let offering = {
+        let offerings = state.offerings.read().await;
+        offerings.iter().find(|o| o.name == service_name).cloned()
+    };
+
+    let offering = offering.ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "SERVICE_NOT_FOUND",
+            format!("Service '{}' not found", service_name),
+            None,
+        )
+    })?;
+
+    // For Docker-managed containers, inspect to get env vars
+    if offering.is_managed() {
+        match state.docker.get_container_recreate_config(&service_name).await {
+            Ok((_image, _ports, env, _volumes)) => {
+                let env_map: std::collections::HashMap<String, String> = env
+                    .iter()
+                    .filter_map(|e| {
+                        let (k, v) = e.split_once('=')?;
+                        Some((k.to_string(), v.to_string()))
+                    })
+                    .collect();
+                Ok(Json(serde_json::json!({ "data": env_map })))
+            }
+            Err(e) => Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ENV_FETCH_FAILED",
+                format!("Failed to read env for '{}': {}", service_name, e),
+                None,
+            )),
+        }
+    } else {
+        // Adopted/borrowed: no env access — return empty
+        Ok(Json(serde_json::json!({ "data": {} })))
+    }
+}
+
 /// POST /api/v1/services/:service:restart - Restart service
 pub async fn restart_service_v1(
     State(state): State<AppState>,

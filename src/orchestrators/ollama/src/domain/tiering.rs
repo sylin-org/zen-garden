@@ -65,10 +65,12 @@ mod tests {
             stone_id: String::new(),
             stone_name: endpoint.to_string(),
             endpoint: endpoint.to_string(),
+            moss_endpoint: None,
             ollama_version: None,
             gpu_name: None,
             vram_total_bytes: vram_gb * GIB,
             vram_budget_bytes: vram_gb * GIB,
+            num_parallel: None,
             health: if healthy {
                 InstanceHealth::Healthy
             } else {

@@ -56,6 +56,7 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                 );
                 for topo_stone in &ollama_stones {
                     let endpoint = topo_stone.ollama_endpoint();
+                    let moss_ep = topo_stone.moss_endpoint();
                     tracing::info!(
                         stone = %topo_stone.stone_name,
                         endpoint = %endpoint,
@@ -71,7 +72,8 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                     let gpu_name = topo_stone.gpu_name.clone();
                     tokio::spawn(async move {
                         profile_instance(
-                            state, client, stone_id, stone_name, endpoint, vram_total, gpu_name,
+                            state, client, stone_id, stone_name, endpoint,
+                            Some(moss_ep), vram_total, gpu_name,
                         )
                         .await;
                     });
@@ -126,6 +128,7 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                             .next()
                             .unwrap_or("")
                             .to_string();
+                        let moss_ep = format!("http://{stone_ip}:7185");
                         let (vram_total, gpu_name) =
                             stone_discovery::fetch_stone_hw(&stone_ip).await;
                         tracing::info!(
@@ -135,7 +138,8 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                             "SSE: fetched HW capabilities"
                         );
                         profile_instance(
-                            state, client, stone_id, stone_name, endpoint, vram_total, gpu_name,
+                            state, client, stone_id, stone_name, endpoint,
+                            Some(moss_ep), vram_total, gpu_name,
                         )
                         .await;
                     });
@@ -247,9 +251,11 @@ async fn topology_refresh_loop(
                         let stone_name = topo_stone.stone_name.clone();
                         let vram_total = topo_stone.vram_total_bytes;
                         let gpu_name = topo_stone.gpu_name.clone();
+                        let moss_ep = topo_stone.moss_endpoint();
                         tokio::spawn(async move {
                             profile_instance(
-                                state, client, stone_id, stone_name, endpoint, vram_total, gpu_name,
+                                state, client, stone_id, stone_name, endpoint,
+                                Some(moss_ep), vram_total, gpu_name,
                             )
                             .await;
                         });
@@ -377,12 +383,15 @@ async fn resolve_stone(state: &AppState, shutdown: &CancellationToken) -> Option
 /// Profile a newly discovered Ollama instance.
 ///
 /// Queries /api/tags, /api/ps, /api/show per model, then registers in AppState.
+/// Also fetches Ollama environment from Moss to detect `OLLAMA_NUM_PARALLEL`.
+#[allow(clippy::too_many_arguments)]
 async fn profile_instance(
     state: AppState,
     client: OllamaClient,
     stone_id: String,
     stone_name: String,
     endpoint: String,
+    moss_endpoint: Option<String>,
     topology_vram_bytes: u64,
     topology_gpu_name: Option<String>,
 ) {
@@ -392,6 +401,20 @@ async fn profile_instance(
         topology_vram_mb = topology_vram_bytes / 1_048_576,
         "profiling instance"
     );
+
+    // Fetch Ollama service env from Moss (best-effort, non-blocking)
+    let num_parallel = if let Some(ref moss_ep) = moss_endpoint {
+        let env = stone_discovery::fetch_service_env(moss_ep, "ollama").await;
+        let np = env
+            .get("OLLAMA_NUM_PARALLEL")
+            .and_then(|v| v.parse::<u32>().ok());
+        if let Some(n) = np {
+            tracing::info!(stone = %stone_name, num_parallel = n, "detected OLLAMA_NUM_PARALLEL");
+        }
+        np
+    } else {
+        None
+    };
 
     let profile = client.full_profile(&endpoint).await;
 
@@ -409,10 +432,12 @@ async fn profile_instance(
                 stone_id,
                 stone_name: stone_name.clone(),
                 endpoint: endpoint.clone(),
+                moss_endpoint,
                 ollama_version: version,
                 gpu_name,
                 vram_total_bytes: vram_total,
                 vram_budget_bytes: vram_budget,
+                num_parallel,
                 health: InstanceHealth::Healthy,
                 models_loaded,
                 models_available,
@@ -465,10 +490,12 @@ async fn profile_instance(
                     stone_id,
                     stone_name,
                     endpoint,
+                    moss_endpoint,
                     ollama_version: None,
                     gpu_name: topology_gpu_name,
                     vram_total_bytes: topology_vram_bytes,
                     vram_budget_bytes: vram_budget,
+                    num_parallel,
                     health: InstanceHealth::Unhealthy {
                         since: Instant::now(),
                         reason: e.to_string(),

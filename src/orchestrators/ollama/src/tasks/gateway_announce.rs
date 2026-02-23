@@ -94,14 +94,13 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
             h
         }
         Err(e) => {
-            // Fallback: use MDNS_NAME (matches the Koi mDNS registration)
-            let fallback = format!("{}.local", MDNS_NAME);
+            // Fallback: use LAN IP directly (mDNS name is not routable without Koi DNS)
             tracing::warn!(
                 error = %e,
-                fallback = %fallback,
-                "Gateway: failed to resolve host DNS name, using mDNS service name"
+                fallback = %self_ip,
+                "Gateway: failed to resolve host DNS name, using IP"
             );
-            fallback
+            self_ip.clone()
         }
     };
 

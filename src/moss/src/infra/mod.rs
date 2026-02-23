@@ -55,9 +55,9 @@ pub use companions::CompanionRegistry;
 pub use config::{AdoptionConfig, MossConfig, NetworkConfig, StaticIpPoolConfig};
 pub use container::ContainerRuntime;
 pub use embedded::{
-    list_all_manifests, load_embedded_adopted_offerings, load_sw_manifests_with_overlay,
-    manifest_exists, read_manifest_overlay, AssetSource, EmbeddedCompanions, EmbeddedManifests,
-    ManifestSource,
+    extract_seeds, list_all_manifests, load_embedded_adopted_offerings,
+    load_sw_manifests_with_overlay, manifest_exists, read_manifest_overlay, AssetSource,
+    EmbeddedCompanions, EmbeddedManifests, EmbeddedSeeds, ManifestSource,
 };
 pub use event_bus::{spawn_listener, EventBus, EventListener};
 pub use filesystem::FileSystem;

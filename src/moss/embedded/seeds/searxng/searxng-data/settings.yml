@@ -1,0 +1,18 @@
+# SearXNG seed configuration for Zen Garden
+#
+# Extends default settings with JSON API enabled.
+# This file was placed by Moss during installation.
+# Customize freely — it won't be overwritten on updates.
+
+use_default_settings: true
+
+server:
+  secret_key: "__ZEN_GARDEN_GENERATE_SECRET__"
+
+search:
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 10.0

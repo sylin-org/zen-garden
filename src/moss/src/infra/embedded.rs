@@ -30,6 +30,7 @@
 //! Embedded assets allow Moss to ship with manifests and Companions directly compiled in.
 //! The overlay pattern allows filesystem files to override embedded defaults.
 
+use anyhow::{Context, Result};
 use rust_embed::Embed;
 use std::path::Path;
 use tracing::debug;
@@ -107,6 +108,28 @@ impl EmbeddedCompanions {
         Self::get(name).is_some()
     }
 }
+
+// ============================================================================
+// Embedded Seeds (First-Boot Configuration)
+// ============================================================================
+
+/// Embedded seed files for offering first-boot configuration.
+///
+/// Decoupled from manifests: manifests are declarative metadata describing
+/// *what* to deploy; seeds are runtime content deployed *into* volumes.
+///
+/// # Directory Convention
+///
+/// ```text
+/// embedded/seeds/
+/// └── {offering}/
+///     └── {volume-name}/
+///         └── {file-path...}
+/// ```
+#[derive(Embed)]
+#[folder = "embedded/seeds/"]
+#[prefix = ""]
+pub struct EmbeddedSeeds;
 
 // ============================================================================
 // Overlay Loading Helpers
@@ -209,7 +232,6 @@ pub struct ManifestSource {
 // Manifest Loading with Overlay
 // ============================================================================
 
-use anyhow::Result;
 use garden_common::manifests::{Offering, OfferingRegistry};
 
 /// Load software manifests with embedded + filesystem overlay
@@ -503,6 +525,8 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         guidance: Option<String>,
         connectivity: Option<ConnectivityConfig>,
         connection: Option<garden_common::manifests::ConnectionProfile>,
+        #[serde(default)]
+        coordination: garden_common::CoordinationMode,
     }
 
     let mut offerings = Vec::new();
@@ -566,7 +590,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     compatibility: None,
                     guidance: None,
                     connection: file.connection,
-                    replicable: true,
+                    coordination: file.coordination,
                 };
 
                 tracing::debug!(
@@ -589,6 +613,146 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
     tracing::info!(count = offerings.len(), "Loaded embedded adopted offerings");
 
     offerings
+}
+
+// ============================================================================
+// Seed Extraction (First-Boot Configuration)
+// ============================================================================
+
+/// Extract seed files for an offering into its volume directories.
+///
+/// Seeds provide initial configuration files needed before a container's first boot.
+/// Files are only written if they don't already exist (**no-clobber**), preserving
+/// any user customizations from a previous install or manual edit.
+///
+/// # Convention
+///
+/// Embedded path: `{offering}/{volume-name}/{path...}`
+/// Extracts to:   `{host_volume_path}/{path...}`
+///
+/// The `{volume-name}` segment is matched against the last component of each
+/// host volume path from the compiled manifest.
+///
+/// # Returns
+///
+/// Number of seed files written (skipped files are not counted).
+pub fn extract_seeds(offering: &str, volumes: &[(String, String)]) -> Result<usize> {
+    let prefix = format!("{}/", offering);
+    let mut extracted = 0;
+
+    for path in EmbeddedSeeds::iter() {
+        let path_str = path.as_ref();
+
+        // Match: {offering}/{volume-name}/{rest...}
+        let Some(after_prefix) = path_str.strip_prefix(&prefix) else {
+            continue;
+        };
+
+        // Split into volume-name and file-path-within-volume
+        let Some((volume_name, file_path)) = after_prefix.split_once('/') else {
+            tracing::debug!(
+                offering,
+                path = %path_str,
+                "Seed path has no file beneath volume directory, skipping"
+            );
+            continue;
+        };
+
+        // Find the matching host path from compiled volumes.
+        // Convention: host path ends with /{volume-name}
+        let Some((host_path, _)) = volumes.iter().find(|(hp, _)| {
+            hp.ends_with(&format!("/{}", volume_name)) || hp.ends_with(&format!("\\{}", volume_name))
+        }) else {
+            tracing::debug!(
+                offering,
+                volume_name,
+                "Seed references volume not present in offering, skipping"
+            );
+            continue;
+        };
+
+        let target = std::path::Path::new(host_path).join(file_path);
+
+        // No-clobber: never overwrite existing files
+        if target.exists() {
+            tracing::debug!(
+                offering,
+                target = %target.display(),
+                "Seed target exists, preserving user file"
+            );
+            continue;
+        }
+
+        // Read embedded content
+        let Some(content) = EmbeddedSeeds::get(path_str) else {
+            continue;
+        };
+
+        // Post-process: replace well-known placeholders with generated values.
+        // This lets seed files contain e.g. unique secrets per install.
+        let final_content = post_process_seed(&content.data);
+
+        // Ensure parent directories exist
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create seed directory {}", parent.display())
+            })?;
+        }
+
+        std::fs::write(&target, &final_content).with_context(|| {
+            format!("Failed to write seed file {}", target.display())
+        })?;
+
+        tracing::info!(
+            offering,
+            target = %target.display(),
+            "Extracted seed file"
+        );
+        extracted += 1;
+    }
+
+    if extracted > 0 {
+        tracing::info!(offering, count = extracted, "Seed files extracted");
+    }
+
+    Ok(extracted)
+}
+
+/// Well-known placeholder for a unique random secret (hex, 64 chars).
+const SECRET_PLACEHOLDER: &str = "__ZEN_GARDEN_GENERATE_SECRET__";
+
+/// Replace well-known placeholders in seed content.
+///
+/// Supported placeholders:
+/// - `__ZEN_GARDEN_GENERATE_SECRET__` → 64-char random hex string
+fn post_process_seed(raw: &[u8]) -> Vec<u8> {
+    // Strip UTF-8 BOM if present (editors on Windows sometimes add one).
+    let data = if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &raw[3..]
+    } else {
+        raw
+    };
+
+    // Only process text-like files (UTF-8). Binary seeds pass through unchanged.
+    let Ok(text) = std::str::from_utf8(data) else {
+        return data.to_vec();
+    };
+
+    if !text.contains(SECRET_PLACEHOLDER) {
+        return data.to_vec();
+    }
+
+    let secret = generate_hex_secret(64);
+    text.replace(SECRET_PLACEHOLDER, &secret).into_bytes()
+}
+
+/// Generate a cryptographically random hex string of `len` characters.
+fn generate_hex_secret(len: usize) -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..len)
+        .map(|_| format!("{:x}", rng.gen::<u8>() % 16))
+        .collect()
 }
 
 #[cfg(test)]
@@ -640,6 +804,58 @@ mod tests {
             offerings.iter().any(|o| o.name == "ollama"),
             "Ollama should be in adopted offerings"
         );
+    }
+
+    #[test]
+    fn test_extract_seeds_writes_to_volume() {
+        let temp = TempDir::new().unwrap();
+        let vol_dir = temp.path().join("volumes").join("searxng-data");
+        let volumes = vec![(
+            vol_dir.to_string_lossy().to_string(),
+            "/etc/searxng".to_string(),
+        )];
+        let count = extract_seeds("searxng", &volumes).unwrap();
+        if count > 0 {
+            // Verify seed file was written
+            assert!(vol_dir.join("settings.yml").exists());
+            let content = std::fs::read_to_string(vol_dir.join("settings.yml")).unwrap();
+            assert!(content.contains("use_default_settings"));
+        }
+    }
+
+    #[test]
+    fn test_extract_seeds_no_clobber() {
+        let temp = TempDir::new().unwrap();
+        let vol_dir = temp.path().join("volumes").join("searxng-data");
+        std::fs::create_dir_all(&vol_dir).unwrap();
+        std::fs::write(vol_dir.join("settings.yml"), "user-custom: true").unwrap();
+
+        let volumes = vec![(
+            vol_dir.to_string_lossy().to_string(),
+            "/etc/searxng".to_string(),
+        )];
+        let _ = extract_seeds("searxng", &volumes).unwrap();
+
+        // User's file should be preserved, not overwritten
+        let content = std::fs::read_to_string(vol_dir.join("settings.yml")).unwrap();
+        assert_eq!(content, "user-custom: true");
+    }
+
+    #[test]
+    fn test_post_process_seed_strips_bom() {
+        let with_bom = b"\xEF\xBB\xBFuse_default_settings: true\n";
+        let result = post_process_seed(with_bom);
+        assert_eq!(result, b"use_default_settings: true\n");
+    }
+
+    #[test]
+    fn test_post_process_seed_replaces_secret_with_bom() {
+        let input = format!("\u{FEFF}secret_key: \"{SECRET_PLACEHOLDER}\"");
+        let result = post_process_seed(input.as_bytes());
+        let text = std::str::from_utf8(&result).unwrap();
+        assert!(!text.starts_with('\u{FEFF}'), "BOM should be stripped");
+        assert!(!text.contains(SECRET_PLACEHOLDER), "placeholder should be replaced");
+        assert!(text.contains("secret_key:"), "key should remain");
     }
 
     #[test]

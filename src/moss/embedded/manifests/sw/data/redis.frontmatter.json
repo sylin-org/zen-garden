@@ -17,5 +17,6 @@
   ],
   "connection": {
     "uri_template": "redis://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

@@ -23,5 +23,6 @@
   "requires_sysctl": "vm.max_map_count=262144",
   "connection": {
     "uri_template": "http://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

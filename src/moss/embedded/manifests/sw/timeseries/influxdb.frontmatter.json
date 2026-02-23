@@ -3,6 +3,8 @@
   "description": "Time series database for metrics and IoT (MIT)",
   "category": "timeseries",
   "tags": ["timeseries", "metrics", "iot", "monitoring", "database"],
+  "port": 8086,
   "ports": [8086],
-  "volumes": ["influxdb-data", "influxdb-config"]
+  "volumes": ["influxdb-data", "influxdb-config"],
+  "coordination": "elected"
 }

@@ -31,7 +31,7 @@ use crate::manifests::connection::ConnectionProfile;
 use crate::manifests::connectivity::ConnectivityConfig;
 use crate::manifests::detection::{ControlConfig, HealthConfig, LocationConfig, OsDetectionRules};
 use crate::types::AdoptedControlLevel;
-use crate::{CompatibilityRules, OfferingMode, TaskDefinition};
+use crate::{CompatibilityRules, CoordinationMode, OfferingMode, TaskDefinition};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -178,10 +178,6 @@ pub struct OfferingMetadata {
 // ============================================================================
 // Runtime Manifests Directory
 // ============================================================================
-
-fn default_replicable() -> bool {
-    true
-}
 
 /// Get runtime manifests directory (uses platform-aware paths)
 pub fn runtime_manifests_dir() -> String {
@@ -332,12 +328,12 @@ pub struct Offering {
     pub connection: Option<ConnectionProfile>,
 
     // ═══════════════════════════════════════════════════════════════════════
-    // ORCHESTRATION (ORCH-0001)
+    // ORCHESTRATION (ORCH-0006)
     // ═══════════════════════════════════════════════════════════════════════
-    /// Whether this offering supports replication across stones.
-    /// Default: `true` — most offerings can be replicated.
-    #[serde(default = "default_replicable")]
-    pub replicable: bool,
+    /// How instances coordinate across stones.
+    /// `Independent` (default) = no election. `Elected` = Primary/Dormant roles.
+    #[serde(default)]
+    pub coordination: CoordinationMode,
 }
 
 impl Offering {
@@ -672,8 +668,8 @@ impl OfferingRegistry {
 
         // Load optional files
         let compatibility = Self::load_compatibility(dir, name);
-        let (metadata, connection) =
-            Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None));
+        let (metadata, connection, fm_coordination) =
+            Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default()));
         let guidance = Self::load_guidance(dir, name);
 
         Ok(Offering {
@@ -693,7 +689,7 @@ impl OfferingRegistry {
             compatibility,
             guidance,
             connection,
-            replicable: true,
+            coordination: fm_coordination,
         })
     }
 
@@ -718,7 +714,7 @@ impl OfferingRegistry {
             compatibility: manifest.compatibility,
             guidance: manifest.guidance,
             connection: manifest.connection,
-            replicable: manifest.replicable,
+            coordination: manifest.coordination,
         })
     }
 
@@ -759,7 +755,7 @@ impl OfferingRegistry {
             compatibility: None,
             guidance: None,
             connection: adopted_file.connection,
-            replicable: true,
+            coordination: adopted_file.coordination,
         })
     }
 
@@ -777,7 +773,7 @@ impl OfferingRegistry {
     fn load_metadata(
         dir: &Path,
         name: &str,
-    ) -> Option<(OfferingMetadata, Option<ConnectionProfile>)> {
+    ) -> Option<(OfferingMetadata, Option<ConnectionProfile>, CoordinationMode)> {
         let path = dir.join(format!("{}.frontmatter.json", name));
         if !path.exists() {
             return None;
@@ -797,7 +793,7 @@ impl OfferingRegistry {
                     documentation: fm.documentation,
                     port: fm.port,
                 };
-                (metadata, fm.connection)
+                (metadata, fm.connection, fm.coordination)
             })
     }
 
@@ -847,7 +843,7 @@ impl OfferingRegistry {
             .map(crate::utils::strings::strip_bom)
             .and_then(|yaml| serde_yaml::from_str(yaml).ok());
 
-        let (metadata, connection) = frontmatter_content
+        let (metadata, connection, fm_coordination) = frontmatter_content
             .map(crate::utils::strings::strip_bom)
             .and_then(|json| serde_json::from_str::<FrontmatterFile>(json).ok())
             .map(|fm| {
@@ -859,9 +855,9 @@ impl OfferingRegistry {
                     documentation: fm.documentation,
                     port: fm.port,
                 };
-                (metadata, fm.connection)
+                (metadata, fm.connection, fm.coordination)
             })
-            .unwrap_or((OfferingMetadata::default(), None));
+            .unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default()));
 
         let guidance = guidance_content
             .map(crate::utils::strings::strip_bom)
@@ -881,7 +877,7 @@ impl OfferingRegistry {
             compatibility,
             guidance,
             connection,
-            replicable: true,
+            coordination: fm_coordination,
         })
     }
 }
@@ -902,8 +898,8 @@ struct ManifestFile {
     compatibility: Option<CompatibilityRules>,
     guidance: Option<String>,
     connection: Option<ConnectionProfile>,
-    #[serde(default = "default_replicable")]
-    replicable: bool,
+    #[serde(default)]
+    coordination: CoordinationMode,
 }
 
 /// Adopted-only file format (.adopted.yaml)
@@ -921,6 +917,8 @@ struct AdoptedFile {
     guidance: Option<String>,
     connectivity: Option<ConnectivityConfig>,
     connection: Option<ConnectionProfile>,
+    #[serde(default)]
+    coordination: CoordinationMode,
 }
 
 /// Frontmatter file format (.frontmatter.json)
@@ -933,6 +931,8 @@ struct FrontmatterFile {
     documentation: Option<String>,
     port: Option<u16>,
     connection: Option<ConnectionProfile>,
+    #[serde(default)]
+    coordination: CoordinationMode,
 }
 
 /// Strip YAML frontmatter from markdown content
@@ -1016,7 +1016,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
-            replicable: true,
+            coordination: CoordinationMode::default(),
         };
 
         assert!(offering.supports_mode(&OfferingMode::Managed));
@@ -1043,7 +1043,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
-            replicable: true,
+            coordination: CoordinationMode::Elected,
         });
 
         registry.upsert(Offering {
@@ -1067,7 +1067,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
-            replicable: true,
+            coordination: CoordinationMode::default(),
         });
 
         assert_eq!(registry.by_mode(&OfferingMode::Managed).len(), 1);

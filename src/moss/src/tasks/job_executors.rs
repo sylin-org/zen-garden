@@ -702,6 +702,24 @@ pub async fn install_service_task(
         .unwrap_or("latest")
         .to_string();
 
+    // Extract seed files (initial configuration) into volume directories.
+    // Must happen before container creation so configs are present at first boot.
+    match crate::infra::embedded::extract_seeds(offering_type, &compiled.volumes) {
+        Ok(n) if n > 0 => {
+            emit_job_progress(
+                state,
+                "info",
+                format!("Seeded {} config file(s)", n),
+                job_id,
+                offering,
+            );
+        }
+        Err(e) => {
+            tracing::warn!(offering, error = ?e, "Failed to extract seed files (non-fatal)");
+        }
+        _ => {}
+    }
+
     // Install via Docker
     emit_job_progress(
         state,
@@ -750,8 +768,14 @@ pub async fn install_service_task(
         }
     };
 
-    // Use actual Docker-bound port (may differ from manifest if remapped due to conflict)
-    let actual_port = actual_ports.first().map(|(h, _)| *h).unwrap_or(native_port);
+    // Use actual Docker-bound port. Prefer the manifest's default (native_port) if it
+    // appears in Docker's response; fall back to first port only when remapped.
+    let actual_port = actual_ports
+        .iter()
+        .find(|(h, _)| *h == native_port)
+        .or(actual_ports.first())
+        .map(|(h, _)| *h)
+        .unwrap_or(native_port);
 
     emit_job_progress(
         state,
@@ -820,8 +844,8 @@ pub async fn install_service_task(
         &image_full,
     ));
 
-    // Assign initial orchestration role for replicable offerings (ORCH-0001)
-    if compiled.replicable {
+    // Assign initial orchestration role for elected offerings (ORCH-0006)
+    if compiled.coordination.is_elected() {
         if let Err(e) =
             crate::tasks::offering_orchestration::assign_initial_role(state, &offering_id, offering)
                 .await
@@ -1023,6 +1047,18 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             .unwrap_or("latest")
             .to_string();
 
+        // Extract seed files (initial configuration) into volume directories.
+        // Must happen before container creation so configs are present at first boot.
+        match crate::infra::embedded::extract_seeds(&offering_type, &compiled.volumes) {
+            Ok(n) if n > 0 => {
+                tracing::info!(service = %service_name, count = n, "Seeded config files");
+            }
+            Err(e) => {
+                tracing::warn!(service = %service_name, error = ?e, "Failed to extract seed files (non-fatal)");
+            }
+            _ => {}
+        }
+
         // Install via Docker
         let ports_for_docker = compiled.ports_vec();
         let actual_ports = match state
@@ -1049,8 +1085,14 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             }
         };
 
-        // Use actual Docker-bound port (may differ from manifest if remapped due to conflict)
-        let actual_port = actual_ports.first().map(|(h, _)| *h).unwrap_or(native_port);
+        // Use actual Docker-bound port. Prefer the manifest's default (native_port) if it
+        // appears in Docker's response; fall back to first port only when remapped.
+        let actual_port = actual_ports
+            .iter()
+            .find(|(h, _)| *h == native_port)
+            .or(actual_ports.first())
+            .map(|(h, _)| *h)
+            .unwrap_or(native_port);
 
         // Add to offerings registry
         let offering_id = generate_guidv7();

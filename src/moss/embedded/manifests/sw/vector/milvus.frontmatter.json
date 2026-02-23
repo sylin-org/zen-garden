@@ -7,5 +7,6 @@
   "port": 19530,
   "health_port": 9091,
   "volumes": ["milvus-data"],
-  "minimum_memory_gb": 8
+  "minimum_memory_gb": 8,
+  "coordination": "elected"
 }

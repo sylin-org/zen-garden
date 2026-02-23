@@ -13,5 +13,6 @@
   ],
   "connection": {
     "uri_template": "mongodb://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

@@ -15,5 +15,6 @@
   ],
   "connection": {
     "uri_template": "mysql://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

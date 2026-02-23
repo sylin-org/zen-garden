@@ -14,5 +14,6 @@
   ],
   "connection": {
     "uri_template": "sqlserver://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

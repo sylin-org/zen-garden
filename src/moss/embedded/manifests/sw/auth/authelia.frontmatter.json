@@ -3,6 +3,7 @@
   "description": "Authentication and authorization server with 2FA/SSO (Apache 2.0)",
   "category": "auth",
   "tags": ["authentication", "authorization", "sso", "2fa", "totp", "security"],
+  "port": 9091,
   "ports": [9091],
   "volumes": ["authelia-config"]
 }

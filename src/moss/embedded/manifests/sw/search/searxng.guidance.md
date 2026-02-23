@@ -23,7 +23,7 @@ Preferences are stored in a browser cookie by default.
 
 ## API Search
 
-SearXNG exposes a JSON API for programmatic search:
+SearXNG's JSON API is enabled out of the box — no extra configuration needed.
 
 ```bash
 curl "http://{{server-name}}:{{default-port}}/search?q=rust+programming&format=json"
@@ -32,6 +32,8 @@ curl "http://{{server-name}}:{{default-port}}/search?q=rust+programming&format=j
 ## Configuration
 
 Custom settings persist in the `searxng-data` volume at `/etc/searxng/settings.yml`.
+Zen Garden seeds this file on first install with `use_default_settings: true` and
+JSON API enabled. Your edits are preserved across updates.
 
 **Edit settings:**
 ```bash

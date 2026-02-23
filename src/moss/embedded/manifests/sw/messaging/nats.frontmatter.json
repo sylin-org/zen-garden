@@ -21,5 +21,6 @@
   ],
   "connection": {
     "uri_template": "nats://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

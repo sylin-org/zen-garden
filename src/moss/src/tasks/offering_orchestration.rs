@@ -52,6 +52,10 @@ pub async fn offering_orchestration_task(state: AppState, token: CancellationTok
     // This handles pre-existing offerings that were deployed before ORCH-0001.
     backfill_orchestration(&state).await;
 
+    // Phase 1.6: Cleanup — strip stale OrchestrationState from Independent offerings.
+    // Self-healing for offerings that acquired orchestration before ORCH-0006.
+    cleanup_independent_orchestration(&state).await;
+
     // Phase 2: Pin recovery — re-elect pinned offerings
     pin_recovery(&state).await;
 
@@ -144,7 +148,7 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 ///
 /// Only backfills offerings where:
 /// - `orchestration` is `None`
-/// - The manifest is marked `replicable: true`
+/// - The manifest declares `coordination: elected` (ORCH-0006)
 /// - The offering is in `Running` status
 async fn backfill_orchestration(state: &AppState) {
     use garden_common::OfferingStatus;
@@ -160,26 +164,26 @@ async fn backfill_orchestration(state: &AppState) {
         return;
     }
 
-    // Check offerings index for replicable flag
-    let replicable_types: std::collections::HashSet<String> = {
+    // Check offerings index for coordination mode (ORCH-0006)
+    let elected_types: std::collections::HashSet<String> = {
         let index_guard = state.offerings_index.read().await;
         match index_guard.as_ref() {
             Some(index) => index
                 .offerings
                 .iter()
-                .filter(|co| co.replicable)
+                .filter(|co| co.coordination.is_elected())
                 .map(|co| co.name.clone())
                 .collect(),
             None => {
-                // Index not built yet — assume all are replicable (safe default)
-                candidates.iter().map(|(_, _, t)| t.clone()).collect()
+                // Index not built yet — safe default: skip all (Independent)
+                std::collections::HashSet::new()
             }
         }
     };
 
     let mut count = 0u32;
     for (offering_id, fqn, offering_type) in &candidates {
-        if !replicable_types.contains(offering_type) {
+        if !elected_types.contains(offering_type) {
             continue;
         }
 
@@ -248,7 +252,22 @@ async fn pin_recovery(state: &AppState) {
 /// One tick of the orchestration loop.
 ///
 /// Iterates all offerings with orchestration state and dispatches by role.
+/// Skips offerings whose manifest declares `Independent` coordination (ORCH-0006).
 async fn orchestration_tick(state: &AppState) -> Result<()> {
+    // Build elected-types set from the offerings index (ORCH-0006 gate).
+    let elected_types: std::collections::HashSet<String> = {
+        let index_guard = state.offerings_index.read().await;
+        match index_guard.as_ref() {
+            Some(index) => index
+                .offerings
+                .iter()
+                .filter(|co| co.coordination.is_elected())
+                .map(|co| co.name.clone())
+                .collect(),
+            None => std::collections::HashSet::new(),
+        }
+    };
+
     let offerings = state.get_offerings().await;
 
     for offering in &offerings {
@@ -256,6 +275,11 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
             Some(o) => o,
             None => continue,
         };
+
+        // ORCH-0006: skip Independent offerings that still carry stale state
+        if !elected_types.is_empty() && !elected_types.contains(&offering.offering) {
+            continue;
+        }
 
         let fqn = &offering.name;
         let offering_id = &offering.offering_id;
@@ -578,6 +602,51 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Strip `OrchestrationState` from offerings whose manifest is `Independent`.
+///
+/// Self-healing: offerings deployed before ORCH-0006 may carry stale roles.
+/// Runs once at startup; the tick loop also gates on `elected_types` as a
+/// belt-and-suspenders check.
+async fn cleanup_independent_orchestration(state: &AppState) {
+    let elected_types: std::collections::HashSet<String> = {
+        let index_guard = state.offerings_index.read().await;
+        match index_guard.as_ref() {
+            Some(index) => index
+                .offerings
+                .iter()
+                .filter(|co| co.coordination.is_elected())
+                .map(|co| co.name.clone())
+                .collect(),
+            None => return, // Index not built yet — skip cleanup
+        }
+    };
+
+    let mut cleaned = 0u32;
+    {
+        let mut offerings = state.offerings.write().await;
+        for o in offerings.iter_mut() {
+            if o.orchestration.is_some() && !elected_types.contains(&o.offering) {
+                tracing::info!(
+                    offering = %o.name,
+                    offering_type = %o.offering,
+                    "Removing stale OrchestrationState from Independent offering (ORCH-0006)"
+                );
+                o.orchestration = None;
+                o.touch();
+                cleaned += 1;
+            }
+        }
+    }
+
+    if cleaned > 0 {
+        tracing::info!(count = cleaned, "Cleaned stale orchestration state from Independent offerings");
+        if let Err(e) = state.persist_offerings().await {
+            tracing::error!(error = ?e, "Failed to persist after orchestration cleanup");
+        }
+        state.sync_self_services(true).await;
+    }
 }
 
 /// Assign initial orchestration state for a newly deployed offering.

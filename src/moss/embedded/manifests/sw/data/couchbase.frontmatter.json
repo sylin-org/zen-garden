@@ -14,5 +14,6 @@
   ],
   "connection": {
     "uri_template": "couchbase://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

@@ -22,5 +22,6 @@
   ],
   "connection": {
     "uri_template": "amqp://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

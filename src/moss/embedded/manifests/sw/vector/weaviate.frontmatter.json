@@ -5,5 +5,6 @@
   "tags": ["vector", "database", "embeddings", "ai", "search", "semantic"],
   "port": 8080,
   "grpc_port": 50051,
-  "volumes": ["weaviate-data"]
+  "volumes": ["weaviate-data"],
+  "coordination": "elected"
 }

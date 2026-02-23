@@ -3,6 +3,7 @@
   "description": "Self-hosted cloud platform for files, calendar, contacts (AGPL v3)",
   "category": "storage",
   "tags": ["cloud", "files", "sync", "calendar", "contacts", "collaboration"],
+  "port": 8080,
   "ports": [8080],
   "volumes": ["nextcloud-data", "nextcloud-apps", "nextcloud-config"]
 }

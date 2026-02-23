@@ -15,5 +15,6 @@
   ],
   "connection": {
     "uri_template": "postgresql://{host}:{port}"
-  }
+  },
+  "coordination": "elected"
 }

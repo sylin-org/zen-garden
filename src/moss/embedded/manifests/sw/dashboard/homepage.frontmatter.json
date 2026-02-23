@@ -3,6 +3,7 @@
   "description": "Modern application dashboard with service integrations (GPL-3.0)",
   "category": "dashboard",
   "tags": ["dashboard", "startpage", "homepage", "docker", "monitoring"],
+  "port": 3001,
   "ports": [3001],
   "volumes": ["homepage-config"]
 }

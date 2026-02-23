@@ -1012,9 +1012,19 @@ pub struct RuleCondition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub os_family_not: Option<Vec<String>>,
 
-    // AI/GPU requirements
+    // GPU/AI hardware presence (simple boolean — uses same detection as `observe`)
+    /// Match if stone has (true) or lacks (false) any GPU hardware.
+    /// Simpler and more reliable than runtime-specific checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_gpu: Option<bool>,
+    /// Match if stone has (true) or lacks (false) any AI runtime
+    /// (CUDA, ROCm, DirectML, OpenVINO, NPU, tensor cores, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_ai_runtime: Option<bool>,
+
+    // AI/GPU requirements (runtime-specific — prefer has_gpu/has_ai_runtime above)
     /// Match if ANY of the listed AI runtimes are present (OR logic: ['cuda', 'rocm'])
-    /// Use for offerings that REQUIRE a GPU.
+    /// Use for offerings that REQUIRE a specific GPU runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_ai_any: Option<Vec<String>>,
     /// Match if ALL of the listed AI runtimes are present (AND logic: ['cuda', 'directml'])
@@ -1126,6 +1136,39 @@ pub struct RemediationFile {
 // ============================================================================
 // Orchestration Types (ORCH-0001: Multi-instance coordination)
 // ============================================================================
+
+/// How instances of this offering coordinate across stones (ORCH-0006).
+///
+/// Controls whether the offering participates in Primary/Dormant election.
+/// Stateless services (inference engines, proxies) use `Independent` (default).
+/// Stateful services (databases, message brokers) opt in with `Elected`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinationMode {
+    /// Each instance operates independently. No election, no roles.
+    /// Safe default for most offerings (inference, proxies, stateless APIs).
+    #[default]
+    Independent,
+    /// One Primary, rest Dormant. Election determines the active writer.
+    /// For stateful services (databases, registries, seed banks).
+    Elected,
+}
+
+impl CoordinationMode {
+    /// Returns `true` if this offering participates in Primary/Dormant election.
+    pub fn is_elected(&self) -> bool {
+        matches!(self, Self::Elected)
+    }
+}
+
+impl std::fmt::Display for CoordinationMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Independent => write!(f, "independent"),
+            Self::Elected => write!(f, "elected"),
+        }
+    }
+}
 
 /// Orchestration role for multi-instance coordination.
 ///

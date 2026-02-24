@@ -227,6 +227,7 @@ mod tests {
             format: None,
             size_disk: 0,
             vram_bytes: Some(vram_gb * GIB),
+            context_length: None,
         }
     }
 

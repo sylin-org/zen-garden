@@ -67,9 +67,9 @@ pub async fn proxy_handler(
         (Method::GET, "/api/tags") => proxy_merged_tags(&state).await,
         (Method::GET, "/api/ps") => proxy_merged_ps(&state).await,
 
-        // ── Pass-through endpoints (routed to specific instance) ──
+        // ── Show (with catalog fallback) ──
         (Method::POST, "/api/show") => {
-            proxy_routed(&state, &path, method, &headers, body_bytes).await
+            proxy_show(&state, &path, method, &headers, body_bytes).await
         }
         (Method::POST, "/api/pull") => {
             proxy_routed(&state, &path, method, &headers, body_bytes).await
@@ -438,6 +438,117 @@ async fn proxy_routed(
             .body(Body::from(bytes))
             .unwrap())
     }
+}
+
+/// Proxy `/api/show` with catalog fallback.
+///
+/// Tries to forward to an instance that has the model.  If the upstream
+/// returns a non-success status (e.g. 404 — model not currently loaded)
+/// or no instance has it, synthesizes a response from the orchestrator's
+/// cached model catalog.  The catalog is populated at discovery time via
+/// `/api/show` on each stone, so the metadata is authoritative — it just
+/// might not be currently loaded in VRAM.
+///
+/// This means clients always get a valid response as long as the model was
+/// ever profiled, regardless of whether it's loaded right now.
+async fn proxy_show(
+    state: &ProxyState,
+    path: &str,
+    method: Method,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Result<Response, StatusCode> {
+    let model_name = extract_model(&body);
+
+    // Try upstream first — routed to an instance that has the model
+    let target = if let Some(ref m) = model_name {
+        let instances = state.app.instances.read().await;
+        instances
+            .values()
+            .find(|i| i.health.is_routable() && i.models_available.iter().any(|name| name == m))
+            .map(|i| i.endpoint.clone())
+    } else {
+        None
+    };
+
+    if let Some(ref endpoint) = target {
+        let resp = state
+            .client
+            .forward_request(endpoint, path, method, body, headers.clone())
+            .await;
+
+        if let Ok(resp) = resp {
+            let status = resp.status().as_u16();
+            if (200..300).contains(&status) {
+                // Upstream succeeded — forward as-is
+                let http_status =
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                let bytes = resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+                return Ok(Response::builder()
+                    .status(http_status)
+                    .header("content-type", "application/json")
+                    .body(Body::from(bytes))
+                    .unwrap());
+            }
+            // Upstream returned an error — fall through to catalog
+        }
+        // Forward failed — fall through to catalog
+    }
+
+    // ── Catalog fallback ──────────────────────────────────────────
+    let model_name = model_name.ok_or(StatusCode::BAD_REQUEST)?;
+    let models = state.app.models.read().await;
+
+    let info = models.get(&model_name).ok_or_else(|| {
+        tracing::debug!(model = %model_name, "show: model not in catalog");
+        StatusCode::NOT_FOUND
+    })?;
+
+    // Synthesize a response in Ollama's /api/show shape.
+    // Clients parsing model_info will find the fields they need.
+    let mut model_info = serde_json::Map::new();
+    if let Some(pc) = info.parameter_count {
+        model_info.insert(
+            "general.parameter_count".into(),
+            serde_json::Value::Number(pc.into()),
+        );
+    }
+    if let Some(ctx) = info.context_length {
+        // Infer architecture prefix from family for the context_length key.
+        // Ollama stores it as "{arch}.context_length", and clients expect this shape.
+        let arch = info.family.as_deref().unwrap_or("general");
+        model_info.insert(
+            format!("{arch}.context_length"),
+            serde_json::Value::Number(ctx.into()),
+        );
+        // Also provide it under a stable key so clients don't need to guess the arch
+        model_info.insert(
+            "general.context_length".into(),
+            serde_json::Value::Number(ctx.into()),
+        );
+    }
+
+    let body = serde_json::json!({
+        "modelfile": "",
+        "parameters": "",
+        "template": "",
+        "details": {
+            "family": info.family,
+            "families": info.families,
+            "parameter_size": info.parameter_size,
+            "quantization_level": info.quantization_level,
+            "format": info.format,
+        },
+        "model_info": model_info,
+        "capabilities": info.capabilities,
+    });
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .header("x-zen-garden-source", "catalog")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap())
 }
 
 /// Merge `/api/tags` from all instances into a unified response.

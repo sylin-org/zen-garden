@@ -24,6 +24,9 @@ struct V1Model {
     format: Option<String>,
     size_disk: u64,
     vram_bytes: Option<u64>,
+    /// Context window in tokens from GGUF metadata (e.g. 256, 8192, 131072).
+    /// `null` if `/api/show` didn't return it (model never profiled).
+    context_length: Option<u64>,
     /// Stones that have this model installed.
     available_on: Vec<ModelPlacement>,
     /// Stones where this model is currently loaded in VRAM.
@@ -112,6 +115,7 @@ pub async fn get_models(State(state): State<ProxyState>) -> impl IntoResponse {
             format: info.format.clone(),
             size_disk: info.size_disk,
             vram_bytes: info.vram_bytes,
+            context_length: info.context_length,
             available_on,
             loaded_on,
         });

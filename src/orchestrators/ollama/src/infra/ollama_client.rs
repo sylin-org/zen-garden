@@ -1,7 +1,8 @@
 //! HTTP client for Ollama API operations.
 //!
 //! Encapsulates all direct communication with Ollama instances.
-//! Every method is fallible and includes timeouts.
+//! Discovery, show, and benchmark methods have per-request timeouts.
+//! Inference forwarding has no timeout — streams live until disconnect.
 
 use crate::domain::types::*;
 use anyhow::{Context, Result};
@@ -58,7 +59,10 @@ impl Default for OllamaClient {
 impl OllamaClient {
     pub fn new() -> Self {
         let http = Client::builder()
-            .timeout(Duration::from_secs(300)) // long for inference
+            // No client-level timeout — inference streams stay open until
+            // the upstream stone or the downstream client disconnects.
+            // Per-request timeouts on discovery/show/benchmark methods
+            // still apply via .timeout() on individual RequestBuilder calls.
             .connect_timeout(Duration::from_secs(5))
             .pool_max_idle_per_host(4)
             .build()
@@ -365,11 +369,11 @@ impl OllamaClient {
         let show_results = futures_util::future::join_all(show_futures).await;
 
         for (name, tag, show_result) in show_results {
-            let (param_count, capabilities) = match show_result {
-                Ok(show) => (show.parameter_count(), show.capabilities),
+            let (param_count, context_length, capabilities) = match show_result {
+                Ok(show) => (show.parameter_count(), show.context_length(), show.capabilities),
                 Err(e) => {
                     tracing::warn!(model = %name, error = %e, "failed to query /api/show");
-                    (None, vec![])
+                    (None, None, vec![])
                 }
             };
 
@@ -394,6 +398,7 @@ impl OllamaClient {
                 format,
                 size_disk: tag.size,
                 vram_bytes,
+                context_length,
             });
         }
 

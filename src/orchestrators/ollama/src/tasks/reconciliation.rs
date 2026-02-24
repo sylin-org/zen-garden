@@ -126,6 +126,7 @@ async fn reconcile_instance(
                         let tag = tags.models.iter().find(|t| t.name == *model_name);
                         let details = tag.and_then(|t| t.details.as_ref());
                         let param_count = show.parameter_count();
+                        let ctx_length = show.context_length();
                         let quant = details.and_then(|d| d.quantization_level.as_deref());
                         let format = details.and_then(|d| d.format.clone());
 
@@ -144,6 +145,7 @@ async fn reconcile_instance(
                                 format,
                                 size_disk: tag.map(|t| t.size).unwrap_or(0),
                                 vram_bytes: None,
+                                context_length: ctx_length,
                             })
                             .await;
                     }

@@ -176,6 +176,11 @@ pub struct ModelInfo {
     /// (`size_vram` field) when the model is loaded.  `None` means the model
     /// has never been observed in VRAM — no guessing, no heuristics.
     pub vram_bytes: Option<u64>,
+    /// Model context window in tokens, from `/api/show` → `model_info["{arch}.context_length"]`.
+    /// Authoritative — Ollama reads this from the GGUF metadata at model load time.
+    /// Critical for embedding models where windows vary wildly (256 for all-minilm
+    /// vs 8192 for nomic-embed-text vs 32768 for qwen3-embedding).
+    pub context_length: Option<u64>,
 }
 
 // ── Tiers ────────────────────────────────────────────────────────
@@ -397,6 +402,19 @@ impl OllamaShowResponse {
             .as_ref()?
             .get("general.parameter_count")?
             .as_u64()
+    }
+
+    /// Extract `{arch}.context_length` from `model_info`.
+    ///
+    /// Ollama stores context length under an architecture-prefixed key:
+    ///   model_info["general.architecture"] → e.g. "bert", "nomic-bert", "qwen2"
+    ///   model_info["{arch}.context_length"] → e.g. 8192, 256, 131072
+    ///
+    /// Returns `None` if architecture or context length is missing.
+    pub fn context_length(&self) -> Option<u64> {
+        let info = self.model_info.as_ref()?;
+        let arch = info.get("general.architecture")?.as_str()?;
+        info.get(&format!("{arch}.context_length"))?.as_u64()
     }
 }
 

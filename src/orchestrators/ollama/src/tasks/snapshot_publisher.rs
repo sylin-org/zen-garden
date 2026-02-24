@@ -124,6 +124,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
                 "capabilities": m.capabilities,
                 "vram_mb": m.vram_bytes.map(|v| v / 1_048_576),
                 "size_disk_mb": m.size_disk / 1_048_576,
+                "context_length": m.context_length,
                 "on_stones": on_stones,
                 "loaded_on": loaded_on,
                 "request_count": request_count,

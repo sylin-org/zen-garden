@@ -227,7 +227,7 @@ body {
 /* ── Models Section ───────────────────────────────────────── */
 .model-row {
   display: grid;
-  grid-template-columns: 2fr 0.8fr 0.6fr 0.6fr 1fr 1fr 0.6fr 0.4fr;
+  grid-template-columns: 2fr 0.8fr 0.6fr 0.5fr 0.6fr 1fr 1fr 0.6fr 0.4fr;
   gap: 0.5rem; align-items: center;
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--vellum-border);
@@ -620,7 +620,7 @@ body {
     <div class="section-title">Models</div>
     <div class="card" id="modelsCard">
       <div class="model-row" style="font-weight:600; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400);">
-        <div class="sortable" onclick="sortModels('name')">Name <span id="sortNameIcon">▲</span></div><div class="sortable" onclick="sortModels('size')">Size <span id="sortSizeIcon"></span></div><div>Spec</div><div>Capabilities</div><div>Available On</div><div>Loaded On</div><div class="sortable" onclick="sortModels('requests')">Requests <span id="sortReqIcon"></span></div><div></div>
+        <div class="sortable" onclick="sortModels('name')">Name <span id="sortNameIcon">▲</span></div><div class="sortable" onclick="sortModels('size')">Size <span id="sortSizeIcon"></span></div><div>Spec</div><div class="sortable" onclick="sortModels('context')">Context <span id="sortContextIcon"></span></div><div>Capabilities</div><div>Available On</div><div>Loaded On</div><div class="sortable" onclick="sortModels('requests')">Requests <span id="sortReqIcon"></span></div><div></div>
       </div>
       <div id="modelsBody"></div>
       <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--vellum-border);">
@@ -997,6 +997,8 @@ function renderModels(models) {
     let cmp;
     if (modelSort.field === 'size') {
       cmp = (a.size_disk_mb || 0) - (b.size_disk_mb || 0);
+    } else if (modelSort.field === 'context') {
+      cmp = (a.context_length || 0) - (b.context_length || 0);
     } else if (modelSort.field === 'requests') {
       cmp = (a.request_count || 0) - (b.request_count || 0);
     } else {
@@ -1006,9 +1008,11 @@ function renderModels(models) {
   });
   const ni = document.getElementById('sortNameIcon');
   const si = document.getElementById('sortSizeIcon');
+  const ci = document.getElementById('sortContextIcon');
   const ri = document.getElementById('sortReqIcon');
   if (ni) ni.textContent = modelSort.field === 'name' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
   if (si) si.textContent = modelSort.field === 'size' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
+  if (ci) ci.textContent = modelSort.field === 'context' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
   if (ri) ri.textContent = modelSort.field === 'requests' ? (modelSort.dir === 'asc' ? '▲' : '▼') : '';
   body.innerHTML = '';
   sorted.forEach(m => {
@@ -1022,11 +1026,13 @@ function renderModels(models) {
       `<span class="cap-badge ${esc(c)}">${esc(c)}</span>`
     ).join('') || '—';
     const spec = [m.parameter_size, m.quantization_level].filter(Boolean).join(' / ') || '—';
+    const ctx = m.context_length ? (m.context_length >= 1024 ? Math.round(m.context_length / 1024) + 'K' : m.context_length) : '—';
     const reqCount = m.request_count || 0;
     body.innerHTML += `<div class="model-row">
       <div class="model-name">${esc(m.name)}</div>
       <div class="model-detail">${m.size_disk_mb != null ? m.size_disk_mb + ' MB' : '—'}</div>
       <div class="model-detail">${esc(spec)}</div>
+      <div class="model-detail">${ctx}</div>
       <div class="model-detail"><span class="cap-badges">${caps}</span></div>
       <div class="model-detail"><span class="stone-dots">${availDots}</span></div>
       <div class="model-detail"><span class="stone-dots">${loadedDots}</span></div>

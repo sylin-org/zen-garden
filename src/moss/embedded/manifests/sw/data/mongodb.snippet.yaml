@@ -1,5 +1,6 @@
 image: mongo:7
 container_name: mongodb
+command: ["--replSet", "zen-garden", "--bind_ip_all"]
 ports:
   default: [27017, 27017]
 volumes:

@@ -2,6 +2,12 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-24
+
+- New `orchestrator-common` crate: extracted shared infrastructure (discovery, topology, gateway, tools stream, persistence, events, HTTP helpers) from the Ollama orchestrator into a reusable foundation for all orchestrators (ORCH-0008)
+- New `zen-garden-mongodb-orchestrator`: replica set orchestration for MongoDB offerings — auto-discovery via Koi/topology, `rs.initiate()`/`rs.add()` bootstrap, health monitoring with oplog/cache/lag advisors, placement scoring, management API on port 7191, embedded HTML dashboard (ORCH-0007)
+- MongoDB manifest: added `--replSet zen-garden --bind_ip_all` to enable replica set mode by default
+
 ## 2026-02-22
 
 - Dashboard Models: added per-model request counter, sortable Requests column, and Reset Counters button

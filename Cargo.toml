@@ -16,6 +16,8 @@ members = [
   "src/build-utils",
   "src/probe",
   "src/orchestrators/ollama",
+  "src/orchestrators/common",
+  "src/orchestrators/mongodb",
 ]
 resolver = "2"
 

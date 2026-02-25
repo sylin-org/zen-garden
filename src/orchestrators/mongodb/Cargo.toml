@@ -1,0 +1,48 @@
+[package]
+name = "zen-garden-mongodb-orchestrator"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "MongoDB Orchestrator — replica set orchestration for Zen Garden"
+
+[[bin]]
+name = "zen-garden-mongodb-orchestrator"
+path = "src/main.rs"
+
+[dependencies]
+garden-common = { path = "../../common" }
+orchestrator-common = { path = "../common" }
+
+# Core
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# HTTP server
+axum = { workspace = true, features = ["macros"] }
+tower-http = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true, features = ["stream"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Streaming
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Time
+chrono.workspace = true
+
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Shutdown coordination
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# MongoDB driver (wire protocol)
+mongodb = "3"

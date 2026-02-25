@@ -433,12 +433,19 @@ pub async fn find_services(
     {
         let gateways = state.gateways.read().await;
         for (offering, gw) in gateways.iter() {
+            let gw_category = gw.category.as_deref().unwrap_or("orchestrator");
+            let gw_tags = if gw.tags.is_empty() {
+                vec!["orchestrator".to_string()]
+            } else {
+                gw.tags.clone()
+            };
+
             if !matches_criteria(
                 criteria,
                 &gw.fqn,
                 offering,
-                "ai",
-                &["orchestrator".to_string()],
+                gw_category,
+                &gw_tags,
                 &[],
             ) {
                 continue;
@@ -456,8 +463,8 @@ pub async fn find_services(
                 offering_id: String::new(),
                 name: gw.fqn.clone(),
                 offering: offering.clone(),
-                category: "ai".to_string(),
-                tags: vec!["orchestrator".to_string()],
+                category: gw_category.to_string(),
+                tags: gw_tags,
                 status: garden_common::SERVICE_RUNNING.to_string(),
                 stone: StoneRef {
                     id: state.stone_id.clone(),
@@ -479,12 +486,19 @@ pub async fn find_services(
             }
             for gw in &stone.gateways {
                 let primary_offering = gw.handler_for.first().map(|s| s.as_str()).unwrap_or("");
+                let gw_category = gw.category.as_deref().unwrap_or("orchestrator");
+                let gw_tags = if gw.tags.is_empty() {
+                    vec!["orchestrator".to_string()]
+                } else {
+                    gw.tags.clone()
+                };
+
                 if !matches_criteria(
                     criteria,
                     &gw.fqn,
                     primary_offering,
-                    "ai",
-                    &["orchestrator".to_string()],
+                    gw_category,
+                    &gw_tags,
                     &[],
                 ) {
                     continue;
@@ -502,8 +516,8 @@ pub async fn find_services(
                     offering_id: String::new(),
                     name: gw.fqn.clone(),
                     offering: primary_offering.to_string(),
-                    category: "ai".to_string(),
-                    tags: vec!["orchestrator".to_string()],
+                    category: gw_category.to_string(),
+                    tags: gw_tags,
                     status: garden_common::SERVICE_RUNNING.to_string(),
                     stone: StoneRef {
                         id: stone.stone_id.clone(),

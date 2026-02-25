@@ -837,6 +837,15 @@ pub struct GatewayRegistration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri_template: Option<String>,
 
+    /// Category for service discovery (e.g. "orchestrator", "data", "ai").
+    /// If absent, defaults to "orchestrator" in service discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+
+    /// Tags for service discovery filtering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
     /// Identifier of the registering process
     pub source: String,
 

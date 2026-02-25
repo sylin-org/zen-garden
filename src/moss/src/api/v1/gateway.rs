@@ -25,6 +25,10 @@ pub struct PutGatewayRequest {
     pub protocol: String,
     #[serde(default)]
     pub uri_template: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub source: String,
 }
 
@@ -62,6 +66,8 @@ pub async fn put_gateway(
         port: body.port,
         protocol: body.protocol,
         uri_template: body.uri_template,
+        category: body.category,
+        tags: body.tags,
         source: body.source,
         registered_at: Utc::now(),
     };

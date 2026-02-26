@@ -53,6 +53,12 @@ pub const MOSS_HTTP: u16 = 7185;
 /// "KOI" on a phone keypad = 5-6-4 → 564x.  Port 5641 chosen.
 pub const KOI_HTTP: u16 = 5641;
 
+/// DNS port for Koi local resolver (.zengarden zone)
+///
+/// Non-standard port — systemd-resolved owns port 53 and forwards
+/// `.zengarden` queries to Koi via `resolvectl` routing domain.
+pub const KOI_DNS: u16 = 5642;
+
 /// HTTP port for Lantern API
 pub const LANTERN_HTTP: u16 = 7186;
 

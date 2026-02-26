@@ -224,6 +224,43 @@ else
     fi
 fi
 
+# --- Enable systemd-resolved + systemd-networkd for DNS ---
+log "Configuring systemd-resolved..."
+if ! command -v resolvectl &>/dev/null; then
+    if command -v apt-get &>/dev/null; then
+        apt-get install -y -qq systemd-resolved >/dev/null 2>&1 \
+            && ok "systemd-resolved installed" \
+            || warn "Failed to install systemd-resolved"
+    fi
+fi
+
+if command -v resolvectl &>/dev/null; then
+    mkdir -p /etc/systemd/resolved.conf.d
+    cat > /etc/systemd/resolved.conf.d/zen-garden.conf << 'RESOLVED_EOF'
+[Resolve]
+# Handle .local mDNS queries (resolve-only, avahi handles publishing)
+MulticastDNS=resolve
+RESOLVED_EOF
+
+    systemctl enable systemd-resolved 2>/dev/null || true
+    systemctl restart systemd-resolved 2>/dev/null || true
+
+    # systemd-networkd provides the D-Bus interface that resolvectl needs
+    # for per-interface DNS/domain routing (e.g. .zengarden → Koi DNS).
+    # Bundled in the systemd package on Debian — just enable it.
+    systemctl enable systemd-networkd 2>/dev/null || true
+    systemctl start systemd-networkd 2>/dev/null || true
+
+    # Point /etc/resolv.conf to resolved stub
+    if [ ! -L /etc/resolv.conf ] || [ "$(readlink /etc/resolv.conf)" != "/run/systemd/resolve/stub-resolv.conf" ]; then
+        ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    fi
+
+    ok "systemd-resolved + systemd-networkd configured"
+else
+    warn "systemd-resolved not available, container DNS may not resolve stone names"
+fi
+
 # --- Enable and start service ---
 log "Configuring garden-moss service..."
 if [[ "$NEEDS_DAEMON_RELOAD" == true ]]; then

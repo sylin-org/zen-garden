@@ -332,6 +332,11 @@ pub async fn run(
             .mdns(true)
             .dns_enabled(true)
             .dns_auto_start(true)
+            .dns(|cfg| {
+                cfg.port(garden_common::constants::KOI_DNS)
+                    .zone("zengarden")
+                    .local_zone(true)
+            })
             .health(false)
             .certmesh(true)
             .proxy(false)
@@ -506,6 +511,35 @@ pub async fn run(
 
     // Phase 7: Docker connection
     let docker = connect_docker(&console_printer, DockerConfig::default()).await?;
+
+    // Phase 7.1: Configure systemd-resolved for container DNS
+    // resolved owns port 53; Koi DNS serves .zengarden on port 5642.
+    // We configure resolved to:
+    //   1. Listen on the Docker bridge gateway (so containers can reach it)
+    //   2. Route .zengarden queries to Koi DNS
+    if let Some(gw) = docker.bridge_gateway().await {
+        if let Err(e) = configure_resolved_for_containers(&gw).await {
+            tracing::warn!(error = %e, "could not configure systemd-resolved (containers may not resolve stone names)");
+        }
+    } else {
+        tracing::warn!("could not determine Docker bridge gateway — container DNS may not work");
+    }
+
+    // Phase 7.2: Reconcile DNS on existing managed containers
+    // Containers created before systemd-resolved integration still point at the
+    // router. Patch their /etc/resolv.conf in-place (no restart needed).
+    match docker.list_zen_containers().await {
+        Ok(containers) => {
+            for name in &containers {
+                if let Err(e) = docker.reconcile_container_dns(name).await {
+                    tracing::debug!(service = %name, error = %e, "DNS reconciliation skipped");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "could not list containers for DNS reconciliation");
+        }
+    }
 
     // Phase 7.5: Docker monitoring
     // Runs in background, polls every 5s when disconnected, 30s when connected
@@ -1398,6 +1432,108 @@ pub async fn run(
         Some(state.companion_registry.clone()),
     )
     .await
+}
+
+/// Configure systemd-resolved for Zen Garden container DNS.
+///
+/// 1. `DNSStubListenerExtra=<bridge_gw>` — resolved listens on Docker bridge
+///    gateway so containers can use it for DNS.
+/// 2. `resolvectl dns docker0 <koi_dns>` + `resolvectl domain docker0 ~zengarden`
+///    — routes `.zengarden` queries to Koi DNS (port 5642).
+///    Uses `docker0` because `lo` (loopback) is rejected by resolvectl.
+#[cfg(target_os = "linux")]
+async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    // 1. Ensure resolved listens on Docker bridge gateway
+    let conf_path = "/etc/systemd/resolved.conf.d/zen-garden.conf";
+    let desired = format!(
+        "[Resolve]\nMulticastDNS=resolve\nDNSStubListenerExtra={}\n",
+        bridge_gw
+    );
+
+    let needs_restart = match tokio::fs::read_to_string(conf_path).await {
+        Ok(existing) => existing != desired,
+        Err(_) => true,
+    };
+
+    if needs_restart {
+        tokio::fs::create_dir_all("/etc/systemd/resolved.conf.d").await?;
+        tokio::fs::write(conf_path, &desired).await?;
+
+        let output = tokio::process::Command::new("systemctl")
+            .args(["restart", "systemd-resolved"])
+            .output()
+            .await
+            .context("restart systemd-resolved")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(%stderr, "systemctl restart systemd-resolved returned non-zero");
+        } else {
+            tracing::info!(bridge_gw = %bridge_gw, "configured resolved bridge listener");
+        }
+    }
+
+    // 2. Route .zengarden queries to Koi DNS via docker0 interface.
+    //    resolvectl rejects loopback (lo), so we use docker0 which is the
+    //    Docker bridge interface. Wait for it to appear (Docker may still
+    //    be initializing the bridge network on slow hardware).
+    let koi_dns = format!("127.0.0.1:{}", garden_common::constants::KOI_DNS);
+
+    // Wait for docker0 to exist (up to 5s)
+    let mut docker0_ready = false;
+    for attempt in 1..=10 {
+        let check = tokio::process::Command::new("ip")
+            .args(["link", "show", "docker0"])
+            .output()
+            .await;
+        if check.map(|o| o.status.success()).unwrap_or(false) {
+            docker0_ready = true;
+            break;
+        }
+        if attempt < 10 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    if !docker0_ready {
+        tracing::warn!("docker0 interface not found after 5s — .zengarden DNS routing skipped");
+        return Ok(());
+    }
+
+    let dns_output = tokio::process::Command::new("resolvectl")
+        .args(["dns", "docker0", &koi_dns])
+        .output()
+        .await
+        .context("resolvectl dns")?;
+    if !dns_output.status.success() {
+        let stderr = String::from_utf8_lossy(&dns_output.stderr);
+        tracing::warn!(%stderr, "resolvectl dns docker0 failed — .zengarden routing unavailable");
+        return Ok(());
+    }
+
+    let domain_output = tokio::process::Command::new("resolvectl")
+        .args(["domain", "docker0", "~zengarden"])
+        .output()
+        .await
+        .context("resolvectl domain")?;
+    if !domain_output.status.success() {
+        let stderr = String::from_utf8_lossy(&domain_output.stderr);
+        tracing::warn!(%stderr, "resolvectl domain docker0 failed — .zengarden routing unavailable");
+        return Ok(());
+    }
+
+    tracing::info!(
+        port = garden_common::constants::KOI_DNS,
+        "configured .zengarden routing to Koi DNS"
+    );
+    Ok(())
+}
+
+/// No-op on non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<()> {
+    Ok(())
 }
 
 /// Start first-boot initialization task (Linux only)

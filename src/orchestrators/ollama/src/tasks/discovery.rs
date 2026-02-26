@@ -111,7 +111,17 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                     stone_id,
                     stone_name,
                     endpoint,
+                    ready,
                 } => {
+                    if !ready {
+                        tracing::debug!(
+                            stone = %stone_name,
+                            endpoint = %endpoint,
+                            "SSE: Ollama instance not ready (container stopped), skipping"
+                        );
+                        return;
+                    }
+
                     tracing::info!(
                         stone = %stone_name,
                         endpoint = %endpoint,
@@ -120,17 +130,15 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                     let state = state_clone.clone();
                     let client = client_clone.clone();
                     tokio::spawn(async move {
-                        // Derive stone IP from the Ollama endpoint so we
-                        // can query the Moss API for real HW capabilities.
-                        let stone_ip = endpoint
+                        let stone_host = endpoint
                             .trim_start_matches("http://")
                             .split(':')
                             .next()
                             .unwrap_or("")
                             .to_string();
-                        let moss_ep = format!("http://{stone_ip}:7185");
+                        let moss_ep = format!("http://{}:{}", stone_host, garden_common::constants::MOSS_HTTP);
                         let (vram_total, gpu_name) =
-                            stone_discovery::fetch_stone_hw(&stone_ip).await;
+                            stone_discovery::fetch_stone_hw(&stone_host).await;
                         tracing::info!(
                             stone = %stone_name,
                             vram_mb = vram_total / 1_048_576,

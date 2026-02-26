@@ -43,7 +43,9 @@ pub enum ToolEvent {
     OllamaDiscovered {
         stone_id: String,
         stone_name: String,
-        endpoint: String, // http://<ip>:<port>
+        endpoint: String, // http://<hostname>:<port>
+        /// Whether the offering is automation-ready (Running + Healthy).
+        ready: bool,
     },
     /// An Ollama instance disappeared.
     OllamaRemoved {
@@ -164,10 +166,9 @@ fn extract_ollama_tool(tool: &serde_json::Value) -> Option<ToolEvent> {
     let stone_name = tool.get("stone_name")?.as_str()?.to_string();
 
     let connection = tool.get("connection")?;
-    let ip = connection
-        .get("ip")
-        .or_else(|| connection.get("hostname"))
-        .and_then(|v| v.as_str())?;
+    let hostname = connection.get("hostname").and_then(|v| v.as_str());
+    let ip = connection.get("ip").and_then(|v| v.as_str());
+    let host = hostname.or(ip)?;
     let port = connection.get("port").and_then(|v| v.as_u64())?;
 
     let protocol = connection
@@ -175,12 +176,18 @@ fn extract_ollama_tool(tool: &serde_json::Value) -> Option<ToolEvent> {
         .and_then(|v| v.as_str())
         .unwrap_or("http");
 
-    let endpoint = format!("{protocol}://{ip}:{port}");
+    let endpoint = format!("{protocol}://{host}:{port}");
+
+    let ready = tool
+        .get("ready")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     Some(ToolEvent::OllamaDiscovered {
         stone_id,
         stone_name,
         endpoint,
+        ready,
     })
 }
 

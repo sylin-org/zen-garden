@@ -51,6 +51,8 @@ pub struct DiscoveredStone {
     pub stone_id: Option<String>,
     /// Resolved IP address.
     pub ip: String,
+    /// mDNS hostname, e.g. `stone-quartz-fen.local`.
+    pub hostname: String,
     /// Moss API port (from mDNS TXT `api_port`, default 7185).
     pub api_port: u16,
     /// HTTPS port (from mDNS TXT `https_port`), when pond is active.
@@ -64,18 +66,9 @@ pub struct DiscoveredStone {
 }
 
 impl DiscoveredStone {
-    /// HTTP endpoint for the Moss API on this stone.
-    pub fn http_endpoint(&self) -> String {
-        format!("http://{}:{}", self.ip, self.api_port)
-    }
-
-    /// Preferred endpoint — always HTTP for now.
-    ///
-    /// The orchestrator doesn't have certmesh certificates, so HTTPS
-    /// connections to pond-enrolled stones would fail. Use HTTP until
-    /// the orchestrator can enroll in the mesh.
+    /// Moss HTTP endpoint using the `.local` hostname.
     pub fn endpoint(&self) -> String {
-        self.http_endpoint()
+        format!("http://{}:{}", self.hostname, self.api_port)
     }
 }
 
@@ -98,7 +91,6 @@ struct MdnsService {
     name: String,
     #[serde(rename = "type")]
     _type: Option<String>,
-    #[allow(dead_code)]
     host: Option<String>,
     ip: Option<String>,
     port: Option<u16>,
@@ -116,6 +108,19 @@ impl MdnsService {
             .unwrap_or_else(|| self.name.clone());
 
         let stone_id = txt.and_then(|t| t.get("stone_id")).cloned();
+
+        // Derive hostname from mDNS host field, falling back to stone_name.local
+        let hostname = self
+            .host
+            .as_deref()
+            .map(|h| h.trim_end_matches('.').to_string())
+            .unwrap_or_else(|| {
+                if stone_name.contains('.') {
+                    stone_name.clone()
+                } else {
+                    format!("{}.local", &stone_name)
+                }
+            });
 
         let api_port = txt
             .and_then(|t| t.get("api_port"))
@@ -138,6 +143,7 @@ impl MdnsService {
             stone_name,
             stone_id,
             ip: ip.clone(),
+            hostname,
             api_port,
             https_port,
             version,
@@ -339,6 +345,8 @@ pub struct TopologyOllamaStone {
     pub stone_id: String,
     pub stone_name: String,
     pub ip: String,
+    /// mDNS hostname, e.g. `stone-quartz-fen.local`.
+    pub hostname: String,
     pub moss_port: u16,
     /// Total VRAM in bytes, from `capabilities.hardware.ai_capabilities.total_vram_mb`.
     /// Zero if the stone hasn't completed GPU detection yet.
@@ -348,14 +356,14 @@ pub struct TopologyOllamaStone {
 }
 
 impl TopologyOllamaStone {
-    /// Default Ollama endpoint: `http://{ip}:11434`.
+    /// Ollama endpoint using the `.local` hostname.
     pub fn ollama_endpoint(&self) -> String {
-        format!("http://{}:11434", self.ip)
+        format!("http://{}:11434", self.hostname)
     }
 
-    /// Moss API endpoint: `http://{ip}:{moss_port}`.
+    /// Moss API endpoint using the `.local` hostname.
     pub fn moss_endpoint(&self) -> String {
-        format!("http://{}:{}", self.ip, self.moss_port)
+        format!("http://{}:{}", self.hostname, self.moss_port)
     }
 }
 
@@ -416,10 +424,17 @@ pub async fn query_topology_ollama(stone_endpoint: &str) -> Result<Vec<TopologyO
                 None => (0, None),
             };
 
+            let sn = &entry.stone_name;
+            let hostname = if sn.contains('.') {
+                sn.clone()
+            } else {
+                format!("{}.local", sn)
+            };
             results.push(TopologyOllamaStone {
                 stone_id: entry.stone_id.clone(),
                 stone_name: entry.stone_name.clone(),
                 ip: entry.address.ip.to_string(),
+                hostname,
                 moss_port: entry.address.port,
                 vram_total_bytes,
                 gpu_name,
@@ -438,12 +453,10 @@ pub async fn query_topology_ollama(stone_endpoint: &str) -> Result<Vec<TopologyO
 
 /// Fetch VRAM total (bytes) and GPU name from a stone's Moss API.
 ///
-/// Queries `GET /api/v1/stone` on the stone's Moss port and extracts
-/// hardware capabilities from the response. Used for SSE-discovered stones
-/// that weren't in the initial topology snapshot.
+/// `stone_host` can be a hostname (e.g. `stone-quartz-fen.local`) or an IP.
 ///
 /// Returns `(vram_total_bytes, gpu_name)`.  Returns `(0, None)` on any error.
-pub async fn fetch_stone_hw(stone_ip: &str) -> (u64, Option<String>) {
+pub async fn fetch_stone_hw(stone_host: &str) -> (u64, Option<String>) {
     use garden_common::types::HardwareCapabilities;
 
     #[derive(Deserialize)]
@@ -451,7 +464,7 @@ pub async fn fetch_stone_hw(stone_ip: &str) -> (u64, Option<String>) {
         data: HardwareCapabilities,
     }
 
-    let url = format!("http://{}:7185/api/v1/stone", stone_ip);
+    let url = format!("http://{}:{}/api/v1/stone", stone_host, garden_common::constants::MOSS_HTTP);
 
     let client = match Client::builder()
         .connect_timeout(Duration::from_secs(3))

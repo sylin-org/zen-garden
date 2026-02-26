@@ -414,7 +414,7 @@ impl OllamaShowResponse {
     pub fn context_length(&self) -> Option<u64> {
         let info = self.model_info.as_ref()?;
         let arch = info.get("general.architecture")?.as_str()?;
-        info.get(&format!("{arch}.context_length"))?.as_u64()
+        info.get(format!("{arch}.context_length").as_str())?.as_u64()
     }
 }
 

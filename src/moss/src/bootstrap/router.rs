@@ -90,6 +90,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::services::get_service_v1),
         )
         .route(
+            "/api/v1/stone/services/{service}/config",
+            get(api::v1::config::get_config_v1),
+        )
+        .route(
             "/api/v1/stone/storage",
             get(api::v1::storage::storage_overview_v1),
         )
@@ -401,6 +405,13 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/services/{service}/cordon",
             post(api::v1::services::cordon_service_v1),
+        )
+        // Service config patches (owned overlays)
+        .route(
+            "/api/v1/stone/services/{service}/config",
+            get(api::v1::config::get_config_v1)
+                .patch(api::v1::config::patch_config_v1)
+                .delete(api::v1::config::delete_config_v1),
         )
         // Stone Companions (Cricket, Firefly, etc.)
         .route(

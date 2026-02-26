@@ -217,6 +217,10 @@ pub fn runtime_manifests_dir() -> String {
 #[derive(Debug, Clone)]
 pub struct ServiceTemplate {
     pub image: String,
+    /// Manifest-level command override (e.g., Prometheus `--config.file=...`).
+    pub command: Option<Vec<String>>,
+    /// Config file mappings for file-based configuration injection.
+    pub config_files: Vec<ConfigFileMapping>,
     pub ports: HashMap<String, (u16, u16)>,
     pub environment: Vec<String>,
     pub volumes: Vec<(String, String)>,
@@ -258,7 +262,113 @@ pub struct TemplateInfo {
     pub tags: Vec<String>,
 }
 
+// ============================================================================
+// Config File Mapping (for managed offerings)
+// ============================================================================
+
+/// A config file that the software reads at startup.
+///
+/// The manifest declares where the file lives inside the container, what format
+/// it uses, and how to trigger a reload after changes. This enables config
+/// changes via file write + restart/signal instead of container recreation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigFileMapping {
+    /// Path inside the container where the software reads config.
+    /// e.g., "/etc/mongod.conf"
+    pub path: String,
+    /// File format so Moss knows how to write/merge it.
+    pub format: ConfigFormat,
+    /// Command-line flag to add to Cmd so software reads this file.
+    /// e.g., "--config /etc/mongod.conf"
+    /// If absent, software reads it automatically from the default location.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
+    /// How to apply changes after writing the config file.
+    #[serde(default)]
+    pub reload: ReloadPolicy,
+}
+
+/// Config file format — determines how Moss writes empty/initial content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigFormat {
+    Yaml,
+    Toml,
+    Ini,
+    Json,
+    Properties,
+    Raw,
+}
+
+impl ConfigFormat {
+    /// Minimal valid content for this format (empty config = all defaults).
+    pub fn empty_content(&self) -> &'static str {
+        match self {
+            Self::Yaml => "# Managed by Zen Garden\n{}\n",
+            Self::Json => "{}\n",
+            Self::Toml => "# Managed by Zen Garden\n",
+            Self::Ini => "; Managed by Zen Garden\n",
+            Self::Properties => "# Managed by Zen Garden\n",
+            Self::Raw => "",
+        }
+    }
+}
+
+/// How to apply config changes after writing the file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReloadPolicy {
+    /// `docker restart` — brief downtime, software re-reads config on startup.
+    #[default]
+    Restart,
+    /// Send a Unix signal to the container process (e.g., "SIGHUP").
+    /// Software reloads config without restarting — zero downtime.
+    Signal(String),
+}
+
 // Internal: YAML parsing structures
+
+/// Deserialize `command` from either a string or a list of strings.
+/// Docker Compose supports both `command: "arg1 arg2"` and `command: ["arg1", "arg2"]`.
+fn deserialize_command<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct CommandVisitor;
+
+    impl<'de> de::Visitor<'de> for CommandVisitor {
+        type Value = Option<Vec<String>>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or list of strings")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.split_whitespace().map(String::from).collect()))
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut items = Vec::new();
+            while let Some(item) = seq.next_element::<String>()? {
+                items.push(item);
+            }
+            Ok(Some(items))
+        }
+    }
+
+    deserializer.deserialize_any(CommandVisitor)
+}
+
 #[derive(Debug, Deserialize)]
 struct ComposeFile {
     services: HashMap<String, ServiceConfig>,
@@ -273,6 +383,10 @@ struct ServiceConfig {
     environment: Option<serde_yaml::Value>,
     #[serde(default)]
     volumes: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_command")]
+    command: Option<Vec<String>>,
+    #[serde(default)]
+    config_files: Vec<ConfigFileMapping>,
     #[serde(default)]
     tasks: HashMap<String, TaskDefinition>,
     #[serde(default)]
@@ -500,6 +614,8 @@ impl Offering {
 
         ServiceTemplate {
             image: config.image,
+            command: config.command,
+            config_files: config.config_files,
             ports: config.ports,
             environment,
             volumes,

@@ -685,21 +685,57 @@ async fn execute_offering_update(
         .map_err(|e| anyhow::anyhow!("Failed to get offering config for '{}': {}", name, e))?
         .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in catalog", name))?;
 
-    // Step 4: Recreate the service with the new image
+    // Step 4: Recreate the service with the new image, composing any config patches
     let _ = tx.send(format!(
         "    Creating new container with image: {}",
         target_image
     ));
+
+    // Get config patches from the offering registry
+    let patches = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .find(|o| o.name == name && o.is_managed())
+            .and_then(|o| o.managed_data())
+            .map(|d| d.config_patches.clone())
+            .unwrap_or_default()
+    };
+
+    let spec = if !patches.is_empty() {
+        // Compose manifest template + patches, override image with target
+        let manifest = state
+            .manifest_registry
+            .get_offering(name)
+            .ok_or_else(|| anyhow::anyhow!("No manifest for '{}'", name))?;
+        let template = manifest
+            .parse_template()
+            .map_err(|e| anyhow::anyhow!("Failed to parse template for '{}': {}", name, e))?;
+        let effective = crate::domain::config_compose::compose(&template, &patches)
+            .map_err(|e| anyhow::anyhow!("Failed to compose config for '{}': {}", name, e))?;
+
+        crate::docker::ContainerSpec {
+            image: target_image.clone(),
+            command: effective.command,
+            ports: effective.ports,
+            environment: effective.environment,
+            volumes: effective.volumes,
+            config_files: effective.config_files,
+        }
+    } else {
+        crate::docker::ContainerSpec {
+            image: target_image.clone(),
+            command: None,
+            ports: compiled.ports_vec(),
+            environment: compiled.environment,
+            volumes: compiled.volumes,
+            config_files: vec![],
+        }
+    };
+
     state
         .docker
-        .install_service(
-            name,
-            &target_image,
-            compiled.ports_vec(),
-            compiled.environment,
-            compiled.volumes,
-            None,
-        )
+        .install_service(name, &spec, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to recreate service '{}': {}", name, e))?;
 

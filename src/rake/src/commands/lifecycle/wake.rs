@@ -89,12 +89,29 @@ impl Command for WakeCommand {
                 );
             }
             _ => {
-                eprintln!(
-                    "{}{} Failed: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
+                let detail = response
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|body| {
+                        crate::api::responses::extract_error_message(&body)
+                    });
+                if let Some(msg) = detail {
+                    eprintln!(
+                        "{}{} Failed: {} - {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        status,
+                        msg
+                    );
+                } else {
+                    eprintln!(
+                        "{}{} Failed: {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        status
+                    );
+                }
             }
         }
 

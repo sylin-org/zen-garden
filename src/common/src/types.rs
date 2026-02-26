@@ -46,6 +46,10 @@ pub struct ServiceInfo {
     /// Cached post-installation guidance (templated at install time)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub guidance: Option<OfferingGuidance>,
+    /// Owners who have applied config patches to this service.
+    /// e.g., ["mongodb-orchestrator"]. Empty = vanilla config.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub customized_by: Vec<String>,
 }
 
 // ============================================================================
@@ -1462,6 +1466,50 @@ impl OfferingModeData {
     }
 }
 
+/// A configuration overlay applied to a managed service by an external actor.
+///
+/// Config patches allow orchestrators, admins, or other tools to modify
+/// a container's runtime configuration (command, env vars, mounts) without
+/// touching the manifest. Patches are persisted and survive restarts and
+/// nourish operations.
+///
+/// Each patch has an **owner** — the actor who applied it. Ownership enables
+/// conflict detection (two owners cannot set the same singular field),
+/// targeted removal, and visibility ("customized by X").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigPatch {
+    /// Who owns this patch (e.g., "mongodb-orchestrator", "admin").
+    pub owner: String,
+
+    /// Human-readable description of why this patch exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// When this patch was applied or last updated.
+    pub applied_at: chrono::DateTime<chrono::Utc>,
+
+    /// Container command override (replaces image default CMD).
+    /// Singular field — only one owner may set this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
+
+    /// Additional environment variables (KEY → VALUE).
+    /// Additive — multiple owners may contribute, but same key = conflict.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub environment: HashMap<String, String>,
+
+    /// Additional volume mounts (host_path, container_path).
+    /// Additive — duplicate container_path = conflict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<(String, String)>,
+
+    /// Config file content keyed by container path.
+    /// e.g., "/etc/mongod.conf" → "replication:\n  replSetName: zen-garden\n"
+    /// Written to the host config directory and applied via restart or signal.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub config: HashMap<String, String>,
+}
+
 /// Data specific to managed (container) offerings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ManagedData {
@@ -1476,6 +1524,12 @@ pub struct ManagedData {
     /// Cached post-installation guidance
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guidance: Option<OfferingGuidance>,
+
+    /// Configuration patches applied by external actors (orchestrators, admins).
+    /// Composed with the manifest template at every container lifecycle event
+    /// to produce the effective container configuration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_patches: Vec<ConfigPatch>,
 }
 
 /// Data specific to adopted (native) offerings
@@ -1839,6 +1893,7 @@ mod tests {
             job_id: None,
             sub_capabilities: Vec::new(),
             guidance: None,
+            customized_by: Vec::new(),
         };
         let json = serde_json::to_string(&info).unwrap();
         let deserialized: ServiceInfo = serde_json::from_str(&json).unwrap();

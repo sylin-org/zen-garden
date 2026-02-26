@@ -1199,6 +1199,12 @@ async fn offering_to_service_info(offering: &Offering, state: &AppState) -> Serv
             .managed_data()
             .and_then(|m| m.guidance.clone())
             .or_else(|| offering.adopted_data().and_then(|a| a.guidance.clone())),
+        customized_by: offering
+            .managed_data()
+            .map(|m| {
+                crate::domain::config_compose::patch_owners(&m.config_patches)
+            })
+            .unwrap_or_default(),
     }
 }
 

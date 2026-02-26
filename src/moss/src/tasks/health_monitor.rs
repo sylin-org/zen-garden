@@ -210,15 +210,15 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                             offering = %name,
                             "Container missing topology mount, recreating"
                         );
-                        match state.docker.get_container_recreate_config(name).await {
-                            Ok((image, ports, env, volumes)) => {
+                        match state.docker.inspect_container_spec(name).await {
+                            Ok(spec) => {
                                 if let Err(e) = state.docker.remove_service(name, None).await {
                                     tracing::error!(offering = %name, error = ?e, "Failed to remove container for mount remediation");
                                     continue;
                                 }
                                 if let Err(e) = state
                                     .docker
-                                    .install_service(name, &image, ports, env, volumes, None)
+                                    .install_service(name, &spec, None)
                                     .await
                                 {
                                     tracing::error!(offering = %name, error = ?e, "Failed to recreate container with topology mount");

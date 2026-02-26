@@ -2,6 +2,7 @@ pub mod admin;
 pub mod adoption;
 pub mod capabilities;
 pub mod companions;
+pub mod config;
 pub mod console;
 pub mod election;
 pub mod events;

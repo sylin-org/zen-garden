@@ -728,17 +728,17 @@ pub async fn install_service_task(
         job_id,
         offering,
     );
-    let ports_for_docker = compiled.ports_vec();
+    let spec = crate::docker::ContainerSpec {
+        image: compiled.image.clone(),
+        command: None,
+        ports: compiled.ports_vec(),
+        environment: compiled.environment,
+        volumes: compiled.volumes,
+        config_files: vec![],
+    };
     let actual_ports = match state
         .docker
-        .install_service(
-            offering,
-            &compiled.image,
-            ports_for_docker,
-            compiled.environment,
-            compiled.volumes,
-            Some(&state.console),
-        )
+        .install_service(offering, &spec, Some(&state.console))
         .await
     {
         Ok(resolved) => resolved,
@@ -821,6 +821,7 @@ pub async fn install_service_task(
                     resources: None,
                     job_id: None,
                     guidance,
+                    ..Default::default()
                 }),
                 registered_at: chrono::Utc::now(),
                 updated_at: None,
@@ -1060,17 +1061,17 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         }
 
         // Install via Docker
-        let ports_for_docker = compiled.ports_vec();
+        let spec = crate::docker::ContainerSpec {
+            image: compiled.image.clone(),
+            command: None,
+            ports: compiled.ports_vec(),
+            environment: compiled.environment,
+            volumes: compiled.volumes,
+            config_files: vec![],
+        };
         let actual_ports = match state
             .docker
-            .install_service(
-                &service_name,
-                &compiled.image,
-                ports_for_docker,
-                compiled.environment,
-                compiled.volumes,
-                Some(&state.console),
-            )
+            .install_service(&service_name, &spec, Some(&state.console))
             .await
         {
             Ok(resolved) => resolved,
@@ -1114,6 +1115,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
                 resources: None,
                 job_id: None,
                 guidance,
+                ..Default::default()
             }),
             registered_at: chrono::Utc::now(),
             updated_at: None,
@@ -1478,6 +1480,12 @@ async fn offering_to_service_info_for_refresh(
             .managed_data()
             .and_then(|m| m.guidance.clone())
             .or_else(|| offering.adopted_data().and_then(|a| a.guidance.clone())),
+        customized_by: offering
+            .managed_data()
+            .map(|m| {
+                crate::domain::config_compose::patch_owners(&m.config_patches)
+            })
+            .unwrap_or_default(),
     }
 }
 

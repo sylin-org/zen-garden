@@ -47,6 +47,12 @@ fn offering_to_service_info(o: &Offering) -> ServiceInfo {
             .managed_data()
             .and_then(|m| m.guidance.clone())
             .or_else(|| o.adopted_data().and_then(|a| a.guidance.clone())),
+        customized_by: o
+            .managed_data()
+            .map(|m| {
+                crate::domain::config_compose::patch_owners(&m.config_patches)
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -403,6 +409,7 @@ pub async fn create_service_v1(
                 resources: None,
                 job_id: Some(job_id.clone()),
                 guidance: None, // Guidance is added when installation completes
+                ..Default::default()
             }),
             registered_at: chrono::Utc::now(),
             updated_at: None,
@@ -541,19 +548,76 @@ pub async fn wake_service_v1(
             })?
     };
 
-    // Start the Docker container
-    if let Err(e) = state
+    // Check if the Docker container still exists. If the offering is registered
+    // but the container was removed (pruned, failed upgrade, etc.), transparently
+    // reinstall it from the manifest — preserving data in named volumes/mounts.
+    let container_exists = state
         .docker
-        .start_service(&service_name, Some(&state.console))
+        .zen_container_exists(&service_name)
         .await
-    {
-        tracing::error!(error = ?e, service = %service_name, "Failed to start container");
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "START_FAILED",
-            format!("Failed to start service: {}", e),
-            None,
-        ));
+        .unwrap_or(false);
+
+    if !container_exists {
+        tracing::info!(
+            service = %service_name,
+            "Container missing for registered offering, reinstalling"
+        );
+        match rebuild_missing_container(&state, &service_name).await {
+            Ok(_) => {
+                tracing::info!(
+                    service = %service_name,
+                    "Container reinstalled successfully (data preserved)"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, service = %service_name, "Failed to reinstall missing container");
+                return Err(error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "REINSTALL_FAILED",
+                    format!(
+                        "Container is missing and reinstall failed: {}. Try 'garden-rake offer {}' to reinstall manually.",
+                        e, service_name
+                    ),
+                    None,
+                ));
+            }
+        }
+    } else {
+        // Container exists — run compose-on-start if needed, then start normally.
+        let needs_compose = {
+            let offerings = state.offerings.read().await;
+            offerings
+                .iter()
+                .find(|o| o.offering_id == offering_id)
+                .and_then(|o| o.managed_data())
+                .map(|d| !d.config_patches.is_empty())
+                .unwrap_or(false)
+        };
+
+        if needs_compose {
+            if let Err(e) = compose_on_start(&state, &service_name).await {
+                tracing::warn!(
+                    service = %service_name,
+                    error = ?e,
+                    "Compose-on-start failed, falling back to normal start"
+                );
+            }
+        }
+
+        // Start the Docker container
+        if let Err(e) = state
+            .docker
+            .start_service(&service_name, Some(&state.console))
+            .await
+        {
+            tracing::error!(error = ?e, service = %service_name, "Failed to start container");
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "START_FAILED",
+                format!("Failed to start service: {}", e),
+                None,
+            ));
+        }
     }
 
     // Update status
@@ -666,16 +730,18 @@ pub async fn nourish_service_v1(
     })?;
 
     // Perform Docker upgrade
+    let ports = template.ports_vec();
+    let spec = crate::docker::ContainerSpec {
+        image: template.image.clone(),
+        command: template.command,
+        ports,
+        environment: template.environment,
+        volumes: template.volumes,
+        config_files: template.config_files,
+    };
     if let Err(e) = state
         .docker
-        .upgrade_service(
-            &service_name,
-            &template.image,
-            template.ports_vec(),
-            template.environment,
-            template.volumes,
-            Some(&state.console),
-        )
+        .upgrade_service(&service_name, &spec, Some(&state.console))
         .await
     {
         tracing::error!(error = ?e, service = %service_name, "Docker upgrade failed");
@@ -1070,9 +1136,10 @@ pub async fn get_service_env_v1(
 
     // For Docker-managed containers, inspect to get env vars
     if offering.is_managed() {
-        match state.docker.get_container_recreate_config(&service_name).await {
-            Ok((_image, _ports, env, _volumes)) => {
-                let env_map: std::collections::HashMap<String, String> = env
+        match state.docker.inspect_container_spec(&service_name).await {
+            Ok(spec) => {
+                let env_map: std::collections::HashMap<String, String> = spec
+                    .environment
                     .iter()
                     .filter_map(|e| {
                         let (k, v) = e.split_once('=')?;
@@ -1418,4 +1485,126 @@ fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<Api
                 None,
             )
         })
+}
+
+/// Build a ContainerSpec from the manifest template + any config patches.
+///
+/// Used by both `compose_on_start` (drift convergence) and
+/// `rebuild_missing_container` (dormant container reinstall).
+async fn build_spec_from_manifest(
+    state: &crate::AppState,
+    service_name: &str,
+) -> anyhow::Result<crate::docker::ContainerSpec> {
+    use anyhow::Context;
+
+    let patches = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .find(|o| o.name == service_name && o.is_managed())
+            .and_then(|o| o.managed_data())
+            .map(|d| d.config_patches.clone())
+            .unwrap_or_default()
+    };
+
+    let manifest = state
+        .manifest_registry
+        .get_offering(service_name)
+        .context("No manifest for offering")?;
+    let template = manifest
+        .parse_template()
+        .context("Failed to parse template")?;
+
+    let effective = crate::domain::config_compose::compose(&template, &patches)
+        .context("Failed to compose config")?;
+
+    Ok(crate::docker::ContainerSpec {
+        image: effective.image,
+        command: effective.command,
+        ports: effective.ports,
+        environment: effective.environment,
+        volumes: effective.volumes,
+        config_files: effective.config_files,
+    })
+}
+
+/// Reinstall a container for a registered offering whose Docker container is
+/// missing. Rebuilds the spec from the manifest + config patches and calls
+/// `install_service`, which preserves named Docker volumes on disk.
+async fn rebuild_missing_container(
+    state: &crate::AppState,
+    service_name: &str,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let spec = build_spec_from_manifest(state, service_name)
+        .await
+        .context("Failed to build container spec from manifest")?;
+
+    state
+        .docker
+        .install_service(service_name, &spec, Some(&state.console))
+        .await
+        .context("Failed to install container")?;
+
+    Ok(())
+}
+
+/// Compose-on-start: check if a stopped container needs to be recreated
+/// to match the effective config (manifest + patches).
+///
+/// This ensures config patches are applied even after a container restart or
+/// Moss daemon restart. If the container spec doesn't match the desired config,
+/// it is removed and recreated.
+async fn compose_on_start(state: &crate::AppState, service_name: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    // Only run if there are config patches to apply
+    let has_patches = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .find(|o| o.name == service_name && o.is_managed())
+            .and_then(|o| o.managed_data())
+            .map(|d| !d.config_patches.is_empty())
+            .unwrap_or(false)
+    };
+
+    if !has_patches {
+        return Ok(());
+    }
+
+    let desired_spec = build_spec_from_manifest(state, service_name)
+        .await
+        .context("Failed to build spec for compose-on-start")?;
+
+    // Check if container needs cycling
+    match state.docker.needs_cycle(service_name, &desired_spec).await {
+        Ok(true) => {
+            tracing::info!(
+                service = %service_name,
+                "Compose-on-start: container spec mismatch, cycling"
+            );
+            state
+                .docker
+                .recreate_service(service_name, &desired_spec)
+                .await
+                .context("Failed to recreate container for compose-on-start")?;
+        }
+        Ok(false) => {
+            tracing::debug!(
+                service = %service_name,
+                "Compose-on-start: container already matches desired config"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                service = %service_name,
+                error = ?e,
+                "Compose-on-start: could not inspect container, will start as-is"
+            );
+        }
+    }
+
+    Ok(())
 }

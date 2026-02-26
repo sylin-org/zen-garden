@@ -2,6 +2,8 @@
 //!
 //! The core update operation: pulls the new image, stops the old container,
 //! removes it, and creates a new one with the same configuration but new image.
+//! Config patches are composed into the new container spec to ensure they survive
+//! image upgrades.
 
 use crate::AppState;
 use anyhow::{Context, Result};
@@ -9,7 +11,7 @@ use anyhow::{Context, Result};
 /// Execute the nourish phase
 ///
 /// Pulls the new image and recreates the container with the updated image.
-/// Volume mounts are preserved from the manifest configuration.
+/// Existing config patches are composed into the new container spec.
 pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Result<()> {
     tracing::info!(offering, new_image, "Starting nourish phase");
 
@@ -21,20 +23,8 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
         .await
         .context("Failed to pull new image")?;
 
-    // Step 2: Get the manifest for reinstallation config
-    let manifest = state
-        .manifest_registry
-        .sw
-        .get(offering)
-        .context(format!("No manifest found for offering {}", offering))?;
-
-    // Parse the manifest to get ports, env, and volumes
-    let snippet_yaml = manifest
-        .managed
-        .as_ref()
-        .map(|m| m.snippet_yaml.as_str())
-        .unwrap_or("");
-    let (ports, env, volumes) = parse_manifest_config(snippet_yaml)?;
+    // Step 2: Build the effective container spec from manifest + patches
+    let spec = build_nourish_spec(state, offering, new_image).await?;
 
     // Step 3: Stop the old container
     tracing::info!(offering, "Stopping old container");
@@ -52,19 +42,11 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
         .await
         .context("Failed to remove container")?;
 
-    // Step 5: Create new container with new image
-    // Volume paths from manifest ensure data directories are preserved
+    // Step 5: Create new container with composed spec
     tracing::info!(offering, new_image, "Creating new container");
     state
         .docker
-        .install_service(
-            offering,
-            new_image,
-            ports,
-            env,
-            volumes,
-            Some(&state.console),
-        )
+        .install_service(offering, &spec, Some(&state.console))
         .await
         .context("Failed to create new container")?;
 
@@ -77,21 +59,72 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     Ok(())
 }
 
-/// Parse manifest snippet YAML to extract ports, env, and volumes
+/// Build the container spec for a nourish operation.
 ///
-/// This is a simplified parser - in production we'd use the full template parser.
-#[allow(clippy::type_complexity)]
-fn parse_manifest_config(
-    snippet_yaml: &str,
-) -> Result<(Vec<(u16, u16)>, Vec<String>, Vec<(String, String)>)> {
-    // TODO: Parse from snippet_yaml when full template support is needed
-    // For now, return empty configs - volume paths from original install are preserved
-    // on the filesystem, and the container will remount them
-    let _ = snippet_yaml;
+/// Parses the manifest template, overrides the image with `new_image`,
+/// and composes any existing config patches into the effective spec.
+async fn build_nourish_spec(
+    state: &AppState,
+    offering: &str,
+    new_image: &str,
+) -> Result<crate::docker::ContainerSpec> {
+    // Get existing config patches from the offering registry
+    let patches = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .find(|o| o.name == offering && o.is_managed())
+            .and_then(|o| o.managed_data())
+            .map(|d| d.config_patches.clone())
+            .unwrap_or_default()
+    };
 
-    // Return empty vectors - the service will use defaults
-    // This is KISS - basic nourishment doesn't need config parsing
-    Ok((Vec::new(), Vec::new(), Vec::new()))
+    // Parse the manifest template
+    let manifest = state
+        .manifest_registry
+        .get_offering(offering);
+
+    if let Some(manifest) = manifest {
+        let template = manifest
+            .parse_template()
+            .context("Failed to parse template")?;
+
+        if !patches.is_empty() {
+            // Compose manifest + patches, then override image with new_image
+            let effective = crate::domain::config_compose::compose(&template, &patches)
+                .context("Failed to compose config patches")?;
+
+            Ok(crate::docker::ContainerSpec {
+                image: new_image.to_string(),
+                command: effective.command,
+                ports: effective.ports,
+                environment: effective.environment,
+                volumes: effective.volumes,
+                config_files: effective.config_files,
+            })
+        } else {
+            // No patches — use template directly
+            let ports = template.ports_vec();
+            Ok(crate::docker::ContainerSpec {
+                image: new_image.to_string(),
+                command: template.command,
+                ports,
+                environment: template.environment,
+                volumes: template.volumes,
+                config_files: template.config_files,
+            })
+        }
+    } else {
+        // No manifest — best effort with empty config
+        Ok(crate::docker::ContainerSpec {
+            image: new_image.to_string(),
+            command: None,
+            ports: Vec::new(),
+            environment: Vec::new(),
+            volumes: Vec::new(),
+            config_files: vec![],
+        })
+    }
 }
 
 #[cfg(test)]

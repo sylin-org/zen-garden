@@ -2,6 +2,11 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-02-26
+
+- Wake auto-reinstalls missing containers for dormant offerings (preserves volumes/mounts)
+- Rake wake/rest commands now display API error details instead of bare HTTP status codes
+
 ## 2026-02-24
 
 - New `orchestrator-common` crate: extracted shared infrastructure (discovery, topology, gateway, tools stream, persistence, events, HTTP helpers) from the Ollama orchestrator into a reusable foundation for all orchestrators (ORCH-0008)

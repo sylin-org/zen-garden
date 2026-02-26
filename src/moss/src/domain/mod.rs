@@ -16,6 +16,7 @@
 pub mod adoption;
 pub mod capabilities;
 pub mod ceremony;
+pub mod config_compose;
 pub mod compatibility;
 pub mod connection;
 pub mod connectivity;

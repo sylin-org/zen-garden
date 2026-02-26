@@ -2694,6 +2694,7 @@ dependencies = [
  "async-stream",
  "axum",
  "hostname",
+ "if-addrs 0.15.0",
  "koi-common",
  "mdns-sd",
  "serde",
@@ -6080,6 +6081,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
 ]
 
 [[package]]

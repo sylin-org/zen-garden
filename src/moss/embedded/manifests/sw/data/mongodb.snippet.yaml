@@ -1,10 +1,14 @@
 image: mongo:7
 container_name: mongodb
-command: ["--replSet", "zen-garden", "--bind_ip_all"]
 ports:
   default: [27017, 27017]
 volumes:
   - mongo-data:/data/db
+config_files:
+  - path: /etc/mongod.conf
+    format: yaml
+    flag: "--config /etc/mongod.conf"
+    reload: restart
 healthcheck:
   test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
   interval: 10s

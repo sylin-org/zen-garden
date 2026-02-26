@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use bollard::container::{
-    Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
-    RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
+    Config, CreateContainerOptions, InspectContainerOptions, KillContainerOptions,
+    ListContainersOptions, LogsOptions, RemoveContainerOptions, RestartContainerOptions,
+    StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::image::{CreateImageOptions, PruneImagesOptions};
 use bollard::models::{ContainerCreateResponse, HealthStatusEnum, HostConfig, PortBinding};
@@ -44,6 +45,65 @@ fn decode_offering_container_suffix(encoded: &str) -> String {
         )
     } else {
         encoded.to_string()
+    }
+}
+
+// ============================================================================
+// Container Networking
+// ============================================================================
+
+/// DNS, env, and host configuration injected into every managed container.
+struct ContainerNetworking {
+    /// DNS servers (bridge gateway for resolved, plus fallback).
+    dns: Vec<String>,
+    /// Search domains (e.g., `["zengarden"]`).
+    dns_search: Vec<String>,
+    /// Extra host mappings (e.g., `host.docker.internal:<ip>`).
+    extra_hosts: Vec<String>,
+    /// Auto-injected environment variables (`KOI_ENDPOINT`, `GARDEN_STONE_ENDPOINT`, etc.).
+    env_inject: Vec<String>,
+}
+
+// ============================================================================
+// Container Specification
+// ============================================================================
+
+/// Full specification for creating a managed container.
+///
+/// Replaces positional parameters in `install_service` / `upgrade_service`
+/// and serves as the bridge between the config composition engine and Docker.
+#[derive(Debug, Clone, Default)]
+pub struct ContainerSpec {
+    /// Docker image (e.g., "mongo:7").
+    pub image: String,
+    /// Container command override. `None` = use image default CMD.
+    pub command: Option<Vec<String>>,
+    /// Port mappings (host_port, container_port).
+    pub ports: Vec<(u16, u16)>,
+    /// Environment variables in `KEY=VALUE` format.
+    pub environment: Vec<String>,
+    /// Volume mounts (host_path, container_path).
+    pub volumes: Vec<(String, String)>,
+    /// Config file mappings from the manifest template.
+    /// At install time, empty config files are created on the host and bind-mounted
+    /// into the container. Config patches write content to these files and restart.
+    pub config_files: Vec<garden_common::manifests::offering::ConfigFileMapping>,
+}
+
+impl ContainerSpec {
+    /// Return the effective command including config file flags.
+    /// This matches what `install_service` writes to the container,
+    /// so `needs_cycle` can compare against the running container's Cmd.
+    pub fn effective_command(&self) -> Option<Vec<String>> {
+        let mut cmd = self.command.clone();
+        for cf in &self.config_files {
+            if let Some(ref flag) = cf.flag {
+                let flag_args: Vec<String> = flag.split_whitespace().map(String::from).collect();
+                let c = cmd.get_or_insert_with(Vec::new);
+                c.extend(flag_args);
+            }
+        }
+        cmd
     }
 }
 
@@ -351,6 +411,65 @@ impl DockerManager {
         Ok(version.version.unwrap_or_else(|| "unknown".to_string()))
     }
 
+    /// Get the gateway IP of the default Docker bridge network.
+    ///
+    /// Containers on the bridge network can reach the host via this IP.
+    /// Used to configure systemd-resolved bridge listener and container DNS.
+    pub async fn bridge_gateway(&self) -> Option<String> {
+        let network = self
+            .docker
+            .inspect_network("bridge", None::<bollard::network::InspectNetworkOptions<String>>)
+            .await
+            .ok()?;
+
+        network
+            .ipam?
+            .config?
+            .into_iter()
+            .find_map(|c| c.gateway)
+    }
+
+    /// Build container networking configuration.
+    ///
+    /// Every managed container gets:
+    /// - DNS pointing to systemd-resolved (via Docker bridge gateway)
+    /// - Search domain `zengarden` (Koi DNS zone, forwarded by resolved)
+    /// - Environment variables for reaching host services (Koi HTTP, Moss API)
+    /// - `host.docker.internal` extra host mapping
+    async fn container_networking(&self, name: &str) -> ContainerNetworking {
+        let host_ip = garden_common::infra::network::get_local_ip();
+        let dns_ip = match self.bridge_gateway().await {
+            Some(gw) => gw,
+            None => {
+                tracing::warn!(
+                    offering = %name,
+                    fallback = %host_ip,
+                    "bridge gateway unavailable, using host IP for container DNS"
+                );
+                host_ip.clone()
+            }
+        };
+
+        ContainerNetworking {
+            dns: vec![dns_ip, "8.8.8.8".to_string()],
+            dns_search: vec!["zengarden".to_string()],
+            extra_hosts: vec![format!("host.docker.internal:{}", host_ip)],
+            env_inject: vec![
+                format!(
+                    "KOI_ENDPOINT=http://{}:{}",
+                    host_ip,
+                    garden_common::constants::KOI_HTTP
+                ),
+                format!(
+                    "GARDEN_STONE_ENDPOINT=http://{}:{}",
+                    host_ip,
+                    garden_common::constants::MOSS_HTTP
+                ),
+                format!("GARDEN_OFFERING_NAME={}", name),
+            ],
+        }
+    }
+
     /// Stop a service container
     pub async fn stop_service(
         &self,
@@ -420,20 +539,17 @@ impl DockerManager {
     pub async fn install_service(
         &self,
         name: &str,
-        image: &str,
-        ports: Vec<(u16, u16)>,
-        env: Vec<String>,
-        volumes: Vec<(String, String)>,
+        spec: &ContainerSpec,
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<Vec<(u16, u16)>> {
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Requesting,
-                format!("{} → {}", name, image),
+                format!("{} → {}", name, spec.image),
             ));
         }
-        tracing::info!(service = %name, image = %image, "Installing service via Docker API");
+        tracing::info!(service = %name, image = %spec.image, "Installing service via Docker API");
 
         // Prefix container name with "zen-offering-" to identify as Zen Garden offering
         // Note: zen-companion-* prefix is reserved for sidecars/companion containers
@@ -445,10 +561,10 @@ impl DockerManager {
         }
 
         // Pre-flight port availability check with automatic remediation/remapping
-        let resolved_ports = check_and_remediate_ports(&ports).await?;
+        let resolved_ports = check_and_remediate_ports(&spec.ports).await?;
 
         // Log any port remappings
-        for ((original, _), (actual, _)) in ports.iter().zip(resolved_ports.iter()) {
+        for ((original, _), (actual, _)) in spec.ports.iter().zip(resolved_ports.iter()) {
             if original != actual {
                 tracing::info!(
                     service = %name,
@@ -460,7 +576,7 @@ impl DockerManager {
         }
 
         // Pull image if not present
-        self.pull_image(image, console).await?;
+        self.pull_image(&spec.image, console).await?;
 
         // Configure port bindings (using resolved ports)
         let mut port_bindings = HashMap::new();
@@ -476,7 +592,7 @@ impl DockerManager {
 
         // Configure volumes
         let mut binds = Vec::new();
-        for (host_path, container_path) in &volumes {
+        for (host_path, container_path) in &spec.volumes {
             binds.push(format!("{}:{}", host_path, container_path));
         }
 
@@ -487,35 +603,60 @@ impl DockerManager {
         let topo_container = garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR;
         binds.push(format!("{}:{}", topo_host, topo_container));
 
-        // KOI-0001: Resolve host LAN IP for container→host networking.
-        // Containers use this to reach Koi HTTP and Stone endpoints on the host.
-        let host_ip = garden_common::infra::network::get_local_ip();
+        // Config file injection: create empty config files on the host and
+        // bind-mount them into the container. This lets config patches write
+        // content to these files and restart — no container recreation needed.
+        let mut effective_cmd = spec.command.clone();
+        for cf in &spec.config_files {
+            let host_dir = garden_common::constants::paths::offering_config_dir(name);
+            tokio::fs::create_dir_all(&host_dir).await.context(
+                format!("Failed to create config dir: {}", host_dir),
+            )?;
 
-        // KOI-0001: Auto-inject container networking env vars.
-        // Every managed container gets these so it can reach host services.
-        let mut full_env = env;
-        full_env.push(format!(
-            "KOI_ENDPOINT=http://{}:{}",
-            host_ip,
-            garden_common::constants::KOI_HTTP
-        ));
-        full_env.push(format!(
-            "GARDEN_STONE_ENDPOINT=http://{}:{}",
-            host_ip,
-            garden_common::constants::MOSS_HTTP
-        ));
-        full_env.push(format!("GARDEN_OFFERING_NAME={}", name));
+            let filename = std::path::Path::new(&cf.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "config".to_string());
+            let host_path = format!("{}/{}", host_dir, filename);
 
-        // KOI-0001: Configure extra_hosts so containers can resolve the host by name.
-        let extra_hosts = vec![format!("host.docker.internal:{}", host_ip)];
-        // TODO(KOI): Re-enable once Koi DNS server is running on the host.
-        // let dns_servers = vec![host_ip.clone(), "8.8.8.8".to_string()];
+            // Create empty config file if it doesn't exist (idempotent)
+            if !tokio::fs::try_exists(&host_path).await.unwrap_or(false) {
+                let empty_content = cf.format.empty_content();
+                tokio::fs::write(&host_path, empty_content).await.context(
+                    format!("Failed to write empty config file: {}", host_path),
+                )?;
+                tracing::info!(
+                    service = %name,
+                    host_path = %host_path,
+                    container_path = %cf.path,
+                    "Created empty config file"
+                );
+            }
+
+            // Bind-mount the config file into the container (read-only)
+            binds.push(format!("{}:{}:ro", host_path, cf.path));
+
+            // If the manifest declares a flag, add it to the container command
+            // so the software knows to read this config file.
+            if let Some(ref flag) = cf.flag {
+                let flag_args: Vec<String> = flag.split_whitespace().map(String::from).collect();
+                let cmd = effective_cmd.get_or_insert_with(Vec::new);
+                cmd.extend(flag_args);
+            }
+        }
+
+        // Container networking: DNS (via systemd-resolved on bridge gateway),
+        // env vars (Koi/Moss endpoints), and host.docker.internal mapping.
+        let net = self.container_networking(name).await;
+        let mut full_env = spec.environment.clone();
+        full_env.extend(net.env_inject);
 
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
             binds: Some(binds),
-            extra_hosts: Some(extra_hosts),
-            // dns: Some(dns_servers),
+            extra_hosts: Some(net.extra_hosts),
+            dns: Some(net.dns),
+            dns_search: Some(net.dns_search),
             restart_policy: Some(bollard::models::RestartPolicy {
                 name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                 maximum_retry_count: None,
@@ -523,9 +664,15 @@ impl DockerManager {
             ..Default::default()
         };
 
+        let cmd_refs: Option<Vec<&str>> = effective_cmd
+            .as_ref()
+            .map(|c| c.iter().map(|s| s.as_str()).collect());
+        let env_refs: Vec<&str> = full_env.iter().map(|s| s.as_str()).collect();
+
         let config = Config {
-            image: Some(image),
-            env: Some(full_env.iter().map(|s| s.as_str()).collect()),
+            image: Some(spec.image.as_str()),
+            cmd: cmd_refs,
+            env: Some(env_refs),
             host_config: Some(host_config),
             ..Default::default()
         };
@@ -621,14 +768,211 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Recreate a container with a new spec, preserving data volumes.
+    ///
+    /// Purpose-built for config patch cycling: stops the running container,
+    /// removes it **without** deleting volumes (`v: false`), then creates and
+    /// starts a replacement with the updated spec.
+    ///
+    /// Unlike `remove_service` (which uses `v: true` for full uninstalls),
+    /// this method preserves all Docker volumes so data survives the cycle.
+    /// Unlike `install_service`, this skips the image pull (the image is
+    /// already present) and port availability pre-flight (ports were just freed
+    /// by the stop).
+    pub async fn recreate_service(
+        &self,
+        name: &str,
+        spec: &ContainerSpec,
+    ) -> Result<Vec<(u16, u16)>> {
+        let container_name = zen_offering_container_name(name)?;
+        tracing::info!(service = %name, "Recreating container for config convergence");
+
+        // Stop the running container
+        self.docker
+            .stop_container(&container_name, None::<StopContainerOptions>)
+            .await
+            .context("Failed to stop container for recreate")?;
+
+        // Remove container WITHOUT deleting volumes (v: false)
+        self.docker
+            .remove_container(
+                &container_name,
+                Some(RemoveContainerOptions {
+                    v: false, // Preserve volumes — this is a reconfigure, not an uninstall
+                    force: false,
+                    link: false,
+                }),
+            )
+            .await
+            .context("Failed to remove container for recreate")?;
+
+        tracing::info!(service = %name, "Old container removed (volumes preserved)");
+
+        // Resolve ports (same logic as install_service)
+        let resolved_ports = check_and_remediate_ports(&spec.ports).await?;
+
+        // Configure port bindings
+        let mut port_bindings = HashMap::new();
+        for (host_port, container_port) in &resolved_ports {
+            port_bindings.insert(
+                format!("{}/tcp", container_port),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(host_port.to_string()),
+                }]),
+            );
+        }
+
+        // Configure volumes
+        let mut binds = Vec::new();
+        for (host_path, container_path) in &spec.volumes {
+            binds.push(format!("{}:{}", host_path, container_path));
+        }
+
+        // TOPO-0002: Auto-inject shared topology directory mount
+        let topo_host = garden_common::constants::paths::topology_dir();
+        let topo_container = garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR;
+        binds.push(format!("{}:{}", topo_host, topo_container));
+
+        // Config file injection (same as install_service)
+        let mut effective_cmd = spec.command.clone();
+        for cf in &spec.config_files {
+            let host_dir = garden_common::constants::paths::offering_config_dir(name);
+            tokio::fs::create_dir_all(&host_dir).await.context(
+                format!("Failed to create config dir: {}", host_dir),
+            )?;
+
+            let filename = std::path::Path::new(&cf.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "config".to_string());
+            let host_path = format!("{}/{}", host_dir, filename);
+
+            if !tokio::fs::try_exists(&host_path).await.unwrap_or(false) {
+                let empty_content = cf.format.empty_content();
+                tokio::fs::write(&host_path, empty_content).await.context(
+                    format!("Failed to write empty config file: {}", host_path),
+                )?;
+            }
+
+            binds.push(format!("{}:{}:ro", host_path, cf.path));
+
+            if let Some(ref flag) = cf.flag {
+                let flag_args: Vec<String> = flag.split_whitespace().map(String::from).collect();
+                let cmd = effective_cmd.get_or_insert_with(Vec::new);
+                cmd.extend(flag_args);
+            }
+        }
+
+        // Container networking (same as install_service)
+        let net = self.container_networking(name).await;
+        let mut full_env = spec.environment.clone();
+        full_env.extend(net.env_inject);
+
+        let host_config = HostConfig {
+            port_bindings: Some(port_bindings),
+            binds: Some(binds),
+            extra_hosts: Some(net.extra_hosts),
+            dns: Some(net.dns),
+            dns_search: Some(net.dns_search),
+            restart_policy: Some(bollard::models::RestartPolicy {
+                name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
+                maximum_retry_count: None,
+            }),
+            ..Default::default()
+        };
+
+        let cmd_refs: Option<Vec<&str>> = effective_cmd
+            .as_ref()
+            .map(|c| c.iter().map(|s| s.as_str()).collect());
+        let env_refs: Vec<&str> = full_env.iter().map(|s| s.as_str()).collect();
+
+        let config = Config {
+            image: Some(spec.image.as_str()),
+            cmd: cmd_refs,
+            env: Some(env_refs),
+            host_config: Some(host_config),
+            ..Default::default()
+        };
+
+        // Create new container
+        let response: ContainerCreateResponse = self
+            .docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: &container_name,
+                    platform: None,
+                }),
+                config,
+            )
+            .await
+            .context("Failed to create container during recreate")?;
+
+        tracing::info!(
+            container_id = %response.id,
+            container_name = %container_name,
+            "New container created"
+        );
+
+        // Start the new container
+        self.docker
+            .start_container(&container_name, None::<StartContainerOptions<String>>)
+            .await
+            .context("Failed to start container during recreate")?;
+
+        tracing::info!(
+            service = %name,
+            container_name = %container_name,
+            "Container recreated and started successfully"
+        );
+
+        Ok(resolved_ports)
+    }
+
+    /// Restart a running container via Docker API.
+    ///
+    /// Much less destructive than recreate — the container keeps its identity,
+    /// mounts, and configuration. Only the process inside is restarted.
+    /// Used after config file changes (file_restart policy).
+    pub async fn restart_service(&self, name: &str) -> Result<()> {
+        let container_name = zen_offering_container_name(name)?;
+        tracing::info!(service = %name, "Restarting container");
+        self.docker
+            .restart_container(
+                &container_name,
+                Some(RestartContainerOptions { t: 10 }),
+            )
+            .await
+            .context("Failed to restart container")?;
+        tracing::info!(service = %name, "Container restarted successfully");
+        Ok(())
+    }
+
+    /// Send a signal to a running container (e.g., SIGHUP for config reload).
+    ///
+    /// Least destructive option — zero downtime. The process stays running
+    /// and re-reads its config file. Used for signal_reload policy.
+    pub async fn signal_container(&self, name: &str, signal: &str) -> Result<()> {
+        let container_name = zen_offering_container_name(name)?;
+        tracing::info!(service = %name, signal = %signal, "Sending signal to container");
+        self.docker
+            .kill_container(
+                &container_name,
+                Some(KillContainerOptions {
+                    signal: signal.to_string(),
+                }),
+            )
+            .await
+            .context("Failed to send signal to container")?;
+        tracing::info!(service = %name, signal = %signal, "Signal sent successfully");
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub async fn upgrade_service(
         &self,
         name: &str,
-        new_image: &str,
-        ports: Vec<(u16, u16)>,
-        env: Vec<String>,
-        volumes: Vec<(String, String)>,
+        spec: &ContainerSpec,
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<()> {
         let container_name = zen_offering_container_name(name)?;
@@ -637,20 +981,19 @@ impl DockerManager {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
                 console::EventStatus::Upgrading,
-                format!("{} → {}", name, new_image),
+                format!("{} → {}", name, spec.image),
             ));
         }
-        tracing::info!(service = %name, new_image = %new_image, "Upgrading service");
+        tracing::info!(service = %name, new_image = %spec.image, "Upgrading service");
 
         // Pull new image
-        self.pull_image(new_image, console).await?;
+        self.pull_image(&spec.image, console).await?;
 
         // Stop and remove old container
         self.remove_service(name, console).await?;
 
         // Create and start new container
-        self.install_service(name, new_image, ports, env, volumes, console)
-            .await?;
+        self.install_service(name, spec, console).await?;
 
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
@@ -1196,15 +1539,12 @@ impl DockerManager {
             .any(|(_, dest)| dest == garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR))
     }
 
-    /// Extract a container's runtime config for recreation (TOPO-0002)
+    /// Extract a container's runtime config as a `ContainerSpec`.
     ///
-    /// Returns (image, ports, env, volumes) from Docker inspect — the same
-    /// shape as `install_service()` parameters. Filters out the topology mount
-    /// from volumes since `install_service()` auto-injects it.
-    pub async fn get_container_recreate_config(
-        &self,
-        name: &str,
-    ) -> Result<(String, Vec<(u16, u16)>, Vec<String>, Vec<(String, String)>)> {
+    /// Inspects the running container and returns its effective configuration.
+    /// Filters out auto-injected env vars and topology mount since those are
+    /// re-applied by `install_service()`.
+    pub async fn inspect_container_spec(&self, name: &str) -> Result<ContainerSpec> {
         let container_name = zen_offering_container_name(name)?;
         let info = self
             .docker
@@ -1212,22 +1552,37 @@ impl DockerManager {
             .await
             .context(format!("Failed to inspect container '{}'", container_name))?;
 
-        // Image
         let config = info.config.as_ref().context("Container has no config")?;
+
+        // Image
         let image = config
             .image
             .clone()
             .unwrap_or_else(|| "<unknown>".to_string());
 
-        // Env
-        let env: Vec<String> = config.env.as_ref().cloned().unwrap_or_default();
+        // Command
+        let command = config
+            .cmd
+            .as_ref()
+            .filter(|c| !c.is_empty())
+            .cloned();
+
+        // Env (filter out auto-injected vars that install_service adds)
+        let auto_prefixes = ["KOI_ENDPOINT=", "GARDEN_STONE_ENDPOINT=", "GARDEN_OFFERING_NAME="];
+        let env: Vec<String> = config
+            .env
+            .as_ref()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| !auto_prefixes.iter().any(|prefix| e.starts_with(prefix)))
+            .collect();
 
         // Ports: parse from host_config.port_bindings
         let mut ports = Vec::new();
         if let Some(ref host_config) = info.host_config {
             if let Some(ref bindings) = host_config.port_bindings {
                 for (container_port_key, host_bindings) in bindings {
-                    // Key format: "27017/tcp"
                     let container_port: u16 = container_port_key
                         .split('/')
                         .next()
@@ -1253,8 +1608,11 @@ impl DockerManager {
             }
         }
 
-        // Volumes: from mounts, excluding the topology mount (auto-injected by install_service)
+        // Volumes: from mounts, excluding auto-injected mounts:
+        // - Topology mount (TOPO-0002)
+        // - Config file mounts (config file injection)
         let topo_container_path = garden_common::constants::paths::CONTAINER_TOPOLOGY_DIR;
+        let config_dir_prefix = format!("{}/config/", garden_common::constants::paths::data_dir());
         let volumes: Vec<(String, String)> = info
             .mounts
             .unwrap_or_default()
@@ -1262,8 +1620,11 @@ impl DockerManager {
             .filter_map(|m| {
                 let source = m.source.as_ref()?;
                 let dest = m.destination.as_ref()?;
-                // Skip topology mount — install_service() auto-injects it
                 if dest == topo_container_path {
+                    return None;
+                }
+                // Filter out config file bind mounts (injected by install_service)
+                if source.starts_with(&config_dir_prefix) {
                     return None;
                 }
                 Some((source.clone(), dest.clone()))
@@ -1273,13 +1634,156 @@ impl DockerManager {
         tracing::debug!(
             container = %container_name,
             image = %image,
+            command = ?command,
             ports = ports.len(),
             env_vars = env.len(),
             volumes = volumes.len(),
-            "Extracted container config for recreation"
+            "Inspected container spec"
         );
 
-        Ok((image, ports, env, volumes))
+        Ok(ContainerSpec {
+            image,
+            command,
+            ports,
+            environment: env,
+            volumes,
+            // Config files can't be introspected from Docker — this is
+            // only used for spec comparison in needs_cycle(), where
+            // config files are handled separately (file write + restart).
+            config_files: vec![],
+        })
+    }
+
+    /// Check if the running container matches the desired spec.
+    ///
+    /// Compares command, environment, and volumes. Returns `true` if the
+    /// container needs to be recycled (stop → remove → create → start).
+    pub async fn needs_cycle(&self, name: &str, desired: &ContainerSpec) -> Result<bool> {
+        let running = self.inspect_container_spec(name).await?;
+
+        // Compare command — use effective_command() so config file flags
+        // (injected by install_service) are included in the desired side.
+        let desired_cmd = desired.effective_command();
+        if running.command != desired_cmd {
+            tracing::debug!(
+                service = %name,
+                running = ?running.command,
+                desired = ?desired_cmd,
+                "Container command mismatch"
+            );
+            return Ok(true);
+        }
+
+        // Compare environment (sorted, ignoring auto-injected)
+        let mut running_env = running.environment.clone();
+        let mut desired_env = desired.environment.clone();
+        running_env.sort();
+        desired_env.sort();
+        if running_env != desired_env {
+            tracing::debug!(
+                service = %name,
+                "Container environment mismatch"
+            );
+            return Ok(true);
+        }
+
+        // Compare volumes (sorted by container path)
+        let mut running_vols = running.volumes.clone();
+        let mut desired_vols = desired.volumes.clone();
+        running_vols.sort_by(|a, b| a.1.cmp(&b.1));
+        desired_vols.sort_by(|a, b| a.1.cmp(&b.1));
+        if running_vols != desired_vols {
+            tracing::debug!(
+                service = %name,
+                "Container volumes mismatch"
+            );
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Ensure a managed container's `/etc/resolv.conf` points at the correct
+    /// DNS servers (bridge gateway → systemd-resolved). Patches the file
+    /// in-place via `docker exec` — no container restart needed.
+    pub async fn reconcile_container_dns(&self, name: &str) -> Result<()> {
+        let container_name = zen_offering_container_name(name)?;
+        let net = self.container_networking(name).await;
+
+        let nameservers = net.dns.iter()
+            .map(|s| format!("nameserver {s}"))
+            .collect::<Vec<_>>()
+            .join("\\n");
+        let search = if net.dns_search.is_empty() {
+            String::new()
+        } else {
+            format!("\\nsearch {}", net.dns_search.join(" "))
+        };
+        let desired_content = format!("{nameservers}{search}\\n");
+
+        // Read current resolv.conf
+        let exec = self.docker.create_exec(
+            &container_name,
+            bollard::exec::CreateExecOptions {
+                cmd: Some(vec!["cat", "/etc/resolv.conf"]),
+                attach_stdout: Some(true),
+                ..Default::default()
+            },
+        ).await.context("create exec for resolv.conf read")?;
+
+        let output = self.docker.start_exec(
+            &exec.id,
+            None::<bollard::exec::StartExecOptions>,
+        ).await.context("exec cat /etc/resolv.conf")?;
+
+        let current = match output {
+            bollard::exec::StartExecResults::Attached { mut output, .. } => {
+                use futures_util::StreamExt;
+                let mut buf = String::new();
+                while let Some(Ok(chunk)) = output.next().await {
+                    buf.push_str(&chunk.to_string());
+                }
+                buf
+            }
+            _ => String::new(),
+        };
+
+        // Check if first nameserver already matches
+        let first_ns = current.lines()
+            .find(|l| l.starts_with("nameserver "))
+            .and_then(|l| l.strip_prefix("nameserver "))
+            .unwrap_or("");
+        let desired_primary = net.dns.first().map(|s| s.as_str()).unwrap_or("");
+
+        if first_ns == desired_primary {
+            return Ok(());
+        }
+
+        tracing::info!(
+            service = %name,
+            from = %first_ns,
+            to = %desired_primary,
+            "patching container DNS"
+        );
+
+        // Write new resolv.conf via printf
+        let exec = self.docker.create_exec(
+            &container_name,
+            bollard::exec::CreateExecOptions {
+                cmd: Some(vec![
+                    "sh", "-c",
+                    &format!("printf '{desired_content}' > /etc/resolv.conf"),
+                ]),
+                ..Default::default()
+            },
+        ).await.context("create exec for resolv.conf write")?;
+
+        self.docker.start_exec(
+            &exec.id,
+            None::<bollard::exec::StartExecOptions>,
+        ).await.context("exec write resolv.conf")?;
+
+        Ok(())
     }
 
     /// Get the actual port bindings from a running container.

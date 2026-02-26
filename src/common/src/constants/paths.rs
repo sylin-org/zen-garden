@@ -75,6 +75,15 @@ pub fn volumes_dir() -> String {
     std::env::var("GARDEN_VOLUMES_DIR").unwrap_or_else(|_| format!("{}/volumes", data_dir()))
 }
 
+/// Per-offering config directory for config file injection.
+/// Layout: {data_dir}/config/{offering_name}/
+///
+/// Bind-mounted into containers so config changes are just
+/// a file write + restart (no container recreation).
+pub fn offering_config_dir(offering_name: &str) -> String {
+    format!("{}/config/{}", data_dir(), offering_name)
+}
+
 /// Get shared topology directory for cross-process topology sharing
 /// Layout: {shared_data_dir}/topology/
 ///

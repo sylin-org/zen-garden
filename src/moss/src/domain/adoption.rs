@@ -193,6 +193,7 @@ pub async fn adopt_offering_container(
             resources: None,
             job_id: None,
             guidance,
+            ..Default::default()
         }),
         registered_at: chrono::Utc::now(),
         updated_at: None,

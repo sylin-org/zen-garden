@@ -37,6 +37,8 @@ pub struct RsMember {
     pub optime_ts: Option<i64>,
     /// Last heartbeat received.
     pub last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
+    /// `true` if this member is the one we ran the command against.
+    pub is_self: bool,
 }
 
 /// Oplog window information from `getReplicationInfo`-equivalent queries.
@@ -106,6 +108,7 @@ impl MongoClient {
                                 chrono::DateTime::from_timestamp_millis(millis)
                                     .unwrap_or_default()
                             }),
+                        is_self: doc.get_bool("self").unwrap_or(false),
                     })
                 })
                 .collect(),
@@ -231,6 +234,78 @@ impl MongoClient {
             .run_command(doc! { "replSetReconfig": config })
             .await
             .with_context(|| format!("replSetReconfig (removing {host})"))?;
+
+        let ok = result.get_f64("ok").unwrap_or(0.0);
+        if ok != 1.0 {
+            let errmsg = result.get_str("errmsg").unwrap_or("unknown error");
+            anyhow::bail!("replSetReconfig failed: {errmsg}");
+        }
+
+        Ok(())
+    }
+
+    /// Rewrite the replica set member list to match the given endpoints.
+    ///
+    /// Fetches the current RS config, preserves `_id` for any host that already
+    /// exists (MongoDB requires stable member IDs across reconfigs), assigns new
+    /// IDs only for new hosts, increments the version, and applies via
+    /// `replSetReconfig` with `force: true`.
+    pub async fn rs_reconfig_members(&self, rs_name: &str, desired_hosts: &[&str]) -> Result<()> {
+        let db = self.client.database("admin");
+        let config_doc = db
+            .run_command(doc! { "replSetGetConfig": 1 })
+            .await
+            .context("replSetGetConfig")?;
+
+        let old_config = config_doc
+            .get_document("config")
+            .context("missing config in replSetGetConfig response")?;
+
+        let version = old_config.get_i32("version").unwrap_or(0);
+
+        // Build host→_id map from existing config so we preserve IDs
+        let mut existing_ids: std::collections::HashMap<String, i32> =
+            std::collections::HashMap::new();
+        let mut max_id: i32 = -1;
+        if let Ok(old_members) = old_config.get_array("members") {
+            for m in old_members {
+                if let Some(doc) = m.as_document() {
+                    if let (Ok(host), Ok(id)) = (doc.get_str("host"), doc.get_i32("_id")) {
+                        existing_ids.insert(host.to_string(), id);
+                        max_id = max_id.max(id);
+                    }
+                }
+            }
+        }
+
+        // Build new member list — reuse existing _id where possible
+        let mut next_id = max_id + 1;
+        let new_members: Vec<mongodb::bson::Bson> = desired_hosts
+            .iter()
+            .map(|host| {
+                let id = existing_ids.get(*host).copied().unwrap_or_else(|| {
+                    let id = next_id;
+                    next_id += 1;
+                    id
+                });
+                mongodb::bson::Bson::Document(doc! {
+                    "_id": id,
+                    "host": *host,
+                })
+            })
+            .collect();
+
+        let new_config = doc! {
+            "_id": rs_name,
+            "version": version + 1,
+            "members": new_members,
+        };
+
+        tracing::debug!(config = %new_config, "sending replSetReconfig");
+        let result = db
+            .run_command(doc! { "replSetReconfig": new_config, "force": true })
+            .await
+            .with_context(|| format!("replSetReconfig (rebuild members) on {}", self.endpoint))?;
 
         let ok = result.get_f64("ok").unwrap_or(0.0);
         if ok != 1.0 {

@@ -84,6 +84,7 @@ async fn main() -> Result<()> {
 
     // Load any cached tending state from a previous run
     state.load_tending().await;
+    state.load_pending_actions().await;
 
     // ── Background Tasks ─────────────────────────────────────────
     let discovery_handle = tokio::spawn(tasks::discovery::run(
@@ -141,6 +142,14 @@ async fn main() -> Result<()> {
         .route(
             "/api/cluster/install",
             axum::routing::post(cluster::post_install),
+        )
+        .route(
+            "/api/cluster/members/{endpoint}",
+            axum::routing::delete(cluster::delete_member),
+        )
+        .route(
+            "/api/cluster/actions",
+            axum::routing::get(cluster::get_pending_actions),
         )
         // Monitoring
         .route(

@@ -8,6 +8,7 @@
 //! 5. Query serverStatus for WiredTiger cache metrics
 //! 6. Detect membership changes and emit events
 //! 7. Update connection strings
+//! 8. Reconcile RS config if members don't match the logical set
 
 use crate::app_state::AppState;
 use crate::domain::cache_advisor;
@@ -15,6 +16,7 @@ use crate::domain::membership;
 use crate::domain::oplog;
 use crate::domain::types::*;
 use crate::infra::mongo_client::MongoClient;
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -137,6 +139,9 @@ async fn health_cycle(state: &AppState) {
 
 /// Probe replica set status, update instance health/roles, compute lag,
 /// query oplog and cache metrics.
+///
+/// If the RS member list doesn't match the logical set (registry endpoints),
+/// triggers a one-shot `rs.reconfig` to rebuild the member list.
 async fn probe_and_update(
     state: &AppState,
     instances: &[MongoInstance],
@@ -144,11 +149,16 @@ async fn probe_and_update(
 ) -> Option<ReplicaSetState> {
     let rs_name = derive_replica_set_name(fqn);
 
-    for instance in instances {
+    // Active instances = non-Stopped (candidates for RS membership)
+    let active_instances: Vec<&MongoInstance> = instances
+        .iter()
+        .filter(|i| i.health != InstanceHealth::Stopped)
+        .collect();
+
+    for instance in &active_instances {
         let client = match MongoClient::connect(&instance.mongo_endpoint).await {
             Ok(c) => c,
             Err(_) => {
-                // Mark unreachable
                 update_instance_health(state, &instance.mongo_endpoint, InstanceHealth::Unreachable)
                     .await;
                 continue;
@@ -184,14 +194,48 @@ async fn probe_and_update(
             }
         };
 
-        // Find primary optime for lag computation
+        // ── Check if RS members match the logical set ──────────────
+        // The logical set (registry) is the source of truth.
+        // If RS has different endpoints, reconfig to match.
+        let rs_hosts: HashSet<&str> = status.members.iter().map(|m| m.name.as_str()).collect();
+        let registry_hosts: HashSet<&str> = active_instances
+            .iter()
+            .map(|i| i.mongo_endpoint.as_str())
+            .collect();
+
+        if rs_hosts != registry_hosts {
+            tracing::warn!(
+                fqn = %fqn,
+                rs_members = ?rs_hosts,
+                logical_set = ?registry_hosts,
+                "RS members don't match logical set — rebuilding RS config"
+            );
+
+            // Find any reachable member to run reconfig against
+            let desired: Vec<&str> = registry_hosts.into_iter().collect();
+            // reconfig with force:true works from any member
+            if let Err(e) = client.rs_reconfig_members(&rs_name, &desired).await {
+                tracing::warn!(error = ?e, "RS reconfig failed — will retry next cycle");
+            } else {
+                tracing::info!(fqn = %fqn, members = ?desired, "RS config rebuilt to match logical set");
+                state
+                    .emit_event(
+                        "rs.reconfig",
+                        &serde_json::json!({ "fqn": fqn, "members": desired }).to_string(),
+                    )
+                    .await;
+            }
+            // Either way, return early — next cycle will see the new config
+            return None;
+        }
+
+        // ── RS matches logical set — process normally ──────────────
         let primary_optime = status
             .members
             .iter()
             .find(|m| m.state == 1)
             .and_then(|m| m.optime_ts);
 
-        // Build member states with lag
         let members: Vec<MemberState> = status
             .members
             .iter()
@@ -205,7 +249,6 @@ async fn probe_and_update(
                     _ => ReplicaRole::Unknown,
                 };
 
-                // Compute lag for secondaries
                 let lag_seconds = if m.state == 2 {
                     match (primary_optime, m.optime_ts) {
                         (Some(primary), Some(secondary)) => {
@@ -217,7 +260,6 @@ async fn probe_and_update(
                     None
                 };
 
-                // Update the instance's role in state
                 let stone_name = instances
                     .iter()
                     .find(|i| i.mongo_endpoint == m.name)

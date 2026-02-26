@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::Instant;
 
 /// A discovered MongoDB instance running on a stone.
@@ -37,6 +38,9 @@ pub enum InstanceHealth {
     Unreachable,
     /// Instance is responding but in a degraded state.
     Degraded,
+    /// Container is intentionally stopped on the stone (tools stream: ready = false).
+    /// Distinct from Unreachable — the offering exists but the container is down.
+    Stopped,
 }
 
 /// Replica set role for a MongoDB member.
@@ -117,6 +121,58 @@ pub fn derive_replica_set_name(fqn: &str) -> String {
 pub fn build_connection_string(members: &[MemberState], rs_name: &str) -> String {
     let hosts: Vec<&str> = members.iter().map(|m| m.endpoint.as_str()).collect();
     format!("mongodb://{}/?replicaSet={}", hosts.join(","), rs_name)
+}
+
+/// A pending membership action queued for eventual execution.
+///
+/// Actions are persisted to disk so they survive orchestrator restart.
+/// The bootstrap task executor checks the queue each cycle and executes
+/// actions when the target becomes reachable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum PendingAction {
+    /// Remove a member from the replica set and logical set.
+    RemoveMember {
+        /// MongoDB wire endpoint (e.g. "stone-quartz-fen.local:27017").
+        mongo_endpoint: String,
+        /// FQN of the logical set (e.g. "mongodb", "mongodb:analytics").
+        fqn: String,
+        /// When the action was requested.
+        requested_at: DateTime<Utc>,
+    },
+}
+
+impl PendingAction {
+    /// The target endpoint this action applies to.
+    pub fn target_endpoint(&self) -> &str {
+        match self {
+            PendingAction::RemoveMember { mongo_endpoint, .. } => mongo_endpoint,
+        }
+    }
+}
+
+/// Load pending actions from the data directory.
+pub async fn load_pending_actions(data_dir: &str) -> Vec<PendingAction> {
+    let path = Path::new(data_dir).join("pending-actions.json");
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => vec![],
+    }
+}
+
+/// Persist pending actions to the data directory.
+pub async fn save_pending_actions(data_dir: &str, actions: &[PendingAction]) {
+    let path = Path::new(data_dir).join("pending-actions.json");
+    match serde_json::to_string_pretty(actions) {
+        Ok(json) => {
+            if let Err(e) = tokio::fs::write(&path, json).await {
+                tracing::warn!(error = %e, "failed to persist pending actions");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to serialize pending actions");
+        }
+    }
 }
 
 #[cfg(test)]

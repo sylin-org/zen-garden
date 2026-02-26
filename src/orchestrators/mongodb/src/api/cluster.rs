@@ -1,9 +1,9 @@
 //! Cluster management API endpoints.
 
 use crate::app_state::AppState;
-use crate::domain::types::{derive_replica_set_name, MongoInstance, ReplicaRole};
+use crate::domain::types::{derive_replica_set_name, MongoInstance, PendingAction, ReplicaRole};
 use crate::infra::mongo_client::MongoClient;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -269,7 +269,6 @@ pub async fn post_install(
     State(state): State<AppState>,
     Json(req): Json<InstallRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let offering = "mongodb".to_string();
     let fqn = match &req.fqn_suffix {
         Some(suffix) if !suffix.is_empty() => format!("mongodb:{suffix}"),
         _ => "mongodb".to_string(),
@@ -280,8 +279,11 @@ pub async fn post_install(
         req.moss_endpoint.trim_end_matches('/')
     );
 
+    // Accept self-signed certs for internal stone-to-stone communication
+    // (pond CA issues certs that are not in the system trust store).
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
             (
@@ -292,7 +294,7 @@ pub async fn post_install(
 
     let resp = client
         .post(&url)
-        .json(&json!({ "offering": offering }))
+        .json(&json!({ "offering": fqn }))
         .send()
         .await
         .map_err(|e| {
@@ -333,4 +335,80 @@ pub async fn post_install(
         "message": format!("MongoDB installation requested on {}", req.moss_endpoint),
         "fqn": fqn,
     })))
+}
+
+/// `DELETE /api/cluster/members/:endpoint` — remove a member from the logical set.
+///
+/// Queues a `PendingAction::RemoveMember` that will execute `rs.remove()` when
+/// the target is reachable, then removes the instance from the registry.
+/// If the instance comes back with the same FQN, it will be auto-readmitted.
+pub async fn delete_member(
+    State(state): State<AppState>,
+    Path(endpoint): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // URL-decode the endpoint (it may contain colons, dots)
+    let mongo_endpoint = urlencoding::decode(&endpoint)
+        .map(|s| s.into_owned())
+        .unwrap_or(endpoint);
+
+    // Look up the instance to get its FQN
+    let fqn = {
+        let reg = state.instances.read().await;
+        reg.get(&mongo_endpoint).map(|i| i.fqn.clone())
+    };
+
+    let fqn = fqn.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "success": false,
+                "message": format!("instance '{}' not found in registry", mongo_endpoint),
+            })),
+        )
+    })?;
+
+    // Check if there's already a pending removal
+    if state.has_pending_removal(&mongo_endpoint).await {
+        return Ok(Json(json!({
+            "success": true,
+            "message": "removal already pending",
+            "endpoint": mongo_endpoint,
+            "fqn": fqn,
+        })));
+    }
+
+    // Queue the removal action
+    let action = PendingAction::RemoveMember {
+        mongo_endpoint: mongo_endpoint.clone(),
+        fqn: fqn.clone(),
+        requested_at: chrono::Utc::now(),
+    };
+
+    state.queue_action(action).await;
+
+    tracing::info!(
+        endpoint = %mongo_endpoint,
+        fqn = %fqn,
+        "member removal queued"
+    );
+
+    state
+        .emit_event(
+            "rs.member.removal_queued",
+            &json!({ "endpoint": mongo_endpoint, "fqn": fqn }).to_string(),
+        )
+        .await;
+
+    Ok(Json(json!({
+        "success": true,
+        "message": format!("removal queued for {}", mongo_endpoint),
+        "endpoint": mongo_endpoint,
+        "fqn": fqn,
+    })))
+}
+
+/// `GET /api/cluster/actions` — list pending membership actions.
+pub async fn get_pending_actions(State(state): State<AppState>) -> Json<Value> {
+    let actions = state.pending_actions_snapshot().await;
+    Json(json!({ "pending_actions": actions }))
 }

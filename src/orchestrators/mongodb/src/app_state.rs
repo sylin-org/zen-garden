@@ -33,6 +33,8 @@ pub struct AppState {
     pub instances: Arc<RwLock<HashMap<String, MongoInstance>>>,
     /// Replica set states, keyed by FQN (e.g. "mongodb", "mongodb:analytics").
     pub replica_sets: Arc<RwLock<HashMap<String, ReplicaSetState>>>,
+    /// Pending membership actions (persisted across restarts).
+    pub pending_actions: Arc<RwLock<Vec<PendingAction>>>,
 
     // ── Events ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
@@ -62,6 +64,7 @@ impl AppState {
             tended_stone: Arc::new(RwLock::new(None)),
             instances: Arc::new(RwLock::new(HashMap::new())),
             replica_sets: Arc::new(RwLock::new(HashMap::new())),
+            pending_actions: Arc::new(RwLock::new(Vec::new())),
             dashboard_tx,
             shutdown,
             start_time: Instant::now(),
@@ -72,13 +75,34 @@ impl AppState {
     // ── Instance Management ──────────────────────────────────────
 
     /// Register or update a MongoDB instance. Emits a registry event.
-    pub async fn upsert_instance(&self, instance: MongoInstance) {
+    ///
+    /// If the instance already exists, only discovery-sourced fields are updated
+    /// (stone name, moss endpoint, FQN, last_seen). Health and role are preserved
+    /// to avoid overwriting values set by the health monitor.
+    /// Upsert an instance into the registry.
+    /// Returns `true` if this is a newly discovered instance, `false` if updated.
+    pub async fn upsert_instance(&self, instance: MongoInstance) -> bool {
         let endpoint = instance.mongo_endpoint.clone();
+        let is_new;
         {
             let mut reg = self.instances.write().await;
-            reg.insert(endpoint, instance);
+            if let Some(existing) = reg.get_mut(&endpoint) {
+                // Merge: update discovery fields, preserve health/role
+                existing.stone_id = instance.stone_id;
+                existing.stone_name = instance.stone_name;
+                existing.moss_endpoint = instance.moss_endpoint;
+                existing.fqn = instance.fqn;
+                existing.last_seen = instance.last_seen;
+                is_new = false;
+            } else {
+                reg.insert(endpoint, instance);
+                is_new = true;
+            }
         }
-        self.emit_event("registry.updated", "{}").await;
+        if is_new {
+            self.emit_event("registry.updated", "{}").await;
+        }
+        is_new
     }
 
     /// Remove an instance from the registry.
@@ -106,6 +130,47 @@ impl AppState {
         fqns.sort();
         fqns.dedup();
         fqns
+    }
+
+    // ── Pending Actions ─────────────────────────────────────────
+
+    /// Queue a pending action. Persists to disk.
+    pub async fn queue_action(&self, action: PendingAction) {
+        {
+            let mut actions = self.pending_actions.write().await;
+            actions.push(action);
+            save_pending_actions(&self.data_dir, &actions).await;
+        }
+        self.emit_event("actions.updated", "{}").await;
+    }
+
+    /// Remove a completed action by target endpoint. Persists to disk.
+    pub async fn complete_action(&self, target_endpoint: &str) {
+        let mut actions = self.pending_actions.write().await;
+        actions.retain(|a| a.target_endpoint() != target_endpoint);
+        save_pending_actions(&self.data_dir, &actions).await;
+    }
+
+    /// Check if there is a pending removal action for a given endpoint.
+    pub async fn has_pending_removal(&self, mongo_endpoint: &str) -> bool {
+        let actions = self.pending_actions.read().await;
+        actions.iter().any(|a| matches!(a,
+            PendingAction::RemoveMember { mongo_endpoint: ep, .. } if ep == mongo_endpoint
+        ))
+    }
+
+    /// Load persisted pending actions from the data directory.
+    pub async fn load_pending_actions(&self) {
+        let actions = load_pending_actions(&self.data_dir).await;
+        if !actions.is_empty() {
+            tracing::info!(count = actions.len(), "restored pending actions from disk");
+            *self.pending_actions.write().await = actions;
+        }
+    }
+
+    /// Get a snapshot of all pending actions.
+    pub async fn pending_actions_snapshot(&self) -> Vec<PendingAction> {
+        self.pending_actions.read().await.clone()
     }
 
     // ── Replica Set State ────────────────────────────────────────

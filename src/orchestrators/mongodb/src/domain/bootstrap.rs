@@ -40,16 +40,21 @@ pub fn should_initiate(
         return None;
     }
 
-    // Need at least one instance
-    if instances.is_empty() {
+    // Need at least one non-stopped instance
+    let active_instances: Vec<_> = instances
+        .iter()
+        .filter(|i| i.health != InstanceHealth::Stopped)
+        .collect();
+    if active_instances.is_empty() {
         return None;
     }
 
     // Pick the first healthy instance (prefer instances that are actually reachable)
-    let candidate = instances
+    let candidate = active_instances
         .iter()
         .find(|i| i.health == InstanceHealth::Healthy)
-        .or_else(|| instances.first())?;
+        .or_else(|| active_instances.first())
+        .copied()?;
 
     let rs_name = derive_replica_set_name(fqn);
 
@@ -62,10 +67,12 @@ pub fn should_initiate(
 /// Determine whether a new member should be added to a replica set.
 ///
 /// Returns `Some(AddMemberAction)` for each instance that is not yet in the
-/// replica set's member list.
+/// replica set's member list. Skips instances that are Stopped (container down)
+/// or have a pending removal action.
 pub fn should_add_members(
     instances: &[MongoInstance],
     rs_state: &ReplicaSetState,
+    pending_removal_endpoints: &[String],
 ) -> Vec<AddMemberAction> {
     if !rs_state.initialized {
         return vec![];
@@ -86,7 +93,21 @@ pub fn should_add_members(
 
     instances
         .iter()
-        .filter(|inst| !existing_endpoints.contains(inst.mongo_endpoint.as_str()))
+        .filter(|inst| {
+            // Skip instances already in the replica set
+            if existing_endpoints.contains(inst.mongo_endpoint.as_str()) {
+                return false;
+            }
+            // Skip stopped instances (container down)
+            if inst.health == InstanceHealth::Stopped {
+                return false;
+            }
+            // Skip instances with pending removal
+            if pending_removal_endpoints.contains(&inst.mongo_endpoint) {
+                return false;
+            }
+            true
+        })
         .map(|inst| AddMemberAction {
             primary_endpoint: primary.endpoint.clone(),
             new_member_endpoint: inst.mongo_endpoint.clone(),

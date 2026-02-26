@@ -129,7 +129,7 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                 "bootstrapped MongoDB instances from topology"
             );
             for s in stones {
-                let mongo_endpoint = format!("{}:27017", s.ip);
+                let mongo_endpoint = format!("{}:27017", s.hostname);
                 let instance = MongoInstance {
                     stone_id: s.stone_id.clone(),
                     stone_name: s.stone_name.clone(),
@@ -157,6 +157,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
             stone_name,
             endpoint,
             tool_fqid,
+            ready,
         } => {
             // Derive FQN from tool_fqid:
             //   "offering:mongodb"           → "mongodb"
@@ -166,33 +167,80 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 .unwrap_or("mongodb")
                 .to_string();
 
-            tracing::info!(
-                stone = %stone_name,
-                endpoint = %endpoint,
-                fqn = %fqn,
-                "MongoDB instance discovered via tools stream"
-            );
-
             // Extract host:port from endpoint URL.
             // The tools stream constructs endpoints using the connection protocol
             // (mongodb://, tcp://, http://, etc.) so we strip any scheme.
             let mongo_endpoint = strip_scheme(&endpoint);
 
-            let instance = MongoInstance {
-                stone_id: stone_id.clone(),
-                stone_name: stone_name.clone(),
-                moss_endpoint: format!("http://{}:7185", mongo_endpoint.split(':').next().unwrap_or("127.0.0.1")),
-                mongo_endpoint,
-                fqn,
-                health: InstanceHealth::Unknown,
-                role: None,
-                last_seen: Instant::now(),
-            };
-
             // Spawn a task to update state (we're in a sync callback)
             let state = state.clone();
             tokio::spawn(async move {
-                state.upsert_instance(instance).await;
+                // Suppress registration if a pending removal exists for this endpoint
+                if state.has_pending_removal(&mongo_endpoint).await {
+                    tracing::trace!(
+                        stone = %stone_name,
+                        endpoint = %mongo_endpoint,
+                        "suppressing discovery (pending removal action)"
+                    );
+                    return;
+                }
+
+                // Determine health based on readiness:
+                // ready=true  → Unknown (health monitor will promote to Healthy)
+                // ready=false → Stopped (container is down, skip probing)
+                let health = if ready {
+                    InstanceHealth::Unknown
+                } else {
+                    InstanceHealth::Stopped
+                };
+
+                let host = mongo_endpoint.split(':').next().unwrap_or("127.0.0.1");
+                let instance = MongoInstance {
+                    stone_id: stone_id.clone(),
+                    stone_name: stone_name.clone(),
+                    moss_endpoint: format!("http://{}:{}", host, garden_common::constants::MOSS_HTTP),
+                    mongo_endpoint: mongo_endpoint.clone(),
+                    fqn: fqn.clone(),
+                    health,
+                    role: None,
+                    last_seen: Instant::now(),
+                };
+
+                let is_new = state.upsert_instance(instance).await;
+                if is_new {
+                    tracing::info!(
+                        stone = %stone_name,
+                        endpoint = %endpoint,
+                        fqn = %fqn,
+                        ready = ready,
+                        "MongoDB instance discovered via tools stream"
+                    );
+                } else if !ready {
+                    // Existing instance transitioned to stopped — update health
+                    let mut reg = state.instances.write().await;
+                    if let Some(inst) = reg.get_mut(&mongo_endpoint) {
+                        if inst.health != InstanceHealth::Stopped {
+                            tracing::info!(
+                                stone = %stone_name,
+                                "MongoDB instance stopped (container down)"
+                            );
+                            inst.health = InstanceHealth::Stopped;
+                        }
+                    }
+                } else {
+                    // Existing instance with ready=true — if it was Stopped, transition to Unknown
+                    let mut reg = state.instances.write().await;
+                    if let Some(inst) = reg.get_mut(&mongo_endpoint) {
+                        if inst.health == InstanceHealth::Stopped {
+                            tracing::info!(
+                                stone = %stone_name,
+                                "MongoDB instance restarted (transitioning from stopped)"
+                            );
+                            inst.health = InstanceHealth::Unknown;
+                        }
+                        inst.last_seen = Instant::now();
+                    }
+                }
             });
         }
         ToolStreamEvent::OfferingRemoved {
@@ -204,7 +252,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 "MongoDB instance removed via tools stream"
             );
 
-            // Find and remove the matching instance
+            // Find and remove the matching instance (offering uninstalled)
             let state = state.clone();
             tokio::spawn(async move {
                 let endpoint = {
@@ -214,6 +262,8 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                         .map(|i| i.mongo_endpoint.clone())
                 };
                 if let Some(ep) = endpoint {
+                    // Also clean up any pending action for this endpoint
+                    state.complete_action(&ep).await;
                     state.remove_instance(&ep).await;
                 }
             });

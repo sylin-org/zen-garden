@@ -44,5 +44,8 @@ clap = { workspace = true, features = ["derive", "env"] }
 # Shutdown coordination
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# URL encoding
+urlencoding = "2.1"
+
 # MongoDB driver (wire protocol)
 mongodb = "3"

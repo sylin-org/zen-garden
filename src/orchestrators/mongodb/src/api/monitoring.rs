@@ -218,7 +218,12 @@ pub async fn get_placement(State(state): State<AppState>) -> Json<Value> {
             has_ssd,
             already_has_mongo: mongo_stone_ids.contains(&entry.stone_id),
             vram_mb,
-            moss_endpoint: Some(entry.address.http_base()),
+            moss_endpoint: Some(
+                entry
+                    .address
+                    .https_base()
+                    .unwrap_or_else(|| entry.address.http_base()),
+            ),
         });
     }
 

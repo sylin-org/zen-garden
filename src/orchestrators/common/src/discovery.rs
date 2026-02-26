@@ -25,6 +25,8 @@ pub struct DiscoveredStone {
     pub stone_id: Option<String>,
     /// Resolved IP address.
     pub ip: String,
+    /// mDNS hostname, e.g. `stone-quartz-fen.local`.
+    pub hostname: String,
     /// Moss API port (from mDNS TXT `api_port`, default 7185).
     pub api_port: u16,
     /// HTTPS port (from mDNS TXT `https_port`), when pond is active.
@@ -38,14 +40,9 @@ pub struct DiscoveredStone {
 }
 
 impl DiscoveredStone {
-    /// HTTP endpoint for the Moss API on this stone.
-    pub fn http_endpoint(&self) -> String {
-        format!("http://{}:{}", self.ip, self.api_port)
-    }
-
-    /// Preferred endpoint — always HTTP for now.
+    /// Moss HTTP endpoint using the `.local` hostname.
     pub fn endpoint(&self) -> String {
-        self.http_endpoint()
+        format!("http://{}:{}", self.hostname, self.api_port)
     }
 }
 
@@ -67,7 +64,6 @@ struct MdnsService {
     name: String,
     #[serde(rename = "type")]
     _type: Option<String>,
-    #[allow(dead_code)]
     host: Option<String>,
     ip: Option<String>,
     port: Option<u16>,
@@ -85,6 +81,19 @@ impl MdnsService {
             .unwrap_or_else(|| self.name.clone());
 
         let stone_id = txt.and_then(|t| t.get("stone_id")).cloned();
+
+        // Derive hostname from mDNS host field, falling back to stone_name.local
+        let hostname = self
+            .host
+            .as_deref()
+            .map(|h| h.trim_end_matches('.').to_string())
+            .unwrap_or_else(|| {
+                if stone_name.contains('.') {
+                    stone_name.clone()
+                } else {
+                    format!("{}.local", &stone_name)
+                }
+            });
 
         let api_port = txt
             .and_then(|t| t.get("api_port"))
@@ -107,6 +116,7 @@ impl MdnsService {
             stone_name,
             stone_id,
             ip: ip.clone(),
+            hostname,
             api_port,
             https_port,
             version,
@@ -292,8 +302,10 @@ pub async fn check_koi_health(koi_endpoint: &str) -> bool {
 
 /// Fetch VRAM total (bytes) and GPU name from a stone's Moss API.
 ///
+/// `stone_host` can be a hostname (e.g. `stone-quartz-fen.local`) or an IP.
+///
 /// Returns `(vram_total_bytes, gpu_name)`. Returns `(0, None)` on any error.
-pub async fn fetch_stone_hw(stone_ip: &str) -> (u64, Option<String>) {
+pub async fn fetch_stone_hw(stone_host: &str) -> (u64, Option<String>) {
     use garden_common::types::HardwareCapabilities;
 
     #[derive(Deserialize)]
@@ -301,7 +313,7 @@ pub async fn fetch_stone_hw(stone_ip: &str) -> (u64, Option<String>) {
         data: HardwareCapabilities,
     }
 
-    let url = format!("http://{}:7185/api/v1/stone", stone_ip);
+    let url = format!("http://{}:{}/api/v1/stone", stone_host, garden_common::constants::MOSS_HTTP);
 
     let client = match Client::builder()
         .connect_timeout(Duration::from_secs(3))

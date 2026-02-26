@@ -16,15 +16,17 @@ pub struct TopologyOfferingStone {
     pub stone_id: String,
     pub stone_name: String,
     pub ip: String,
+    /// mDNS hostname, e.g. `stone-quartz-fen.local`.
+    pub hostname: String,
     pub moss_port: u16,
     /// Full hardware capabilities from the chirp payload.
     pub capabilities: Option<HardwareCapabilities>,
 }
 
 impl TopologyOfferingStone {
-    /// Moss API endpoint: `http://{ip}:{moss_port}`.
+    /// Moss API endpoint using the `.local` hostname.
     pub fn moss_endpoint(&self) -> String {
-        format!("http://{}:{}", self.ip, self.moss_port)
+        format!("http://{}:{}", self.hostname, self.moss_port)
     }
 }
 
@@ -72,10 +74,17 @@ pub async fn query_topology_for_offering(
             .iter()
             .any(|s| s.offering == offering_name && s.status == "running");
         if has_offering {
+            let sn = &entry.stone_name;
+            let hostname = if sn.contains('.') {
+                sn.clone()
+            } else {
+                format!("{}.local", sn)
+            };
             results.push(TopologyOfferingStone {
                 stone_id: entry.stone_id.clone(),
                 stone_name: entry.stone_name.clone(),
                 ip: entry.address.ip.to_string(),
+                hostname,
                 moss_port: entry.address.port,
                 capabilities: entry.capabilities.clone(),
             });

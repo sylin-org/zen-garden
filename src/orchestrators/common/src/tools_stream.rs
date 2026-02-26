@@ -17,10 +17,13 @@ pub enum ToolStreamEvent {
     OfferingDiscovered {
         stone_id: String,
         stone_name: String,
-        /// Fully constructed endpoint URL, e.g. `http://192.168.1.5:27017`.
+        /// Fully constructed endpoint URL using hostname, e.g. `http://stone-quartz-fen.local:27017`.
         endpoint: String,
         /// Fully qualified ID from tools, e.g. `"offering:mongodb"` or `"offering:mongodb:analytics"`.
         tool_fqid: String,
+        /// Whether the offering is automation-ready (Running + Healthy).
+        /// `false` means the container is stopped, degraded, or unavailable.
+        ready: bool,
     },
     /// An offering instance disappeared.
     OfferingRemoved {
@@ -149,10 +152,9 @@ fn extract_offering_tool(
     let stone_name = tool.get("stone_name")?.as_str()?.to_string();
 
     let connection = tool.get("connection")?;
-    let ip = connection
-        .get("ip")
-        .or_else(|| connection.get("hostname"))
-        .and_then(|v| v.as_str())?;
+    let hostname = connection.get("hostname").and_then(|v| v.as_str());
+    let ip = connection.get("ip").and_then(|v| v.as_str());
+    let host = hostname.or(ip)?;
     let port = connection.get("port").and_then(|v| v.as_u64())?;
 
     let protocol = connection
@@ -160,13 +162,19 @@ fn extract_offering_tool(
         .and_then(|v| v.as_str())
         .unwrap_or("http");
 
-    let endpoint = format!("{protocol}://{ip}:{port}");
+    let endpoint = format!("{protocol}://{host}:{port}");
+
+    let ready = tool
+        .get("ready")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     Some(ToolStreamEvent::OfferingDiscovered {
         stone_id,
         stone_name,
         endpoint,
         tool_fqid: fqid.to_string(),
+        ready,
     })
 }
 

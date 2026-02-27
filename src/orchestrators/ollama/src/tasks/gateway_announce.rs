@@ -8,7 +8,6 @@
 
 use crate::infra::gateway::{GatewayParams, KoiMdnsClient, MossGatewayClient};
 use crate::AppState;
-use std::collections::HashMap;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -38,9 +37,13 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
             return;
         }
 
-        let mut txt = HashMap::new();
-        txt.insert("garden-offering".to_string(), OFFERING.to_string());
-        txt.insert("garden-role".to_string(), "orchestrator".to_string());
+        let txt = garden_common::mdns::build_http_txt(
+            &garden_common::mdns::HttpServiceComponent::Orchestrator {
+                offering: OFFERING.to_string(),
+            },
+            "/",
+            env!("CARGO_PKG_VERSION"),
+        );
 
         match koi
             .announce(MDNS_NAME, state.proxy_port, MDNS_LEASE_SECS, txt)

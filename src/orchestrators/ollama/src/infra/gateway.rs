@@ -59,7 +59,7 @@ impl KoiMdnsClient {
         let url = format!("{}/v1/mdns/announce", self.base_url);
         let body = AnnounceRequest {
             name: name.to_string(),
-            service_type: "_http._tcp".to_string(),
+            service_type: garden_common::constants::HTTP_SERVICE_TYPE.to_string(),
             port,
             lease_secs,
             txt,

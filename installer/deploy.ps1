@@ -237,13 +237,13 @@ function Resolve-StoneEndpoint {
 }
 
 function Get-StoneInfo {
-    param([PSCustomObject]$Stone)
+    param([PSCustomObject]$Stone, [int]$TimeoutSec = 10)
 
     $resolvedEndpoint = Resolve-StoneEndpoint -Stone $Stone
 
     try {
         $url = "$($resolvedEndpoint.TrimEnd('/'))/health"
-        $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
+        $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
         return [PSCustomObject]@{
             OS = if ($health.os) { $health.os } else { "linux" }
             Architecture = if ($health.architecture) { $health.architecture } else { "unknown" }
@@ -289,15 +289,15 @@ function Deploy-PackageToStone {
             Write-Status "   ✅ Package uploaded and staged" -Type "Success"
 
             Write-Status "   ⏳ Waiting for service to restart..."
-            Start-Sleep -Seconds 5
+            Start-Sleep -Seconds 8
 
             $healthUrl = "$($Stone.Endpoint.TrimEnd('/'))/health"
             $online = $false
 
-            for ($i = 1; $i -le 15; $i++) {
-                Start-Sleep -Seconds 2
+            for ($i = 1; $i -le 20; $i++) {
+                Start-Sleep -Seconds 3
                 try {
-                    $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 3
+                    $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 5
                     if ($health.status) {
                         Write-Status "   ✅ $($Stone.Name) is back online" -Type "Success"
                         $online = $true
@@ -356,49 +356,108 @@ try {
         exit 1
     }
 
-    # Detect platform and prepare configs
+    # Detect platform and prepare configs (parallel probing)
     Write-Status "`n🔍 Detecting platform for each stone..."
     $stoneConfigs = @()
     $skippedStones = @()
 
+    # Probe all stones in parallel with 10s timeout
+    $probeJobs = @()
     foreach ($stone in $stones) {
-        $info = Get-StoneInfo -Stone $stone
-        $arch = $info.Architecture
-
-        if ($arch -eq "unknown") {
-            Write-Status "   $($stone.Name): SKIPPED (unreachable - cannot detect architecture)" -Type "Warning"
-            $skippedStones += $stone.Name
-            continue
-        }
-
-        $platformLabel = if ($info.OS -match "windows") { "Windows x64" }
-                         elseif ($arch -eq "x86" -or $arch -eq "i686" -or $arch -eq "i386") { "Linux x86" }
-                         else { "Linux x64" }
-
-        $packagePath = switch ($platformLabel) {
-            "Windows x64" { $windowsX64Package }
-            "Linux x86"   { $linuxX86Package }
-            default       { $linuxX64Package }
-        }
-
-        if (-not $packagePath) {
-            Write-Status "   $($stone.Name): $platformLabel - SKIPPED (no package)" -Type "Warning"
-            $skippedStones += $stone.Name
-            continue
-        }
-
-        Write-Status "   $($stone.Name): $platformLabel" -Type "Success"
-
-        $stoneConfigs += [PSCustomObject]@{
-            Stone = [PSCustomObject]@{
-                Name = $stone.Name
-                Endpoint = $info.ResolvedEndpoint
-                Address = $stone.Address
+        $resolvedEndpoint = Resolve-StoneEndpoint -Stone $stone
+        $probeJobs += Start-Job -ScriptBlock {
+            param($StoneName, $Endpoint, $Address, $TimeoutSec)
+            try {
+                $url = "$($Endpoint.TrimEnd('/'))/health"
+                $health = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
+                return @{
+                    Name = $StoneName
+                    Endpoint = $Endpoint
+                    Address = $Address
+                    OS = if ($health.os) { $health.os } else { "linux" }
+                    Architecture = if ($health.architecture) { $health.architecture } else { "unknown" }
+                    Reachable = $true
+                }
             }
-            Platform = $platformLabel
-            PackagePath = $packagePath
+            catch {
+                return @{
+                    Name = $StoneName
+                    Endpoint = $Endpoint
+                    Address = $Address
+                    OS = "unknown"
+                    Architecture = "unknown"
+                    Reachable = $false
+                }
+            }
+        } -ArgumentList $stone.Name, $resolvedEndpoint, $stone.Address, 10
+    }
+
+    # Stream results as each probe completes (capped at 15s total)
+    $probeHandled = @{}
+    $probeStart = Get-Date
+    while ($probeHandled.Count -lt $probeJobs.Count -and ((Get-Date) - $probeStart).TotalSeconds -lt 15) {
+        foreach ($job in $probeJobs) {
+            if ($probeHandled.ContainsKey($job.Id)) { continue }
+            if ($job.State -ne 'Completed') { continue }
+            $probeHandled[$job.Id] = $true
+
+            $info = Receive-Job $job
+            $arch = $info.Architecture
+
+            if (-not $info.Reachable -or $arch -eq "unknown") {
+                Write-Status "   $($info.Name): SKIPPED (unreachable)" -Type "Warning"
+                $skippedStones += $info.Name
+                continue
+            }
+
+            $platformLabel = if ($info.OS -match "windows") { "Windows x64" }
+                             elseif ($arch -eq "x86" -or $arch -eq "i686" -or $arch -eq "i386") { "Linux x86" }
+                             else { "Linux x64" }
+
+            $packagePath = switch ($platformLabel) {
+                "Windows x64" { $windowsX64Package }
+                "Linux x86"   { $linuxX86Package }
+                default       { $linuxX64Package }
+            }
+
+            if (-not $packagePath) {
+                Write-Status "   $($info.Name): $platformLabel - SKIPPED (no package)" -Type "Warning"
+                $skippedStones += $info.Name
+                continue
+            }
+
+            Write-Status "   $($info.Name): $platformLabel" -Type "Success"
+
+            $stoneConfigs += [PSCustomObject]@{
+                Stone = [PSCustomObject]@{
+                    Name = $info.Name
+                    Endpoint = $info.Endpoint
+                    Address = $info.Address
+                }
+                Platform = $platformLabel
+                PackagePath = $packagePath
+            }
+        }
+        if ($probeHandled.Count -lt $probeJobs.Count) { Start-Sleep -Milliseconds 250 }
+    }
+
+    # Handle any remaining timed-out probes
+    foreach ($job in $probeJobs) {
+        if ($probeHandled.ContainsKey($job.Id)) { continue }
+        # Try to get the stone name from completed-but-unprocessed jobs
+        if ($job.State -eq 'Completed') {
+            $info = Receive-Job $job
+            Write-Status "   $($info.Name): SKIPPED (unreachable)" -Type "Warning"
+            $skippedStones += $info.Name
+        } else {
+            # Job still running after 15s — find matching stone name from launch order
+            $idx = [array]::IndexOf($probeJobs, $job)
+            $stoneName = if ($idx -ge 0 -and $idx -lt $stones.Count) { $stones[$idx].Name } else { "unknown" }
+            Write-Status "   ${stoneName}: SKIPPED (timed out)" -Type "Warning"
+            $skippedStones += $stoneName
         }
     }
+    $probeJobs | Remove-Job -Force
 
     if ($stoneConfigs.Count -eq 0) {
         Write-Status "`n⚠️  No stones can be deployed to" -Type "Warning"
@@ -436,15 +495,16 @@ try {
                         return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Unexpected: $($response.status)" }
                     }
 
-                    Start-Sleep -Seconds 5
+                    # Wait for service to restart — 8s initial grace, then poll for up to 60s
+                    Start-Sleep -Seconds 8
 
                     $healthUrl = "$($StoneEndpoint.TrimEnd('/'))/health"
                     $online = $false
 
-                    for ($i = 1; $i -le 15; $i++) {
-                        Start-Sleep -Seconds 2
+                    for ($i = 1; $i -le 20; $i++) {
+                        Start-Sleep -Seconds 3
                         try {
-                            $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 3
+                            $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 5
                             if ($health.status) { $online = $true; break }
                         }
                         catch {}
@@ -464,18 +524,25 @@ try {
             Write-Status "   ⏳ Started: $($config.Stone.Name)"
         }
 
-        Write-Status "`n   Waiting for deployments..."
-        $completed = 0
-        while ($completed -lt $jobs.Count) {
-            $done = @($jobs | Where-Object { $_.State -eq 'Completed' }).Count
-            if ($done -gt $completed) {
-                $completed = $done
-                Write-Status "   Progress: $completed/$($jobs.Count)"
-            }
-            Start-Sleep -Milliseconds 500
-        }
+        # Stream results as each deployment completes
+        Write-Status ""
+        $deployHandled = @{}
+        while ($deployHandled.Count -lt $jobs.Count) {
+            foreach ($job in $jobs) {
+                if ($deployHandled.ContainsKey($job.Id)) { continue }
+                if ($job.State -ne 'Completed') { continue }
+                $deployHandled[$job.Id] = $true
 
-        $results = $jobs | Receive-Job
+                $result = Receive-Job $job
+                $results += $result
+                if ($result.Success) {
+                    Write-Status "   ✅ $($result.Name) ($($result.Platform)) — updated" -Type "Success"
+                } else {
+                    Write-Status "   ✗ $($result.Name) ($($result.Platform)) — $($result.Error)" -Type "Error"
+                }
+            }
+            if ($deployHandled.Count -lt $jobs.Count) { Start-Sleep -Milliseconds 500 }
+        }
         $jobs | Remove-Job
     }
     else {

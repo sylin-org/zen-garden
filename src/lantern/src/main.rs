@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
         "Lantern daemon starting"
     );
 
-    // Initialize Koi embedded (mDNS-only for Lantern — browse, no registration)
+    // Initialize Koi embedded (mDNS for Lantern — browse + _http._tcp registration)
     let koi_handle = {
         let koi = koi_embedded::Builder::new()
             .service_mode(koi_embedded::ServiceMode::EmbeddedOnly)
@@ -68,9 +68,47 @@ async fn main() -> Result<()> {
             .await
             .expect("Failed to start Koi embedded for Lantern");
 
-        tracing::info!("Koi embedded started (mDNS browse for discovery)");
+        tracing::info!("Koi embedded started (mDNS browse + registration)");
         std::sync::Arc::new(handle)
     };
+
+    // Register Lantern dashboard as _http._tcp for mDNS discoverability
+    if let Ok(mdns) = koi_handle.mdns() {
+        let http_txt = garden_common::mdns::build_http_txt(
+            &garden_common::mdns::HttpServiceComponent::Lantern,
+            "/",
+            env!("CARGO_PKG_VERSION"),
+        );
+
+        let (ip, _mac) = garden_common::infra::network::get_local_ip_and_mac();
+        let ip_opt = if ip == "127.0.0.1" || ip.is_empty() {
+            None
+        } else {
+            Some(ip.clone())
+        };
+
+        match mdns.register(koi_embedded::RegisterPayload {
+            name: lantern_name.clone(),
+            service_type: garden_common::constants::HTTP_SERVICE_TYPE.to_string(),
+            port: http_port,
+            ip: ip_opt,
+            lease_secs: None,
+            txt: http_txt,
+        }) {
+            Ok(_) => {
+                tracing::info!(
+                    name = %lantern_name,
+                    port = http_port,
+                    "Lantern registered as _http._tcp on mDNS"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to register Lantern _http._tcp mDNS");
+            }
+        }
+    } else {
+        tracing::warn!("mDNS not available for Lantern HTTP registration");
+    }
 
     // Initialize application state
     let state = AppState::new(lantern_name, http_port, koi_handle);

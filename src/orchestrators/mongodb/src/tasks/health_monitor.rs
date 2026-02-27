@@ -275,40 +275,102 @@ async fn probe_and_update(
         // ── Check if RS members match the logical set ──────────────
         // The logical set (registry) is the source of truth.
         // If RS has different endpoints, reconfig to match.
-        // Compare using catalog-resolved stone names to avoid format mismatches.
-        let rs_stone_names: Vec<Option<String>> = {
-            let catalog = state.catalog.read().await;
-            status
-                .members
-                .iter()
-                .map(|m| catalog.resolve_name(m.name.as_str()).map(|s| s.to_string()))
-                .collect()
-        };
-        let registry_stone_names: HashSet<&str> = active_instances
-            .iter()
-            .map(|i| i.stone_name.as_str())
-            .collect();
+        //
+        // Two-tier comparison:
+        // 1. Resolve RS member endpoints to stone names via catalog
+        //    (handles IP changes: old IP in RS → catalog → stone name)
+        // 2. Fallback to raw endpoint comparison for stones not yet in catalog
+        //
+        // When names match but endpoints differ (IP drift from DHCP),
+        // we build an old→new endpoint mapping so rs_reconfig_members
+        // can preserve MongoDB member _ids across the IP change.
 
-        // Also compare raw endpoints as fallback (for stones not yet in catalog)
         let rs_hosts: HashSet<&str> = status.members.iter().map(|m| m.name.as_str()).collect();
         let registry_hosts: HashSet<&str> = active_instances
             .iter()
             .map(|i| i.mongo_endpoint.as_str())
             .collect();
 
-        // Use stone-name comparison when all RS members resolve, raw endpoints otherwise
-        let all_resolved = rs_stone_names.iter().all(|n| n.is_some());
-        let members_match = if all_resolved {
-            let rs_names: HashSet<&str> = rs_stone_names
+        // Build stone_name→RS_endpoint map from RS members
+        let rs_name_to_endpoint: HashMap<String, String> = {
+            let catalog = state.catalog.read().await;
+            status
+                .members
                 .iter()
-                .filter_map(|n| n.as_deref())
-                .collect();
-            rs_names == registry_stone_names
-        } else {
-            rs_hosts == registry_hosts
+                .filter_map(|m| {
+                    catalog
+                        .resolve_name(m.name.as_str())
+                        .map(|name| (name.to_string(), m.name.clone()))
+                })
+                .collect()
         };
 
-        if !members_match {
+        // Build stone_name→registry_endpoint map from active instances
+        let registry_name_to_endpoint: HashMap<&str, &str> = active_instances
+            .iter()
+            .map(|i| (i.stone_name.as_str(), i.mongo_endpoint.as_str()))
+            .collect();
+
+        let registry_stone_names: HashSet<&str> = registry_name_to_endpoint.keys().copied().collect();
+        let rs_resolved_names: HashSet<&str> = rs_name_to_endpoint.keys().map(|s| s.as_str()).collect();
+
+        // Determine match status
+        let all_rs_resolved = rs_name_to_endpoint.len() == status.members.len();
+        let names_match = all_rs_resolved && rs_resolved_names == registry_stone_names;
+        let endpoints_match = rs_hosts == registry_hosts;
+
+        if names_match && endpoints_match {
+            // Perfect — same stones, same IPs. No action needed.
+        } else if names_match && !endpoints_match {
+            // IP drift: same stones but endpoints changed (DHCP renewal).
+            // Build old→new mapping for _id-preserving reconfig.
+            let mut drift_details = Vec::new();
+            let mut old_to_new: HashMap<String, String> = HashMap::new();
+            for (stone, old_ep) in &rs_name_to_endpoint {
+                if let Some(new_ep) = registry_name_to_endpoint.get(stone.as_str()) {
+                    if old_ep != *new_ep {
+                        drift_details.push(format!(
+                            "{}: {} → {}", stone, old_ep, new_ep
+                        ));
+                        old_to_new.insert(old_ep.clone(), new_ep.to_string());
+                    }
+                }
+            }
+
+            tracing::warn!(
+                fqn = %fqn,
+                changes = ?drift_details,
+                "IP drift detected — same stones, different endpoints. Reconfiguring RS."
+            );
+
+            let desired: Vec<&str> = registry_hosts.into_iter().collect();
+            if let Err(e) = client
+                .rs_reconfig_members_with_mapping(&rs_name, &desired, &old_to_new)
+                .await
+            {
+                tracing::warn!(error = ?e, "RS reconfig (IP drift) failed — will retry next cycle");
+            } else {
+                tracing::info!(
+                    fqn = %fqn,
+                    members = ?desired,
+                    "RS config updated for IP drift — member _ids preserved"
+                );
+                state
+                    .emit_event(
+                        "rs.reconfig",
+                        &serde_json::json!({
+                            "fqn": fqn,
+                            "reason": "ip_drift",
+                            "members": desired,
+                            "changes": drift_details,
+                        })
+                        .to_string(),
+                    )
+                    .await;
+            }
+            return None;
+        } else if !names_match {
+            // Membership change: different stones (added/removed).
             tracing::warn!(
                 fqn = %fqn,
                 rs_members = ?rs_hosts,
@@ -316,9 +378,7 @@ async fn probe_and_update(
                 "RS members don't match logical set — rebuilding RS config"
             );
 
-            // Find any reachable member to run reconfig against
             let desired: Vec<&str> = registry_hosts.into_iter().collect();
-            // reconfig with force:true works from any member
             if let Err(e) = client.rs_reconfig_members(&rs_name, &desired).await {
                 tracing::warn!(error = ?e, "RS reconfig failed — will retry next cycle");
             } else {
@@ -330,7 +390,6 @@ async fn probe_and_update(
                     )
                     .await;
             }
-            // Either way, return early — next cycle will see the new config
             return None;
         }
 

@@ -40,9 +40,12 @@ pub struct DiscoveredStone {
 }
 
 impl DiscoveredStone {
-    /// Moss HTTP endpoint using the `.local` hostname.
+    /// Moss HTTP endpoint using the resolved IP address.
+    ///
+    /// Prefers IP over `.local` hostname because mDNS resolution is
+    /// unreliable inside Docker containers on Windows.
     pub fn endpoint(&self) -> String {
-        format!("http://{}:{}", self.hostname, self.api_port)
+        format!("http://{}:{}", self.ip, self.api_port)
     }
 }
 
@@ -283,6 +286,104 @@ pub async fn check_stone_health(endpoint: &str) -> bool {
     };
 
     client.get(&url).send().await.is_ok()
+}
+
+/// Resolve a `.local` hostname to an IP address via Koi's DNS lookup.
+///
+/// Queries `GET {koi_endpoint}/v1/dns/lookup?name={hostname}` and returns
+/// the first IP address. Returns `None` on any error (Koi unreachable,
+/// hostname unknown, etc.).
+///
+/// Use this as a fallback when the IP is not directly available from
+/// topology or mDNS discovery data.
+pub async fn resolve_hostname_via_koi(koi_endpoint: &str, hostname: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct DnsLookupResponse {
+        ips: Vec<String>,
+    }
+
+    let url = format!(
+        "{}/v1/dns/lookup?name={}",
+        koi_endpoint.trim_end_matches('/'),
+        hostname,
+    );
+
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()?;
+
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        tracing::debug!(
+            hostname = %hostname,
+            status = %resp.status(),
+            "Koi DNS lookup failed"
+        );
+        return None;
+    }
+
+    let data: DnsLookupResponse = resp.json().await.ok()?;
+    let ip = data.ips.into_iter().next();
+    if let Some(ref ip) = ip {
+        tracing::debug!(hostname = %hostname, ip = %ip, "resolved hostname via Koi DNS");
+    }
+    ip
+}
+
+/// Resolve any `.local` hostname in an endpoint URL to an IP via Koi DNS.
+///
+/// If the host part of `endpoint` is already an IP address, returns the
+/// endpoint unchanged. If the host is a `.local` hostname, resolves it
+/// through Koi's `/v1/dns/lookup` and returns the IP-based endpoint.
+/// Falls back to the original endpoint if resolution fails.
+///
+/// # Examples
+///
+/// - `http://192.168.1.5:11434` → unchanged
+/// - `http://stone-azure-pool.local:11434` → `http://192.168.1.5:11434`
+/// - `192.168.1.5:27017` → unchanged (no scheme)
+/// - `stone-azure-pool.local:27017` → `192.168.1.5:27017`
+pub async fn resolve_endpoint(koi_endpoint: &str, endpoint: &str) -> String {
+    // Split into optional scheme and host:port
+    let (scheme, rest) = if let Some(pos) = endpoint.find("://") {
+        (Some(&endpoint[..pos + 3]), &endpoint[pos + 3..])
+    } else {
+        (None, endpoint)
+    };
+
+    let (host, port_suffix) = match rest.rsplit_once(':') {
+        Some((h, p)) => (h, format!(":{p}")),
+        None => (rest, String::new()),
+    };
+
+    // If host is already an IP, return as-is
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return endpoint.to_string();
+    }
+
+    // Host is a name — try Koi DNS resolve
+    match resolve_hostname_via_koi(koi_endpoint, host).await {
+        Some(ip) => {
+            let resolved = format!(
+                "{}{}{}", scheme.unwrap_or(""), ip, port_suffix
+            );
+            tracing::debug!(
+                original = %endpoint,
+                resolved = %resolved,
+                "resolved .local endpoint to IP via Koi"
+            );
+            resolved
+        }
+        None => {
+            tracing::debug!(
+                endpoint = %endpoint,
+                "could not resolve hostname via Koi, using as-is"
+            );
+            endpoint.to_string()
+        }
+    }
 }
 
 /// Validate that Koi is reachable.

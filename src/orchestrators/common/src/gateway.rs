@@ -127,6 +127,16 @@ impl KoiMdnsClient {
 
     /// Query Koi for the host machine's mDNS hostname (e.g. "stone-azure-pool.local").
     pub async fn get_hostname(&self) -> Result<String> {
+        let info = self.get_host_info().await?;
+        Ok(info.hostname)
+    }
+
+    /// Query Koi for the host machine's identity: hostname and LAN IP.
+    ///
+    /// This is the authoritative source of truth for the host's network
+    /// identity — critical when running inside Docker containers where
+    /// `get_local_ip()` returns the container's virtual IP, not the host's LAN IP.
+    pub async fn get_host_info(&self) -> Result<HostInfo> {
         let url = format!("{}/v1/host", self.base_url);
         let resp = self
             .http
@@ -146,8 +156,21 @@ impl KoiMdnsClient {
             .await
             .context("Failed to parse Koi host info response")?;
 
-        Ok(data.hostname_fqdn)
+        let ip = pick_best_lan_ip(&data.interfaces.lan);
+
+        Ok(HostInfo {
+            hostname: data.hostname_fqdn,
+            ip,
+        })
     }
+}
+
+/// Resolved host identity from Koi.
+pub struct HostInfo {
+    /// mDNS hostname (e.g. "stone-azure-pool.local").
+    pub hostname: String,
+    /// Best LAN IP address, or `None` if no suitable interface was found.
+    pub ip: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +178,59 @@ struct HostInfoResponse {
     #[allow(dead_code)]
     hostname: String,
     hostname_fqdn: String,
+    #[serde(default)]
+    interfaces: HostInterfaces,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct HostInterfaces {
+    #[serde(default)]
+    lan: Vec<LanInterface>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LanInterface {
+    #[allow(dead_code)]
+    name: String,
+    ip: String,
+}
+
+/// Pick the best LAN IP from Koi's interface list using the same priority
+/// logic as `garden_common::infra::network::get_ip_priority`.
+fn pick_best_lan_ip(interfaces: &[LanInterface]) -> Option<String> {
+    let mut best: Option<(u8, &str)> = None;
+
+    for iface in interfaces {
+        let Ok(addr) = iface.ip.parse::<std::net::Ipv4Addr>() else {
+            continue;
+        };
+        let octets = addr.octets();
+
+        // Skip loopback, link-local
+        if addr.is_loopback() || addr.is_link_local() {
+            continue;
+        }
+
+        let priority = match octets {
+            [192, 168, _, _] => 100,
+            [10, _, _, _] => 90,
+            [100, second, _, _] if (64..=127).contains(&second) => 80,
+            [172, second, _, _] if (16..=31).contains(&second) => {
+                if second == 17 { 0 } else { 70 }
+            }
+            _ => 50,
+        };
+
+        if priority == 0 {
+            continue;
+        }
+
+        if best.map_or(true, |(p, _)| priority > p) {
+            best = Some((priority, &iface.ip));
+        }
+    }
+
+    best.map(|(_, ip)| ip.to_string())
 }
 
 // ─── Moss Gateway Client ────────────────────────────────────────

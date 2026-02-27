@@ -1,9 +1,9 @@
 [package]
 name = "zen-garden-mongodb-orchestrator"
 version = "0.1.0"
-edition.workspace = true
-rust-version.workspace = true
-authors.workspace = true
+edition = "2021"
+rust-version = "1.75"
+authors = ["Koan Framework"]
 description = "MongoDB Orchestrator — replica set orchestration for Zen Garden"
 
 [[bin]]
@@ -15,31 +15,31 @@ garden-common = { path = "../../common" }
 orchestrator-common = { path = "../common" }
 
 # Core
-anyhow.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal", "fs", "io-util"] }
-tracing.workspace = true
-tracing-subscriber.workspace = true
+anyhow = "1.0"
+tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # HTTP server
-axum = { workspace = true, features = ["macros"] }
-tower-http = { workspace = true }
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
 
 # HTTP client
-reqwest = { workspace = true, features = ["stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Serialization
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 # Streaming
 futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # Time
-chrono.workspace = true
+chrono = "0.4"
 
 # CLI
-clap = { workspace = true, features = ["derive", "env"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 
 # Shutdown coordination
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -49,3 +49,9 @@ urlencoding = "2.1"
 
 # MongoDB driver (wire protocol)
 mongodb = "3"
+
+[profile.fast-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 4
+strip = true

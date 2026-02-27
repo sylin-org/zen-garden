@@ -15,8 +15,12 @@ members = [
   "src/companion-sdk",
   "src/build-utils",
   "src/probe",
-  "src/orchestrators/ollama",
+]
+exclude = [
+  # Orchestrators are standalone crates — not part of this workspace.
+  # Each builds independently inside its own Docker image.
   "src/orchestrators/common",
+  "src/orchestrators/ollama",
   "src/orchestrators/mongodb",
 ]
 resolver = "2"

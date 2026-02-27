@@ -119,19 +119,27 @@ pub async fn run<F, Fut>(
     };
 
     // ── Phase 3: Resolve host identity via Koi ─────────────────────
-    let self_ip = garden_common::infra::network::get_local_ip();
-    let hostname = match koi.get_hostname().await {
-        Ok(h) => {
-            tracing::info!(hostname = %h, "Gateway: resolved host DNS name via Koi");
-            h
+    // Koi runs on the host and knows the real LAN IP — critical when
+    // this code runs inside a Docker container where get_local_ip()
+    // returns the container's virtual bridge IP (or fails entirely).
+    let (hostname, self_ip) = match koi.get_host_info().await {
+        Ok(info) => {
+            let ip = info.ip.unwrap_or_else(|| {
+                let fallback = garden_common::infra::network::get_local_ip();
+                tracing::warn!(fallback = %fallback, "Gateway: Koi returned no LAN IP, using local fallback");
+                fallback
+            });
+            tracing::info!(hostname = %info.hostname, ip = %ip, "Gateway: resolved host identity via Koi");
+            (info.hostname, ip)
         }
         Err(e) => {
+            let ip = garden_common::infra::network::get_local_ip();
             tracing::warn!(
                 error = %e,
-                fallback = %self_ip,
-                "Gateway: failed to resolve host DNS name, using IP"
+                fallback_ip = %ip,
+                "Gateway: Koi host info failed, using local IP detection"
             );
-            self_ip.clone()
+            (ip.clone(), ip)
         }
     };
 

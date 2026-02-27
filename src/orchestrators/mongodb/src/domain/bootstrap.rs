@@ -69,6 +69,10 @@ pub fn should_initiate(
 /// Returns `Some(AddMemberAction)` for each instance that is not yet in the
 /// replica set's member list. Skips instances that are Stopped (container down)
 /// or have a pending removal action.
+///
+/// Membership is checked by both endpoint AND stone name — this prevents
+/// spurious rs.add() attempts when a stone's IP changes (DHCP renewal) but
+/// the stone is already in the RS under its old IP.
 pub fn should_add_members(
     instances: &[MongoInstance],
     rs_state: &ReplicaSetState,
@@ -91,11 +95,20 @@ pub fn should_add_members(
     let existing_endpoints: std::collections::HashSet<&str> =
         rs_state.members.iter().map(|m| m.endpoint.as_str()).collect();
 
+    // Also track existing stone names — a stone already in the RS under a
+    // different IP (IP drift) should not be re-added as a new member.
+    let existing_stone_names: std::collections::HashSet<&str> =
+        rs_state.members.iter().map(|m| m.stone_name.as_str()).collect();
+
     instances
         .iter()
         .filter(|inst| {
-            // Skip instances already in the replica set
+            // Skip instances already in the replica set (by endpoint)
             if existing_endpoints.contains(inst.mongo_endpoint.as_str()) {
+                return false;
+            }
+            // Skip instances already in the replica set (by stone name — IP may have changed)
+            if existing_stone_names.contains(inst.stone_name.as_str()) {
                 return false;
             }
             // Skip stopped instances (container down)

@@ -130,6 +130,10 @@ pub async fn run(state: AppState, client: OllamaClient, shutdown: CancellationTo
                     let state = state_clone.clone();
                     let client = client_clone.clone();
                     tokio::spawn(async move {
+                        // Resolve .local hostnames to IP via Koi (mDNS unreliable in Docker on Windows)
+                        let endpoint = stone_discovery::resolve_endpoint(
+                            &state.koi_endpoint, &endpoint,
+                        ).await;
                         let stone_host = endpoint
                             .trim_start_matches("http://")
                             .split(':')

@@ -102,7 +102,8 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                 "bootstrapped MongoDB instances from topology"
             );
             for s in stones {
-                let mongo_endpoint = format!("{}:27017", s.hostname);
+                // Use IP for endpoint — .local mDNS unreliable in Docker on Windows
+                let mongo_endpoint = format!("{}:27017", s.ip);
                 let moss_endpoint = s.moss_endpoint();
 
                 // Register stone identity in the catalog
@@ -160,11 +161,16 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
             // Extract host:port from endpoint URL.
             // The tools stream constructs endpoints using the connection protocol
             // (mongodb://, tcp://, http://, etc.) so we strip any scheme.
-            let mongo_endpoint = strip_scheme(&endpoint);
+            let mongo_endpoint_raw = strip_scheme(&endpoint);
 
             // Spawn a task to update state (we're in a sync callback)
             let state = state.clone();
             tokio::spawn(async move {
+                // Resolve .local hostnames to IP via Koi (mDNS unreliable in Docker on Windows)
+                let mongo_endpoint = orchestrator_common::discovery::resolve_endpoint(
+                    &state.koi_endpoint, &mongo_endpoint_raw,
+                ).await;
+
                 // Suppress registration if a pending removal exists for this endpoint
                 if state.has_pending_removal(&mongo_endpoint).await {
                     tracing::trace!(
@@ -184,6 +190,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     InstanceHealth::Stopped
                 };
 
+                // host is an IP (tools stream now prefers IP over hostname)
                 let host = mongo_endpoint.split(':').next().unwrap_or("127.0.0.1");
                 let moss_endpoint =
                     format!("http://{}:{}", host, garden_common::constants::MOSS_HTTP);
@@ -193,10 +200,10 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 services.insert(ServiceKey::Mongo, mongo_endpoint.clone());
                 services.insert(ServiceKey::Moss, moss_endpoint.clone());
 
-                let hostname = if host.contains('.') {
-                    host.to_string()
+                let hostname = if stone_name.contains('.') {
+                    stone_name.clone()
                 } else {
-                    format!("{}.local", host)
+                    format!("{}.local", &stone_name)
                 };
 
                 state
@@ -204,7 +211,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                         stone_name: stone_name.clone(),
                         stone_id: Some(stone_id.clone()),
                         hostname,
-                        ip: None, // IP not directly available from tools stream
+                        ip: Some(host.to_string()),
                         services,
                     })
                     .await;

@@ -1,45 +1,23 @@
 # ── Builder ────────────────────────────────────────────────────
+# Each orchestrator is a standalone crate (no workspace). Docker only needs
+# to copy the orchestrator itself, orchestrator-common, and garden-common.
+# Zero stubs required.
 FROM rust:latest AS builder
 
-WORKDIR /build
+# Mirror the repo layout so path deps (../../common) resolve correctly
+WORKDIR /build/src/orchestrators/mongodb
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace manifests first for layer caching
-COPY Cargo.toml Cargo.lock* ./
-COPY src/common/Cargo.toml src/common/Cargo.toml
-COPY src/orchestrators/common/Cargo.toml src/orchestrators/common/Cargo.toml
-COPY src/orchestrators/mongodb/Cargo.toml src/orchestrators/mongodb/Cargo.toml
+# Copy only the crates we actually depend on
+COPY src/common/ /build/src/common/
+COPY src/orchestrators/common/ /build/src/orchestrators/common/
+COPY src/orchestrators/mongodb/ .
 
-# Stub other members so workspace resolves
-RUN mkdir -p src/lantern/src && echo "" > src/lantern/src/lib.rs && \
-    echo '[package]\nname = "garden-lantern"\nversion = "0.1.0"\nedition = "2021"' > src/lantern/Cargo.toml && \
-    mkdir -p src/moss/src && echo "" > src/moss/src/lib.rs && \
-    echo '[package]\nname = "garden-moss"\nversion = "0.1.0"\nedition = "2021"' > src/moss/Cargo.toml && \
-    mkdir -p src/rake/src && echo "" > src/rake/src/lib.rs && \
-    echo '[package]\nname = "garden-rake"\nversion = "0.1.0"\nedition = "2021"' > src/rake/Cargo.toml && \
-    mkdir -p src/cricket/src && echo "" > src/cricket/src/lib.rs && \
-    echo '[package]\nname = "garden-cricket"\nversion = "0.1.0"\nedition = "2021"' > src/cricket/Cargo.toml && \
-    mkdir -p src/firefly/src && echo "" > src/firefly/src/lib.rs && \
-    echo '[package]\nname = "garden-firefly"\nversion = "0.1.0"\nedition = "2021"' > src/firefly/Cargo.toml && \
-    mkdir -p src/companion-sdk/src && echo "" > src/companion-sdk/src/lib.rs && \
-    echo '[package]\nname = "garden-companion-sdk"\nversion = "0.1.0"\nedition = "2021"' > src/companion-sdk/Cargo.toml && \
-    mkdir -p src/build-utils/src && echo "" > src/build-utils/src/lib.rs && \
-    echo '[package]\nname = "garden-build-utils"\nversion = "0.1.0"\nedition = "2021"' > src/build-utils/Cargo.toml && \
-    mkdir -p src/probe/src && echo "" > src/probe/src/lib.rs && \
-    echo '[package]\nname = "garden-probe"\nversion = "0.1.0"\nedition = "2021"' > src/probe/Cargo.toml && \
-    mkdir -p src/orchestrators/ollama/src && echo "" > src/orchestrators/ollama/src/lib.rs && \
-    echo '[package]\nname = "zen-garden-ollama-orchestrator"\nversion = "0.1.0"\nedition = "2021"' > src/orchestrators/ollama/Cargo.toml
-
-# Copy real source for orchestrator + dependencies
-COPY src/common/ src/common/
-COPY src/orchestrators/common/ src/orchestrators/common/
-COPY src/orchestrators/mongodb/ src/orchestrators/mongodb/
-
-# Build only the orchestrator binary
+# Build the orchestrator binary
 RUN cargo build --profile fast-release --bin zen-garden-mongodb-orchestrator
 
 # ── Runtime ────────────────────────────────────────────────────
@@ -72,7 +50,7 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m -u 1000 router
 RUN mkdir -p /data && chown router:router /data
 
-COPY --from=builder /build/target/fast-release/zen-garden-mongodb-orchestrator /usr/local/bin/zen-garden-mongodb-orchestrator
+COPY --from=builder /build/src/orchestrators/mongodb/target/fast-release/zen-garden-mongodb-orchestrator /usr/local/bin/zen-garden-mongodb-orchestrator
 RUN chmod +x /usr/local/bin/zen-garden-mongodb-orchestrator
 
 USER router

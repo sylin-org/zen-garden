@@ -251,6 +251,21 @@ impl MongoClient {
     /// IDs only for new hosts, increments the version, and applies via
     /// `replSetReconfig` with `force: true`.
     pub async fn rs_reconfig_members(&self, rs_name: &str, desired_hosts: &[&str]) -> Result<()> {
+        self.rs_reconfig_members_with_mapping(rs_name, desired_hosts, &std::collections::HashMap::new()).await
+    }
+
+    /// Rewrite the replica set member list, preserving `_id` across IP changes.
+    ///
+    /// `old_to_new` maps old endpoints (currently in RS config) to their
+    /// replacement endpoints. This allows preserving MongoDB member `_id`s
+    /// when a stone's IP changes due to DHCP renewal — the old endpoint's
+    /// `_id` is reused for the new endpoint.
+    pub async fn rs_reconfig_members_with_mapping(
+        &self,
+        rs_name: &str,
+        desired_hosts: &[&str],
+        old_to_new: &std::collections::HashMap<String, String>,
+    ) -> Result<()> {
         let db = self.client.database("admin");
         let config_doc = db
             .run_command(doc! { "replSetGetConfig": 1 })
@@ -263,7 +278,9 @@ impl MongoClient {
 
         let version = old_config.get_i32("version").unwrap_or(0);
 
-        // Build host→_id map from existing config so we preserve IDs
+        // Build host→_id map from existing config so we preserve IDs.
+        // Also register old→new mappings: if old endpoint "192.168.1.5:27017"
+        // maps to new "192.168.1.6:27017", the _id for .5 is reused for .6.
         let mut existing_ids: std::collections::HashMap<String, i32> =
             std::collections::HashMap::new();
         let mut max_id: i32 = -1;
@@ -272,6 +289,10 @@ impl MongoClient {
                 if let Some(doc) = m.as_document() {
                     if let (Ok(host), Ok(id)) = (doc.get_str("host"), doc.get_i32("_id")) {
                         existing_ids.insert(host.to_string(), id);
+                        // If this old host has a replacement, map the new host to the same _id
+                        if let Some(new_host) = old_to_new.get(host) {
+                            existing_ids.insert(new_host.clone(), id);
+                        }
                         max_id = max_id.max(id);
                     }
                 }

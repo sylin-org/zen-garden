@@ -24,9 +24,12 @@ pub struct TopologyOfferingStone {
 }
 
 impl TopologyOfferingStone {
-    /// Moss API endpoint using the `.local` hostname.
+    /// Moss API endpoint using the resolved IP address.
+    ///
+    /// Prefers IP over `.local` hostname because mDNS resolution is
+    /// unreliable inside Docker containers on Windows.
     pub fn moss_endpoint(&self) -> String {
-        format!("http://{}:{}", self.hostname, self.moss_port)
+        format!("http://{}:{}", self.ip, self.moss_port)
     }
 }
 

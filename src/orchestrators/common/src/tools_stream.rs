@@ -152,9 +152,11 @@ fn extract_offering_tool(
     let stone_name = tool.get("stone_name")?.as_str()?.to_string();
 
     let connection = tool.get("connection")?;
-    let hostname = connection.get("hostname").and_then(|v| v.as_str());
     let ip = connection.get("ip").and_then(|v| v.as_str());
-    let host = hostname.or(ip)?;
+    let hostname = connection.get("hostname").and_then(|v| v.as_str());
+    // Prefer IP over hostname — .local mDNS resolution is unreliable
+    // inside Docker containers on Windows.
+    let host = ip.or(hostname)?;
     let port = connection.get("port").and_then(|v| v.as_u64())?;
 
     let protocol = connection

@@ -89,12 +89,26 @@ impl AppState {
     /// variants to the canonical stone identity.
     ///
     /// Returns `true` if this is a newly discovered instance, `false` if updated.
+    ///
+    /// When an existing instance's `mongo_endpoint` changes (IP drift from DHCP),
+    /// the RS member list is updated inline so downstream logic (bootstrap,
+    /// health monitor) sees the correct endpoints immediately, and an async
+    /// `replSetReconfig` is triggered to update MongoDB itself.
     pub async fn upsert_instance(&self, instance: MongoInstance) -> bool {
         let key = instance.stone_name.clone();
         let is_new;
+        let mut ip_drift: Option<(String, String, String)> = None; // (stone, old_ep, new_ep)
         {
             let mut reg = self.instances.write().await;
             if let Some(existing) = reg.get_mut(&key) {
+                // Detect IP drift: same stone, different mongo endpoint
+                if existing.mongo_endpoint != instance.mongo_endpoint {
+                    ip_drift = Some((
+                        key.clone(),
+                        existing.mongo_endpoint.clone(),
+                        instance.mongo_endpoint.clone(),
+                    ));
+                }
                 // Merge: update discovery fields, preserve health/role
                 existing.stone_id = instance.stone_id;
                 existing.stone_name = instance.stone_name;
@@ -108,10 +122,64 @@ impl AppState {
                 is_new = true;
             }
         }
+
+        if let Some((stone_name, old_ep, new_ep)) = ip_drift {
+            tracing::warn!(
+                stone = %stone_name,
+                old_endpoint = %old_ep,
+                new_endpoint = %new_ep,
+                "IP drift detected — endpoint changed for existing instance"
+            );
+
+            // Update the RS member list inline so bootstrap/health monitor
+            // see the correct endpoint immediately (no stale-IP window).
+            self.apply_endpoint_drift(&stone_name, &old_ep, &new_ep).await;
+
+            self.emit_event(
+                "instance.ip_drift",
+                &serde_json::json!({
+                    "stone": stone_name,
+                    "old_endpoint": old_ep,
+                    "new_endpoint": new_ep,
+                })
+                .to_string(),
+            )
+            .await;
+        }
+
         if is_new {
             self.emit_event("registry.updated", "{}").await;
         }
         is_new
+    }
+
+    /// Update RS member lists and connection strings when a stone's endpoint changes.
+    ///
+    /// Walks all replica sets and replaces `old_ep` with `new_ep` in member lists,
+    /// keeping the rest of the member state (role, health, lag) intact.
+    async fn apply_endpoint_drift(&self, stone_name: &str, old_ep: &str, new_ep: &str) {
+        let mut rs_map = self.replica_sets.write().await;
+        for (fqn, rs) in rs_map.iter_mut() {
+            let mut changed = false;
+            for member in &mut rs.members {
+                if member.stone_name == stone_name || member.endpoint == old_ep {
+                    tracing::info!(
+                        fqn = %fqn,
+                        stone = %stone_name,
+                        old = %member.endpoint,
+                        new = %new_ep,
+                        "updating RS member endpoint (IP drift)"
+                    );
+                    member.endpoint = new_ep.to_string();
+                    changed = true;
+                }
+            }
+            if changed {
+                // Rebuild connection string with updated endpoints
+                rs.connection_string =
+                    Some(build_connection_string(&rs.members, &rs.rs_name));
+            }
+        }
     }
 
     /// Remove an instance from the registry by stone_name.

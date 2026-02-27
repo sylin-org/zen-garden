@@ -33,6 +33,18 @@ pub const CERTMESH_SERVICE_TYPE: &str = "_certmesh._tcp";
 /// mDNS service type for certmesh CA discovery (fully qualified with `.local.`)
 pub const CERTMESH_SERVICE_TYPE_LOCAL: &str = "_certmesh._tcp.local.";
 
+/// mDNS service type for HTTP web UIs (RFC 6763 standard).
+///
+/// Used by all zen-garden components that serve web interfaces:
+/// Moss portrait, Lantern dashboard, and orchestrator dashboards.
+pub const HTTP_SERVICE_TYPE: &str = "_http._tcp";
+
+/// TXT key: URL path to the web UI (RFC 6763 standard for `_http._tcp`)
+pub const TXT_PATH: &str = "path";
+
+/// TXT key: zen-garden component type (e.g. "moss", "lantern", "orchestrator")
+pub const TXT_COMPONENT: &str = "garden-component";
+
 // ============================================================================
 // Network Ports
 // ============================================================================

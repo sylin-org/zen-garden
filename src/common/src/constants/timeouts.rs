@@ -173,3 +173,22 @@ pub fn mount_recovery_max_attempts() -> u32 {
         .and_then(|v| v.parse().ok())
         .unwrap_or(50)
 }
+
+// ============================================================================
+// Docker Timeouts
+// ============================================================================
+
+/// Stall detection timeout for Docker image pulls (default 5 minutes).
+///
+/// This is a **TTL-with-no-activity** timeout — not a wall-clock cap.
+/// The timer resets each time Docker sends a progress event (layer download
+/// progress, extraction status, etc.). It only fires when Docker goes
+/// completely silent for this duration, indicating a genuine stall (network
+/// failure, registry hang, DNS timeout, etc.).
+///
+/// Legitimate large-image pulls can take longer than 5 minutes total, and
+/// that's fine — as long as Docker keeps sending progress events, the
+/// timer keeps resetting.
+pub fn docker_pull_stall_timeout() -> Duration {
+    env_duration_secs("GARDEN_DOCKER_PULL_STALL_TIMEOUT_SECS", 300)
+}

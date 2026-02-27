@@ -18,6 +18,7 @@ pub mod events;
 pub mod infra;
 pub mod jobs;
 pub mod manifests;
+pub mod mdns;
 pub mod metrics;
 pub mod naming;
 pub mod net;

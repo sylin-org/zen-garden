@@ -2,5 +2,15 @@
     // Use a separate target directory for rust-analyzer to prevent it from
     // invalidating Cargo's build cache (and vice versa). Without this,
     // switching between 'cargo build' and rust-analyzer triggers full rebuilds.
-    "rust-analyzer.cargo.targetDir": true
+    "rust-analyzer.cargo.targetDir": true,
+
+    // Orchestrators are standalone crates (excluded from root workspace).
+    // Link them explicitly so rust-analyzer indexes them.
+    "rust-analyzer.linkedProjects": [
+        "Cargo.toml",
+        "src/orchestrators/common/Cargo.toml",
+        "src/orchestrators/ollama/Cargo.toml",
+        "src/orchestrators/mongodb/Cargo.toml"
+    ],
+    "git.ignoreLimitWarning": true
 }

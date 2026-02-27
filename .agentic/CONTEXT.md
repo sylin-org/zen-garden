@@ -81,26 +81,39 @@ tokio::spawn(async move {
 
 After making changes, run:
 ```bash
+# Root workspace (moss, rake, lantern, companions)
 cargo check --all
 cargo test --package moss
 cargo clippy -- -D warnings
+
+# Orchestrators are standalone crates (not in root workspace)
+cd src/orchestrators/ollama && cargo check
+cd src/orchestrators/mongodb && cargo check
 ```
 
 ---
 
 ## Module Structure
 
+Root workspace builds the stone platform. Orchestrators are standalone crates
+(excluded from root workspace) that depend on `garden-common` via path. Each
+orchestrator builds independently inside its own Docker image.
+
 ```
 src/
-├── common/           # Shared: types, utils, constants, contracts
-├── moss/             # Stone daemon
-│   ├── domain/       # Business logic
-│   ├── infra/        # External integrations
-│   └── api/          # HTTP handlers
-├── rake/             # CLI client
-├── cricket/          # Audio companion
-├── firefly/          # LED companion
-└── lantern/          # Service registry
+├── common/                 # Shared: types, utils, constants, contracts
+├── moss/                   # Stone daemon
+│   ├── domain/             # Business logic
+│   ├── infra/              # External integrations
+│   └── api/                # HTTP handlers
+├── rake/                   # CLI client
+├── cricket/                # Audio companion
+├── firefly/                # LED companion
+├── lantern/                # Service registry
+└── orchestrators/          # Standalone crates (excluded from root workspace)
+    ├── common/             # Shared orchestrator infra (gateway, topology, streams)
+    ├── ollama/             # Ollama orchestrator (Docker image)
+    └── mongodb/            # MongoDB orchestrator (Docker image)
 ```
 
 ---

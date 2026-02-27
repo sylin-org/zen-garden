@@ -352,4 +352,5 @@ mod tests {
         let result = parse_mac_address("AA:BB:CC:DD:EE:GG");
         assert!(result.is_err());
     }
+
 }

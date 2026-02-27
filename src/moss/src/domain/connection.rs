@@ -257,7 +257,7 @@ pub fn build_hostname(stone_name: &str) -> String {
 /// * `protocol` - Protocol name (used for {protocol} placeholder)
 ///
 /// # Returns
-/// Vector of URIs with hostname-based first (more resilient), IP-based second (fallback)
+/// Vector of URIs with IP-based first (reliable in containers), hostname-based second (human-readable)
 pub fn resolve_uris(
     template: &str,
     hostname: &str,
@@ -265,21 +265,22 @@ pub fn resolve_uris(
     port: u16,
     protocol: &str,
 ) -> Vec<String> {
-    let uri_hostname = template
-        .replace("{host}", hostname)
-        .replace("{port}", &port.to_string())
-        .replace("{protocol}", protocol);
-
     let uri_ip = template
         .replace("{host}", ip)
         .replace("{port}", &port.to_string())
         .replace("{protocol}", protocol);
 
-    // Hostname first (more resilient to IP changes), IP second (fallback)
-    if uri_hostname != uri_ip {
-        vec![uri_hostname, uri_ip]
+    let uri_hostname = template
+        .replace("{host}", hostname)
+        .replace("{port}", &port.to_string())
+        .replace("{protocol}", protocol);
+
+    // IP first (reliable — .local mDNS fails in Docker on Windows),
+    // hostname second (human-readable fallback)
+    if uri_ip != uri_hostname {
+        vec![uri_ip, uri_hostname]
     } else {
-        vec![uri_hostname]
+        vec![uri_ip]
     }
 }
 
@@ -359,8 +360,8 @@ mod tests {
             "mongodb",
         );
         assert_eq!(uris.len(), 2);
-        assert_eq!(uris[0], "mongodb://stone-02.local:27017");
-        assert_eq!(uris[1], "mongodb://192.168.1.102:27017");
+        assert_eq!(uris[0], "mongodb://192.168.1.102:27017");
+        assert_eq!(uris[1], "mongodb://stone-02.local:27017");
     }
 
     #[test]
@@ -372,8 +373,8 @@ mod tests {
             8080,
             "http",
         );
-        assert_eq!(uris[0], "http://stone-01.local:8080");
-        assert_eq!(uris[1], "http://10.0.0.1:8080");
+        assert_eq!(uris[0], "http://10.0.0.1:8080");
+        assert_eq!(uris[1], "http://stone-01.local:8080");
     }
 
     #[test]
@@ -391,14 +392,14 @@ mod tests {
         assert_eq!(conn.port, 27017);
         assert_eq!(conn.protocol, "mongodb");
         assert_eq!(conn.uris.len(), 2);
-        assert_eq!(conn.uris[0], "mongodb://stone-02.local:27017");
+        assert_eq!(conn.uris[0], "mongodb://192.168.1.102:27017");
     }
 
     #[test]
     fn test_resolve_connection_default_template() {
         let conn = resolve_connection("stone-01", "http://10.0.0.1:7185", 6379, "redis", None);
 
-        assert_eq!(conn.uris[0], "redis://stone-01.local:6379");
+        assert_eq!(conn.uris[0], "redis://10.0.0.1:6379");
     }
 
     #[test]

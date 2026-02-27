@@ -283,6 +283,7 @@ pub async fn find_local_services(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
+    let self_endpoint = state.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await;
     let offerings_index = state.offerings_index.read().await;
 
@@ -325,7 +326,7 @@ pub async fn find_local_services(
 
         let conn = connection::resolve_connection(
             &state.stone_name,
-            &format!("http://127.0.0.1:{}", state.api_port),
+            &self_endpoint,
             port,
             &protocol,
             uri_template.as_deref(),
@@ -341,7 +342,7 @@ pub async fn find_local_services(
             stone: StoneRef {
                 id: state.stone_id.clone(),
                 name: state.stone_name.clone(),
-                endpoint: format!("http://127.0.0.1:{}", state.api_port),
+                endpoint: self_endpoint.clone(),
             },
             connection: conn,
             sub_capabilities: offering.sub_capabilities.clone(),
@@ -356,6 +357,7 @@ pub async fn find_local_services(
 /// Returns all offerings from unified registry with full connection info.
 /// Includes both running and non-running offerings.
 pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryResponse {
+    let self_endpoint = state.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await;
     let offerings_index = state.offerings_index.read().await;
 
@@ -381,7 +383,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
 
         let conn = connection::resolve_connection(
             &state.stone_name,
-            &format!("http://127.0.0.1:{}", state.api_port),
+            &self_endpoint,
             port,
             &protocol,
             uri_template.as_deref(),
@@ -397,7 +399,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
             stone: StoneRef {
                 id: state.stone_id.clone(),
                 name: state.stone_name.clone(),
-                endpoint: format!("http://127.0.0.1:{}", state.api_port),
+                endpoint: self_endpoint.clone(),
             },
             connection: conn,
             sub_capabilities: offering.sub_capabilities.clone(),

@@ -261,7 +261,10 @@ async fn execute_pending_removals(
 
         // Member is either not in the RS or was successfully removed — clean up
         state.complete_action(mongo_endpoint).await;
-        state.remove_instance(mongo_endpoint).await;
+        // Resolve mongo_endpoint to stone_name for instance registry removal
+        if let Some(stone_name) = state.resolve_endpoint(mongo_endpoint).await {
+            state.remove_instance(&stone_name).await;
+        }
     }
 }
 
@@ -436,6 +439,8 @@ async fn probe_replica_set(
                     members,
                     connection_string: conn_string,
                     last_updated: chrono::Utc::now(),
+                    cache: None,
+                    oplog: None,
                 });
             }
             Err(e) => {
@@ -451,6 +456,8 @@ async fn probe_replica_set(
                         members: vec![],
                         connection_string: None,
                         last_updated: chrono::Utc::now(),
+                        cache: None,
+                        oplog: None,
                     });
                 }
 
@@ -516,6 +523,8 @@ async fn initiate_replica_set(
         members,
         connection_string: Some(conn),
         last_updated: chrono::Utc::now(),
+        cache: None,
+        oplog: None,
     })
 }
 

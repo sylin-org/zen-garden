@@ -63,6 +63,7 @@ pub async fn get_cluster_status(State(state): State<AppState>) -> Json<Value> {
 pub async fn get_cluster_members(State(state): State<AppState>) -> Json<Value> {
     let instances = state.instances.read().await;
     let replica_sets = state.replica_sets.read().await;
+    let catalog = state.catalog.read().await;
 
     // Group instances by FQN
     let mut fqn_groups: std::collections::HashMap<String, Vec<&MongoInstance>> =
@@ -87,11 +88,19 @@ pub async fn get_cluster_members(State(state): State<AppState>) -> Json<Value> {
         let members: Vec<Value> = group
             .iter()
             .map(|inst| {
-                // Try to find matching RS member for role/lag overlay
+                // Try to find matching RS member for role/lag overlay.
+                // Uses catalog to resolve endpoint format mismatches between
+                // the instance's mongo_endpoint and RS member endpoint strings.
                 let rs_member = rs.and_then(|r| {
-                    r.members
-                        .iter()
-                        .find(|m| m.endpoint == inst.mongo_endpoint)
+                    r.members.iter().find(|m| {
+                        // Direct match
+                        m.endpoint == inst.mongo_endpoint
+                            // Catalog-resolved: both resolve to same stone
+                            || catalog.resolve_name(&m.endpoint)
+                                == Some(inst.stone_name.as_str())
+                            // stone_name match (from health monitor)
+                            || m.stone_name == inst.stone_name
+                    })
                 });
 
                 json!({
@@ -351,13 +360,23 @@ pub async fn delete_member(
         .map(|s| s.into_owned())
         .unwrap_or(endpoint);
 
-    // Look up the instance to get its FQN
-    let fqn = {
+    // Resolve endpoint to stone_name via catalog, then look up instance for FQN
+    let (stone_name, fqn, resolved_endpoint) = {
+        let cat = state.catalog.read().await;
         let reg = state.instances.read().await;
-        reg.get(&mongo_endpoint).map(|i| i.fqn.clone())
-    };
 
-    let fqn = fqn.ok_or_else(|| {
+        if let Some(identity) = cat.resolve(&mongo_endpoint) {
+            let sn = identity.stone_name.clone();
+            let inst_data = reg.get(&sn).map(|i| (i.fqn.clone(), i.mongo_endpoint.clone()));
+            inst_data.map(|(fqn, ep)| (sn, fqn, ep))
+        } else {
+            // Fallback: search by mongo_endpoint field directly
+            reg.values()
+                .find(|i| i.mongo_endpoint == mongo_endpoint)
+                .map(|i| (i.stone_name.clone(), i.fqn.clone(), i.mongo_endpoint.clone()))
+        }
+    }
+    .ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -366,6 +385,8 @@ pub async fn delete_member(
             })),
         )
     })?;
+    // Use the canonical mongo_endpoint from the registry for RS operations
+    let mongo_endpoint = resolved_endpoint;
 
     // Check if there's already a pending removal
     if state.has_pending_removal(&mongo_endpoint).await {
@@ -402,6 +423,7 @@ pub async fn delete_member(
     Ok(Json(json!({
         "success": true,
         "message": format!("removal queued for {}", mongo_endpoint),
+        "stone_name": stone_name,
         "endpoint": mongo_endpoint,
         "fqn": fqn,
     })))

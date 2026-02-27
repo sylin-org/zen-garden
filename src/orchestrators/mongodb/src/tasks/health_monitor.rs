@@ -16,12 +16,15 @@ use crate::domain::membership;
 use crate::domain::oplog;
 use crate::domain::types::*;
 use crate::infra::mongo_client::MongoClient;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// Health check interval.
 const HEALTH_INTERVAL_SECS: u64 = 15;
+
+/// Minimum interval between repeated log lines for the same severity.
+const LOG_COOLDOWN: Duration = Duration::from_secs(300);
 
 /// Run the health monitor task.
 pub async fn run(state: AppState, shutdown: CancellationToken) {
@@ -32,6 +35,9 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(HEALTH_INTERVAL_SECS));
+    let mut cache_log_state: HashMap<String, (cache_advisor::CacheHealth, Instant)> =
+        HashMap::new();
+    let mut oplog_log_state: HashMap<String, (oplog::OplogSeverity, Instant)> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -40,14 +46,18 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
                 return;
             }
             _ = interval.tick() => {
-                health_cycle(&state).await;
+                health_cycle(&state, &mut cache_log_state, &mut oplog_log_state).await;
             }
         }
     }
 }
 
 /// Run a single health check cycle across all replica sets.
-async fn health_cycle(state: &AppState) {
+async fn health_cycle(
+    state: &AppState,
+    cache_log_state: &mut HashMap<String, (cache_advisor::CacheHealth, Instant)>,
+    oplog_log_state: &mut HashMap<String, (oplog::OplogSeverity, Instant)>,
+) {
     let fqns = state.distinct_fqns().await;
 
     for fqn in &fqns {
@@ -128,6 +138,72 @@ async fn health_cycle(state: &AppState) {
                     }
                 }
 
+                // ── Rate-limited cache logging + event emission ──
+                if let Some(ref cache) = new_rs_state.cache {
+                    let should_log = match cache_log_state.get(fqn.as_str()) {
+                        Some((prev_health, last_logged)) => {
+                            *prev_health != cache.health
+                                || last_logged.elapsed() >= LOG_COOLDOWN
+                        }
+                        None => cache.health != cache_advisor::CacheHealth::Healthy,
+                    };
+                    if should_log && cache.health != cache_advisor::CacheHealth::Healthy {
+                        tracing::info!(
+                            fqn = %fqn,
+                            dirty_ratio = format_args!("{:.1}%", cache.status.dirty_ratio * 100.0),
+                            hit_ratio = format_args!("{:.1}%", cache.status.hit_ratio * 100.0),
+                            health = ?cache.health,
+                            "WiredTiger cache pressure"
+                        );
+                    }
+                    cache_log_state
+                        .insert(fqn.clone(), (cache.health.clone(), Instant::now()));
+
+                    state
+                        .emit_event(
+                            "cache.updated",
+                            &serde_json::json!({
+                                "fqn": fqn,
+                                "health": cache.health,
+                                "dirty_ratio": cache.status.dirty_ratio,
+                                "hit_ratio": cache.status.hit_ratio,
+                            })
+                            .to_string(),
+                        )
+                        .await;
+                }
+
+                // ── Rate-limited oplog logging ──
+                if let Some(ref oplog_health) = new_rs_state.oplog {
+                    let should_log = match oplog_log_state.get(fqn.as_str()) {
+                        Some((prev_severity, last_logged)) => {
+                            *prev_severity != oplog_health.severity
+                                || last_logged.elapsed() >= LOG_COOLDOWN
+                        }
+                        None => oplog_health.severity != oplog::OplogSeverity::Healthy,
+                    };
+                    if should_log && oplog_health.severity != oplog::OplogSeverity::Healthy {
+                        tracing::warn!(
+                            fqn = %fqn,
+                            severity = %oplog_health.severity,
+                            window = oplog_health.window_secs,
+                            lag = oplog_health.max_lag_secs,
+                            "oplog health concern"
+                        );
+                    }
+                    oplog_log_state
+                        .insert(fqn.clone(), (oplog_health.severity.clone(), Instant::now()));
+
+                    if oplog_health.severity != oplog::OplogSeverity::Healthy {
+                        state
+                            .emit_event(
+                                "oplog.health",
+                                &serde_json::to_string(&oplog_health).unwrap_or_default(),
+                            )
+                            .await;
+                    }
+                }
+
                 state.update_replica_set(fqn, new_rs_state).await;
             }
             None => {
@@ -187,6 +263,8 @@ async fn probe_and_update(
                         members: vec![],
                         connection_string: None,
                         last_updated: chrono::Utc::now(),
+                        cache: None,
+                        oplog: None,
                     });
                 }
                 tracing::debug!(error = %e, endpoint = %instance.mongo_endpoint, "rs.status() failed");
@@ -197,13 +275,40 @@ async fn probe_and_update(
         // ── Check if RS members match the logical set ──────────────
         // The logical set (registry) is the source of truth.
         // If RS has different endpoints, reconfig to match.
+        // Compare using catalog-resolved stone names to avoid format mismatches.
+        let rs_stone_names: Vec<Option<String>> = {
+            let catalog = state.catalog.read().await;
+            status
+                .members
+                .iter()
+                .map(|m| catalog.resolve_name(m.name.as_str()).map(|s| s.to_string()))
+                .collect()
+        };
+        let registry_stone_names: HashSet<&str> = active_instances
+            .iter()
+            .map(|i| i.stone_name.as_str())
+            .collect();
+
+        // Also compare raw endpoints as fallback (for stones not yet in catalog)
         let rs_hosts: HashSet<&str> = status.members.iter().map(|m| m.name.as_str()).collect();
         let registry_hosts: HashSet<&str> = active_instances
             .iter()
             .map(|i| i.mongo_endpoint.as_str())
             .collect();
 
-        if rs_hosts != registry_hosts {
+        // Use stone-name comparison when all RS members resolve, raw endpoints otherwise
+        let all_resolved = rs_stone_names.iter().all(|n| n.is_some());
+        let members_match = if all_resolved {
+            let rs_names: HashSet<&str> = rs_stone_names
+                .iter()
+                .filter_map(|n| n.as_deref())
+                .collect();
+            rs_names == registry_stone_names
+        } else {
+            rs_hosts == registry_hosts
+        };
+
+        if !members_match {
             tracing::warn!(
                 fqn = %fqn,
                 rs_members = ?rs_hosts,
@@ -230,11 +335,22 @@ async fn probe_and_update(
         }
 
         // ── RS matches logical set — process normally ──────────────
+
+        // Diagnostic dump at DEBUG level (enable with RUST_LOG=...=debug)
+        tracing::debug!(
+            fqn = %fqn,
+            rs_members = ?status.members.iter().map(|m| format!("{}(state={},health={},str={})", m.name, m.state, m.health, m.state_str)).collect::<Vec<_>>(),
+            "health cycle: rs state"
+        );
+
         let primary_optime = status
             .members
             .iter()
             .find(|m| m.state == 1)
             .and_then(|m| m.optime_ts);
+
+        // Read catalog once (outside the map closure which is sync)
+        let member_catalog = state.catalog.read().await;
 
         let members: Vec<MemberState> = status
             .members
@@ -246,7 +362,18 @@ async fn probe_and_update(
                     7 => ReplicaRole::Arbiter,
                     3 | 5 => ReplicaRole::Recovering,
                     0 | 6 => ReplicaRole::Startup,
-                    _ => ReplicaRole::Unknown,
+                    8 => ReplicaRole::Down,
+                    9 => ReplicaRole::Rollback,
+                    10 => ReplicaRole::Removed,
+                    other => {
+                        tracing::warn!(
+                            member = %m.name,
+                            state = other,
+                            state_str = %m.state_str,
+                            "unrecognized RS member state"
+                        );
+                        ReplicaRole::Unknown
+                    }
                 };
 
                 let lag_seconds = if m.state == 2 {
@@ -260,10 +387,17 @@ async fn probe_and_update(
                     None
                 };
 
-                let stone_name = instances
-                    .iter()
-                    .find(|i| i.mongo_endpoint == m.name)
-                    .map(|i| i.stone_name.clone())
+                // Resolve rs.status() member name to stone_name via catalog
+                let stone_name = member_catalog
+                    .resolve_name(&m.name)
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        // Fallback: direct match on mongo_endpoint field
+                        instances
+                            .iter()
+                            .find(|i| i.mongo_endpoint == m.name)
+                            .map(|i| i.stone_name.clone())
+                    })
                     .unwrap_or_else(|| m.name.clone());
 
                 MemberState {
@@ -277,9 +411,105 @@ async fn probe_and_update(
             })
             .collect();
 
-        // Update instance roles in state
+        drop(member_catalog);
+
+        // ── Quorum loss recovery ──────────────────────────────────
+        // No PRIMARY + at least one healthy SECONDARY + at least one DOWN member
+        // → force-reconfig to healthy members only, restoring write availability.
+        {
+            let probe_rs = ReplicaSetState {
+                rs_name: rs_name.clone(),
+                initialized: true,
+                members: members.clone(),
+                connection_string: None,
+                last_updated: chrono::Utc::now(),
+                cache: None,
+                oplog: None,
+            };
+
+            if let Some(ql) = membership::detect_quorum_loss(&probe_rs) {
+                tracing::warn!(
+                    fqn = %fqn,
+                    healthy = ?ql.healthy_endpoints,
+                    evicted = ?ql.evicted_endpoints,
+                    "quorum loss detected — force-reconfiguring to healthy members"
+                );
+
+                let desired: Vec<&str> =
+                    ql.healthy_endpoints.iter().map(|s| s.as_str()).collect();
+                match client.rs_reconfig_members(&rs_name, &desired).await {
+                    Ok(()) => {
+                        tracing::info!(
+                            fqn = %fqn,
+                            members = ?desired,
+                            "quorum recovered — RS reconfigured to healthy members"
+                        );
+                        state
+                            .emit_event(
+                                "rs.quorum.recovered",
+                                &serde_json::json!({
+                                    "fqn": fqn,
+                                    "healthy_members": ql.healthy_endpoints,
+                                    "evicted_members": ql.evicted_endpoints,
+                                })
+                                .to_string(),
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            fqn = %fqn,
+                            "quorum recovery reconfig failed — will retry next cycle"
+                        );
+                    }
+                }
+
+                // Update instance registry so roles/health are accurate
+                for member in &members {
+                    update_instance_role(state, &member.endpoint, member.role.clone()).await;
+                    let health = if member.healthy {
+                        InstanceHealth::Healthy
+                    } else {
+                        match member.role {
+                            ReplicaRole::Down | ReplicaRole::Removed => InstanceHealth::Unreachable,
+                            ReplicaRole::Recovering | ReplicaRole::Rollback | ReplicaRole::Startup => {
+                                InstanceHealth::Degraded
+                            }
+                            _ => InstanceHealth::Unreachable,
+                        }
+                    };
+                    update_instance_health(state, &member.endpoint, health).await;
+                }
+
+                // Save the current RS state so detect_member_changes has an
+                // accurate baseline next cycle (prevents stale role flapping).
+                state.update_replica_set(fqn, probe_rs).await;
+                // Next health cycle will pick up the post-reconfig state
+                return None;
+            }
+        }
+
+        // Update instance roles and health in state.
+        // rs.status() reports health for ALL members, not just the one we connected to.
+        // Without this, members we didn't directly connect to stay at InstanceHealth::Unknown.
         for member in &members {
             update_instance_role(state, &member.endpoint, member.role.clone()).await;
+
+            let health = if member.healthy {
+                InstanceHealth::Healthy
+            } else {
+                // RS reports unhealthy — could be DOWN, RECOVERING, etc.
+                // Map role to appropriate InstanceHealth
+                match member.role {
+                    ReplicaRole::Down | ReplicaRole::Removed => InstanceHealth::Unreachable,
+                    ReplicaRole::Recovering | ReplicaRole::Rollback | ReplicaRole::Startup => {
+                        InstanceHealth::Degraded
+                    }
+                    _ => InstanceHealth::Unreachable,
+                }
+            };
+            update_instance_health(state, &member.endpoint, health).await;
         }
 
         let conn_string = build_connection_string(&members, &status.set_name);
@@ -290,44 +520,40 @@ async fn probe_and_update(
             .filter_map(|m| m.lag_seconds)
             .fold(0.0_f64, f64::max);
 
-        if let Ok(repl_info) = client.replication_info().await {
-            let oplog_health = oplog::evaluate_oplog(
+        let oplog_snapshot = if let Ok(repl_info) = client.replication_info().await {
+            Some(oplog::evaluate_oplog(
                 repl_info.oplog_window_secs,
                 repl_info.oplog_used_mb,
                 repl_info.oplog_size_mb,
                 max_lag,
-            );
-
-            if oplog_health.severity != oplog::OplogSeverity::Healthy {
-                tracing::warn!(
-                    fqn = %fqn,
-                    severity = %oplog_health.severity,
-                    window = oplog_health.window_secs,
-                    lag = oplog_health.max_lag_secs,
-                    ratio = oplog_health.safety_ratio,
-                    "oplog health concern"
-                );
-                state
-                    .emit_event("oplog.health", &serde_json::to_string(&oplog_health).unwrap_or_default())
-                    .await;
-            }
-        }
+            ))
+        } else {
+            None
+        };
 
         // ── WiredTiger cache (best-effort) ──
-        if let Ok(server_status) = client.server_status().await {
-            if let Some(cache_status) = cache_advisor::parse_cache_status(&server_status) {
-                let recs = cache_advisor::evaluate_cache(&cache_status, 0, 0);
-                for rec in &recs {
-                    if rec.severity != cache_advisor::CacheHealth::Healthy {
-                        tracing::info!(
-                            fqn = %fqn,
-                            message = %rec.message,
-                            "WiredTiger cache recommendation"
-                        );
-                    }
+        let cache_snapshot = if let Ok(server_status) = client.server_status().await {
+            cache_advisor::parse_cache_status(&server_status).map(|status| {
+                let recs = cache_advisor::evaluate_cache(&status, 0, 0);
+                let health = recs
+                    .iter()
+                    .map(|r| &r.severity)
+                    .max_by_key(|s| match s {
+                        cache_advisor::CacheHealth::Healthy => 0,
+                        cache_advisor::CacheHealth::Warning => 1,
+                        cache_advisor::CacheHealth::Critical => 2,
+                    })
+                    .cloned()
+                    .unwrap_or(cache_advisor::CacheHealth::Healthy);
+                CacheSnapshot {
+                    status,
+                    health,
+                    recommendations: recs,
                 }
-            }
-        }
+            })
+        } else {
+            None
+        };
 
         return Some(ReplicaSetState {
             rs_name: status.set_name,
@@ -335,6 +561,8 @@ async fn probe_and_update(
             members,
             connection_string: Some(conn_string),
             last_updated: chrono::Utc::now(),
+            cache: cache_snapshot,
+            oplog: oplog_snapshot,
         });
     }
 
@@ -342,18 +570,42 @@ async fn probe_and_update(
 }
 
 /// Update a single instance's health in shared state.
+///
+/// Resolves `mongo_endpoint` through the catalog to find the stone_name key.
 async fn update_instance_health(state: &AppState, mongo_endpoint: &str, health: InstanceHealth) {
+    let stone_name = state.resolve_endpoint(mongo_endpoint).await;
     let mut reg = state.instances.write().await;
-    if let Some(inst) = reg.get_mut(mongo_endpoint) {
+    let key = stone_name.as_deref().unwrap_or(mongo_endpoint);
+    if let Some(inst) = reg.get_mut(key) {
+        if inst.health != health {
+            tracing::info!(
+                stone = %key,
+                from = ?inst.health,
+                to = ?health,
+                "instance health changed"
+            );
+        }
         inst.health = health;
         inst.last_seen = Instant::now();
     }
 }
 
 /// Update a single instance's role in shared state.
+///
+/// Resolves `mongo_endpoint` through the catalog to find the stone_name key.
 async fn update_instance_role(state: &AppState, mongo_endpoint: &str, role: ReplicaRole) {
+    let stone_name = state.resolve_endpoint(mongo_endpoint).await;
     let mut reg = state.instances.write().await;
-    if let Some(inst) = reg.get_mut(mongo_endpoint) {
-        inst.role = Some(role);
+    let key = stone_name.as_deref().unwrap_or(mongo_endpoint);
+    if let Some(inst) = reg.get_mut(key) {
+        if inst.role.as_ref() != Some(&role) {
+            tracing::info!(
+                stone = %key,
+                from = ?inst.role,
+                to = %role,
+                "instance role changed"
+            );
+            inst.role = Some(role);
+        }
     }
 }

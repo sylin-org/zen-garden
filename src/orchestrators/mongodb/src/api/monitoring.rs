@@ -1,16 +1,19 @@
 //! Monitoring API endpoints — oplog, cache, lag, placement.
+//!
+//! All monitoring data is read from `ReplicaSetState` (populated by the
+//! health monitor task every 15 seconds).  No additional MongoDB connections
+//! are made here — the health monitor is the single writer.
 
 use crate::app_state::AppState;
-use crate::domain::cache_advisor;
-use crate::domain::oplog;
 use crate::domain::placement::{self, StonePlacementProfile};
 use crate::domain::types::*;
-use crate::infra::mongo_client::MongoClient;
 use axum::extract::State;
 use axum::Json;
 use serde_json::{json, Value};
 
 /// `GET /api/monitoring/oplog` — oplog health for all replica sets.
+///
+/// Reads cached oplog snapshots from state (written by health monitor).
 pub async fn get_oplog(State(state): State<AppState>) -> Json<Value> {
     let replica_sets = state.replica_sets.read().await;
     let mut results: Vec<Value> = Vec::new();
@@ -20,79 +23,46 @@ pub async fn get_oplog(State(state): State<AppState>) -> Json<Value> {
             continue;
         }
 
-        // Try to get oplog info from the primary
-        let primary = rs.members.iter().find(|m| m.role == ReplicaRole::Primary);
-        let primary_endpoint = match primary {
-            Some(p) => &p.endpoint,
-            None => continue,
-        };
-
-        let max_lag = rs
-            .members
-            .iter()
-            .filter_map(|m| m.lag_seconds)
-            .fold(0.0_f64, f64::max);
-
-        let oplog_health = match MongoClient::connect(primary_endpoint).await {
-            Ok(client) => match client.replication_info().await {
-                Ok(info) => {
-                    let health = oplog::evaluate_oplog(
-                        info.oplog_window_secs,
-                        info.oplog_used_mb,
-                        info.oplog_size_mb,
-                        max_lag,
-                    );
-                    serde_json::to_value(&health).unwrap_or(json!(null))
-                }
-                Err(e) => json!({ "error": e.to_string() }),
-            },
-            Err(e) => json!({ "error": e.to_string() }),
+        let oplog_value = match &rs.oplog {
+            Some(health) => serde_json::to_value(health).unwrap_or(json!(null)),
+            None => json!(null),
         };
 
         results.push(json!({
             "fqn": fqn,
             "rs_name": rs.rs_name,
-            "oplog": oplog_health,
+            "oplog": oplog_value,
         }));
     }
 
     Json(json!({ "oplog_health": results }))
 }
 
-/// `GET /api/monitoring/cache` — WiredTiger cache status for all instances.
+/// `GET /api/monitoring/cache` — WiredTiger cache status for all replica sets.
+///
+/// Reads cached WiredTiger snapshots from state (written by health monitor).
 pub async fn get_cache(State(state): State<AppState>) -> Json<Value> {
-    let instances = state.instances.read().await;
+    let replica_sets = state.replica_sets.read().await;
     let mut results: Vec<Value> = Vec::new();
 
-    for instance in instances.values() {
-        if instance.health != InstanceHealth::Healthy {
+    for (fqn, rs) in replica_sets.iter() {
+        if !rs.initialized {
             continue;
         }
 
-        let cache_info = match MongoClient::connect(&instance.mongo_endpoint).await {
-            Ok(client) => match client.server_status().await {
-                Ok(status) => {
-                    match cache_advisor::parse_cache_status(&status) {
-                        Some(cache_status) => {
-                            let recs = cache_advisor::evaluate_cache(&cache_status, 0, 0);
-                            json!({
-                                "status": cache_status,
-                                "recommendations": recs,
-                            })
-                        }
-                        None => json!({ "error": "WiredTiger cache metrics not available" }),
-                    }
-                }
-                Err(e) => json!({ "error": e.to_string() }),
-            },
-            Err(e) => json!({ "error": e.to_string() }),
+        let cache_value = match &rs.cache {
+            Some(snapshot) => json!({
+                "status": snapshot.status,
+                "health": snapshot.health,
+                "recommendations": snapshot.recommendations,
+            }),
+            None => json!(null),
         };
 
         results.push(json!({
-            "stone_name": instance.stone_name,
-            "endpoint": instance.mongo_endpoint,
-            "fqn": instance.fqn,
-            "cache": cache_info,
+            "fqn": fqn,
+            "rs_name": rs.rs_name,
+            "cache": cache_value,
         }));
     }
 

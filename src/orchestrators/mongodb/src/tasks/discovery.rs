@@ -1,123 +1,96 @@
 //! Stone discovery task for the MongoDB orchestrator.
 //!
-//! Two-phase discovery:
-//! 1. Find a stone to tend to (via Koi mDNS or explicit `--stone`)
-//! 2. Subscribe to the Tools API stream for MongoDB offerings
+//! Uses the shared `resilient_stream` runner from orchestrator-common for:
+//! - Initial stone resolution (local → registry → Koi mDNS)
+//! - Tools API stream subscription with exponential backoff
+//! - Automatic failover with endpoint blacklisting
 //!
-//! When an explicit `--stone` is set, phase 1 is skipped.
+//! MongoDB-specific logic lives here:
+//! - Topology bootstrap (register discovered instances + catalog identities)
+//! - Tool stream event handling (offering discovered/removed → state updates)
 
 use crate::app_state::AppState;
-use crate::domain::types::{InstanceHealth, MongoInstance};
-use orchestrator_common::discovery;
-use orchestrator_common::persistence::TendedStone;
-use orchestrator_common::tools_stream::{self, ToolStreamEvent};
+use crate::domain::types::{InstanceHealth, MongoInstance, PendingAction};
+use orchestrator_common::resilient_stream::{self, StreamConfig, StreamContext};
+use orchestrator_common::stone_catalog::{ServiceKey, StoneIdentity};
+use orchestrator_common::tools_stream::ToolStreamEvent;
 use orchestrator_common::topology;
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 /// Run the discovery task.
 ///
-/// 1. Discover or use explicit stone → bind as tended
-/// 2. Bootstrap from topology (one-shot scan for existing MongoDB instances)
+/// 1. Resolve a stone (local → registry → Koi mDNS, with failover)
+/// 2. Bootstrap from topology
 /// 3. Subscribe to tools stream for real-time changes
-/// 4. On stream error, reconnect with backoff
+/// 4. On persistent failure → blacklist + failover to another stone
 pub async fn run(state: AppState, shutdown: CancellationToken) {
-    // ── Phase 1: Find a stone to tend to ──────────────────────
-    let stone_endpoint = if let Some(ref explicit) = state.explicit_stone {
-        tracing::info!(endpoint = %explicit, "using explicit stone (skipping discovery)");
-        let stone = TendedStone {
-            stone_name: "explicit".to_string(),
-            stone_id: None,
-            endpoint: explicit.clone(),
-            last_seen: chrono::Utc::now(),
-        };
-        state.tend_to(stone).await;
-        explicit.clone()
-    } else {
-        // Discover stones via Koi mDNS
-        loop {
-            if shutdown.is_cancelled() {
-                return;
-            }
+    // Bootstrap from topology when the initial stone is resolved
+    // (and again on each failover — see on_stone_switched)
+    let bootstrap_state = state.clone();
 
-            tracing::info!("discovering stones via Koi mDNS...");
-            match discovery::discover_stones(&state.koi_endpoint).await {
-                Ok(stones) if !stones.is_empty() => {
-                    let stone = &stones[0];
-                    tracing::info!(
-                        stone = %stone.stone_name,
-                        ip = %stone.ip,
-                        port = stone.api_port,
-                        "discovered stone, binding as tended"
-                    );
+    let ctx = StreamContext {
+        koi_endpoint: state.koi_endpoint.clone(),
 
-                    let tended = TendedStone {
-                        stone_name: stone.stone_name.clone(),
-                        stone_id: stone.stone_id.clone(),
-                        endpoint: stone.endpoint(),
-                        last_seen: chrono::Utc::now(),
-                    };
-                    let endpoint = tended.endpoint.clone();
+        local_endpoint: Some(format!(
+            "http://localhost:{}",
+            garden_common::constants::MOSS_HTTP,
+        )),
+
+        explicit_stone: state.explicit_stone.clone(),
+
+        fqid_filter: |fqid: &str| {
+            fqid == "offering:mongodb" || fqid.starts_with("offering:mongodb:")
+        },
+
+        on_event: {
+            let state = state.clone();
+            move |event| handle_tool_event(&state, event)
+        },
+
+        candidate_endpoints: {
+            let state = state.clone();
+            Box::new(move || {
+                let state = state.clone();
+                Box::pin(async move {
+                    let reg = state.instances.read().await;
+                    reg.values()
+                        .map(|i| i.moss_endpoint.clone())
+                        .collect()
+                })
+            })
+        },
+
+        on_stone_selected: {
+            let state = state.clone();
+            Box::new(move |tended| {
+                let state = state.clone();
+                Box::pin(async move {
                     state.tend_to(tended).await;
-                    break endpoint;
-                }
-                Ok(_) => {
-                    tracing::info!("no stones found, retrying in 10s...");
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "stone discovery failed, retrying in 10s...");
-                }
-            }
+                })
+            })
+        },
 
-            tokio::select! {
-                _ = shutdown.cancelled() => return,
-                _ = tokio::time::sleep(Duration::from_secs(10)) => continue,
-            }
-        }
+        on_stone_switched: {
+            let state = bootstrap_state;
+            Box::new(move |endpoint: String| {
+                let state = state.clone();
+                Box::pin(async move {
+                    bootstrap_from_topology(&state, &endpoint).await;
+                })
+            })
+        },
+
+        config: StreamConfig::default(),
     };
 
-    // ── Phase 2: Bootstrap from topology ──────────────────────
-    bootstrap_from_topology(&state, &stone_endpoint).await;
-
-    // ── Phase 3: Subscribe to tools stream ────────────────────
-    let mut backoff_secs = 1u64;
-    loop {
-        if shutdown.is_cancelled() {
-            return;
-        }
-
-        // Re-resolve stone endpoint in case tending changed
-        let endpoint = state
-            .tended_endpoint()
-            .await
-            .unwrap_or_else(|| stone_endpoint.clone());
-
-        let state_clone = state.clone();
-        let result = tools_stream::subscribe_tools_stream(
-            &endpoint,
-            |fqid| fqid == "offering:mongodb" || fqid.starts_with("offering:mongodb:"),
-            move |event| {
-                handle_tool_event(&state_clone, event);
-            },
-        )
-        .await;
-
-        match result {
-            Ok(()) => {
-                tracing::info!("tools stream ended normally, reconnecting...");
-                backoff_secs = 1;
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, backoff = backoff_secs, "tools stream error, reconnecting...");
-                backoff_secs = (backoff_secs * 2).min(60);
-            }
-        }
-
-        tokio::select! {
-            _ = shutdown.cancelled() => return,
-            _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => continue,
-        }
-    }
+    // The resilient stream handles everything:
+    // - Initial stone resolution (local → registry → Koi mDNS)
+    // - Topology bootstrap via on_stone_switched (called on both initial and failover)
+    // - Tools stream subscription with automatic reconnection
+    // - Endpoint blacklisting and failover after consecutive failures
+    resilient_stream::run_resilient_stream(ctx, shutdown).await;
 }
 
 /// Bootstrap from topology — one-shot scan for existing MongoDB instances.
@@ -130,11 +103,28 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
             );
             for s in stones {
                 let mongo_endpoint = format!("{}:27017", s.hostname);
+                let moss_endpoint = s.moss_endpoint();
+
+                // Register stone identity in the catalog
+                let mut services = HashMap::new();
+                services.insert(ServiceKey::Mongo, mongo_endpoint.clone());
+                services.insert(ServiceKey::Moss, moss_endpoint.clone());
+
+                state
+                    .upsert_catalog(StoneIdentity {
+                        stone_name: s.stone_name.clone(),
+                        stone_id: Some(s.stone_id.clone()),
+                        hostname: s.hostname.clone(),
+                        ip: Some(s.ip.clone()),
+                        services,
+                    })
+                    .await;
+
                 let instance = MongoInstance {
                     stone_id: s.stone_id.clone(),
                     stone_name: s.stone_name.clone(),
-                    moss_endpoint: s.moss_endpoint(),
-                    mongo_endpoint: mongo_endpoint.clone(),
+                    moss_endpoint,
+                    mongo_endpoint,
                     fqn: "mongodb".to_string(), // Default FQN; refined by tools stream
                     health: InstanceHealth::Unknown,
                     role: None,
@@ -195,10 +185,34 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 };
 
                 let host = mongo_endpoint.split(':').next().unwrap_or("127.0.0.1");
+                let moss_endpoint =
+                    format!("http://{}:{}", host, garden_common::constants::MOSS_HTTP);
+
+                // Register stone identity in the catalog
+                let mut services = HashMap::new();
+                services.insert(ServiceKey::Mongo, mongo_endpoint.clone());
+                services.insert(ServiceKey::Moss, moss_endpoint.clone());
+
+                let hostname = if host.contains('.') {
+                    host.to_string()
+                } else {
+                    format!("{}.local", host)
+                };
+
+                state
+                    .upsert_catalog(StoneIdentity {
+                        stone_name: stone_name.clone(),
+                        stone_id: Some(stone_id.clone()),
+                        hostname,
+                        ip: None, // IP not directly available from tools stream
+                        services,
+                    })
+                    .await;
+
                 let instance = MongoInstance {
                     stone_id: stone_id.clone(),
                     stone_name: stone_name.clone(),
-                    moss_endpoint: format!("http://{}:{}", host, garden_common::constants::MOSS_HTTP),
+                    moss_endpoint,
                     mongo_endpoint: mongo_endpoint.clone(),
                     fqn: fqn.clone(),
                     health,
@@ -218,7 +232,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 } else if !ready {
                     // Existing instance transitioned to stopped — update health
                     let mut reg = state.instances.write().await;
-                    if let Some(inst) = reg.get_mut(&mongo_endpoint) {
+                    if let Some(inst) = reg.get_mut(&stone_name) {
                         if inst.health != InstanceHealth::Stopped {
                             tracing::info!(
                                 stone = %stone_name,
@@ -230,7 +244,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 } else {
                     // Existing instance with ready=true — if it was Stopped, transition to Unknown
                     let mut reg = state.instances.write().await;
-                    if let Some(inst) = reg.get_mut(&mongo_endpoint) {
+                    if let Some(inst) = reg.get_mut(&stone_name) {
                         if inst.health == InstanceHealth::Stopped {
                             tracing::info!(
                                 stone = %stone_name,
@@ -252,20 +266,34 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 "MongoDB instance removed via tools stream"
             );
 
-            // Find and remove the matching instance (offering uninstalled)
+            // Queue rs.remove() before removing the instance from the registry
+            // (we need the FQN and endpoint from the registry while it still exists).
             let state = state.clone();
             tokio::spawn(async move {
-                let endpoint = {
+                let instance_data = {
                     let reg = state.instances.read().await;
-                    reg.values()
-                        .find(|i| i.stone_name == stone_name)
-                        .map(|i| i.mongo_endpoint.clone())
+                    reg.get(&stone_name)
+                        .map(|i| (i.mongo_endpoint.clone(), i.fqn.clone()))
                 };
-                if let Some(ep) = endpoint {
-                    // Also clean up any pending action for this endpoint
-                    state.complete_action(&ep).await;
-                    state.remove_instance(&ep).await;
+                if let Some((mongo_ep, fqn)) = instance_data {
+                    // Queue rs.remove() so the bootstrap task will evict the
+                    // member from the replica set on its next cycle.
+                    if !state.has_pending_removal(&mongo_ep).await {
+                        state
+                            .queue_action(PendingAction::RemoveMember {
+                                mongo_endpoint: mongo_ep.clone(),
+                                fqn,
+                                requested_at: chrono::Utc::now(),
+                            })
+                            .await;
+                        tracing::info!(
+                            stone = %stone_name,
+                            endpoint = %mongo_ep,
+                            "queued rs.remove() for uprooted instance"
+                        );
+                    }
                 }
+                state.remove_instance(&stone_name).await;
             });
         }
         ToolStreamEvent::Heartbeat => {

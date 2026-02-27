@@ -6,6 +6,7 @@
 use crate::domain::types::*;
 use orchestrator_common::events::DashboardEvent;
 use orchestrator_common::persistence::TendedStone;
+use orchestrator_common::stone_catalog::{StoneCatalog, StoneIdentity};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,7 +30,10 @@ pub struct AppState {
     pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
 
     // ── Registry ──
-    /// All discovered MongoDB instances, keyed by mongo_endpoint.
+    /// Centralized stone identity catalog — single source of truth for
+    /// name/hostname/IP/endpoint resolution.
+    pub catalog: Arc<RwLock<StoneCatalog>>,
+    /// All discovered MongoDB instances, keyed by stone_name.
     pub instances: Arc<RwLock<HashMap<String, MongoInstance>>>,
     /// Replica set states, keyed by FQN (e.g. "mongodb", "mongodb:analytics").
     pub replica_sets: Arc<RwLock<HashMap<String, ReplicaSetState>>>,
@@ -62,6 +66,7 @@ impl AppState {
             explicit_stone,
             dashboard_port,
             tended_stone: Arc::new(RwLock::new(None)),
+            catalog: Arc::new(RwLock::new(StoneCatalog::new())),
             instances: Arc::new(RwLock::new(HashMap::new())),
             replica_sets: Arc::new(RwLock::new(HashMap::new())),
             pending_actions: Arc::new(RwLock::new(Vec::new())),
@@ -79,23 +84,27 @@ impl AppState {
     /// If the instance already exists, only discovery-sourced fields are updated
     /// (stone name, moss endpoint, FQN, last_seen). Health and role are preserved
     /// to avoid overwriting values set by the health monitor.
-    /// Upsert an instance into the registry.
+    ///
+    /// Instances are keyed by `stone_name` — the catalog resolves all endpoint
+    /// variants to the canonical stone identity.
+    ///
     /// Returns `true` if this is a newly discovered instance, `false` if updated.
     pub async fn upsert_instance(&self, instance: MongoInstance) -> bool {
-        let endpoint = instance.mongo_endpoint.clone();
+        let key = instance.stone_name.clone();
         let is_new;
         {
             let mut reg = self.instances.write().await;
-            if let Some(existing) = reg.get_mut(&endpoint) {
+            if let Some(existing) = reg.get_mut(&key) {
                 // Merge: update discovery fields, preserve health/role
                 existing.stone_id = instance.stone_id;
                 existing.stone_name = instance.stone_name;
                 existing.moss_endpoint = instance.moss_endpoint;
+                existing.mongo_endpoint = instance.mongo_endpoint;
                 existing.fqn = instance.fqn;
                 existing.last_seen = instance.last_seen;
                 is_new = false;
             } else {
-                reg.insert(endpoint, instance);
+                reg.insert(key, instance);
                 is_new = true;
             }
         }
@@ -105,11 +114,15 @@ impl AppState {
         is_new
     }
 
-    /// Remove an instance from the registry.
-    pub async fn remove_instance(&self, mongo_endpoint: &str) {
+    /// Remove an instance from the registry by stone_name.
+    pub async fn remove_instance(&self, stone_name: &str) {
         {
             let mut reg = self.instances.write().await;
-            reg.remove(mongo_endpoint);
+            reg.remove(stone_name);
+        }
+        {
+            let mut cat = self.catalog.write().await;
+            cat.remove(stone_name);
         }
         self.emit_event("registry.updated", "{}").await;
     }
@@ -130,6 +143,25 @@ impl AppState {
         fqns.sort();
         fqns.dedup();
         fqns
+    }
+
+    /// Resolve any endpoint string to a stone_name via the catalog.
+    pub async fn resolve_endpoint(&self, endpoint: &str) -> Option<String> {
+        let cat = self.catalog.read().await;
+        cat.resolve_name(endpoint).map(|s| s.to_string())
+    }
+
+    /// Register a stone identity in the catalog.
+    pub async fn upsert_catalog(&self, identity: StoneIdentity) {
+        tracing::debug!(
+            stone_name = %identity.stone_name,
+            hostname = %identity.hostname,
+            ip = ?identity.ip,
+            services = ?identity.services.iter().map(|(k, v)| (format!("{:?}", k), v.as_str())).collect::<Vec<_>>(),
+            "catalog upsert"
+        );
+        let mut cat = self.catalog.write().await;
+        cat.upsert(identity);
     }
 
     // ── Pending Actions ─────────────────────────────────────────

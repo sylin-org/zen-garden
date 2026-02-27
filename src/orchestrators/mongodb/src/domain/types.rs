@@ -1,5 +1,7 @@
 //! Core domain types for the MongoDB orchestrator.
 
+use crate::domain::cache_advisor::{CacheHealth, CacheRecommendation, CacheStatus};
+use crate::domain::oplog::OplogHealth;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -52,8 +54,14 @@ pub enum ReplicaRole {
     Arbiter,
     /// Recovering (e.g. initial sync, rollback).
     Recovering,
-    /// Node is in STARTUP2 or similar initialization state.
+    /// Node is in STARTUP or STARTUP2 initialization state.
     Startup,
+    /// Member is DOWN — unreachable from the reporting member's perspective.
+    Down,
+    /// Member is performing a rollback.
+    Rollback,
+    /// Member has been removed from the replica set config.
+    Removed,
     /// Role could not be determined.
     Unknown,
 }
@@ -66,6 +74,9 @@ impl std::fmt::Display for ReplicaRole {
             Self::Arbiter => write!(f, "ARBITER"),
             Self::Recovering => write!(f, "RECOVERING"),
             Self::Startup => write!(f, "STARTUP"),
+            Self::Down => write!(f, "DOWN"),
+            Self::Rollback => write!(f, "ROLLBACK"),
+            Self::Removed => write!(f, "REMOVED"),
             Self::Unknown => write!(f, "UNKNOWN"),
         }
     }
@@ -84,6 +95,20 @@ pub struct ReplicaSetState {
     pub connection_string: Option<String>,
     /// Last time rs.status() was successfully queried.
     pub last_updated: DateTime<Utc>,
+    /// WiredTiger cache status (populated by health monitor).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheSnapshot>,
+    /// Oplog health (populated by health monitor).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oplog: Option<OplogHealth>,
+}
+
+/// WiredTiger cache snapshot — status + evaluated recommendations.
+#[derive(Debug, Clone, Serialize)]
+pub struct CacheSnapshot {
+    pub status: CacheStatus,
+    pub health: CacheHealth,
+    pub recommendations: Vec<CacheRecommendation>,
 }
 
 /// State of a single member within a replica set (from rs.status()).

@@ -166,10 +166,34 @@ process_validated_upgrade() {
     tty_log "  ✓ Update complete, starting new version..."
 }
 
+# One-time remediation: fix 2-minute boot delay from systemd-networkd-wait-online
+# systemd-networkd is only running for resolved D-Bus support — it doesn't manage
+# interfaces (ifupdown does), so wait-online blocks boot for 2 min with nothing
+# to wait on. Masking it is safe: network-online.target uses Wants= not Requires=.
+fix_wait_online() {
+    # Skip if already masked
+    if systemctl is-enabled systemd-networkd-wait-online.service 2>/dev/null | grep -q masked; then
+        return 0
+    fi
+
+    # Only fix if systemd-networkd is enabled (we caused this in setup-stone.sh)
+    if ! systemctl is-enabled systemd-networkd &>/dev/null; then
+        return 0
+    fi
+
+    log "Masking systemd-networkd-wait-online (one-time boot fix)"
+    systemctl mask systemd-networkd-wait-online.service 2>/dev/null || true
+
+    # Clean up the old timeout override if it exists from a previous deploy
+    rm -rf /etc/systemd/system/systemd-networkd-wait-online.service.d 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+}
+
 main() {
     log "Starting update check..."
     ensure_staging_dirs
     process_validated_upgrade
+    fix_wait_online
     log "Update check complete"
 }
 

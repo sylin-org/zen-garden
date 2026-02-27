@@ -4,6 +4,9 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-02-26
 
+- Fixed 2-minute boot delay on all Linux stones (systemd-networkd-wait-online timeout)
+- Fixed duplicate offerings in `garden-rake list` caused by FQN-blind upsert and adoption guards
+- Added startup coalesce to self-heal any pre-existing duplicate offerings by FQN
 - Wake auto-reinstalls missing containers for dormant offerings (preserves volumes/mounts)
 - Rake wake/rest commands now display API error details instead of bare HTTP status codes
 

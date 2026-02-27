@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "koi-certmesh"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "axum",
  "chrono",
@@ -2552,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "koi-client"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "hickory-proto",
  "koi-common",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "koi-common"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "axum",
  "serde",
@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "koi-config"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "koi-common",
  "serde",
@@ -2591,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "koi-crypto"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2616,7 +2616,7 @@ dependencies = [
 
 [[package]]
 name = "koi-dns"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "axum",
  "hickory-proto",
@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "koi-embedded"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "axum",
  "futures-util",
@@ -2667,7 +2667,7 @@ dependencies = [
 
 [[package]]
 name = "koi-health"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "axum",
  "chrono",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "koi-mdns"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "async-stream",
  "axum",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "koi-proxy"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "axum",
  "axum-server",
@@ -2739,7 +2739,7 @@ dependencies = [
 
 [[package]]
 name = "koi-truststore"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "koi-common",
  "thiserror 2.0.17",
@@ -2748,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "koi-udp"
-version = "0.2.202602251514"
+version = "0.2.202602261914"
 dependencies = [
  "async-stream",
  "axum",

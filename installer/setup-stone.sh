@@ -251,6 +251,14 @@ RESOLVED_EOF
     systemctl enable systemd-networkd 2>/dev/null || true
     systemctl start systemd-networkd 2>/dev/null || true
 
+    # Mask the wait-online service: systemd-networkd is only here for the
+    # D-Bus interface that resolvectl needs — it doesn't manage interfaces
+    # (ifupdown does), so wait-online has nothing to wait on and would
+    # block boot for 2 minutes. Masking it is safe because
+    # network-online.target uses Wants= (not Requires=) so it still
+    # activates fine, and moss handles network readiness internally.
+    systemctl mask systemd-networkd-wait-online.service 2>/dev/null || true
+
     # Point /etc/resolv.conf to resolved stub
     if [ ! -L /etc/resolv.conf ] || [ "$(readlink /etc/resolv.conf)" != "/run/systemd/resolve/stub-resolv.conf" ]; then
         ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf

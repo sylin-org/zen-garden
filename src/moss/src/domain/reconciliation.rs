@@ -58,16 +58,16 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
     let mut left_unregistered = Vec::new();
 
     for offering in existing {
-        let in_registry = {
+        // Check if already in registry (read lock, brief)
+        {
             let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name == offering)
-        };
-
-        if in_registry {
-            skipped_existing.push(offering);
-            continue;
+            if offerings.iter().any(|o| o.name == offering) {
+                skipped_existing.push(offering);
+                continue;
+            }
         }
 
+        // Attempt adoption outside the lock (I/O-heavy)
         match adopt_offering_container(
             &state.docker,
             &state.manifest_registry,
@@ -78,8 +78,13 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
         .await
         {
             Ok(Some(adopted_offering)) => {
-                tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
+                // Re-check under write lock to prevent TOCTOU duplicates
                 let mut offerings = state.offerings.write().await;
+                if offerings.iter().any(|o| o.name == offering) {
+                    skipped_existing.push(offering);
+                    continue;
+                }
+                tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
                 offerings.push(adopted_offering);
                 adopted.push(offering);
             }

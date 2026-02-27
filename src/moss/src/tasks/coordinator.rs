@@ -417,6 +417,15 @@ pub fn start_registry_loader(state: AppState) {
         }
         let _ = state.persist_offerings().await;
 
+        // Coalesce any duplicate offerings that accumulated from prior versions
+        let coalesced = state.coalesce_duplicate_offerings().await;
+        if coalesced > 0 {
+            tracing::info!(
+                coalesced,
+                "Startup: removed duplicate offerings by FQN"
+            );
+        }
+
         // Backfill missing guidance for services that were installed before guidance caching
         let backfilled = backfill_missing_guidance(&state).await;
         if backfilled > 0 {

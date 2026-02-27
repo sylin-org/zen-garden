@@ -202,14 +202,14 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                 continue;
             }
 
-            // Check if already adopted
+            // Check if already registered (any mode: managed, adopted, or borrowed)
             {
                 let offerings = state.offerings.read().await;
                 if offerings
                     .iter()
-                    .any(|o| o.offering == manifest.name && o.is_adopted())
+                    .any(|o| o.offering == manifest.name)
                 {
-                    continue; // Already adopted (handled in Phase 1)
+                    continue; // Already in registry (any mode)
                 }
             }
 

@@ -74,6 +74,17 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         let mut state_changed = false;
 
         for (offering_id, name, old_status, old_health) in managed_snapshot {
+            // Skip offerings that are currently installing — the container may not
+            // exist yet (image pull in progress). The job executor will transition
+            // the status when installation completes or fails.
+            if old_status == OfferingStatus::Installing {
+                tracing::trace!(
+                    offering = %name,
+                    "Skipping health check (currently installing)"
+                );
+                continue;
+            }
+
             // Check container status (convert ServiceStatus → OfferingStatus)
             let (new_status, new_health) = match state.docker.get_service_status(&name).await {
                 Ok(service_status) => {

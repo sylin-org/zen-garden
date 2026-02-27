@@ -1067,11 +1067,21 @@ impl DockerManager {
     /// Pull a Docker image from registry
     ///
     /// Used during install and nourishment to fetch images.
+    /// Pull a Docker image, with stall detection.
+    ///
+    /// The Docker pull stream can stall indefinitely (network issues, DNS
+    /// failure, registry rate-limits). To prevent HTTP handlers from hanging
+    /// forever, each stream chunk is guarded by a TTL-with-no-activity
+    /// timeout. The timer resets on every progress event from Docker — so
+    /// large pulls that keep making progress are fine. The timeout only
+    /// fires when Docker goes completely silent.
     pub async fn pull_image(
         &self,
         image: &str,
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<()> {
+        let stall_timeout = garden_common::constants::timeouts::docker_pull_stall_timeout();
+
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
                 console::EventCategory::Services,
@@ -1088,11 +1098,10 @@ impl DockerManager {
 
         let mut stream = self.docker.create_image(Some(options), None, None);
 
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(info) => {
+        loop {
+            match tokio::time::timeout(stall_timeout, stream.next()).await {
+                Ok(Some(Ok(info))) => {
                     if let Some(status) = info.status {
-                        // Emit progress events (deduplicator will handle spam)
                         if let Some(console) = console {
                             if let Some(progress) = &info.progress {
                                 console.emit(console::ConsoleEvent::new(
@@ -1105,8 +1114,20 @@ impl DockerManager {
                         tracing::debug!(image = %image, status = %status, "Pull progress");
                     }
                 }
-                Err(e) => {
+                Ok(Some(Err(e))) => {
                     anyhow::bail!("Failed to pull image '{}': {}", image, e);
+                }
+                Ok(None) => {
+                    // Stream finished — pull complete
+                    break;
+                }
+                Err(_elapsed) => {
+                    anyhow::bail!(
+                        "Image pull stalled for '{}': no progress for {} seconds. \
+                         Check network connectivity and Docker Hub access on this stone.",
+                        image,
+                        stall_timeout.as_secs(),
+                    );
                 }
             }
         }

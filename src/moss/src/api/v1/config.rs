@@ -460,9 +460,36 @@ async fn maybe_cycle_container(
     };
 
     if needs_recreate {
-        // Container spec changed (env, volumes, command) — must recreate
+        // Container spec changed (env, volumes, command) — must recreate.
+        // Resolve image via compiled offerings index for hardware capability
+        // resolution (e.g., AVX fallback: mongo:7 → mongo:4.4).
+        let mut resolved_spec = desired_spec;
+        let offering_type = parse_offering_fqn(service_name)
+            .map(|fqn| fqn.offering.clone())
+            .unwrap_or_else(|_| service_name.to_string());
+
+        match crate::get_compiled_offering(state, &offering_type).await {
+            Ok(Some(compiled)) if compiled.image != resolved_spec.image => {
+                tracing::info!(
+                    service = %service_name,
+                    manifest_image = %resolved_spec.image,
+                    resolved_image = %compiled.image,
+                    "Using hardware-resolved image for container recreation"
+                );
+                resolved_spec.image = compiled.image;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    service = %service_name,
+                    error = ?e,
+                    "Failed to read compiled offerings index, using manifest image for recreation"
+                );
+            }
+        }
+
         tracing::info!(service = %service_name, "Config change requires container recreation");
-        if let Err(e) = state.docker.recreate_service(service_name, &desired_spec).await {
+        if let Err(e) = state.docker.recreate_service(service_name, &resolved_spec).await {
             tracing::error!(
                 service = %service_name,
                 error = ?e,

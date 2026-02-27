@@ -18,8 +18,10 @@ use koi_embedded::KoiHandle;
 /// All platforms use the same code path - no `#[cfg]` conditionals.
 pub struct MdnsHandle {
     koi: Arc<KoiHandle>,
-    /// Current registration ID (returned by Koi on register)
+    /// Current `_moss._tcp` registration ID (returned by Koi on register)
     registration_id: std::sync::RwLock<Option<String>>,
+    /// Current `_http._tcp` registration ID (web UI discoverability)
+    http_registration_id: std::sync::RwLock<Option<String>>,
     /// Stone metadata for re-registration
     stone_id: Option<String>,
     stone_name: String,
@@ -90,15 +92,55 @@ impl MdnsHandle {
                 stone_name = %self.stone_name,
                 ip = %ip,
                 mac = ?mac,
-                "mDNS service re-registered after resolution change"
+                "mDNS _moss._tcp re-registered after resolution change"
             );
         } else {
             tracing::info!(
                 stone_name = %self.stone_name,
                 ip = %ip,
                 mac = ?mac,
-                "mDNS service registered"
+                "mDNS _moss._tcp registered"
             );
+        }
+
+        // ── _http._tcp registration (web UI discoverability) ─────────
+        let old_http_id = self
+            .http_registration_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(ref old_id) = old_http_id {
+            let _ = mdns.unregister(old_id);
+        }
+
+        let http_txt = garden_common::mdns::build_http_txt(
+            &garden_common::mdns::HttpServiceComponent::Moss,
+            "/",
+            &self.version,
+        );
+
+        match mdns.register(koi_embedded::RegisterPayload {
+            name: self.stone_name.clone(),
+            service_type: garden_common::constants::HTTP_SERVICE_TYPE.to_string(),
+            port: self.port,
+            ip: Some(ip.to_string()),
+            lease_secs: None,
+            txt: http_txt,
+        }) {
+            Ok(result) => {
+                *self
+                    .http_registration_id
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(result.id);
+                tracing::info!(
+                    stone_name = %self.stone_name,
+                    port = self.port,
+                    "mDNS _http._tcp registered (portrait web UI)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to register _http._tcp mDNS service");
+            }
         }
 
         Ok(())
@@ -155,6 +197,14 @@ impl Drop for MdnsHandle {
         if let Ok(mdns) = self.koi.mdns() {
             if let Some(id) = self
                 .registration_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+            {
+                let _ = mdns.unregister(&id);
+            }
+            if let Some(id) = self
+                .http_registration_id
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
@@ -247,6 +297,7 @@ pub async fn announce_moss(
     let handle = MdnsHandle {
         koi: koi_handle,
         registration_id: std::sync::RwLock::new(None),
+        http_registration_id: std::sync::RwLock::new(None),
         stone_id: stone_id.map(|s| s.to_string()),
         stone_name: stone_name.to_string(),
         port,

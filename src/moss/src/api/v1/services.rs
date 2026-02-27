@@ -939,18 +939,18 @@ pub async fn destroy_service_v1(
     };
 
     // Hard delete: destroy Docker container first
+    // If the container doesn't exist (already removed, failed install, etc.),
+    // continue with registry cleanup — the goal is to fully remove the offering.
     if let Err(e) = state
         .docker
         .remove_service(&service_name, Some(&state.console))
         .await
     {
-        tracing::error!(error = ?e, service = %service_name, "Docker remove failed");
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DESTROY_FAILED",
-            format!("Failed to destroy service container: {}", e),
-            None,
-        ));
+        tracing::warn!(
+            service = %service_name,
+            error = ?e,
+            "Container removal failed, continuing with registry cleanup"
+        );
     }
 
     // Then remove from registry
@@ -1489,6 +1489,10 @@ fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<Api
 
 /// Build a ContainerSpec from the manifest template + any config patches.
 ///
+/// Uses the **compiled offerings index** for the image (which factors in
+/// hardware capabilities like AVX detection) and the raw manifest for
+/// command/config_files/ports (which are hardware-independent).
+///
 /// Used by both `compose_on_start` (drift convergence) and
 /// `rebuild_missing_container` (dormant container reinstall).
 async fn build_spec_from_manifest(
@@ -1507,6 +1511,11 @@ async fn build_spec_from_manifest(
             .unwrap_or_default()
     };
 
+    // Resolve the offering type (strip instance suffix for FQN lookups)
+    let offering_type = parse_offering_fqn(service_name)
+        .map(|fqn| fqn.offering.clone())
+        .unwrap_or_else(|_| service_name.to_string());
+
     let manifest = state
         .manifest_registry
         .get_offering(service_name)
@@ -1518,8 +1527,41 @@ async fn build_spec_from_manifest(
     let effective = crate::domain::config_compose::compose(&template, &patches)
         .context("Failed to compose config")?;
 
+    // Use the compiled offerings index for the image — it applies hardware
+    // capability resolution (e.g., AVX fallback: mongo:7 → mongo:4.4).
+    // Fall back to the raw manifest image if the index is unavailable.
+    let resolved_image =
+        match crate::get_compiled_offering(state, &offering_type).await {
+            Ok(Some(compiled)) => {
+                if compiled.image != effective.image {
+                    tracing::info!(
+                        service = %service_name,
+                        manifest_image = %effective.image,
+                        resolved_image = %compiled.image,
+                        "Using hardware-resolved image from compiled index"
+                    );
+                }
+                compiled.image
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    service = %service_name,
+                    "No compiled offering found, using manifest image"
+                );
+                effective.image
+            }
+            Err(e) => {
+                tracing::warn!(
+                    service = %service_name,
+                    error = ?e,
+                    "Failed to read compiled offerings index, using manifest image"
+                );
+                effective.image
+            }
+        };
+
     Ok(crate::docker::ContainerSpec {
-        image: effective.image,
+        image: resolved_image,
         command: effective.command,
         ports: effective.ports,
         environment: effective.environment,

@@ -473,6 +473,10 @@ impl AppState {
     ///
     /// Immediately syncs to self_entry and triggers chirp.
     /// This is the primary method for offering state changes.
+    ///
+    /// Dedup guard: matches by `offering_id` first, then by FQN (`name`).
+    /// This prevents duplicate entries when callers generate a fresh GUID
+    /// for an offering that already exists in the registry.
     pub async fn upsert_offering(&self, mut offering: Offering, auto_chirp: bool) {
         offering.touch();
         {
@@ -481,6 +485,19 @@ impl AppState {
                 .iter()
                 .position(|o| o.offering_id == offering.offering_id)
             {
+                // Exact ID match — update in place
+                offerings[pos] = offering;
+            } else if let Some(pos) = offerings
+                .iter()
+                .position(|o| o.name == offering.name)
+            {
+                // FQN match — same service, different ID (e.g. re-adoption)
+                tracing::info!(
+                    name = %offering.name,
+                    old_id = %offerings[pos].offering_id,
+                    new_id = %offering.offering_id,
+                    "upsert_offering: FQN already exists, updating in place"
+                );
                 offerings[pos] = offering;
             } else {
                 offerings.push(offering);
@@ -524,6 +541,60 @@ impl AppState {
         if let Err(e) = self.persist_offerings().await {
             tracing::error!(error = ?e, "Failed to persist offerings after removal");
         }
+    }
+
+    /// Coalesce duplicate offerings by FQN (name)
+    ///
+    /// When multiple entries share the same `name`, keeps the one that
+    /// was most recently updated (or registered). This is a self-heal
+    /// mechanism for registries that accumulated duplicates before the
+    /// FQN dedup guard was added to `upsert_offering`.
+    ///
+    /// Returns the number of duplicates removed.
+    pub async fn coalesce_duplicate_offerings(&self) -> usize {
+        let removed = {
+            let mut offerings = self.offerings.write().await;
+            let before = offerings.len();
+
+            // Build a map of FQN → best index (most recently updated)
+            let mut best: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (i, o) in offerings.iter().enumerate() {
+                let dominated = best.get(&o.name).is_some_and(|&prev| {
+                    let prev_ts = offerings[prev]
+                        .updated_at
+                        .unwrap_or(offerings[prev].registered_at);
+                    let cur_ts = o.updated_at.unwrap_or(o.registered_at);
+                    cur_ts <= prev_ts
+                });
+                if !dominated {
+                    best.insert(o.name.clone(), i);
+                }
+            }
+
+            let keep: std::collections::HashSet<usize> = best.into_values().collect();
+            let mut idx = 0usize;
+            offerings.retain(|_| {
+                let k = keep.contains(&idx);
+                idx += 1;
+                k
+            });
+
+            before - offerings.len()
+        };
+
+        if removed > 0 {
+            tracing::warn!(
+                removed,
+                "Coalesced duplicate offerings by FQN"
+            );
+            self.sync_self_services(true).await;
+            if let Err(e) = self.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist offerings after coalesce");
+            }
+        }
+
+        removed
     }
 
     /// Batch update offerings (for reconciliation)

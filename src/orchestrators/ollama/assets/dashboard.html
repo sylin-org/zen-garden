@@ -511,6 +511,96 @@ body {
 .fitness-legend .legend-item { display: flex; align-items: center; gap: 0.25rem; }
 .fitness-empty { font-size: 0.75rem; color: var(--stone-400); font-family: var(--font-mono); }
 
+/* ── API Reference ────────────────────────────────────────── */
+.api-table { display: flex; flex-direction: column; gap: 0.15rem; }
+.api-row {
+  display: grid; grid-template-columns: 2.5rem 1fr auto;
+  gap: 0.5rem; align-items: baseline; padding: 0.2rem 0;
+  border-bottom: 1px solid rgba(128,128,128,0.05);
+}
+.api-method {
+  font-size: 0.5rem; font-weight: 600; letter-spacing: 0.08em;
+  color: var(--accent-sage);
+}
+.api-path { color: var(--stone-900); word-break: break-all; }
+.api-desc { color: var(--stone-400); text-align: right; white-space: nowrap; }
+
+/* ── Recommendations ──────────────────────────────────────── */
+.rec-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.rec-panel {
+  background: var(--vellum-white); border: 1px solid var(--vellum-border);
+  border-radius: 3px; padding: 1.25rem;
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.03), inset 0 0 20px rgba(255,255,255,0.1);
+  transition: var(--transition-soft);
+  display: flex; flex-direction: column;
+}
+.rec-panel:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(0,0,0,0.05); }
+.rec-role {
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.18em; color: var(--stone-400);
+  margin-bottom: 0.75rem;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.rec-role-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.4rem; height: 1.4rem; border-radius: 2px;
+  font-size: 0.75rem; line-height: 1;
+  background: rgba(132,165,157,0.1); color: var(--accent-sage);
+}
+.rec-pick {
+  border-left: 2px solid var(--accent-sage); padding-left: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.rec-pick-name {
+  font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600;
+  color: var(--stone-900); word-break: break-all; line-height: 1.3;
+}
+.rec-pick-spec {
+  font-family: var(--font-mono); font-size: 0.6rem; color: var(--stone-400);
+  margin-top: 0.15rem;
+}
+.rec-pick-verdict {
+  font-family: var(--font-mono); font-size: 0.55rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-top: 0.35rem;
+}
+.rec-pick-verdict.fast { color: var(--accent-sage); }
+.rec-pick-verdict.degraded { color: var(--accent-hopeful); }
+.rec-pick-verdict.vetoed { color: var(--accent-clay); }
+.rec-pick-verdict.blocked { color: var(--accent-red); }
+.rec-pick-stones {
+  display: flex; flex-wrap: wrap; gap: 0.2rem; margin-top: 0.4rem;
+}
+.rec-chip {
+  font-family: var(--font-mono); font-size: 0.5rem;
+  padding: 0.1rem 0.35rem; border-radius: 2px;
+  border: 1px solid rgba(128,128,128,0.12); color: var(--stone-400);
+}
+.rec-chip.loaded { border-color: rgba(107,142,35,0.3); color: #6b8e23; }
+.rec-chip.blocked { border-color: rgba(139,0,0,0.25); color: #8b0000; text-decoration: line-through; opacity: 0.5; }
+.rec-pick-reason {
+  font-family: var(--font-mono); font-size: 0.55rem; color: var(--stone-400);
+  margin-top: 0.35rem; line-height: 1.5;
+}
+.rec-runners {
+  border-top: 1px solid var(--vellum-border); padding-top: 0.5rem;
+  margin-top: auto;
+}
+.rec-runner {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0.2rem 0; font-family: var(--font-mono); font-size: 0.6rem;
+}
+.rec-runner-name { color: var(--stone-600); word-break: break-all; }
+.rec-runner-score { color: var(--stone-400); white-space: nowrap; margin-left: 0.5rem; }
+.rec-empty {
+  font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
+  text-align: center; padding: 1rem; font-style: italic;
+}
+
 /* ── Side Nav ──────────────────────────────────────────────── */
 .page-layout {
   display: flex;
@@ -578,6 +668,7 @@ body {
   <a href="#tiersSection" data-nav="tiersSection">Tiers</a>
   <a href="#modelsSection" data-nav="modelsSection">Models</a>
   <a href="#fitnessSection" data-nav="fitnessSection">Fitness</a>
+  <a href="#recsSection" data-nav="recsSection">Recs</a>
   <a href="#placementSection" data-nav="placementSection">Placement</a>
   <a href="#advisorSection" data-nav="advisorSection">Advisor</a>
   <a href="#jobsSection" data-nav="jobsSection">Jobs</a>
@@ -673,8 +764,21 @@ body {
           <button class="action-btn" id="wipeAllBtn" onclick="wipeFitness('all')">Reset All</button>
         </div>
       </div>
+      <div id="fitnessSortBar" style="display:flex; gap:0.75rem; align-items:center; margin-bottom:0.5rem; font-family:var(--font-mono); font-size:0.6rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--stone-400);">
+        <span style="opacity:0.6">Sort:</span>
+        <span class="sortable" onclick="sortFitness('name')">Name <span id="fSortName">&#9650;</span></span>
+        <span class="sortable" onclick="sortFitness('size')">Size <span id="fSortSize"></span></span>
+        <span class="sortable" onclick="sortFitness('context')">Context <span id="fSortCtx"></span></span>
+        <span class="sortable" onclick="sortFitness('score')">Score <span id="fSortScore"></span></span>
+      </div>
       <div id="fitnessMatrixContainer"></div>
     </div>
+  </section>
+
+  <!-- ── Recommendations ─────────────────────────────────────── -->
+  <section id="recsSection" class="hidden">
+    <div class="section-title">Recommendations</div>
+    <div id="recsContainer" class="rec-grid"></div>
   </section>
 
   <!-- ── Placement ──────────────────────────────────────────── -->
@@ -699,7 +803,6 @@ body {
   <!-- ── Advisor ─────────────────────────────────────────── -->
   <section id="advisorSection" class="hidden">
     <div class="section-title">Topology Advisor</div>
-    <div id="advisorReasoning" class="card" style="margin-bottom:0.75rem;"></div>
     <div id="advisorGrid" class="grid-2"></div>
     <div id="advisorMeta" class="mono muted" style="font-size:0.6rem; margin-top:0.5rem; padding:0 0.25rem;"></div>
   </section>
@@ -774,6 +877,54 @@ body {
     </div>
   </section>
 
+  <!-- ── API Reference ────────────────────────────────────── -->
+  <section>
+    <div class="section-title">API Reference</div>
+    <div class="card">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:2rem; font-family:var(--font-mono); font-size:0.65rem;">
+        <div>
+          <div style="font-weight:600; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400); margin-bottom:0.75rem; font-size:0.55rem;">Proxy · :21434 (Ollama-compatible)</div>
+          <div class="api-table">
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/generate</span><span class="api-desc">Generate completion</span></div>
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/chat</span><span class="api-desc">Chat completion</span></div>
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/embed</span><span class="api-desc">Generate embeddings</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/tags</span><span class="api-desc">List all models</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/ps</span><span class="api-desc">Running models</span></div>
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/show</span><span class="api-desc">Model metadata</span></div>
+          </div>
+          <div style="font-weight:600; text-transform:uppercase; letter-spacing:0.15em; color:var(--accent-sage); margin:1rem 0 0.75rem; font-size:0.55rem;">Extension API · :21434/v1</div>
+          <div class="api-table">
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/v1/models</span><span class="api-desc">Models with placement and fitness</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/v1/stones</span><span class="api-desc">Per-stone hardware and status</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/v1/recommendations?capability=</span><span class="api-desc">Ranked model recommendations</span></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:600; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400); margin-bottom:0.75rem; font-size:0.55rem;">Dashboard · :7190</div>
+          <div class="api-table">
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/status</span><span class="api-desc">Full orchestrator snapshot</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/events</span><span class="api-desc">SSE event stream</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/settings</span><span class="api-desc">Router configuration</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/jobs</span><span class="api-desc">Background jobs</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/benchmark/results</span><span class="api-desc">Benchmark data</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/benchmark/export</span><span class="api-desc">Export fitness JSON</span></div>
+          </div>
+          <div style="font-weight:600; text-transform:uppercase; letter-spacing:0.15em; color:var(--stone-400); margin:1rem 0 0.75rem; font-size:0.55rem;">Management · :7190</div>
+          <div class="api-table">
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/management/pull</span><span class="api-desc">Pull model to stones</span></div>
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/management/delete</span><span class="api-desc">Delete model from stones</span></div>
+            <div class="api-row"><span class="api-method">GET</span><span class="api-path">/api/management/feasibility?model=</span><span class="api-desc">VRAM feasibility check</span></div>
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/benchmark/start</span><span class="api-desc">Start benchmark run</span></div>
+            <div class="api-row"><span class="api-method">POST</span><span class="api-path">/api/benchmark/cancel</span><span class="api-desc">Cancel benchmark</span></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:1rem; font-family:var(--font-mono); font-size:0.6rem; color:var(--stone-400);">
+        Capabilities: <code style="color:var(--accent-sage)">completion</code> <code style="color:var(--accent-sage)">embedding</code> <code style="color:var(--accent-sage)">vision</code> <code style="color:var(--accent-sage)">tools</code> <code style="color:var(--accent-sage)">thinking</code>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Footer ────────────────────────────────────────────── -->
   <footer style="text-align:center; padding:2rem 0;">
     <span class="mono muted" style="font-size:0.65rem;">
@@ -790,6 +941,7 @@ body {
 let state = null;
 let settings = { auto_pull_mode: 'sync', delete_on_idle: false, metrics_enabled: true };
 let modelSort = { field: 'name', dir: 'asc' };
+let fitnessSort = { type: 'meta', field: 'name', dir: 'asc' };
 let jobs = [];
 let connected = true;
 let activityRing = [];
@@ -901,6 +1053,9 @@ function render() {
   // Fitness / Benchmark
   renderBenchmark(state.benchmark || {}, state.stones || []);
 
+  // Recommendations
+  renderRecommendations();
+
   // Metrics
   renderMetrics(state.metrics || {});
 
@@ -986,6 +1141,38 @@ function sortModels(field) {
     modelSort.dir = 'asc';
   }
   if (state) renderModels(state.models || []);
+}
+
+// ── Fitness Sort ────────────────────────────────────────────────
+function sortFitness(field) {
+  if (fitnessSort.type === 'meta' && fitnessSort.field === field) {
+    fitnessSort.dir = fitnessSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    fitnessSort = { type: 'meta', field, dir: field === 'name' ? 'asc' : 'desc' };
+  }
+  if (state) renderBenchmark(state.benchmark || {}, state.stones || []);
+}
+
+function sortFitnessStone(stoneName) {
+  if (fitnessSort.type === 'stone' && fitnessSort.stone === stoneName) {
+    fitnessSort.dir = fitnessSort.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    fitnessSort = { type: 'stone', stone: stoneName, dir: 'desc' };
+  }
+  if (state) renderBenchmark(state.benchmark || {}, state.stones || []);
+}
+
+function updateFitnessSortIndicators() {
+  const fields = { name: 'fSortName', size: 'fSortSize', context: 'fSortCtx', score: 'fSortScore' };
+  Object.entries(fields).forEach(([field, id]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (fitnessSort.type === 'meta' && fitnessSort.field === field) {
+      el.textContent = fitnessSort.dir === 'asc' ? '\u25B2' : '\u25BC';
+    } else {
+      el.textContent = '';
+    }
+  });
 }
 
 function renderModels(models) {
@@ -1118,21 +1305,8 @@ function renderPlacement(placement, demand) {
 function renderAdvisor(advisor) {
   const section = document.getElementById('advisorSection');
   const gpus = advisor.gpus || [];
-  const reasoning = advisor.reasoning || [];
-  if (!gpus.length && !reasoning.length) { section.classList.add('hidden'); return; }
+  if (!gpus.length) { section.classList.add('hidden'); return; }
   section.classList.remove('hidden');
-
-  // Reasoning block
-  const reasoningEl = document.getElementById('advisorReasoning');
-  if (reasoning.length) {
-    reasoningEl.innerHTML = reasoning.map(r => {
-      const isWarning = r.includes('⚠') || r.includes('→') || r.includes('cannot fit');
-      const cls = isWarning ? 'clay' : (r.includes('looks reasonable') ? 'sage' : '');
-      return `<div class="mono ${cls}" style="font-size:0.75rem; padding:0.2rem 0;">${esc(r)}</div>`;
-    }).join('');
-  } else {
-    reasoningEl.innerHTML = '<span class="muted mono" style="font-size:0.75rem;">No recommendations</span>';
-  }
 
   // Per-GPU cards
   const grid = document.getElementById('advisorGrid');
@@ -1332,6 +1506,301 @@ function renderJobs() {
   }).join('');
 }
 
+// ── Recommendations ─────────────────────────────────────────────
+
+// Scoring constants — mirrors recommendation.rs
+const REC_PER_AVAILABLE = 50;
+const REC_PER_LOADED    = 30;
+const REC_VERDICT_FAST     = 400;
+const REC_VERDICT_DEGRADED = 200;
+const REC_VERDICT_VETOED   = 50;
+const REC_VERDICT_BLOCKED  = -1000;
+const REC_TPS_CAP    = 200;
+const REC_COLD_CAP   = 100;
+
+/// Map user-facing capability to fitness capability key.
+function recFitnessCap(cap) {
+  if (cap === 'completion' || cap === 'tools' || cap === 'thinking') return 'generate';
+  if (cap === 'embedding') return 'embed';
+  if (cap === 'vision') return 'vision';
+  return null;
+}
+
+/// Map user-facing capability to Ollama capability tag.
+function recOllamaCap(cap) {
+  if (cap === 'tools') return 'tools';
+  if (cap === 'thinking') return 'thinking';
+  if (cap === 'completion' || cap === 'tools' || cap === 'thinking') return 'completion';
+  return cap;
+}
+
+/// Capability filter: which Ollama capability tag must the model have?
+function recCapFilter(cap) {
+  if (cap === 'tools') return 'tools';
+  if (cap === 'thinking') return 'thinking';
+  return recOllamaCap(cap);
+}
+
+/// Context bonus cap per capability.
+function recContextCap(cap) {
+  if (cap === 'thinking') return 200;
+  if (cap === 'tools') return 150;
+  if (cap === 'completion') return 100;
+  return 0;
+}
+
+/// Compute recommendations for a single capability from snapshot data.
+function computeRecommendations(cap, models, stones, gpuEntries) {
+  const capFilter = recCapFilter(cap);
+  const fitCap = recFitnessCap(cap);
+
+  // Filter models by capability
+  const eligible = models.filter(m =>
+    (m.capabilities || []).some(c => c === capFilter)
+  );
+  if (!eligible.length) return null;
+
+  // Build stone lookup: healthy stones only
+  const healthyStones = (stones || []).filter(s => s.healthy !== false);
+  // Build model→stones map from stone data
+  const modelStoneMap = new Map(); // model_name → [{stone_name, endpoint, loaded}]
+  healthyStones.forEach(s => {
+    (s.models_available || []).forEach(mName => {
+      if (!modelStoneMap.has(mName)) modelStoneMap.set(mName, []);
+      const loaded = (s.models_loaded || []).some(l => (l.name || l) === mName);
+      modelStoneMap.get(mName).push({
+        stone: s.stone_name,
+        endpoint: s.endpoint,
+        loaded
+      });
+    });
+  });
+
+  // Build fitness lookup: "model|endpoint|capability" → entry
+  const fitnessLookup = new Map();
+  (gpuEntries || []).forEach(e => {
+    fitnessLookup.set(`${e.model}|${e.endpoint}|${e.capability}`, e);
+  });
+
+  // Score each eligible model
+  const scored = eligible.map(m => {
+    let score = 0;
+    const reasoning = [];
+    const stoneScores = [];
+    let bestVerdict = null;
+    let hasFitness = false;
+
+    const mStones = modelStoneMap.get(m.name) || [];
+    const availCount = mStones.length;
+    const loadedCount = mStones.filter(s => s.loaded).length;
+
+    // Layer 0: distribution
+    score += availCount * REC_PER_AVAILABLE;
+    score += loadedCount * REC_PER_LOADED;
+
+    if (availCount > 1) reasoning.push(`available on ${availCount} stones`);
+    else if (availCount === 1) reasoning.push('available on 1 stone');
+
+    if (loadedCount > 0) {
+      const names = mStones.filter(s => s.loaded).map(s => s.stone);
+      reasoning.push(`loaded on ${names.join(', ')}`);
+    }
+
+    // Layer 1: fitness
+    mStones.forEach(ms => {
+      const key = fitCap ? `${m.name}|${ms.endpoint}|${fitCap}` : null;
+      const entry = key ? fitnessLookup.get(key) : null;
+
+      const ss = {
+        stone: ms.stone,
+        endpoint: ms.endpoint,
+        verdict: null,
+        median_tps: null,
+        cold_start_ms: null,
+        loaded: ms.loaded
+      };
+
+      if (entry) {
+        hasFitness = true;
+        ss.verdict = entry.verdict;
+        ss.median_tps = entry.median_tps;
+        ss.cold_start_ms = entry.cold_start_ms;
+
+        const v = (entry.verdict || '').toLowerCase();
+        const vScore = v === 'fast' ? REC_VERDICT_FAST
+          : v === 'degraded' ? REC_VERDICT_DEGRADED
+          : v === 'vetoed' ? REC_VERDICT_VETOED
+          : v === 'blocked' ? REC_VERDICT_BLOCKED : 0;
+        score += vScore;
+
+        // TPS bonus
+        score += Math.min(Math.floor(entry.median_tps || 0), REC_TPS_CAP);
+
+        // Cold start penalty
+        score -= Math.min(Math.floor((entry.cold_start_ms || 0) / 1000), REC_COLD_CAP);
+
+        // Track best verdict
+        const vRank = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
+        const rank = vRank[v] || 0;
+        const bestRank = bestVerdict ? (vRank[bestVerdict.toLowerCase()] || 0) : 0;
+        if (rank > bestRank) bestVerdict = entry.verdict;
+      }
+
+      stoneScores.push(ss);
+    });
+
+    if (hasFitness) {
+      const fastN = stoneScores.filter(s => (s.verdict || '').toLowerCase() === 'fast').length;
+      const blockedN = stoneScores.filter(s => (s.verdict || '').toLowerCase() === 'blocked').length;
+      if (fastN > 0) reasoning.push(`fast on ${fastN} of ${stoneScores.length} stones`);
+      if (blockedN > 0) {
+        const names = stoneScores.filter(s => (s.verdict || '').toLowerCase() === 'blocked').map(s => s.stone);
+        reasoning.push(`blocked on ${names.join(', ')}`);
+      }
+    } else {
+      reasoning.push('no benchmark data');
+    }
+
+    // Layer 2: context bonuses
+    const ctxCap = recContextCap(cap);
+    if (ctxCap > 0 && m.context_length) {
+      const bonus = Math.min(Math.floor(m.context_length / 1000), ctxCap);
+      score += bonus;
+      if (m.context_length >= 32000) {
+        reasoning.push(`${Math.round(m.context_length / 1000)}K context`);
+      }
+    }
+
+    // Sort stones: best verdict first, loaded first
+    const vOrd = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
+    stoneScores.sort((a, b) => {
+      const va = vOrd[(a.verdict || '').toLowerCase()] || 0;
+      const vb = vOrd[(b.verdict || '').toLowerCase()] || 0;
+      return (vb - va) || (b.loaded - a.loaded) || a.stone.localeCompare(b.stone);
+    });
+
+    return {
+      model: m.name,
+      score,
+      verdict: bestVerdict,
+      parameter_size: m.parameter_size,
+      quantization_level: m.quantization_level,
+      context_length: m.context_length,
+      reasoning,
+      stones: stoneScores
+    };
+  });
+
+  // Sort: score desc, name asc
+  scored.sort((a, b) => (b.score - a.score) || a.model.localeCompare(b.model));
+
+  // Assign ranks
+  scored.forEach((r, i) => { r.rank = i + 1; });
+
+  return { capability: cap, recommendations: scored };
+}
+
+/// Render role-based recommendation panels.
+function renderRecommendations() {
+  const section = document.getElementById('recsSection');
+  const container = document.getElementById('recsContainer');
+  if (!state || !state.models || !state.models.length) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  const models = state.models || [];
+  const stones = state.stones || [];
+  const gpuEntries = (state.benchmark && state.benchmark.gpu_matrix)
+    ? (state.benchmark.gpu_matrix.entries || []) : [];
+
+  // Role definitions: each role maps to a capability and has presentation metadata
+  const roles = [
+    { key: 'completion', label: 'Chat / Completion',  icon: '\u{1F4AC}', desc: 'General-purpose text generation' },
+    { key: 'vision',     label: 'Vision / OCR',        icon: '\u{1F441}', desc: 'Image understanding and OCR' },
+    { key: 'tools',      label: 'Tool Use',            icon: '\u{1F527}', desc: 'Function calling and agents' },
+    { key: 'thinking',   label: 'Reasoning',           icon: '\u{1F9E0}', desc: 'Extended thinking and analysis' },
+    { key: 'embedding',  label: 'Embedding',           icon: '\u{1F50D}', desc: 'Semantic search and RAG' },
+  ];
+
+  // Discover which capabilities exist
+  const allCaps = new Set();
+  models.forEach(m => (m.capabilities || []).forEach(c => allCaps.add(c)));
+
+  let panels = '';
+  let panelCount = 0;
+
+  roles.forEach(role => {
+    const capFilter = recCapFilter(role.key);
+    if (!allCaps.has(capFilter)) return;
+
+    const result = computeRecommendations(role.key, models, stones, gpuEntries);
+    if (!result || !result.recommendations.length) return;
+    panelCount++;
+
+    const recs = result.recommendations;
+    const top = recs[0];
+    const runners = recs.slice(1, 4); // up to 3 runners-up
+
+    // Top pick details
+    const spec = [top.parameter_size, top.quantization_level].filter(Boolean).join(' / ');
+    const ctx = top.context_length
+      ? (top.context_length >= 1024 ? Math.round(top.context_length / 1024) + 'K' : top.context_length)
+      : null;
+    const specLine = [spec, ctx ? ctx + ' ctx' : ''].filter(Boolean).join(' · ');
+
+    const v = (top.verdict || '').toLowerCase();
+    const verdictHtml = v
+      ? `<div class="rec-pick-verdict ${esc(v)}">${esc(v)}${top.stones.length ? ` on ${top.stones.filter(s => (s.verdict||'').toLowerCase() === v).length}/${top.stones.length} stones` : ''}</div>`
+      : '';
+
+    // Stone chips for top pick
+    const chips = top.stones.map(s => {
+      const sv = (s.verdict || '').toLowerCase();
+      const cls = sv === 'blocked' ? 'blocked' : s.loaded ? 'loaded' : '';
+      return `<span class="rec-chip ${cls}" title="${esc(s.endpoint)}">${esc(s.stone)}</span>`;
+    }).join('');
+
+    // Reasoning (top 2 reasons)
+    const reasons = top.reasoning.slice(0, 2).map(t => esc(t)).join(' · ');
+
+    // Runners-up
+    let runnersHtml = '';
+    if (runners.length) {
+      runnersHtml = '<div class="rec-runners">';
+      runners.forEach(r => {
+        const rv = (r.verdict || '').toLowerCase();
+        const rvColor = rv === 'fast' ? 'var(--accent-sage)' : rv === 'degraded' ? 'var(--accent-hopeful)' : rv === 'blocked' ? 'var(--accent-red)' : 'var(--stone-400)';
+        const rSpec = [r.parameter_size, r.quantization_level].filter(Boolean).join('/');
+        runnersHtml += `<div class="rec-runner">
+          <span class="rec-runner-name">${esc(r.model)}</span>
+          <span class="rec-runner-score">${rSpec}${rv ? ` <span style="color:${rvColor}">${esc(rv)}</span>` : ''}</span>
+        </div>`;
+      });
+      runnersHtml += '</div>';
+    }
+
+    panels += `<div class="rec-panel">
+      <div class="rec-role"><span class="rec-role-icon">${role.icon}</span> ${esc(role.label)}</div>
+      <div class="rec-pick">
+        <div class="rec-pick-name">${esc(top.model)}</div>
+        ${specLine ? `<div class="rec-pick-spec">${esc(specLine)}</div>` : ''}
+        ${verdictHtml}
+        ${chips ? `<div class="rec-pick-stones">${chips}</div>` : ''}
+        ${reasons ? `<div class="rec-pick-reason">${reasons}</div>` : ''}
+      </div>
+      ${runnersHtml}
+    </div>`;
+  });
+
+  if (panelCount > 0) {
+    section.classList.remove('hidden');
+    container.innerHTML = panels;
+  } else {
+    section.classList.add('hidden');
+  }
+}
+
 // ── Fitness / Benchmark ─────────────────────────────────────────
 function renderBenchmark(run, stones) {
   const setupPanel  = document.getElementById('fitnessPanelSetup');
@@ -1423,6 +1892,7 @@ function renderBenchmark(run, stones) {
       ? buildLiveMatrix(stoneReports, entries)
       : buildFinalMatrix(stoneReports, entries);
     document.getElementById('fitnessMatrixContainer').innerHTML = html;
+    updateFitnessSortIndicators();
   } else {
     resultPanel.classList.add('hidden');
     document.getElementById('fitnessMatrixContainer').innerHTML = '';
@@ -1446,7 +1916,9 @@ function buildStoneHeaders(stoneNames, stoneInfo) {
                  : info.vram_mb > 0 ? info.vram_mb + 'MB' : '';
       subtitle = vram ? `${esc(gpu)} · ${vram}` : esc(gpu);
     }
-    html += `<th class="stone-header" style="--stone-hdr-color:${c}; color:${c}">${esc(sn)}`;
+    const isActive = fitnessSort.type === 'stone' && fitnessSort.stone === sn;
+    const arrow = isActive ? (fitnessSort.dir === 'desc' ? ' \u25BC' : ' \u25B2') : '';
+    html += `<th class="stone-header sortable" style="--stone-hdr-color:${c}; color:${c}" onclick="sortFitnessStone(${JSON.stringify(sn)})">${esc(sn)}${arrow}`;
     if (subtitle) html += `<span class="stone-subtitle">${subtitle}</span>`;
     html += '</th>';
   });
@@ -1512,6 +1984,47 @@ function findBestStone(results, cap) {
   return best;
 }
 
+/// Sort model names for the fitness grid.
+/// scoreFn(model) => { aggregateScore, stoneScores: Map<stone,number>, size, context }
+function sortModelNamesForFitness(modelNames, scoreFn) {
+  if (fitnessSort.type === 'meta') {
+    const dir = fitnessSort.dir === 'asc' ? 1 : -1;
+    return [...modelNames].sort((a, b) => {
+      let cmp;
+      switch (fitnessSort.field) {
+        case 'size': {
+          cmp = (scoreFn(a).size || 0) - (scoreFn(b).size || 0);
+          break;
+        }
+        case 'context': {
+          cmp = (scoreFn(a).context || 0) - (scoreFn(b).context || 0);
+          break;
+        }
+        case 'score': {
+          cmp = (scoreFn(a).aggregateScore || 0) - (scoreFn(b).aggregateScore || 0);
+          break;
+        }
+        default: // 'name'
+          cmp = a.localeCompare(b);
+      }
+      return cmp === 0 ? a.localeCompare(b) : cmp * dir;
+    });
+  }
+  // Per-stone sort
+  const dir = fitnessSort.dir === 'asc' ? 1 : -1;
+  const stone = fitnessSort.stone;
+  return [...modelNames].sort((a, b) => {
+    const scoreA = scoreFn(a).stoneScores.get(stone);
+    const scoreB = scoreFn(b).stoneScores.get(stone);
+    // Models with no data on this stone sink to the bottom
+    if (scoreA == null && scoreB == null) return a.localeCompare(b);
+    if (scoreA == null) return 1;
+    if (scoreB == null) return -1;
+    const cmp = scoreA - scoreB;
+    return cmp === 0 ? a.localeCompare(b) : cmp * dir;
+  });
+}
+
 function renderStatusCell(testStatus, errMsg) {
   switch (testStatus) {
     case 'running':
@@ -1568,7 +2081,42 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
 
   const modelSet = new Set();
   stoneReports.forEach(sr => (sr.tests || []).forEach(t => modelSet.add(t.model)));
-  const modelNames = [...modelSet].sort();
+
+  // Build model-level score index for sorting
+  const modelMetaLookup = new Map();
+  (state && state.models || []).forEach(m => modelMetaLookup.set(m.name, m));
+  const scoreCache = new Map();
+  function modelScoreFn(model) {
+    if (scoreCache.has(model)) return scoreCache.get(model);
+    const m = modelMetaLookup.get(model);
+    const stoneScores = new Map();
+    let aggMax = -Infinity;
+    stoneNames.forEach(sn => {
+      let stoneMax = -Infinity;
+      CAP_ORDER.forEach(cap => {
+        const t = testLookup.get(`${model}|${sn}|${cap}`);
+        let score = -Infinity;
+        if (t && t.status === 'done' && t.summary) {
+          score = bestStoneScore(t.summary.verdict, t.summary.median_tps, t.summary.cold_start_ms, cap);
+        } else if (t && t.status === 'done') {
+          const me = matrixLookup.get(`${model}|${sn}|${cap}`);
+          if (me) score = bestStoneScore(me.verdict, me.median_tps, me.cold_start_ms, cap);
+        }
+        if (score > stoneMax) stoneMax = score;
+      });
+      if (stoneMax > -Infinity) stoneScores.set(sn, stoneMax);
+      if (stoneMax > aggMax) aggMax = stoneMax;
+    });
+    const result = {
+      aggregateScore: aggMax > -Infinity ? aggMax : 0,
+      stoneScores,
+      size: m ? (m.size_disk_mb || 0) : 0,
+      context: m ? (m.context_length || 0) : 0,
+    };
+    scoreCache.set(model, result);
+    return result;
+  }
+  const modelNames = sortModelNamesForFitness([...modelSet], modelScoreFn);
 
   let html = '<table class="fitness-matrix"><thead><tr>';
   html += buildStoneHeaders(stoneNames, stoneInfo);
@@ -1614,12 +2162,43 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
 // ── Final matrix (from gpu_matrix.entries only — legacy compat) ──
 function buildFinalMatrix(stoneReports, entries) {
   const stoneNames = [...new Set(entries.map(e => e.stone_name))].sort();
-  const modelNames = [...new Set(entries.map(e => e.model))].sort();
   const lookup = new Map();
   entries.forEach(e => lookup.set(`${e.model}|${e.stone_name}|${e.capability}`, e));
 
   const stoneInfo = new Map();
   stoneReports.forEach(sr => stoneInfo.set(sr.stone_name, { gpu: sr.gpu_model || '', vram_mb: sr.vram_mb || 0 }));
+
+  // Build model-level score index for sorting
+  const modelMetaLookup = new Map();
+  (state && state.models || []).forEach(m => modelMetaLookup.set(m.name, m));
+  const scoreCache = new Map();
+  function modelScoreFn(model) {
+    if (scoreCache.has(model)) return scoreCache.get(model);
+    const m = modelMetaLookup.get(model);
+    const stoneScores = new Map();
+    let aggMax = -Infinity;
+    stoneNames.forEach(sn => {
+      let stoneMax = -Infinity;
+      CAP_ORDER.forEach(cap => {
+        const e = lookup.get(`${model}|${sn}|${cap}`);
+        if (e) {
+          const score = bestStoneScore(e.verdict, e.median_tps, e.cold_start_ms, cap);
+          if (score > stoneMax) stoneMax = score;
+        }
+      });
+      if (stoneMax > -Infinity) stoneScores.set(sn, stoneMax);
+      if (stoneMax > aggMax) aggMax = stoneMax;
+    });
+    const result = {
+      aggregateScore: aggMax > -Infinity ? aggMax : 0,
+      stoneScores,
+      size: m ? (m.size_disk_mb || 0) : 0,
+      context: m ? (m.context_length || 0) : 0,
+    };
+    scoreCache.set(model, result);
+    return result;
+  }
+  const modelNames = sortModelNamesForFitness([...new Set(entries.map(e => e.model))], modelScoreFn);
 
   let html = '<table class="fitness-matrix"><thead><tr>';
   html += buildStoneHeaders(stoneNames, stoneInfo);

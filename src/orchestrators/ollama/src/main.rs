@@ -189,6 +189,10 @@ async fn main() -> Result<()> {
     let proxy_router = Router::new()
         .route("/v1/models", axum::routing::get(extension::get_models))
         .route("/v1/stones", axum::routing::get(extension::get_stones))
+        .route(
+            "/v1/recommendations",
+            axum::routing::get(extension::get_recommendations),
+        )
         .fallback(proxy::proxy_handler)
         .with_state(proxy_state);
 

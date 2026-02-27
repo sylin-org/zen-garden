@@ -7,8 +7,11 @@
 //! which Ollama will never claim — zero collision risk.
 
 use crate::api::proxy::ProxyState;
-use axum::{extract::State, response::IntoResponse, Json};
-use serde::Serialize;
+use crate::domain::recommendation;
+use axum::extract::{Query, State};
+use axum::response::IntoResponse;
+use axum::Json;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
 // ── /v1/models ───────────────────────────────────────────────────
@@ -219,4 +222,35 @@ pub async fn get_stones(State(state): State<ProxyState>) -> impl IntoResponse {
     stones.sort_by(|a, b| a.name.cmp(&b.name));
 
     Json(V1StonesResponse { stones })
+}
+
+// ── /v1/recommendations ─────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct RecommendationQuery {
+    /// One of: completion, embedding, vision, tools, thinking.
+    pub capability: String,
+}
+
+/// `GET /v1/recommendations?capability=vision` — ranked model recommendations
+/// for a given capability, scored by distribution, fitness, and context window.
+pub async fn get_recommendations(
+    State(state): State<ProxyState>,
+    Query(params): Query<RecommendationQuery>,
+) -> impl IntoResponse {
+    let models = state.app.models.read().await;
+    let instances = state.app.instances.read().await;
+    let gpu_matrix = {
+        let run = state.app.benchmark_run.read().await;
+        run.gpu_matrix.clone()
+    };
+
+    let resp = recommendation::recommend(
+        &params.capability,
+        &models,
+        &instances,
+        &gpu_matrix,
+    );
+
+    Json(resp)
 }

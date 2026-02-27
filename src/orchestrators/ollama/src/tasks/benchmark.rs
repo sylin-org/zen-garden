@@ -717,14 +717,16 @@ async fn run_stone(
                     || (msg.contains("resource limitation") || msg.contains("failed to load"));
 
                 if is_timeout {
-                    // Timeout → record as Vetoed with synthetic summary.
+                    // Timeout → record as Blocked.  A model that cannot
+                    // finish within the benchmark window is unusable; the
+                    // router must not route here.
                     tracing::info!(
                         stone = %stone_name, model = %model_name,
-                        mode = %capability, "benchmark timed out — recording as Vetoed"
+                        mode = %capability, "benchmark timed out — recording as Blocked"
                     );
                     record_synthetic_verdict(
                         state, stone_name, model_name, capability,
-                        Verdict::Vetoed, "timed out",
+                        Verdict::Blocked, "timed out",
                     ).await;
                 } else if is_resource_limit {
                     // Resource exhaustion → record as Blocked.

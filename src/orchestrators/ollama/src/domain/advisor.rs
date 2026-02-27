@@ -280,12 +280,33 @@ pub fn advise_topology(gpus: &[GpuSlot], models: &[ModelSlot]) -> TopologyAdvice
         });
     }
 
-    // Report unplaced models
+    // Report unplaced models — distinguish individually oversized from
+    // collective overflow.  Only warn about models too large for any single GPU.
+    let max_gpu_vram = gpus.iter().map(|g| g.vram_bytes).max().unwrap_or(0);
+    let mut truly_oversized: Vec<&ModelSlot> = Vec::new();
+    let mut overflow_count: usize = 0;
+
     for m in &unplaced {
+        if m.vram_bytes + MIN_HEADROOM > max_gpu_vram {
+            truly_oversized.push(m);
+        } else {
+            overflow_count += 1;
+        }
+    }
+
+    for m in &truly_oversized {
         reasoning.push(format!(
-            "⚠ {} ({} MB) cannot fit on any GPU — needs larger VRAM or fewer models",
+            "⚠ {} ({} MB) exceeds largest GPU ({} MB) — needs larger VRAM",
             m.name,
             m.vram_bytes / 1_048_576,
+            max_gpu_vram / 1_048_576,
+        ));
+    }
+
+    if overflow_count > 0 {
+        reasoning.push(format!(
+            "{} model(s) not placed — more models than VRAM can hold simultaneously (Ollama loads on demand, this is normal)",
+            overflow_count,
         ));
     }
 
@@ -314,7 +335,7 @@ pub fn advise_topology(gpus: &[GpuSlot], models: &[ModelSlot]) -> TopologyAdvice
         reasoning.push("Current topology looks reasonable — no changes recommended.".into());
     }
 
-    let has_recommendations = !unplaced.is_empty()
+    let has_recommendations = !truly_oversized.is_empty()
         || gpu_advice
             .iter()
             .any(|a| {
@@ -549,8 +570,8 @@ mod tests {
         let advice = advise_topology(&gpus, &models);
         assert!(advice.has_recommendations);
         assert!(
-            advice.reasoning.iter().any(|r| r.contains("cannot fit")),
-            "should warn about unplaceable model: {:?}",
+            advice.reasoning.iter().any(|r| r.contains("exceeds largest GPU")),
+            "should warn about oversized model: {:?}",
             advice.reasoning
         );
     }

@@ -4,6 +4,7 @@ pub mod lease;
 pub mod metrics;
 pub mod placement;
 pub mod policy;
+pub mod recommendation;
 pub mod reconciliation;
 pub mod routing;
 pub mod tiering;

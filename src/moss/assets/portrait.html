@@ -481,7 +481,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <span id="version">Moss v?</span> · <a href="/health">/health</a> · <a href="/api/v1/manifest">/api</a> · <a href="https://github.com/sylin-org/zen-garden" target="_blank">GitHub</a> · <a href="https://sylin.org/" target="_blank">Sylin.org</a> · tended with care 🌱
+            <span id="version">Moss v?</span> · <a href="/health">/health</a> · <a href="/api/v1/manifest">/api</a> · <a id="koi-link" href="#" target="_blank">Koi</a> · <a href="https://github.com/sylin-org/zen-garden" target="_blank">GitHub</a> · <a href="https://sylin.org/" target="_blank">Sylin.org</a> · tended with care 🌱
         </footer>
     </main>
 
@@ -1022,6 +1022,7 @@
             $('stone-uptime').textContent = id.uptime || '—';
             $('moss-uptime').textContent = id.moss_uptime || '—';
             $('version').textContent = 'Moss v' + (id.version || '?');
+            $('koi-link').href = location.protocol + '//' + location.hostname + ':5641/';
             if (id.color) {
                 document.documentElement.style.setProperty('--stone-color', id.color);
             }

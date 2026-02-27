@@ -341,6 +341,8 @@ pub async fn run(
             .certmesh(true)
             .proxy(false)
             .udp(true)
+            .dashboard(true)
+            .mdns_browser(true)
             .events(|event| {
                 tracing::debug!(?event, "koi event");
             })
@@ -365,7 +367,7 @@ pub async fn run(
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start Koi embedded: {}", e))?;
 
-        tracing::info!("Koi embedded started (mDNS + certmesh + HTTP + DNS + UDP active)");
+        tracing::info!("Koi embedded started (mDNS + certmesh + HTTP + DNS + UDP + dashboard + browser active)");
         Arc::new(handle)
     };
 

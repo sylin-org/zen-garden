@@ -11,7 +11,6 @@
 //! tended stone endpoint from shared state.
 
 use crate::gateway::{GatewayParams, KoiMdnsClient, MossGatewayClient};
-use std::collections::HashMap;
 use std::future::Future;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -67,9 +66,13 @@ pub async fn run<F, Fut>(
             return;
         }
 
-        let mut txt = HashMap::new();
-        txt.insert("garden-offering".to_string(), config.offering.clone());
-        txt.insert("garden-role".to_string(), "orchestrator".to_string());
+        let txt = garden_common::mdns::build_http_txt(
+            &garden_common::mdns::HttpServiceComponent::Orchestrator {
+                offering: config.offering.clone(),
+            },
+            "/",
+            env!("CARGO_PKG_VERSION"),
+        );
 
         match koi
             .announce(&config.mdns_name, config.port, MDNS_LEASE_SECS, txt)

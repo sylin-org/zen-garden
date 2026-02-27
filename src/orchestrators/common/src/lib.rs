@@ -9,6 +9,8 @@ pub mod events;
 pub mod gateway;
 pub mod http;
 pub mod persistence;
+pub mod resilient_stream;
+pub mod stone_catalog;
 pub mod tasks;
 pub mod tools_stream;
 pub mod topology;

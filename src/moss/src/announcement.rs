@@ -128,7 +128,7 @@ async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
 /// Send a goodbye announcement before shutdown
 ///
 /// Notifies other stones that this stone is going offline gracefully.
-/// This allows immediate offline marking instead of waiting for the 45s chirp timeout.
+/// This allows immediate offline marking instead of waiting for the 90s chirp timeout.
 ///
 /// Sends the goodbye **3 times** with 50ms gaps because UDP is unreliable
 /// and this is a one-shot message with no retry opportunity (the process

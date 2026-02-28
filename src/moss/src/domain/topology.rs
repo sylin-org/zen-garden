@@ -35,8 +35,13 @@ use tokio::sync::RwLock;
 const MAX_OFFLINE_STONES: usize = 64;
 
 /// Threshold for marking a stone as offline (seconds since last seen)
-/// Stones chirp every 30s, so 45s = 1.5 chirp cycles (tolerates 1 missed chirp)
-const OFFLINE_THRESHOLD_SECS: i64 = 45;
+///
+/// Stones chirp every 30s. At 90s (3 chirp cycles) we tolerate 2 missed
+/// chirps before declaring a stone offline — enough headroom for normal
+/// UDP jitter on busy LANs. Graceful shutdowns are handled immediately
+/// via STONE_GOODBYE, so this threshold only governs crash/network-loss
+/// detection.
+const OFFLINE_THRESHOLD_SECS: i64 = 90;
 
 /// TTL for offline stones before eviction (hours)
 const OFFLINE_EVICTION_HOURS: i64 = 24;

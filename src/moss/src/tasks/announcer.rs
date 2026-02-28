@@ -1,7 +1,7 @@
 //! Periodic announcement task
 //!
 //! Runs in background, announcing stone presence every 30 seconds.
-//! Every chirp acts as a heartbeat — peers mark stones offline after 45s
+//! Every chirp acts as a heartbeat — peers mark stones offline after 90s
 //! of silence, so chirps MUST be unconditional.
 //!
 //! Design:
@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 ///
 /// Announces stone presence every 30 seconds via all channels.
 /// Chirps unconditionally — they double as heartbeats for topology
-/// liveness (peers mark offline after 45s silence).
+/// liveness (peers mark offline after 90s silence).
 /// Skips announcements only if network is not ready (no valid LAN IP).
 ///
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).

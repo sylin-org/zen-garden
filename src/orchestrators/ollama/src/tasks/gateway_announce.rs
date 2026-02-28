@@ -18,7 +18,7 @@ const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 const MDNS_LEASE_SECS: u32 = 60;
 
 /// mDNS service name for the orchestrator.
-const MDNS_NAME: &str = "ollama-orchestrator";
+const MDNS_NAME: &str = "ZenGarden orchestrator: Ollama";
 
 /// Offering name for gateway registration.
 const OFFERING: &str = "ollama";
@@ -46,14 +46,14 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         );
 
         match koi
-            .announce(MDNS_NAME, state.proxy_port, MDNS_LEASE_SECS, txt)
+            .announce(MDNS_NAME, state.dashboard_port, MDNS_LEASE_SECS, txt)
             .await
         {
             Ok(id) => {
                 tracing::info!(
                     mdns_id = %id,
                     name = MDNS_NAME,
-                    port = state.proxy_port,
+                    port = state.dashboard_port,
                     "Gateway: mDNS registered via Koi"
                 );
                 break id;

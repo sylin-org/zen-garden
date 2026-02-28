@@ -32,7 +32,7 @@ const FQN_SCAN_SECS: u64 = 15;
 
 /// Configuration for the gateway sync task.
 pub struct GatewaySyncConfig {
-    /// mDNS service name (e.g. `"mongodb-orchestrator"`).
+    /// mDNS service name (e.g. `"ZenGarden orchestrator: MongoDB"`).
     pub mdns_name: String,
     /// Offering family (e.g. `"mongodb"`, `"redis"`).
     pub offering: String,

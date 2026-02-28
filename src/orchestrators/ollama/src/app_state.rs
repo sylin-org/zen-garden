@@ -46,6 +46,8 @@ pub struct AppState {
     pub explicit_stone: Option<String>,
     /// Proxy port (Ollama-compatible endpoint, e.g. 21434).
     pub proxy_port: u16,
+    /// Dashboard port (management UI, e.g. 7190).
+    pub dashboard_port: u16,
     /// Currently tended stone (bound via discovery or explicit).
     pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
 
@@ -105,6 +107,7 @@ impl AppState {
         koi_endpoint: String,
         explicit_stone: Option<String>,
         proxy_port: u16,
+        dashboard_port: u16,
         data_dir: String,
         config: RouterConfig,
         shutdown: CancellationToken,
@@ -121,6 +124,7 @@ impl AppState {
             koi_endpoint,
             explicit_stone,
             proxy_port,
+            dashboard_port,
             tended_stone: Arc::new(RwLock::new(None)),
             instances: Arc::new(RwLock::new(HashMap::new())),
             models: Arc::new(RwLock::new(HashMap::new())),

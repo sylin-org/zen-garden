@@ -92,6 +92,7 @@ async fn main() -> Result<()> {
         cli.koi_endpoint.clone(),
         cli.stone.clone(),
         cli.proxy_port,
+        cli.dashboard_port,
         cli.data_dir.clone(),
         config,
         shutdown.clone(),

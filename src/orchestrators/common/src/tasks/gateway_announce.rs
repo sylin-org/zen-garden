@@ -23,7 +23,7 @@ const MDNS_LEASE_SECS: u32 = 60;
 
 /// Configuration for the gateway announcement task.
 pub struct GatewayAnnounceConfig {
-    /// mDNS service name (e.g. "ollama-orchestrator", "mongodb-orchestrator").
+    /// mDNS service name (e.g. "ZenGarden orchestrator: Ollama").
     pub mdns_name: String,
     /// Offering name for gateway registration (e.g. "ollama", "mongodb").
     pub offering: String,

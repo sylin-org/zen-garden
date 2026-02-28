@@ -93,7 +93,7 @@ pub async fn run(
     shutdown: CancellationToken,
 ) {
     let config = GatewaySyncConfig {
-        mdns_name: "mongodb-orchestrator".to_string(),
+        mdns_name: "ZenGarden orchestrator: MongoDB".to_string(),
         offering: "mongodb".to_string(),
         dashboard_port: state.dashboard_port,
         koi_endpoint,

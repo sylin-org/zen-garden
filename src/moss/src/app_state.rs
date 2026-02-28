@@ -469,6 +469,30 @@ impl AppState {
         }
     }
 
+    /// Sync self_entry capabilities from the capabilities cache.
+    ///
+    /// Called after background hardware detection completes to ensure
+    /// chirps carry the freshly-detected hardware data instead of the
+    /// stale skeleton/cache loaded at boot.
+    pub async fn sync_self_capabilities(&self, auto_chirp: bool) {
+        let caps = self.capabilities.read().await.clone();
+
+        {
+            let mut entry = self.self_entry.write().await;
+            entry.capabilities = caps;
+            entry.last_seen = chrono::Utc::now();
+        }
+
+        tracing::info!("Synced self_entry capabilities from background detection");
+
+        if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
+            let entry = self.self_entry.read().await.clone();
+            if let Err(e) = crate::announcement::announce(&entry).await {
+                tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
+            }
+        }
+    }
+
     /// Add or update a single offering
     ///
     /// Immediately syncs to self_entry and triggers chirp.

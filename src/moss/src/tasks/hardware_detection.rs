@@ -116,6 +116,72 @@ fn build_ai_capabilities_summary(
     }
 }
 
+/// Merge fresh GPU detection results with cached GPU data.
+///
+/// Matches GPUs by (vendor, model) pair (case-insensitive). For matched pairs,
+/// preserves the richer value for optional fields (e.g., keeps cached VRAM when
+/// fresh detection returns None). Fresh-only GPUs are added as-is. Cached-only
+/// GPUs are dropped (hardware no longer present).
+///
+/// This prevents data regression on platforms where GPU detection tools
+/// (e.g., rocm-smi on AMD Linux) don't report VRAM on every boot.
+fn merge_gpus(cached: &[GpuInfo], fresh: &[GpuInfo]) -> Vec<GpuInfo> {
+    let mut result = Vec::with_capacity(fresh.len());
+
+    for fresh_gpu in fresh {
+        let fresh_vendor = fresh_gpu.vendor.to_lowercase();
+        let fresh_model = fresh_gpu.model.to_lowercase();
+
+        // Find matching cached GPU by vendor+model
+        let cached_match = cached.iter().find(|c| {
+            c.vendor.to_lowercase() == fresh_vendor && c.model.to_lowercase() == fresh_model
+        });
+
+        if let Some(cached_gpu) = cached_match {
+            // Merge: fresh values win, but preserve cached VRAM if fresh is None
+            let vram_mb = fresh_gpu.vram_mb.or(cached_gpu.vram_mb);
+
+            // Union capabilities (dedup, case-insensitive)
+            let mut capabilities: Vec<String> = fresh_gpu.capabilities.clone();
+            for cap in &cached_gpu.capabilities {
+                if !capabilities.iter().any(|c| c.eq_ignore_ascii_case(cap)) {
+                    capabilities.push(cap.clone());
+                }
+            }
+
+            // Union AI runtimes (dedup, case-insensitive)
+            let mut ai_runtimes: Vec<String> = fresh_gpu.ai_runtimes.clone();
+            for rt in &cached_gpu.ai_runtimes {
+                if !ai_runtimes.iter().any(|r| r.eq_ignore_ascii_case(rt)) {
+                    ai_runtimes.push(rt.clone());
+                }
+            }
+
+            if fresh_gpu.vram_mb.is_none() && cached_gpu.vram_mb.is_some() {
+                tracing::info!(
+                    vendor = %fresh_gpu.vendor,
+                    model = %fresh_gpu.model,
+                    preserved_vram_mb = ?cached_gpu.vram_mb,
+                    "Preserved cached VRAM (fresh detection returned None)"
+                );
+            }
+
+            result.push(GpuInfo {
+                vendor: fresh_gpu.vendor.clone(),
+                model: fresh_gpu.model.clone(),
+                vram_mb,
+                capabilities,
+                ai_runtimes,
+            });
+        } else {
+            // New GPU not in cache, add as-is
+            result.push(fresh_gpu.clone());
+        }
+    }
+
+    result
+}
+
 pub async fn detect_capabilities_background(
     stone_name: String,
     caps_arc: Arc<RwLock<Option<HardwareCapabilities>>>,
@@ -286,12 +352,13 @@ pub async fn detect_capabilities_background(
             .take()
             .expect("capabilities should exist after CPU phase");
 
-        // Update GPU fields
-        caps.hardware.gpus = gpus.clone();
+        // Merge fresh GPU data with cached, preserving VRAM from prior detection
+        caps.hardware.gpus = merge_gpus(&caps.hardware.gpus, &gpus);
 
-        // Build and update AI capabilities summary
+        // Build AI summary from the merged list (includes preserved VRAM values)
         caps.hardware.ai_capabilities = Some(build_ai_capabilities_summary(
-            &gpus, true, // detection_complete = true
+            &caps.hardware.gpus,
+            true, // detection_complete = true
         ));
 
         // Update swap (storage moved to live metrics)
@@ -330,6 +397,11 @@ pub async fn detect_capabilities_background(
 
     tracing::info!("Hardware capability detection complete");
 
+    // Sync updated capabilities to self_entry so chirps carry fresh data.
+    // This closes the gap where Phase 9.5 copies stale/skeleton capabilities
+    // but background detection never pushes updates to self_entry.
+    state.sync_self_capabilities(true).await;
+
     // Re-evaluate offerings index now that complete hardware is known
     // This ensures compatibility warnings update (e.g., no AI → no Ollama, no AVX → MongoDB warning)
     tracing::info!("Re-evaluating offerings compatibility with detected hardware...");
@@ -341,5 +413,149 @@ pub async fn detect_capabilities_background(
             console::EventStatus::Completed,
             "[OFFERINGS] Compatibility re-evaluated".to_string(),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gpu(vendor: &str, model: &str, vram: Option<u64>) -> GpuInfo {
+        GpuInfo {
+            vendor: vendor.to_string(),
+            model: model.to_string(),
+            vram_mb: vram,
+            capabilities: vec![],
+            ai_runtimes: vec![],
+        }
+    }
+
+    fn gpu_full(
+        vendor: &str,
+        model: &str,
+        vram: Option<u64>,
+        caps: Vec<&str>,
+        runtimes: Vec<&str>,
+    ) -> GpuInfo {
+        GpuInfo {
+            vendor: vendor.to_string(),
+            model: model.to_string(),
+            vram_mb: vram,
+            capabilities: caps.into_iter().map(String::from).collect(),
+            ai_runtimes: runtimes.into_iter().map(String::from).collect(),
+        }
+    }
+
+    #[test]
+    fn merge_preserves_cached_vram_when_fresh_is_none() {
+        let cached = vec![gpu("AMD", "Radeon RX 7900 XTX", Some(24517))];
+        let fresh = vec![gpu("AMD", "Radeon RX 7900 XTX", None)];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].vram_mb, Some(24517));
+    }
+
+    #[test]
+    fn merge_fresh_vram_wins_when_both_present() {
+        let cached = vec![gpu("AMD", "Radeon RX 7900 XTX", Some(24517))];
+        let fresh = vec![gpu("AMD", "Radeon RX 7900 XTX", Some(25000))];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].vram_mb, Some(25000));
+    }
+
+    #[test]
+    fn merge_new_gpu_added_as_is() {
+        let cached = vec![gpu("AMD", "Radeon RX 7900 XTX", Some(24517))];
+        let fresh = vec![
+            gpu("AMD", "Radeon RX 7900 XTX", None),
+            gpu("NVIDIA", "RTX 4090", Some(24576)),
+        ];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].vram_mb, Some(24517)); // preserved
+        assert_eq!(result[1].vram_mb, Some(24576)); // new, as-is
+    }
+
+    #[test]
+    fn merge_removed_gpu_dropped() {
+        let cached = vec![
+            gpu("AMD", "Radeon RX 7900 XTX", Some(24517)),
+            gpu("NVIDIA", "RTX 3080", Some(10240)),
+        ];
+        let fresh = vec![gpu("AMD", "Radeon RX 7900 XTX", None)];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].vendor, "AMD");
+    }
+
+    #[test]
+    fn merge_capabilities_union() {
+        let cached = vec![gpu_full(
+            "AMD",
+            "Radeon RX 7900 XTX",
+            Some(24517),
+            vec!["vulkan", "directml"],
+            vec!["rocm/6.0"],
+        )];
+        let fresh = vec![gpu_full(
+            "AMD",
+            "Radeon RX 7900 XTX",
+            None,
+            vec!["vulkan", "opencl"],
+            vec!["rocm/6.1"],
+        )];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].capabilities.contains(&"vulkan".to_string()));
+        assert!(result[0].capabilities.contains(&"opencl".to_string()));
+        assert!(result[0].capabilities.contains(&"directml".to_string()));
+        assert!(result[0].ai_runtimes.contains(&"rocm/6.1".to_string()));
+        assert!(result[0].ai_runtimes.contains(&"rocm/6.0".to_string()));
+    }
+
+    #[test]
+    fn merge_case_insensitive_matching() {
+        let cached = vec![gpu("nvidia", "rtx 4090", Some(24576))];
+        let fresh = vec![gpu("NVIDIA", "RTX 4090", None)];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].vram_mb, Some(24576));
+        // Fresh vendor/model casing is used
+        assert_eq!(result[0].vendor, "NVIDIA");
+        assert_eq!(result[0].model, "RTX 4090");
+    }
+
+    #[test]
+    fn merge_empty_cached() {
+        let cached: Vec<GpuInfo> = vec![];
+        let fresh = vec![gpu("AMD", "Radeon RX 7900 XTX", Some(24517))];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].vram_mb, Some(24517));
+    }
+
+    #[test]
+    fn merge_empty_fresh() {
+        let cached = vec![gpu("AMD", "Radeon RX 7900 XTX", Some(24517))];
+        let fresh: Vec<GpuInfo> = vec![];
+
+        let result = merge_gpus(&cached, &fresh);
+
+        assert!(result.is_empty());
     }
 }

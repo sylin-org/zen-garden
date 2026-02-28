@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         };
 
         match mdns.register(koi_embedded::RegisterPayload {
-            name: lantern_name.clone(),
+            name: format!("ZenGarden: {}", lantern_name),
             service_type: garden_common::constants::HTTP_SERVICE_TYPE.to_string(),
             port: http_port,
             ip: ip_opt,

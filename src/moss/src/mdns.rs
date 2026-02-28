@@ -120,7 +120,7 @@ impl MdnsHandle {
         );
 
         match mdns.register(koi_embedded::RegisterPayload {
-            name: self.stone_name.clone(),
+            name: format!("ZenGarden: {}", self.stone_name),
             service_type: garden_common::constants::HTTP_SERVICE_TYPE.to_string(),
             port: self.port,
             ip: Some(ip.to_string()),

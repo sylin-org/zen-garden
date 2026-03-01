@@ -100,6 +100,19 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // Find the running offering by FQN
             let offering = self.state.find_offering(&fqn).await?;
 
+            // ORCH-0008: if an active gateway claims handler_for this offering
+            // type, this stone is ineligible — the handler owns the lifecycle.
+            {
+                let cache = self.state.topology_cache.read().await;
+                let handled = cache
+                    .values()
+                    .flat_map(|entry| entry.gateways.iter())
+                    .any(|gw| gw.handler_for.iter().any(|h| h == &offering.offering));
+                if handled {
+                    return None;
+                }
+            }
+
             // Look up the per-stone compatibility evaluation from the
             // compiled offerings index. This was already evaluated against
             // THIS stone's capabilities when the index was built.

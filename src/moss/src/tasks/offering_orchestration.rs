@@ -253,6 +253,7 @@ async fn pin_recovery(state: &AppState) {
 ///
 /// Iterates all offerings with orchestration state and dispatches by role.
 /// Skips offerings whose manifest declares `Independent` coordination (ORCH-0006).
+/// Skips offerings whose type is handled by an active gateway (ORCH-0008).
 async fn orchestration_tick(state: &AppState) -> Result<()> {
     // Build elected-types set from the offerings index (ORCH-0006 gate).
     let elected_types: std::collections::HashSet<String> = {
@@ -268,6 +269,17 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         }
     };
 
+    // ORCH-0008: collect offering types covered by any active gateway in the garden.
+    // A service registering handler_for: ["mongodb"] suppresses elections for mongodb.
+    let gateway_handled: std::collections::HashSet<String> = {
+        let cache = state.topology_cache.read().await;
+        cache
+            .values()
+            .flat_map(|entry| entry.gateways.iter())
+            .flat_map(|gw| gw.handler_for.iter().cloned())
+            .collect()
+    };
+
     let offerings = state.get_offerings().await;
 
     for offering in &offerings {
@@ -278,6 +290,12 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
         // ORCH-0006: skip Independent offerings that still carry stale state
         if !elected_types.is_empty() && !elected_types.contains(&offering.offering) {
+            continue;
+        }
+
+        // ORCH-0008: skip offerings whose type has an active handler (gateway).
+        // The handler owns the lifecycle — elections resume when it expires.
+        if gateway_handled.contains(&offering.offering) {
             continue;
         }
 

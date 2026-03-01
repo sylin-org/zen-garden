@@ -191,11 +191,11 @@ async fn run_pulse_monitor(
         state.connection_status = ConnectionStatus::Connecting;
         render_frame(&state, term);
 
-        // Try to connect
+        // Try to connect — no total timeout (SSE streams are indefinite).
+        // The client's default pool timeout handles connect-phase failures.
         let connect_result = client
             .get(&presence_url)
             .header("Accept", "text/event-stream")
-            .timeout(Duration::from_secs(10))
             .send()
             .await;
 
@@ -287,8 +287,12 @@ async fn stream_loop(
                             dirty = true;
                         }
                     }
-                    Some(Err(_)) | None => {
-                        // Disconnected
+                    Some(Err(e)) => {
+                        tracing::debug!("SSE stream error: {}", e);
+                        return true;
+                    }
+                    None => {
+                        // Stream ended (server closed connection)
                         return true;
                     }
                 }
@@ -705,7 +709,7 @@ fn render_offerings(buf: &mut String, state: &MonitorState, cols: usize, color: 
 
     for (count, offering) in state.offerings.iter().enumerate() {
         let status_char = match offering.status.as_str() {
-            "running" => {
+            "running" | "adopted" | "borrowed" => {
                 if offering.health == "healthy" {
                     "ok"
                 } else {

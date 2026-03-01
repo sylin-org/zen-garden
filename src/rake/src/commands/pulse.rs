@@ -779,7 +779,7 @@ fn render_frame(
 
     // Build frame buffer
     let mut buf = String::with_capacity(layout.cols * layout.rows);
-    buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
+    buf.push_str("\x1b[H"); // cursor home (no clear — frame buffer overwrites every cell)
 
     // Header
     for line in &header_lines {
@@ -803,6 +803,7 @@ fn render_frame(
     paint_separator(&mut buf, None, layout.cols, layout.unicode, layout.color);
 
     // Content region (wire + optional sidebar/garden)
+    let mut content_lines_used;
     match layout.mode {
         LayoutMode::Split {
             wire_cols,
@@ -810,12 +811,14 @@ fn render_frame(
         } => {
             let wire_lines = paint_wire(state, wire_cols, content_rows, &layout);
             let sidebar_lines = paint_sidebar(state, sidebar_cols, content_rows, &layout);
+            content_lines_used = wire_lines.len().max(sidebar_lines.len());
             composite_split(&mut buf, &wire_lines, &sidebar_lines, wire_cols, layout.unicode);
         }
         LayoutMode::Stacked => {
             let garden_rows = layout.garden_rows(state.topology.len());
             let wire_rows = content_rows.saturating_sub(garden_rows);
             let wire_lines = paint_wire(state, layout.cols, wire_rows, &layout);
+            content_lines_used = wire_lines.len();
             for line in &wire_lines {
                 buf.push_str(line);
                 buf.push('\n');
@@ -824,6 +827,7 @@ fn render_frame(
             if garden_rows > 0 {
                 let label = garden_summary(&state.topology, layout.cols);
                 paint_separator(&mut buf, Some(&label), layout.cols, layout.unicode, layout.color);
+                content_lines_used += 1; // separator
                 paint_garden_compact(
                     &mut buf,
                     state,
@@ -831,15 +835,23 @@ fn render_frame(
                     garden_rows.saturating_sub(1),
                     &layout,
                 );
+                content_lines_used += garden_rows.saturating_sub(1);
             }
         }
         LayoutMode::Narrow => {
             let wire_lines = paint_wire(state, layout.cols, content_rows, &layout);
+            content_lines_used = wire_lines.len();
             for line in &wire_lines {
                 buf.push_str(line);
                 buf.push('\n');
             }
         }
+    }
+
+    // Pad to fill remaining rows so footer is pinned to bottom
+    let pad_rows = content_rows.saturating_sub(content_lines_used);
+    for _ in 0..pad_rows {
+        buf.push('\n');
     }
 
     // Footer
@@ -1070,9 +1082,9 @@ fn paint_wire(
         return Vec::new();
     }
 
-    let all_events: Vec<&EventLine> = state.events.iter().collect();
-    let start = all_events.len().saturating_sub(max_rows);
-    let display_events = &all_events[start..];
+    // Most recent first (newest at top, oldest at bottom)
+    let all_events: Vec<&EventLine> = state.events.iter().rev().collect();
+    let display_events = &all_events[..all_events.len().min(max_rows)];
 
     // Compute entity column width
     let entity_width = display_events

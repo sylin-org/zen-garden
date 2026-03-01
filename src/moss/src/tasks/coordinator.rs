@@ -401,21 +401,35 @@ pub fn start_hardware_detection(
 pub fn start_registry_loader(state: AppState) {
     tokio::spawn(async move {
         // Reconcile existing offerings: if the container no longer exists, mark it offline
-        {
-            let mut offerings = state.offerings.write().await;
-            for offering in offerings.iter_mut().filter(|o| o.is_managed()) {
-                if !state
-                    .docker
-                    .zen_container_exists(&offering.name)
-                    .await
-                    .unwrap_or(false)
-                {
-                    offering.status = garden_common::OfferingStatus::Stopped;
-                    offering.health = ServiceHealthStatus::Offline;
-                }
+        // Snapshot managed offerings to avoid holding write lock during async Docker calls
+        let managed_snapshot: Vec<(String, String)> = {
+            let offerings = state.offerings.read().await;
+            offerings
+                .iter()
+                .filter(|o| o.is_managed())
+                .map(|o| (o.offering_id.clone(), o.name.clone()))
+                .collect()
+        };
+        let mut any_changed = false;
+        for (offering_id, name) in managed_snapshot {
+            if !state
+                .docker
+                .zen_container_exists(&name)
+                .await
+                .unwrap_or(false)
+            {
+                state.update_offering(&offering_id, false, |o| {
+                    o.status = garden_common::OfferingStatus::Stopped;
+                    o.health = ServiceHealthStatus::Offline;
+                    true
+                }).await;
+                any_changed = true;
             }
         }
-        let _ = state.persist_offerings().await;
+        if any_changed {
+            state.sync_self_services(true).await;
+            let _ = state.persist_offerings().await;
+        }
 
         // Coalesce any duplicate offerings that accumulated from prior versions
         let coalesced = state.coalesce_duplicate_offerings().await;

@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::infra::storage::{analyze_device, ObjectStore, SeedBankRegistry, SeedBankStore};
-use crate::infra::SseEvent;
+use crate::infra::{DomainPulse, PulseEvent};
 use crate::{error_response, AppState};
 use garden_common::presence::event_types;
 
@@ -506,17 +506,14 @@ pub async fn delete_bank_v1(
         })?;
     }
 
-    let event = SseEvent {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        event_type: event_types::STORAGE_REMOVED.to_string(),
-        message: format!("Seed bank '{}' removed", id),
-        job_id: None,
-        offering: None,
-        offering_id: None,
-        data: Some(serde_json::json!({ "name": id })),
-    };
-    let _ = state.sse_tx.send(event);
+    let pulse = DomainPulse::storage_event(
+        event_types::STORAGE_REMOVED,
+        format!("Seed bank '{}' removed", id),
+        "info",
+        None,
+        Some(serde_json::json!({ "name": id })),
+    );
+    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
 
     info!(id = %id, "Bank mount directory removed");
     Ok(StatusCode::NO_CONTENT)
@@ -566,17 +563,14 @@ pub async fn release_bank_v1(
         )
     })?;
 
-    let event = SseEvent {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        event_type: event_types::STORAGE_RELEASED.to_string(),
-        message: format!("Seed bank '{}' released", id),
-        job_id: None,
-        offering: None,
-        offering_id: None,
-        data: Some(serde_json::json!({ "name": id })),
-    };
-    let _ = state.sse_tx.send(event);
+    let pulse = DomainPulse::storage_event(
+        event_types::STORAGE_RELEASED,
+        format!("Seed bank '{}' released", id),
+        "info",
+        None,
+        Some(serde_json::json!({ "name": id })),
+    );
+    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
 
     if let Err(e) = garden_common::console::print_storage_released_ribbon(&id) {
         warn!("Failed to print released ribbon: {}", e);
@@ -1340,7 +1334,7 @@ pub async fn prepare_seed_bank_v1(
     let stone_name = state.stone_name.clone();
     let stone_id = state.stone_id.clone();
     let api_port = state.api_port;
-    let sse_tx = state.sse_tx.clone();
+    let pulse_tx = state.pulse_tx.clone();
     let tools_state = state.clone();
     let guard_device = request.device.clone();
 
@@ -1357,7 +1351,7 @@ pub async fn prepare_seed_bank_v1(
             &filesystem,
             encrypted,
             &stone_name,
-            sse_tx.clone(),
+            pulse_tx.clone(),
         )
         .await
         {
@@ -1390,17 +1384,14 @@ pub async fn prepare_seed_bank_v1(
                     error_chain = ?e,
                     "Seed bank preparation FAILED"
                 );
-                let failure_event = SseEvent {
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    level: "error".to_string(),
-                    event_type: event_types::STORAGE_PREPARE_PROGRESS.to_string(),
-                    message: format!("Preparation failed: {} - {}", name_clone, e),
-                    job_id: Some(job_id_clone.clone()),
-                    offering: None,
-                    offering_id: None,
-                    data: Some(serde_json::json!({ "name": name_clone, "error": e.to_string() })),
-                };
-                let _ = sse_tx.send(failure_event);
+                let failure_pulse = DomainPulse::storage_event(
+                    event_types::STORAGE_PREPARE_PROGRESS,
+                    format!("Preparation failed: {} - {}", name_clone, e),
+                    "error",
+                    Some(job_id_clone.clone()),
+                    Some(serde_json::json!({ "name": name_clone, "error": e.to_string() })),
+                );
+                let _ = pulse_tx.send(PulseEvent::Domain(failure_pulse));
             }
         }
     });
@@ -1424,17 +1415,16 @@ async fn run_prepare_job(
     filesystem: &str,
     encrypted: bool,
     stone_name: &str,
-    sse_tx: tokio::sync::broadcast::Sender<SseEvent>,
+    pulse_tx: tokio::sync::broadcast::Sender<PulseEvent>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
-    use chrono::Utc;
     use garden_common::storage::{SeedBankManifest, SeedBankVisibility};
 
     info!(
         job_id,
         device, name, encrypted, "Starting seed bank preparation"
     );
-    emit_progress(&sse_tx, job_id, name, "analyzing", "Analyzing device...");
+    emit_progress(&pulse_tx, job_id, name, "analyzing", "Analyzing device...");
 
     // Determine actual filesystem
     let actual_fs = if filesystem == "btrfs" && check_btrfs_support().await {
@@ -1473,7 +1463,7 @@ async fn run_prepare_job(
         .context("Failed to create mount directory")?;
 
     emit_progress(
-        &sse_tx,
+        &pulse_tx,
         job_id,
         name,
         "formatting",
@@ -1485,7 +1475,7 @@ async fn run_prepare_job(
         .await
         .context("Failed to format device")?;
 
-    emit_progress(&sse_tx, job_id, name, "mounting", "Mounting filesystem...");
+    emit_progress(&pulse_tx, job_id, name, "mounting", "Mounting filesystem...");
 
     #[cfg(target_os = "linux")]
     mount_device(device, &mount_dir)
@@ -1508,7 +1498,7 @@ async fn run_prepare_job(
     }
 
     emit_progress(
-        &sse_tx,
+        &pulse_tx,
         job_id,
         name,
         "creating",
@@ -1561,17 +1551,14 @@ async fn run_prepare_job(
     let _ = tokio::process::Command::new("sync").output().await;
 
     // Emit completion
-    let event = SseEvent {
-        timestamp: Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        event_type: event_types::STORAGE_PREPARED.to_string(),
-        message: format!("Seed bank '{}' prepared at {}", name, mount_dir.display()),
-        job_id: Some(job_id.to_string()),
-        offering: None,
-        offering_id: None,
-        data: Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
-    };
-    let _ = sse_tx.send(event);
+    let pulse = DomainPulse::storage_event(
+        event_types::STORAGE_PREPARED,
+        format!("Seed bank '{}' prepared at {}", name, mount_dir.display()),
+        "info",
+        Some(job_id.to_string()),
+        Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
+    );
+    let _ = pulse_tx.send(PulseEvent::Domain(pulse));
 
     if let Err(e) =
         garden_common::console::print_storage_prepared_ribbon(name, &mount_dir.to_string_lossy())
@@ -1584,23 +1571,20 @@ async fn run_prepare_job(
 }
 
 fn emit_progress(
-    tx: &tokio::sync::broadcast::Sender<SseEvent>,
+    tx: &tokio::sync::broadcast::Sender<PulseEvent>,
     job_id: &str,
     name: &str,
     phase: &str,
     message: &str,
 ) {
-    let event = SseEvent {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        event_type: event_types::STORAGE_PREPARE_PROGRESS.to_string(),
-        message: format!("{}: {}", phase, message),
-        job_id: Some(job_id.to_string()),
-        offering: None,
-        offering_id: None,
-        data: Some(serde_json::json!({ "name": name, "phase": phase })),
-    };
-    let _ = tx.send(event);
+    let pulse = DomainPulse::storage_event(
+        event_types::STORAGE_PREPARE_PROGRESS,
+        format!("{}: {}", phase, message),
+        "info",
+        Some(job_id.to_string()),
+        Some(serde_json::json!({ "name": name, "phase": phase })),
+    );
+    let _ = tx.send(PulseEvent::Domain(pulse));
 }
 
 async fn check_btrfs_support() -> bool {
@@ -1897,17 +1881,14 @@ pub async fn release_all_seed_banks_v1(
         });
     }
 
-    let event = SseEvent {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        level: "info".to_string(),
-        event_type: event_types::STORAGE_RELEASED.to_string(),
-        message: format!("Released {} seed banks", results.len()),
-        job_id: None,
-        offering: None,
-        offering_id: None,
-        data: Some(serde_json::json!({ "count": results.len() })),
-    };
-    let _ = state.sse_tx.send(event);
+    let pulse = DomainPulse::storage_event(
+        event_types::STORAGE_RELEASED,
+        format!("Released {} seed banks", results.len()),
+        "info",
+        None,
+        Some(serde_json::json!({ "count": results.len() })),
+    );
+    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0007: Clear all lifecycle objects (all banks released)
     {

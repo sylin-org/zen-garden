@@ -109,86 +109,101 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         let mut state_changed = false;
 
         // Phase 1: Validate health of already-adopted offerings
-        {
-            let mut offerings = state.offerings.write().await;
-            for offering in offerings.iter_mut().filter(|o| o.is_adopted()) {
-                // Find the manifest for this adopted offering
-                let manifest = state.manifest_registry.get_offering(&offering.offering);
-                if manifest.is_none() {
-                    continue; // Manifest not found, skip validation
-                }
-                let manifest = manifest.unwrap();
+        // Snapshot adopted offerings to avoid holding write lock during async work
+        let adopted_snapshot: Vec<(String, String, garden_common::OfferingLocation, ServiceHealthStatus)> = {
+            let offerings = state.offerings.read().await;
+            offerings
+                .iter()
+                .filter(|o| o.is_adopted())
+                .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone(), o.health.clone()))
+                .collect()
+        };
 
-                // Run detection to check if still available
-                match orchestrator.detect(manifest).await {
-                    Ok(result) if result.detected => {
-                        let connectivity_outcome = connectivity
-                            .ensure_connectivity(
-                                manifest,
-                                Some(&offering.location),
-                                &state.stone_name,
-                            )
-                            .await
-                            .unwrap_or_else(|e| {
-                                tracing::warn!(
-                                    offering = %offering.offering,
-                                    error = %e,
-                                    "Connectivity enforcement failed"
-                                );
-                                crate::domain::ConnectivityOutcome {
-                                    status: ConnectivityStatus::Failed,
-                                    details: format!("Connectivity enforcement error: {}", e),
-                                }
-                            });
+        for (offering_id, offering_name, location, old_health) in adopted_snapshot {
+            // Find the manifest for this adopted offering
+            let manifest = match state.manifest_registry.get_offering(&offering_name) {
+                Some(m) => m,
+                None => continue, // Manifest not found, skip validation
+            };
 
-                        // Offering is available
-                        if offering.health != ServiceHealthStatus::Healthy {
-                            tracing::info!(
-                                offering = %offering.offering,
-                                "Adopted offering came back online, marking healthy"
-                            );
-                            offering.health = ServiceHealthStatus::Healthy;
-                            state_changed = true;
-
-                            state
-                                .console
-                                .emit(garden_common::console::ConsoleEvent::new(
-                                    garden_common::console::EventCategory::Services,
-                                    garden_common::console::EventStatus::Healthy,
-                                    format!("{} is back online", offering.offering),
-                                ));
-                        }
-
-                        if !connectivity_outcome.is_ok()
-                            && offering.health == ServiceHealthStatus::Healthy
-                        {
+            // Run detection to check if still available
+            match orchestrator.detect(manifest).await {
+                Ok(result) if result.detected => {
+                    let connectivity_outcome = connectivity
+                        .ensure_connectivity(
+                            manifest,
+                            Some(&location),
+                            &state.stone_name,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
                             tracing::warn!(
-                                offering = %offering.offering,
-                                details = %connectivity_outcome.details,
-                                "Connectivity checks failed for adopted offering"
+                                offering = %offering_name,
+                                error = %e,
+                                "Connectivity enforcement failed"
                             );
-                            offering.health = ServiceHealthStatus::Degraded;
-                            state_changed = true;
-                        }
+                            crate::domain::ConnectivityOutcome {
+                                status: ConnectivityStatus::Failed,
+                                details: format!("Connectivity enforcement error: {}", e),
+                            }
+                        });
+
+                    // Offering is available
+                    if old_health != ServiceHealthStatus::Healthy {
+                        tracing::info!(
+                            offering = %offering_name,
+                            "Adopted offering came back online, marking healthy"
+                        );
+                        state.update_offering(&offering_id, false, |o| {
+                            o.health = ServiceHealthStatus::Healthy;
+                            true
+                        }).await;
+                        state_changed = true;
+
+                        state
+                            .console
+                            .emit(garden_common::console::ConsoleEvent::new(
+                                garden_common::console::EventCategory::Services,
+                                garden_common::console::EventStatus::Healthy,
+                                format!("{} is back online", offering_name),
+                            ));
                     }
-                    Ok(_) | Err(_) => {
-                        // Offering not detected - mark unhealthy (but don't remove)
-                        if offering.health == ServiceHealthStatus::Healthy {
-                            tracing::warn!(
-                                offering = %offering.offering,
-                                "Adopted offering not responding, marking offline"
-                            );
-                            offering.health = ServiceHealthStatus::Offline;
-                            state_changed = true;
 
-                            state
-                                .console
-                                .emit(garden_common::console::ConsoleEvent::new(
-                                    garden_common::console::EventCategory::Services,
-                                    garden_common::console::EventStatus::Disconnected,
-                                    format!("{} is offline", offering.offering),
-                                ));
-                        }
+                    if !connectivity_outcome.is_ok()
+                        && old_health == ServiceHealthStatus::Healthy
+                    {
+                        tracing::warn!(
+                            offering = %offering_name,
+                            details = %connectivity_outcome.details,
+                            "Connectivity checks failed for adopted offering"
+                        );
+                        state.update_offering(&offering_id, false, |o| {
+                            o.health = ServiceHealthStatus::Degraded;
+                            true
+                        }).await;
+                        state_changed = true;
+                    }
+                }
+                Ok(_) | Err(_) => {
+                    // Offering not detected - mark unhealthy (but don't remove)
+                    if old_health == ServiceHealthStatus::Healthy {
+                        tracing::warn!(
+                            offering = %offering_name,
+                            "Adopted offering not responding, marking offline"
+                        );
+                        state.update_offering(&offering_id, false, |o| {
+                            o.health = ServiceHealthStatus::Offline;
+                            true
+                        }).await;
+                        state_changed = true;
+
+                        state
+                            .console
+                            .emit(garden_common::console::ConsoleEvent::new(
+                                garden_common::console::EventCategory::Services,
+                                garden_common::console::EventStatus::Disconnected,
+                                format!("{} is offline", offering_name),
+                            ));
                     }
                 }
             }
@@ -371,8 +386,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             }
         }
 
-        // Persist changes if anything changed
+        // Sync + chirp + persist if we made changes
         if state_changed {
+            state.sync_self_services(true).await;
             if let Err(e) = state.persist_offerings().await {
                 tracing::error!(error = ?e, "Failed to persist offerings");
             }

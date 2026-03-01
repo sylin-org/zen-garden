@@ -78,14 +78,9 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
         .await
         {
             Ok(Some(adopted_offering)) => {
-                // Re-check under write lock to prevent TOCTOU duplicates
-                let mut offerings = state.offerings.write().await;
-                if offerings.iter().any(|o| o.name == offering) {
-                    skipped_existing.push(offering);
-                    continue;
-                }
+                // upsert_offering handles TOCTOU internally (idempotent insert)
                 tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
-                offerings.push(adopted_offering);
+                state.upsert_offering(adopted_offering, false).await;
                 adopted.push(offering);
             }
             Ok(None) => {

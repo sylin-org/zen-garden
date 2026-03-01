@@ -17,7 +17,7 @@ use crate::docker::DockerManager;
 use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{
     stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
-    NurturingStore, SseEvent,
+    NurturingStore, PulseEvent,
 };
 use crate::mdns::MdnsHandle;
 use crate::tasks::NetworkMonitor;
@@ -76,8 +76,13 @@ pub struct AppState {
     /// Stone identity (e.g., "stone-01", hostname)
     pub stone_name: String,
 
-    /// Unified offerings registry (all modes: managed, adopted, borrowed)
-    /// Single source of truth for all running offerings
+    /// Unified offerings registry (all modes: managed, adopted, borrowed).
+    ///
+    /// **Write access**: use gateway methods only (`update_offering`,
+    /// `update_offering_by_name`, `update_offerings_batch`, `upsert_offering`,
+    /// `remove_offering`, `remove_service`, `replace_offerings`).
+    /// Direct `.write()` is reserved for `app_state.rs` internals.
+    /// **Read access**: `.read()` is fine from anywhere.
     pub offerings: Arc<RwLock<Vec<Offering>>>,
 
     /// Manifest registry - single source of truth for all manifests
@@ -90,8 +95,9 @@ pub struct AppState {
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,
 
-    /// SSE event broadcast channel for presence streaming (Firefly, Cricket, etc.)
-    pub sse_tx: tokio::sync::broadcast::Sender<SseEvent>,
+    /// Unified pulse event channel (domain + transport events).
+    /// Consumers: pulse stream (full firehose), presence stream (domain-only, translated).
+    pub pulse_tx: tokio::sync::broadcast::Sender<PulseEvent>,
 
     /// Domain event bus (unified event dispatch for offerings, storage, stone events)
     pub event_bus: EventBus,
@@ -338,7 +344,7 @@ impl AppState {
     /// Persist offerings to disk
     ///
     /// Reads the current offerings and saves to disk atomically.
-    pub async fn persist_offerings(&self) -> anyhow::Result<()> {
+    pub(crate) async fn persist_offerings(&self) -> anyhow::Result<()> {
         let offerings = self.offerings.read().await;
         crate::infra::save_offerings(&offerings).await?;
         drop(offerings);
@@ -416,7 +422,7 @@ impl AppState {
     /// Also compiles notification tags for cross-stone awareness.
     /// Optionally triggers immediate chirp announcement (if network is ready).
     /// Called after any offerings modification.
-    pub async fn sync_self_services(&self, auto_chirp: bool) {
+    pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
         let offerings = self.offerings.read().await;
         let mut topology_services =
             garden_common::TopologyServiceEntry::from_offerings(&offerings);
@@ -474,7 +480,7 @@ impl AppState {
     /// Called after background hardware detection completes to ensure
     /// chirps carry the freshly-detected hardware data instead of the
     /// stale skeleton/cache loaded at boot.
-    pub async fn sync_self_capabilities(&self, auto_chirp: bool) {
+    pub(crate) async fn sync_self_capabilities(&self, auto_chirp: bool) {
         let caps = self.capabilities.read().await.clone();
 
         {
@@ -635,6 +641,104 @@ impl AppState {
         if let Err(e) = self.persist_offerings().await {
             tracing::error!(error = ?e, "Failed to persist offerings after batch update");
         }
+    }
+
+    // ========================================================================
+    // Offering Gateway Methods
+    // ========================================================================
+
+    /// Update a single offering by ID via a closure.
+    ///
+    /// This is the preferred way to mutate an existing offering's operational
+    /// state (status, health, port, role, etc.).  The closure receives `&mut Offering`
+    /// and returns `true` if it made changes.
+    ///
+    /// After a successful mutation, `self_entry` is synced automatically so
+    /// chirps carry current data.  Pass `auto_chirp = true` for immediate
+    /// broadcast (status changes) or `false` to let the periodic announcer
+    /// pick it up (detail-only changes).
+    pub async fn update_offering<F>(
+        &self,
+        offering_id: &str,
+        auto_chirp: bool,
+        mutator: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut Offering) -> bool,
+    {
+        let changed = {
+            let mut offerings = self.offerings.write().await;
+            if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+                mutator(o)
+            } else {
+                false
+            }
+        };
+
+        if changed {
+            self.sync_self_services(auto_chirp).await;
+        }
+
+        changed
+    }
+
+    /// Update a single offering by name (FQN) via a closure.
+    ///
+    /// Same semantics as `update_offering` but looks up by `offering.name`.
+    pub async fn update_offering_by_name<F>(
+        &self,
+        name: &str,
+        auto_chirp: bool,
+        mutator: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut Offering) -> bool,
+    {
+        let changed = {
+            let mut offerings = self.offerings.write().await;
+            if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
+                mutator(o)
+            } else {
+                false
+            }
+        };
+
+        if changed {
+            self.sync_self_services(auto_chirp).await;
+        }
+
+        changed
+    }
+
+    /// Batch-update offerings via a closure over the entire vec.
+    ///
+    /// The closure receives `&mut Vec<Offering>` and returns the count of
+    /// offerings it changed.  If > 0, self_entry is synced and offerings
+    /// are persisted to disk automatically.
+    ///
+    /// Use this for bulk operations like the health monitor's iterate-all
+    /// pattern where acquiring/releasing the lock per-offering is wasteful.
+    pub async fn update_offerings_batch<F>(
+        &self,
+        mutator: F,
+        auto_chirp: bool,
+    ) -> usize
+    where
+        F: FnOnce(&mut Vec<Offering>) -> usize,
+    {
+        let changed = {
+            let mut offerings = self.offerings.write().await;
+            mutator(&mut offerings)
+        };
+
+        if changed > 0 {
+            self.sync_self_services(auto_chirp).await;
+            if let Err(e) = self.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist after batch update");
+            }
+        }
+
+        changed
     }
 
     // ========================================================================

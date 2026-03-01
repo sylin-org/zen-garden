@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse</title>
+    <style>
+        :root {
+            --bg-base: #f4f2ee;
+            --stone-900: #1a1a1a;
+            --stone-600: #57534e;
+            --stone-400: #a8a29e;
+            --stone-200: #d6d3d1;
+            --vellum-white: rgba(255, 255, 255, 0.45);
+            --vellum-border: rgba(255, 255, 255, 0.6);
+            --accent-sage: #84a59d;
+            --accent-clay: #d4a373;
+            --accent-hopeful: #c4b060;
+            --accent-muted: #a8a29e;
+            --glass-blur: blur(14px);
+            --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+            --badge-domain: var(--accent-clay);
+            --badge-transport: var(--accent-sage);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-base: #1a1a1a;
+                --stone-900: #fafaf9;
+                --stone-600: #a8a29e;
+                --stone-400: #78716c;
+                --stone-200: #44403c;
+                --vellum-white: rgba(40, 40, 40, 0.6);
+                --vellum-border: rgba(255, 255, 255, 0.1);
+                --accent-hopeful: #d4c170;
+            }
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-base);
+            background-image:
+                radial-gradient(circle at 20% 20%, rgba(200, 200, 190, 0.3) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(190, 185, 175, 0.3) 0%, transparent 40%);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: var(--stone-900);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 2rem 1.5rem;
+            line-height: 1.5;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-image:
+                    radial-gradient(circle at 20% 20%, rgba(60, 60, 55, 0.5) 0%, transparent 40%),
+                    radial-gradient(circle at 80% 80%, rgba(50, 50, 45, 0.5) 0%, transparent 40%);
+            }
+        }
+
+        .vellum-grain {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 9999; opacity: 0.03;
+        }
+
+        .container {
+            width: 100%; max-width: 1100px;
+            display: flex; flex-direction: column; gap: 2rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+        /* Header */
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--stone-200); padding-bottom: 1rem;
+        }
+        .header-left { display: flex; align-items: baseline; gap: 1rem; }
+        .header-title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
+        .header-back {
+            font-family: ui-monospace, monospace; font-size: 0.8rem;
+            color: var(--accent-sage); text-decoration: none;
+        }
+        .header-back:hover { text-decoration: underline; }
+        .header-right { display: flex; align-items: center; gap: 1rem; font-size: 0.8rem; color: var(--stone-600); }
+        .rate-counter { font-family: ui-monospace, monospace; }
+
+        /* Connection banner */
+        .connection-banner {
+            position: fixed; top: 0; left: 0; right: 0;
+            background: #ef4444; color: white;
+            padding: 0.4rem 1rem; text-align: center;
+            font-size: 0.8rem; z-index: 1000;
+            display: none; align-items: center; justify-content: center; gap: 0.5rem;
+        }
+        .connection-banner.show { display: flex; }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: white; opacity: 0.7;
+            animation: blink 1.5s infinite;
+        }
+        @keyframes blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+        /* Panels grid */
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+        @media (max-width: 768px) {
+            .panels { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: var(--vellum-white);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--vellum-border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            display: flex; flex-direction: column; gap: 0.75rem;
+        }
+        .panel-header {
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .panel-title {
+            font-family: ui-monospace, monospace;
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em;
+            color: var(--stone-600);
+        }
+
+        /* Wire Feed */
+        .wire-feed {
+            grid-column: 1 / -1;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        .wire-list {
+            display: flex; flex-direction: column; gap: 2px;
+            font-family: ui-monospace, monospace; font-size: 0.78rem;
+        }
+        .wire-entry {
+            display: flex; gap: 0.75rem; align-items: baseline;
+            padding: 0.3rem 0.5rem; border-radius: 4px;
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+        .wire-entry:hover { background: var(--vellum-border); }
+        .wire-time { color: var(--stone-400); flex-shrink: 0; white-space: nowrap; }
+        .wire-badge {
+            display: inline-block; padding: 0.1rem 0.4rem;
+            border-radius: 3px; font-size: 0.65rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            flex-shrink: 0;
+        }
+        .wire-badge.domain { background: var(--badge-domain); color: white; }
+        .wire-badge.transport { background: var(--badge-transport); color: white; }
+        .wire-summary { color: var(--stone-900); word-break: break-word; }
+        .wire-from { color: var(--stone-400); font-size: 0.7rem; flex-shrink: 0; }
+        .wire-empty {
+            text-align: center; padding: 2rem; color: var(--stone-400);
+            font-family: ui-monospace, monospace; font-size: 0.85rem;
+        }
+
+        /* Topology panel */
+        .topo-grid {
+            display: flex; flex-direction: column; gap: 0.5rem;
+        }
+        .topo-stone {
+            display: flex; align-items: stretch; gap: 0.75rem;
+            padding: 0.6rem 0.75rem; border-radius: 8px;
+            background: var(--vellum-white);
+            border: 1px solid var(--vellum-border);
+            transition: var(--transition-soft);
+        }
+        .topo-stone.self { border-left: 3px solid var(--accent-sage); }
+        .topo-stone.stale { opacity: 0.5; }
+        .topo-stripe {
+            width: 4px; border-radius: 2px; flex-shrink: 0;
+        }
+        .topo-stripe.thriving { background: var(--accent-sage); }
+        .topo-stripe.withering { background: var(--accent-hopeful); }
+        .topo-stripe.wilting { background: #ef4444; }
+        .topo-stripe.offline { background: var(--stone-400); }
+        .topo-info { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
+        .topo-name {
+            font-weight: 600; font-size: 0.85rem;
+        }
+        .topo-meta {
+            font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-600);
+        }
+        .topo-services {
+            display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem;
+        }
+        .topo-svc {
+            display: inline-flex; align-items: center; gap: 0.3rem;
+            font-family: ui-monospace, monospace; font-size: 0.7rem;
+            color: var(--stone-600);
+        }
+        .svc-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+        }
+        .svc-dot.running { background: var(--accent-sage); }
+        .svc-dot.stopped { background: var(--stone-400); }
+        .svc-dot.degraded { background: var(--accent-hopeful); }
+        .topo-age { font-size: 0.65rem; color: var(--stone-400); margin-left: auto; align-self: flex-start; }
+
+        /* Pause button */
+        .pause-btn {
+            background: none; border: 1px solid var(--stone-200);
+            border-radius: 4px; padding: 0.2rem 0.6rem;
+            font-family: ui-monospace, monospace; font-size: 0.7rem;
+            color: var(--stone-600); cursor: pointer;
+        }
+        .pause-btn:hover { border-color: var(--stone-400); }
+        .pause-btn.active { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+
+        /* Filter buttons */
+        .filter-group { display: flex; gap: 0.3rem; }
+        .filter-btn {
+            background: none; border: 1px solid var(--stone-200);
+            border-radius: 4px; padding: 0.15rem 0.5rem;
+            font-family: ui-monospace, monospace; font-size: 0.65rem;
+            color: var(--stone-600); cursor: pointer;
+        }
+        .filter-btn:hover { border-color: var(--stone-400); }
+        .filter-btn.active { background: var(--stone-900); color: var(--bg-base); border-color: var(--stone-900); }
+    </style>
+</head>
+<body>
+    <div class="connection-banner" id="connection-banner">
+        <span class="status-dot"></span>
+        <span id="connection-message">Reconnecting...</span>
+    </div>
+
+    <svg class="vellum-grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+
+    <main class="container">
+        <div class="header">
+            <div class="header-left">
+                <span class="header-title">Pulse</span>
+                <a class="header-back" href="/">portrait</a>
+            </div>
+            <div class="header-right">
+                <span class="rate-counter" id="rate-counter">0 evt/min</span>
+                <button class="pause-btn" id="pause-btn" onclick="togglePause()">Pause</button>
+            </div>
+        </div>
+
+        <div class="panels">
+            <!-- Wire Feed -->
+            <div class="panel wire-feed">
+                <div class="panel-header">
+                    <span class="panel-title">Wire Feed</span>
+                    <div class="filter-group">
+                        <button class="filter-btn active" data-filter="all" onclick="setFilter('all', this)">All</button>
+                        <button class="filter-btn" data-filter="domain" onclick="setFilter('domain', this)">Domain</button>
+                        <button class="filter-btn" data-filter="transport" onclick="setFilter('transport', this)">Transport</button>
+                    </div>
+                </div>
+                <div class="wire-list" id="wire-list">
+                    <div class="wire-empty" id="wire-empty">Waiting for events...</div>
+                </div>
+            </div>
+
+            <!-- Topology -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Topology</span>
+                    <span class="panel-title" id="topo-count"></span>
+                </div>
+                <div class="topo-grid" id="topo-grid">
+                    <div class="wire-empty">Loading topology...</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+    (function() {
+        'use strict';
+
+        const MAX_WIRE_ENTRIES = 200;
+        const TOPO_POLL_INTERVAL = 5000;
+
+        let paused = false;
+        let filter = 'all';
+        let eventCount = 0;
+        let rateWindow = [];
+        let evtSource = null;
+        let reconnectTimer = null;
+
+        // Wire Feed
+        function addWireEntry(source, eventType, summary, from, timestamp) {
+            if (paused) return;
+
+            const list = document.getElementById('wire-list');
+            const empty = document.getElementById('wire-empty');
+            if (empty) empty.remove();
+
+            // Track rate
+            const now = Date.now();
+            rateWindow.push(now);
+            rateWindow = rateWindow.filter(t => now - t < 60000);
+            document.getElementById('rate-counter').textContent = rateWindow.length + ' evt/min';
+
+            // Apply filter
+            if (filter !== 'all' && source !== filter) return;
+
+            const entry = document.createElement('div');
+            entry.className = 'wire-entry';
+
+            const time = new Date(timestamp || Date.now());
+            const timeStr = time.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                + '.' + String(time.getMilliseconds()).padStart(3, '0');
+
+            let html = `<span class="wire-time">${timeStr}</span>`;
+            html += `<span class="wire-badge ${source}">${source.substring(0, 4)}</span>`;
+            html += `<span class="wire-summary">${escapeHtml(summary)}</span>`;
+            if (from && source === 'transport') {
+                html += `<span class="wire-from">${escapeHtml(from)}</span>`;
+            }
+
+            entry.innerHTML = html;
+            list.prepend(entry);
+
+            // Prune old entries
+            while (list.children.length > MAX_WIRE_ENTRIES) {
+                list.removeChild(list.lastChild);
+            }
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // SSE Connection
+        function connect() {
+            if (evtSource) evtSource.close();
+
+            evtSource = new EventSource('/api/v1/stone/pulse/stream');
+
+            evtSource.onopen = function() {
+                document.getElementById('connection-banner').classList.remove('show');
+                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            };
+
+            evtSource.onerror = function() {
+                document.getElementById('connection-banner').classList.add('show');
+                document.getElementById('connection-message').textContent = 'Reconnecting...';
+            };
+
+            // Domain events: event type = "domain.{event_type}"
+            // Transport events: event type = "transport.{announcement_type}"
+            // We listen for all events via onmessage won't work (named events),
+            // so we use addEventListener for known prefixes.
+
+            // Catch-all: we need to handle arbitrary event types.
+            // EventSource doesn't have a wildcard, so we override the internal handler.
+            const originalAdd = evtSource.addEventListener.bind(evtSource);
+
+            // Use a MutationObserver-style approach: patch onmessage handler
+            // Actually, let's intercept at the lower level using a wrapper.
+            // The cleanest approach: raw EventSource with onmessage doesn't fire
+            // for named events. Instead, we'll add known event type listeners.
+
+            // Domain event types we expect
+            const domainTypes = [
+                'service.started', 'service.stopped', 'service.updated', 'service.renamed',
+                'service.health.changed', 'stone.tended', 'stone.health.changed',
+                'stone.load.updated', 'stone.network.ready', 'storage.detected',
+                'storage.removed', 'storage.released', 'storage.prepared',
+                'storage.prepare.progress', 'storage.rediscovered', 'storage.readonly_detected',
+                'storage.pool_conflict', 'storage.beacon.received',
+                'storage.sync_started', 'storage.sync_completed',
+                'job.started', 'job.progress', 'job.completed', 'job.failed',
+                'pond.enrollment.changed'
+            ];
+
+            domainTypes.forEach(function(dt) {
+                evtSource.addEventListener('domain.' + dt, function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        addWireEntry('domain', dt, data.message || dt, null, data.timestamp);
+                    } catch (err) {
+                        addWireEntry('domain', dt, e.data, null, null);
+                    }
+                });
+            });
+
+            // Transport event types
+            const transportTypes = [
+                'stone_chirp', 'stone_goodbye',
+                'discovery_request', 'discovery_response',
+                'election_request', 'election_candidate', 'election_result',
+                'storage_beacon', 'tools_beacon'
+            ];
+
+            transportTypes.forEach(function(tt) {
+                evtSource.addEventListener('transport.' + tt, function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        addWireEntry('transport', tt, data.summary || tt, data.from, data.timestamp);
+                    } catch (err) {
+                        addWireEntry('transport', tt, e.data, null, null);
+                    }
+                });
+            });
+        }
+
+        // Filter
+        window.setFilter = function(f, btn) {
+            filter = f;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        };
+
+        // Pause
+        window.togglePause = function() {
+            paused = !paused;
+            const btn = document.getElementById('pause-btn');
+            btn.classList.toggle('active', paused);
+            btn.textContent = paused ? 'Resume' : 'Pause';
+        };
+
+        // Topology polling
+        let prevTopoJson = '';
+        function pollTopology() {
+            fetch('/api/v1/garden/topology')
+                .then(r => r.json())
+                .then(data => renderTopology(data))
+                .catch(() => {});
+        }
+
+        function renderTopology(data) {
+            const grid = document.getElementById('topo-grid');
+            const stones = data.stones || data.data?.stones || [];
+
+            if (!stones.length) {
+                grid.innerHTML = '<div class="wire-empty">No stones discovered</div>';
+                document.getElementById('topo-count').textContent = '';
+                return;
+            }
+
+            document.getElementById('topo-count').textContent = stones.length + ' stone' + (stones.length !== 1 ? 's' : '');
+
+            // Check if current hostname matches
+            const currentHost = location.hostname;
+
+            const json = JSON.stringify(stones);
+            if (json === prevTopoJson) return;
+            prevTopoJson = json;
+
+            grid.innerHTML = '';
+            stones.forEach(function(stone) {
+                const el = document.createElement('div');
+                el.className = 'topo-stone';
+
+                // Detect self
+                const isSelf = stone.name === currentHost
+                    || (stone.address && stone.address.includes(currentHost));
+                if (isSelf) el.classList.add('self');
+
+                // Health stripe
+                const health = (stone.health || 'thriving').toLowerCase();
+                const isOnline = stone.status !== 'offline';
+                const stripeClass = isOnline ? health : 'offline';
+                if (!isOnline) el.classList.add('stale');
+
+                // Age
+                const lastSeen = stone.last_seen ? timeSince(new Date(stone.last_seen)) : '?';
+
+                let html = `<div class="topo-stripe ${stripeClass}"></div>`;
+                html += '<div class="topo-info">';
+                html += `<span class="topo-name">${escapeHtml(stone.name)}${isSelf ? ' (self)' : ''}</span>`;
+                html += `<span class="topo-meta">${escapeHtml(stone.address || '?')}</span>`;
+
+                // Services
+                const services = stone.services || [];
+                if (services.length > 0) {
+                    html += '<div class="topo-services">';
+                    services.forEach(function(svc) {
+                        const status = (svc.status || 'running').toLowerCase();
+                        const dotClass = status === 'running' ? 'running' : (status === 'degraded' ? 'degraded' : 'stopped');
+                        html += `<span class="topo-svc"><span class="svc-dot ${dotClass}"></span>${escapeHtml(svc.name)}</span>`;
+                    });
+                    html += '</div>';
+                }
+
+                html += '</div>';
+                html += `<span class="topo-age">${lastSeen}</span>`;
+
+                el.innerHTML = html;
+                grid.appendChild(el);
+            });
+        }
+
+        function timeSince(date) {
+            const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+            if (seconds < 5) return 'now';
+            if (seconds < 60) return seconds + 's';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
+            return Math.floor(seconds / 86400) + 'd';
+        }
+
+        // Boot
+        connect();
+        pollTopology();
+        setInterval(pollTopology, TOPO_POLL_INTERVAL);
+    })();
+    </script>
+</body>
+</html>

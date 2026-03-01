@@ -556,10 +556,10 @@ pub async fn run(
     .await;
     tracing::debug!("Docker monitor started (5s retry, 30s poll)");
 
-    // Phase 8: Create domain event bus and SSE channels
+    // Phase 8: Create domain event bus and pulse channel
     let event_bus = infra::EventBus::new();
-    let (sse_tx, _) = tokio::sync::broadcast::channel::<infra::SseEvent>(256);
-    tracing::debug!("Domain event bus and SSE channels initialized");
+    let (pulse_tx, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(512);
+    tracing::debug!("Domain event bus and pulse channel initialized");
 
     // Phase 9: Capabilities loading
     let capabilities_arc = init_capabilities(&stone_id, &stone_name, &console_printer).await;
@@ -631,7 +631,7 @@ pub async fn run(
         manifest_registry: manifest_registry.clone(),
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),
-        sse_tx: sse_tx.clone(),
+        pulse_tx: pulse_tx.clone(),
         event_bus: event_bus.clone(),
         shutdown_token: shutdown_token.clone(),
         start_time: std::time::Instant::now(),
@@ -815,16 +815,20 @@ pub async fn run(
         })));
         let _chirp_handle = infra::spawn_listener(&event_bus, chirp_listener);
 
-        // SseListener: Streams domain events to connected clients (Firefly, Cricket, etc.)
-        // Uses shared sse_tx from AppState so presence.rs can subscribe directly
-        let sse_listener = infra::SseListener::new(sse_tx.clone());
-        let _sse_handle = infra::spawn_listener(&event_bus, Arc::new(sse_listener));
+        // PulseDomainBridge: Bridges domain events into the unified pulse channel
+        // Replaces former SseListener — presence.rs and pulse.rs subscribe to pulse_tx
+        let pulse_bridge = infra::PulseDomainBridge::new(pulse_tx.clone());
+        let _pulse_handle = infra::spawn_listener(&event_bus, Arc::new(pulse_bridge));
+
+        // Transport tap: Bridges raw UDP announcements into pulse channel
+        let _transport_tap_handle =
+            infra::spawn_transport_tap(pulse_tx.clone(), shutdown_token.clone());
 
         // TimerListener: Manages nurturing schedule timers (stub - no callback yet)
         let timer_listener = Arc::new(infra::TimerListener::new());
         let _timer_handle = infra::spawn_listener(&event_bus, timer_listener);
 
-        tracing::info!("Domain event listeners started (chirp, sse, timer)");
+        tracing::info!("Domain event listeners started (chirp, pulse, timer)");
     }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
@@ -1156,32 +1160,6 @@ pub async fn run(
 
     // Phase 14: Start periodic announcer (30s background task)
     crate::tasks::start_periodic_announcer(state.clone(), shutdown_token.child_token());
-
-    // Phase 15: Subscribe to domain events for immediate announcements
-    // Note: ChirpListener already handles topology announcements via EventBus
-    // This additional subscription ensures immediate sync for service changes
-    let state_for_events = state.clone();
-    let mut event_rx = state.event_bus.subscribe();
-    tokio::spawn(async move {
-        loop {
-            match event_rx.recv().await {
-                Ok(event) => {
-                    // Check if this is a service-related event that needs immediate sync
-                    if matches!(&event, crate::domain::DomainEvent::Offering(_)) {
-                        tracing::debug!(
-                            event_type = event.event_type(),
-                            "Service event detected, syncing"
-                        );
-                        state_for_events.sync_self_services(true).await;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(missed = n, "Event subscription lagged");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
 
     // Phase 16: Pre-install manifest handling
     start_preinstall_handler(&state).await;

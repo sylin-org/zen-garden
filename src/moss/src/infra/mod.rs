@@ -75,7 +75,10 @@ pub use hardware_id::{generate_hardware_id, load_cached_hardware_id, save_hardwa
 pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use harvest_store::HarvestStore;
-pub use listeners::{ChirpListener, SseEvent, SseListener, TimerListener};
+pub use listeners::{
+    ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TimerListener, TransportPulse,
+    spawn_transport_tap,
+};
 pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
 pub use manifests::{
     AdoptedConfig, BorrowedConfig, HwEntry, HwManifests, ManagedConfig, ManifestRegistry, Offering,

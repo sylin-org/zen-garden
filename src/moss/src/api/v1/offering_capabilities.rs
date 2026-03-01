@@ -109,16 +109,11 @@ pub async fn list_offering_capabilities_v1(
     if !capabilities.is_empty() {
         let sub_caps: Vec<_> = capabilities.iter().map(|c| c.to_sub_capability()).collect();
 
-        // Update in unified registry
-        {
-            let mut offerings = state.offerings.write().await;
-            if let Some(o) = offerings
-                .iter_mut()
-                .find(|o| o.offering_id == offering.offering_id)
-            {
-                o.sub_capabilities = sub_caps;
-            }
-        }
+        // Update in unified registry via gateway (detail-only, no chirp sync)
+        state.update_offering(&offering.offering_id, false, |o| {
+            o.sub_capabilities = sub_caps;
+            false // sub_capabilities are detail-only
+        }).await;
         if let Err(e) = state.persist_offerings().await {
             tracing::error!(error = ?e, "Failed to persist offerings after capability discovery");
         }

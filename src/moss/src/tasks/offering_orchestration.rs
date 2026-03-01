@@ -499,31 +499,12 @@ async fn transition_role(
     fqn: &str,
     new_role: OfferingRole,
 ) -> Result<()> {
+    // Read old role first (for logging and no-op check)
     let old_role = {
-        let mut offerings = state.offerings.write().await;
-        let offering = offerings.iter_mut().find(|o| o.offering_id == offering_id);
-
-        match offering {
-            Some(o) => {
-                let orch = o
-                    .orchestration
-                    .get_or_insert_with(OrchestrationState::default);
-                let old = orch.role.clone();
-
-                if old == new_role {
-                    return Ok(()); // No-op
-                }
-
-                orch.role = new_role.clone();
-
-                // If becoming Primary, record self as primary_stone_id
-                if new_role == OfferingRole::Primary {
-                    orch.primary_stone_id = Some(state.stone_id.clone());
-                }
-
-                o.touch();
-                old
-            }
+        let offerings = state.offerings.read().await;
+        match offerings.iter().find(|o| o.offering_id == offering_id) {
+            Some(o) => o.orchestration.as_ref().map(|orch| orch.role.clone())
+                .unwrap_or_default(),
             None => {
                 tracing::warn!(offering_id = %offering_id, "Offering not found for role transition");
                 return Ok(());
@@ -531,13 +512,27 @@ async fn transition_role(
         }
     };
 
-    // Persist outside the lock
+    if old_role == new_role {
+        return Ok(()); // No-op
+    }
+
+    // Transition via gateway — syncs self_entry + chirps
+    let stone_id = state.stone_id.clone();
+    state.update_offering(offering_id, true, |o| {
+        let orch = o
+            .orchestration
+            .get_or_insert_with(OrchestrationState::default);
+        orch.role = new_role.clone();
+        if new_role == OfferingRole::Primary {
+            orch.primary_stone_id = Some(stone_id);
+        }
+        o.touch();
+        true
+    }).await;
+
     if let Err(e) = state.persist_offerings().await {
         tracing::error!(error = ?e, "Failed to persist offerings after role transition");
     }
-
-    // Sync topology self-entry to reflect the new role in chirps
-    state.sync_self_services(true).await;
 
     tracing::info!(
         offering = %fqn,
@@ -568,12 +563,15 @@ async fn update_primary_stone_id(
     offering_id: &str,
     primary_id: &str,
 ) -> Result<()> {
-    let mut offerings = state.offerings.write().await;
-    if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
+    let primary_id_owned = primary_id.to_string();
+    state.update_offering(offering_id, false, |o| {
         if let Some(ref mut orch) = o.orchestration {
-            orch.primary_stone_id = Some(primary_id.to_string());
+            orch.primary_stone_id = Some(primary_id_owned);
+            true
+        } else {
+            false
         }
-    }
+    }).await;
     Ok(())
 }
 
@@ -623,9 +621,8 @@ async fn cleanup_independent_orchestration(state: &AppState) {
         }
     };
 
-    let mut cleaned = 0u32;
-    {
-        let mut offerings = state.offerings.write().await;
+    let cleaned = state.update_offerings_batch(|offerings| {
+        let mut count = 0;
         for o in offerings.iter_mut() {
             if o.orchestration.is_some() && !elected_types.contains(&o.offering) {
                 tracing::info!(
@@ -635,17 +632,14 @@ async fn cleanup_independent_orchestration(state: &AppState) {
                 );
                 o.orchestration = None;
                 o.touch();
-                cleaned += 1;
+                count += 1;
             }
         }
-    }
+        count
+    }, true).await;
 
     if cleaned > 0 {
         tracing::info!(count = cleaned, "Cleaned stale orchestration state from Independent offerings");
-        if let Err(e) = state.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist after orchestration cleanup");
-        }
-        state.sync_self_services(true).await;
     }
 }
 
@@ -667,30 +661,28 @@ pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str)
         "Assigning initial orchestration role"
     );
 
-    // Set orchestration state directly (no event for initial assignment — deploy event suffices)
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-            let primary_id = if new_role == OfferingRole::Primary {
-                Some(state.stone_id.clone())
-            } else {
-                find_remote_primary(state, fqn).await
-            };
+    // Resolve primary_id before taking the write lock
+    let primary_id = if new_role == OfferingRole::Primary {
+        Some(state.stone_id.clone())
+    } else {
+        find_remote_primary(state, fqn).await
+    };
 
-            o.orchestration = Some(OrchestrationState {
-                role: new_role,
-                primary_stone_id: primary_id,
-                pinned: false,
-                pin_timestamp: None,
-            });
-            o.touch();
-        }
-    }
+    // Set orchestration state via gateway (no event for initial assignment — deploy event suffices)
+    state.update_offering(offering_id, true, |o| {
+        o.orchestration = Some(OrchestrationState {
+            role: new_role,
+            primary_stone_id: primary_id,
+            pinned: false,
+            pin_timestamp: None,
+        });
+        o.touch();
+        true
+    }).await;
 
     if let Err(e) = state.persist_offerings().await {
         tracing::error!(error = ?e, "Failed to persist offerings after initial role assignment");
     }
-    state.sync_self_services(true).await;
 
     Ok(())
 }

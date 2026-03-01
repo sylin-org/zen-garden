@@ -1058,6 +1058,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dlopen2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09b4f5f101177ff01b8ec4ecc81eead416a8aa42819a2869311b3420fa114ffa"
+dependencies = [
+ "libc",
+ "once_cell",
+ "winapi",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2345,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "koi-certmesh"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "axum",
  "chrono",
@@ -2371,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "koi-client"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "hickory-proto",
  "koi-common",
@@ -2385,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "koi-common"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "async-stream",
  "axum",
@@ -2404,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "koi-config"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "koi-common",
  "serde",
@@ -2416,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "koi-crypto"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2441,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "koi-dns"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "axum",
  "hickory-proto",
@@ -2462,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "koi-embedded"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "axum",
  "futures-util",
@@ -2479,6 +2490,7 @@ dependencies = [
  "koi-mdns",
  "koi-proxy",
  "koi-udp",
+ "netdev",
  "reqwest",
  "serde",
  "serde_json",
@@ -2488,12 +2500,14 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "tracing",
+ "utoipa",
+ "utoipa-scalar",
  "uuid",
 ]
 
 [[package]]
 name = "koi-health"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "axum",
  "chrono",
@@ -2515,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "koi-mdns"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "async-stream",
  "axum",
@@ -2537,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "koi-proxy"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "axum",
  "axum-server",
@@ -2565,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "koi-truststore"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "koi-common",
  "thiserror 2.0.17",
@@ -2574,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "koi-udp"
-version = "0.2.202602261914"
+version = "0.2.202602280206"
 dependencies = [
  "async-stream",
  "axum",
@@ -2939,6 +2953,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "netdev"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f901362e84cd407be6f8cd9d3a46bccf09136b095792785401ea7d283c79b91d"
+dependencies = [
+ "dlopen2",
+ "ipnet",
+ "libc",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
+ "once_cell",
+ "system-configuration",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "netlink-packet-core"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72724faf704479d67b388da142b186f916188505e7e0b26719019c525882eda4"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "netlink-packet-utils",
+]
+
+[[package]]
+name = "netlink-packet-route"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "053998cea5a306971f88580d0829e90f270f940befd7cf928da179d4187a5a66"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "byteorder",
+ "libc",
+ "netlink-packet-core",
+ "netlink-packet-utils",
+]
+
+[[package]]
+name = "netlink-packet-utils"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ede8a08c71ad5a95cdd0e4e52facd37190977039a4704eb82a283f713747d34"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "paste",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "netlink-sys"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd6c30ed10fa69cc491d491b85cc971f6bdeb8e7367b7cde2ee6cc878d583fae"
+dependencies = [
+ "bytes",
+ "libc",
+ "log",
+]
+
+[[package]]
 name = "network-interface"
 version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3189,6 +3268,12 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pathdiff"
@@ -4353,6 +4438,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-configuration"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c879d448e9d986b661742763247d3693ed13609438cf3d006f51f5368a5ba6b"
+dependencies = [
+ "bitflags 2.10.0",
+ "core-foundation 0.9.4",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "tagptr"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4900,6 +5006,18 @@ dependencies = [
  "quote",
  "regex",
  "syn",
+]
+
+[[package]]
+name = "utoipa-scalar"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59559e1509172f6b26c1cdbc7247c4ddd1ac6560fe94b584f81ee489b141f719"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "utoipa",
 ]
 
 [[package]]

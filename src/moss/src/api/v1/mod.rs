@@ -24,6 +24,7 @@ pub mod offerings;
 pub mod pond;
 pub mod portrait;
 pub mod presence;
+pub mod pulse;
 pub mod s3_gateway;
 pub mod services;
 pub mod stone;

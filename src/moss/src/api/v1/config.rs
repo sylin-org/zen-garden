@@ -215,18 +215,16 @@ pub async fn patch_config_v1(
         )
     })?;
 
-    // Write patches to the offering
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(offering) = offerings
-            .iter_mut()
-            .find(|o| o.name == service_name && o.is_managed())
-        {
-            if let Some(managed) = offering.managed_data_mut() {
-                managed.config_patches = patches_after.clone();
+    // Write patches to the offering via gateway (detail-only, no chirp sync)
+    let patches = patches_after.clone();
+    state.update_offering_by_name(&service_name, false, |o| {
+        if o.is_managed() {
+            if let Some(managed) = o.managed_data_mut() {
+                managed.config_patches = patches;
             }
         }
-    }
+        false // config patches are detail-only, don't trigger sync
+    }).await;
 
     // Persist
     if let Err(e) = state.persist_offerings().await {
@@ -316,18 +314,16 @@ pub async fn delete_config_v1(
         )
     })?;
 
-    // Write updated patches
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(offering) = offerings
-            .iter_mut()
-            .find(|o| o.name == service_name && o.is_managed())
-        {
-            if let Some(managed) = offering.managed_data_mut() {
-                managed.config_patches = patches_after.clone();
+    // Write updated patches via gateway (detail-only, no chirp sync)
+    let patches = patches_after.clone();
+    state.update_offering_by_name(&service_name, false, |o| {
+        if o.is_managed() {
+            if let Some(managed) = o.managed_data_mut() {
+                managed.config_patches = patches;
             }
         }
-    }
+        false // config patches are detail-only, don't trigger sync
+    }).await;
 
     // Persist
     if let Err(e) = state.persist_offerings().await {

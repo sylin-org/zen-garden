@@ -6,10 +6,10 @@
 //! # Event Flow
 //!
 //! ```text
-//! emit_job_progress() ──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
-//! emit_job_started()  ──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
-//! emit_job_completed()──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
-//! emit_job_failed()   ──► EventBus ──► SseListener ──► /api/v1/stone/presence/stream
+//! emit_job_progress() ──► EventBus ──► PulseDomainBridge ──► /api/v1/stone/presence/stream
+//! emit_job_started()  ──► EventBus ──► PulseDomainBridge ──► /api/v1/stone/presence/stream
+//! emit_job_completed()──► EventBus ──► PulseDomainBridge ──► /api/v1/stone/presence/stream
+//! emit_job_failed()   ──► EventBus ──► PulseDomainBridge ──► /api/v1/stone/presence/stream
 //! ```
 //!
 //! # Event Types
@@ -31,7 +31,7 @@ use crate::AppState;
 
 /// Emit a job progress event via the unified EventBus
 ///
-/// Routes job progress through the EventBus → SseListener → presence stream.
+/// Routes job progress through the EventBus → PulseDomainBridge → presence stream.
 ///
 /// # Arguments
 /// * `state` - Application state containing EventBus

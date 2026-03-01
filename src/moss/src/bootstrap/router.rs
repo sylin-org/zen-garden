@@ -38,6 +38,7 @@ pub fn configure_public(state: AppState) -> Router {
         // ROOT LEVEL - Industry standard endpoints
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
+        .route("/pulse", get(api::v1::pulse::get_pulse_page))
         .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
@@ -104,6 +105,10 @@ pub fn configure_public(state: AppState) -> Router {
         .route(
             "/api/v1/stone/presence/stream",
             get(api::v1::presence::stream_stone_presence),
+        )
+        .route(
+            "/api/v1/stone/pulse/stream",
+            get(api::v1::pulse::stream_pulse),
         )
         .route(
             "/api/v1/stone/nourishment",
@@ -223,6 +228,7 @@ pub fn configure(state: AppState) -> Router {
         // ROOT LEVEL - Industry standard endpoints
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
+        .route("/pulse", get(api::v1::pulse::get_pulse_page))
         .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
@@ -540,6 +546,11 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/presence/notify",
             post(api::v1::presence::notify_presence),
+        )
+        // Stone pulse (full firehose: domain + transport events)
+        .route(
+            "/api/v1/stone/pulse/stream",
+            get(api::v1::pulse::stream_pulse),
         )
         // Stone nourishment (updates for THIS stone)
         .route(

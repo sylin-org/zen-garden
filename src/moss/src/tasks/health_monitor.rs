@@ -105,34 +105,33 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 }
             };
 
-            // Update offerings if status or health changed
+            // Update offerings if status or health changed (via gateway — syncs self_entry)
             if new_status != old_status || new_health != old_health {
-                let mut offerings = state.offerings.write().await;
-                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id)
-                {
-                    tracing::info!(
-                        offering = %name,
-                        old_status = ?old_status,
-                        new_status = ?new_status,
-                        old_health = ?old_health,
-                        new_health = ?new_health,
-                        "Offering state changed"
-                    );
-                    offering.status = new_status;
-                    offering.health = new_health;
-                    state_changed = true;
-                }
+                tracing::info!(
+                    offering = %name,
+                    old_status = ?old_status,
+                    new_status = ?new_status,
+                    old_health = ?old_health,
+                    new_health = ?new_health,
+                    "Offering state changed"
+                );
+                // auto_chirp=false: defer chirp to end of cycle for batching
+                state.update_offering(&offering_id, false, |o| {
+                    o.status = new_status;
+                    o.health = new_health;
+                    true
+                }).await;
+                state_changed = true;
             }
 
-            // Update container resource metrics
+            // Update container resource metrics (detail-only, no chirp impact)
             if let Ok(resources) = state.docker.get_container_stats(&name).await {
-                let mut offerings = state.offerings.write().await;
-                if let Some(offering) = offerings.iter_mut().find(|o| o.offering_id == offering_id)
-                {
-                    if let Some(ref mut managed) = offering.managed_data_mut() {
+                state.update_offering(&offering_id, false, |o| {
+                    if let Some(ref mut managed) = o.managed_data_mut() {
                         managed.resources = Some(resources);
                     }
-                }
+                    false // resources are detail-only, don't trigger sync
+                }).await;
             }
 
             // Port reconciliation: detect if Docker port bindings differ from registry.
@@ -140,13 +139,12 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             // port), so multi-port services don't randomly switch to a secondary port.
             if new_status == OfferingStatus::Running {
                 if let Ok(docker_ports) = state.docker.get_container_ports(&name).await {
-                    let mut offerings = state.offerings.write().await;
-                    if let Some(offering) =
-                        offerings.iter_mut().find(|o| o.offering_id == offering_id)
-                    {
-                        let current_port = offering.location.port;
-                        // Pick the Docker port matching the registry's known primary port;
-                        // only fall back to first if the primary isn't in the Docker list.
+                    let current_port = {
+                        let offerings = state.offerings.read().await;
+                        offerings.iter().find(|o| o.offering_id == offering_id)
+                            .map(|o| o.location.port)
+                    };
+                    if let Some(current_port) = current_port {
                         let best_port = docker_ports
                             .iter()
                             .find(|(h, _)| *h == current_port)
@@ -154,14 +152,17 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                             .map(|(h, _)| *h);
 
                         if let Some(actual_host_port) = best_port {
-                            if offering.location.port != actual_host_port {
+                            if current_port != actual_host_port {
                                 tracing::info!(
                                     offering = %name,
-                                    registry_port = offering.location.port,
+                                    registry_port = current_port,
                                     docker_port = actual_host_port,
                                     "Port mismatch detected, updating registry"
                                 );
-                                offering.location.port = actual_host_port;
+                                state.update_offering(&offering_id, false, |o| {
+                                    o.location.port = actual_host_port;
+                                    true
+                                }).await;
                                 state_changed = true;
                             }
                         }
@@ -181,18 +182,23 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                             template.connection.as_ref(),
                         );
 
-                    let mut offerings = state.offerings.write().await;
-                    if let Some(offering) =
-                        offerings.iter_mut().find(|o| o.offering_id == offering_id)
-                    {
-                        if offering.location.protocol != expected_protocol {
+                    let current_protocol = {
+                        let offerings = state.offerings.read().await;
+                        offerings.iter().find(|o| o.offering_id == offering_id)
+                            .map(|o| o.location.protocol.clone())
+                    };
+                    if let Some(current_protocol) = current_protocol {
+                        if current_protocol != expected_protocol {
                             tracing::info!(
                                 offering = %name,
-                                old_protocol = %offering.location.protocol,
+                                old_protocol = %current_protocol,
                                 new_protocol = %expected_protocol,
                                 "Protocol mismatch detected, updating registry"
                             );
-                            offering.location.protocol = expected_protocol;
+                            state.update_offering(&offering_id, false, |o| {
+                                o.location.protocol = expected_protocol;
+                                true
+                            }).await;
                             state_changed = true;
                         }
                     }
@@ -311,8 +317,11 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
         }
 
-        // Persist if we made changes (upsert_offering already persists, but manual changes need explicit persist)
+        // Sync + chirp + persist if we made changes.
+        // The gateway calls above used auto_chirp=false to batch changes;
+        // now emit a single chirp with the final state.
         if state_changed {
+            state.sync_self_services(true).await;
             let _ = state.persist_offerings().await;
         }
     }

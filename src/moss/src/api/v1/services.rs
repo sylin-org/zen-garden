@@ -491,13 +491,11 @@ pub async fn rest_service_v1(
         ));
     }
 
-    // Update status
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-            o.status = OfferingStatus::Stopped;
-        }
-    }
+    // Update status via gateway (syncs self_entry for chirps)
+    state.update_offering(&offering_id, true, |o| {
+        o.status = OfferingStatus::Stopped;
+        true
+    }).await;
 
     if let Err(e) = state.persist_offerings().await {
         tracing::warn!(error = ?e, "Failed to persist offerings after rest");
@@ -620,13 +618,11 @@ pub async fn wake_service_v1(
         }
     }
 
-    // Update status
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-            o.status = OfferingStatus::Running;
-        }
-    }
+    // Update status via gateway (syncs self_entry for chirps)
+    state.update_offering(&offering_id, true, |o| {
+        o.status = OfferingStatus::Running;
+        true
+    }).await;
 
     if let Err(e) = state.persist_offerings().await {
         tracing::warn!(error = ?e, "Failed to persist offerings after wake");
@@ -663,9 +659,9 @@ pub async fn nourish_service_v1(
 
     // Find and validate the service
     let (offering_id, offering, old_version) = {
-        let mut offerings = state.offerings.write().await;
+        let offerings = state.offerings.read().await;
         let o = offerings
-            .iter_mut()
+            .iter()
             .find(|o| o.name == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
@@ -690,14 +686,14 @@ pub async fn nourish_service_v1(
             }));
         }
 
-        // Capture info for event before mutation
-        let id = o.offering_id.clone();
-        let old_ver = o.version.clone();
-        let off = o.offering.clone();
-
-        o.status = OfferingStatus::Maintenance;
-        (id, off, old_ver)
+        (o.offering_id.clone(), o.offering.clone(), o.version.clone())
     };
+
+    // Mark as Maintenance via gateway (syncs self_entry)
+    state.update_offering(&offering_id, true, |o| {
+        o.status = OfferingStatus::Maintenance;
+        true
+    }).await;
 
     // Load template for upgrade
     let entry = state.manifest_registry.sw.get(&offering).ok_or_else(|| {
@@ -709,17 +705,14 @@ pub async fn nourish_service_v1(
         )
     })?;
     let template = entry.parse_template().map_err(|e| {
-        // Restore status on error
+        // Restore status on error via gateway (syncs self_entry)
         let state_clone = state.clone();
-        let service_clone = service_name.clone();
+        let id_clone = offering_id.clone();
         tokio::spawn(async move {
-            let mut offerings = state_clone.offerings.write().await;
-            if let Some(o) = offerings
-                .iter_mut()
-                .find(|o| o.name == service_clone && o.is_managed())
-            {
+            state_clone.update_offering(&id_clone, true, |o| {
                 o.status = OfferingStatus::Running;
-            }
+                true
+            }).await;
         });
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -745,13 +738,11 @@ pub async fn nourish_service_v1(
         .await
     {
         tracing::error!(error = ?e, service = %service_name, "Docker upgrade failed");
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings
-            .iter_mut()
-            .find(|o| o.name == service_name && o.is_managed())
-        {
+        // Restore status via gateway (syncs self_entry)
+        state.update_offering(&offering_id, true, |o| {
             o.status = OfferingStatus::Running;
-        }
+            true
+        }).await;
         return Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "UPGRADE_FAILED",
@@ -768,16 +759,13 @@ pub async fn nourish_service_v1(
         .to_string();
     let new_image = template.image.clone();
 
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings
-            .iter_mut()
-            .find(|o| o.name == service_name && o.is_managed())
-        {
-            o.status = OfferingStatus::Running;
-            o.version = new_version.clone();
-        }
-    }
+    // Update status and version via gateway (syncs self_entry + persists)
+    let nv = new_version.clone();
+    state.update_offering(&offering_id, true, |o| {
+        o.status = OfferingStatus::Running;
+        o.version = nv;
+        true
+    }).await;
 
     if let Err(e) = state.persist_offerings().await {
         tracing::warn!(error = ?e, "Failed to persist offerings after nourish");
@@ -896,9 +884,6 @@ pub async fn delete_service_v1(
         }
     }
 
-    // Update topology and broadcast change
-    state.sync_self_services(true).await;
-
     let ctx = SuggestionContext::from_headers(&headers, "delete_service");
     let suggestions = generate_suggestions(&ctx);
 
@@ -1000,9 +985,6 @@ pub async fn destroy_service_v1(
             }
         }
     }
-
-    // Update topology and broadcast change
-    state.sync_self_services(true).await;
 
     let ctx = SuggestionContext::from_headers(&headers, "destroy_service");
     let suggestions = generate_suggestions(&ctx);
@@ -1374,13 +1356,13 @@ pub async fn discover_service_capabilities_v1(
     let capabilities: Vec<garden_common::SubCapability> =
         collections.iter().map(|c| c.to_sub_capability()).collect();
 
-    // Update the offering in registry with discovered capabilities
+    // Update the offering in registry with discovered capabilities via gateway
     if !capabilities.is_empty() {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings.iter_mut().find(|o| o.name == service_name) {
-            o.sub_capabilities = capabilities.clone();
-        }
-        drop(offerings);
+        let caps = capabilities.clone();
+        state.update_offering_by_name(&service_name, false, |o| {
+            o.sub_capabilities = caps;
+            false // sub_capabilities are detail-only, don't trigger chirp sync
+        }).await;
         let _ = state.persist_offerings().await;
     }
 
@@ -1453,16 +1435,18 @@ pub async fn refresh_all_capabilities_v1(
         }
     }
 
-    // Persist updated capabilities
+    // Persist updated capabilities via gateway (detail-only, no chirp sync)
     if !updates.is_empty() {
-        let mut offerings = state.offerings.write().await;
-        for (name, sub_caps) in updates {
-            if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
-                o.sub_capabilities = sub_caps;
+        state.update_offerings_batch(|offerings| {
+            let mut count = 0;
+            for (name, sub_caps) in updates {
+                if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
+                    o.sub_capabilities = sub_caps;
+                    count += 1;
+                }
             }
-        }
-        drop(offerings);
-        let _ = state.persist_offerings().await;
+            count
+        }, false).await;
     }
 
     Ok((

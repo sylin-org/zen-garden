@@ -635,19 +635,15 @@ async fn execute_offering_update(
     name: &str,
     tx: &broadcast::Sender<String>,
 ) -> anyhow::Result<()> {
-    // Mark service as updating in registry
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings
-            .iter_mut()
-            .find(|o| o.name == name && o.is_managed())
-        {
+    // Mark service as updating in registry via gateway (syncs self_entry + chirps)
+    state.update_offering_by_name(name, true, |o| {
+        if o.is_managed() {
             o.status = garden_common::OfferingStatus::Maintenance;
+            true
+        } else {
+            false
         }
-    }
-
-    // Sync to self_entry and chirp immediately
-    state.sync_self_services(true).await; // auto_chirp = true
+    }).await;
 
     // Get the target image from the Docker service
     let target_image = state
@@ -761,19 +757,15 @@ async fn execute_offering_update(
         }
     }
 
-    // Mark service as running again
-    {
-        let mut offerings = state.offerings.write().await;
-        if let Some(o) = offerings
-            .iter_mut()
-            .find(|o| o.name == name && o.is_managed())
-        {
+    // Mark service as running again via gateway (syncs self_entry + chirps)
+    state.update_offering_by_name(name, true, |o| {
+        if o.is_managed() {
             o.status = garden_common::OfferingStatus::Running;
+            true
+        } else {
+            false
         }
-    }
-
-    // Sync and chirp completion
-    state.sync_self_services(true).await;
+    }).await;
 
     Ok(())
 }

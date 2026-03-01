@@ -2,7 +2,7 @@
 //!
 //! Dispatches DomainEvent to registered listeners:
 //! - ChirpListener: Broadcasts topology changes via UDP
-//! - SseListener: Streams events to connected clients (Firefly, Cricket)
+//! - PulseDomainBridge: Bridges domain events to pulse channel (Firefly, Cricket)
 //! - TimerListener: Manages nurturing schedule timers
 //!
 //! Uses tokio broadcast channel for fan-out delivery.

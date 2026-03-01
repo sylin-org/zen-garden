@@ -2,7 +2,7 @@
 //!
 //! Stone Presence Protocol (PRESENCE-0001) implementation.
 //! Streams domain events to connected clients (Firefly, Cricket, etc.)
-//! via the unified SseEvent channel.
+//! via the unified pulse channel (domain-only, translated to presence vocabulary).
 
 use axum::{
     extract::{Query, State},
@@ -17,7 +17,7 @@ use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
 use crate::domain::StoneEvent;
-use crate::infra::SseEvent;
+use crate::infra::PulseEvent;
 use crate::AppState;
 use garden_common::presence::{
     event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot,
@@ -38,15 +38,11 @@ pub struct PresenceQuery {
 /// Returns SSE stream of domain events in presence vocabulary.
 /// Only emits events relevant to THIS stone.
 ///
-/// **URI Semantics (API-0001):**
-/// - `/api/v1/stone/*` - Stone-scoped operations (this stone only)
-/// - `/api/v1/garden/*` - Garden-scoped operations (all stones, via Lantern)
-///
 /// **Flow:**
 /// 1. Generate snapshot from AppState
-/// 2. Subscribe to sse_tx (unified SSE event channel)
-/// 3. Filter events by category if requested
-/// 4. Emit as SSE
+/// 2. Subscribe to pulse_tx (unified pulse channel)
+/// 3. Filter for Domain events only, apply category filter
+/// 4. Translate to presence vocabulary and emit as SSE
 ///
 /// **Query Parameters:**
 /// - `categories`: Comma-separated event categories (e.g., "service,stone,storage")
@@ -71,10 +67,10 @@ pub async fn stream_stone_presence(
     let snapshot = generate_snapshot(&state).await;
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
-    // Subscribe to SSE events (unified channel from SseListener)
-    let rx = state.sse_tx.subscribe();
+    // Subscribe to pulse channel (unified domain + transport events)
+    let rx = state.pulse_tx.subscribe();
 
-    // Create the inner event stream: snapshot first, then filtered live events
+    // Create the inner event stream: snapshot first, then filtered domain events
     let inner = futures_util::stream::once(async move {
         Event::default()
             .event(event_types::PRESENCE_SNAPSHOT)
@@ -84,7 +80,18 @@ pub async fn stream_stone_presence(
         tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
             let filter = filter.clone();
             match result {
-                Ok(sse_event) => translate_to_presence(sse_event, &filter),
+                Ok(PulseEvent::Domain(pulse)) => {
+                    // Apply category filter
+                    if !filter.allows(&pulse.category) {
+                        return None;
+                    }
+                    // Translate to presence vocabulary
+                    Some(pulse.to_presence_event())
+                }
+                Ok(PulseEvent::Transport(_)) => {
+                    // Presence stream is domain-only — skip transport events
+                    None
+                }
                 Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
                     tracing::warn!("Presence client lagged {} events", n);
                     None
@@ -244,65 +251,13 @@ fn compute_health(cpu: f64, memory: f64) -> String {
     }
 }
 
-/// Translate SseEvent to presence SSE event
-///
-/// Filters by category and converts to the format expected by Companions.
-fn translate_to_presence(sse_event: SseEvent, filter: &EventFilter) -> Option<Event> {
-    // Determine category from event type
-    let category = if sse_event
-        .event_type
-        .starts_with(event_types::PREFIX_SERVICE)
-    {
-        event_types::CATEGORY_SERVICE
-    } else if sse_event.event_type.starts_with(event_types::PREFIX_STONE) {
-        event_types::CATEGORY_STONE
-    } else if sse_event
-        .event_type
-        .starts_with(event_types::PREFIX_STORAGE)
-    {
-        event_types::CATEGORY_STORAGE
-    } else if sse_event.event_type.starts_with(event_types::PREFIX_JOB) {
-        event_types::CATEGORY_JOB
-    } else {
-        return None; // Unknown category
-    };
-
-    // Apply filter
-    if !filter.allows(category) {
-        return None;
-    }
-
-    // Build event data
-    let mut data = serde_json::json!({
-        "timestamp": sse_event.timestamp,
-        "message": sse_event.message,
-    });
-
-    // Add optional fields
-    if let Some(ref offering) = sse_event.offering {
-        data["service"] = serde_json::Value::String(offering.clone());
-    }
-    if let Some(serde_json::Value::Object(map)) = sse_event.data.as_ref() {
-        // Merge extra data
-        for (k, v) in map {
-            data[k] = v.clone();
-        }
-    }
-
-    Some(
-        Event::default()
-            .event(&sse_event.event_type)
-            .data(data.to_string()),
-    )
-}
-
 /// POST /api/v1/stone/presence/notify - Client-initiated presence notification
 ///
 /// Allows clients (Rake, Lantern) to send notifications that get broadcast to all presence clients.
 /// Used for visual feedback like "I'm tending to you" that creates a temporary glow/pulse.
 ///
 /// **Use case**: When Rake runs `tend stone-01`, it POSTs to Moss, which emits
-/// `stone.tended` event via EventBus → SseListener → all SSE subscribers.
+/// `stone.tended` event via EventBus → PulseDomainBridge → all SSE subscribers.
 ///
 /// **Payload**:
 /// ```json
@@ -331,7 +286,7 @@ pub async fn notify_presence(
         ));
     }
 
-    // Emit StoneEvent via EventBus (will flow through SseListener → presence stream)
+    // Emit StoneEvent via EventBus (will flow through PulseDomainBridge → presence stream)
     let stone_event = StoneEvent::tended(
         &notification.client,
         notification.from_host.as_deref().unwrap_or("unknown"),
@@ -342,8 +297,8 @@ pub async fn notify_presence(
 
     tracing::info!(
         event_type = event_types::STONE_TENDED,
-        "Broadcasted presence notification to {} SSE subscribers",
-        state.sse_tx.receiver_count()
+        "Broadcasted presence notification to {} pulse subscribers",
+        state.pulse_tx.receiver_count()
     );
 
     Ok(StatusCode::ACCEPTED)

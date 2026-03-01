@@ -364,34 +364,33 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         "Backfilling missing guidance for offerings"
     );
 
-    // Second pass: update offerings with generated guidance
-    {
-        let mut offerings = state.offerings.write().await;
-        for (offering_id, name, offering_type, ports) in offerings_needing_guidance {
-            if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip)
-            {
-                if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-                    if let Some(ref mut managed) = o.managed_data_mut() {
-                        managed.guidance = Some(guidance);
-                        updated += 1;
-                        tracing::debug!(offering = %name, "Backfilled guidance");
-                    }
+    // Second pass: update offerings with generated guidance (via gateway)
+    for (offering_id, name, offering_type, ports) in offerings_needing_guidance {
+        if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip) {
+            // Guidance is detail-only (not in chirps), so no sync needed
+            state.update_offering(&offering_id, false, |o| {
+                if let Some(ref mut managed) = o.managed_data_mut() {
+                    managed.guidance = Some(guidance);
+                    updated += 1;
+                    tracing::debug!(offering = %name, "Backfilled guidance");
                 }
-            }
+                false // detail-only, no chirp impact
+            }).await;
         }
+    }
 
-        for (offering_id, name, offering_type, port) in offerings_needing_adopted_guidance {
-            if let Some(guidance) =
-                build_adopted_guidance(state, &name, &offering_type, port, static_ip)
-            {
-                if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-                    if let Some(ref mut adopted) = o.adopted_data_mut() {
-                        adopted.guidance = Some(guidance);
-                        updated += 1;
-                        tracing::debug!(offering = %name, "Backfilled adopted guidance");
-                    }
+    for (offering_id, name, offering_type, port) in offerings_needing_adopted_guidance {
+        if let Some(guidance) =
+            build_adopted_guidance(state, &name, &offering_type, port, static_ip)
+        {
+            state.update_offering(&offering_id, false, |o| {
+                if let Some(ref mut adopted) = o.adopted_data_mut() {
+                    adopted.guidance = Some(guidance);
+                    updated += 1;
+                    tracing::debug!(offering = %name, "Backfilled adopted guidance");
                 }
-            }
+                false // detail-only, no chirp impact
+            }).await;
         }
     }
 
@@ -786,56 +785,62 @@ pub async fn install_service_task(
     );
 
     // Update existing offering entry (created with Installing status before job started)
-    // Change status from Installing to Running and clear job_id
-    let offering_id = {
-        let mut offerings = state.offerings.write().await;
-        if let Some(existing) = offerings.iter_mut().find(|o| o.name == offering) {
-            existing.status = OfferingStatus::Running;
-            existing.health = ServiceHealthStatus::Healthy;
-            existing.version = image_version.clone();
-            existing.location.port = actual_port;
-            existing.location.protocol = offering_protocol.clone();
-            if let Some(ref mut managed) = existing.managed_data_mut() {
-                managed.job_id = None;
-                managed.guidance = guidance.clone();
-            }
-            existing.offering_id.clone()
-        } else {
-            // Fallback: entry was somehow removed, recreate it
-            let new_id = generate_guidv7();
-            let unified = Offering {
-                offering_id: new_id.clone(),
-                name: offering.to_string(),
-                offering: offering_type.to_string(),
-                version: image_version.clone(),
-                status: OfferingStatus::Running,
-                health: ServiceHealthStatus::Healthy,
-                sub_capabilities: Vec::new(),
-                location: OfferingLocation {
-                    host: "localhost".to_string(),
-                    port: actual_port,
-                    protocol: offering_protocol.clone(),
-                    agnostic_port: None,
-                },
-                mode_data: OfferingModeData::Managed(ManagedData {
-                    resources: None,
-                    job_id: None,
-                    guidance,
-                    ..Default::default()
-                }),
-                registered_at: chrono::Utc::now(),
-                updated_at: None,
-                orchestration: None,
-            };
-            offerings.push(unified);
-            new_id
+    // Change status from Installing to Running and clear job_id (via gateway)
+    let image_version_clone = image_version.clone();
+    let offering_protocol_clone = offering_protocol.clone();
+    let guidance_clone = guidance.clone();
+    let updated = state.update_offering_by_name(offering, false, |o| {
+        o.status = OfferingStatus::Running;
+        o.health = ServiceHealthStatus::Healthy;
+        o.version = image_version_clone;
+        o.location.port = actual_port;
+        o.location.protocol = offering_protocol_clone;
+        if let Some(ref mut managed) = o.managed_data_mut() {
+            managed.job_id = None;
+            managed.guidance = guidance_clone;
         }
+        true
+    }).await;
+
+    let offering_id = if updated {
+        let offerings = state.offerings.read().await;
+        offerings.iter().find(|o| o.name == offering)
+            .map(|o| o.offering_id.clone())
+            .unwrap_or_default()
+    } else {
+        // Fallback: entry was somehow removed, recreate it
+        let new_id = generate_guidv7();
+        let unified = Offering {
+            offering_id: new_id.clone(),
+            name: offering.to_string(),
+            offering: offering_type.to_string(),
+            version: image_version.clone(),
+            status: OfferingStatus::Running,
+            health: ServiceHealthStatus::Healthy,
+            sub_capabilities: Vec::new(),
+            location: OfferingLocation {
+                host: "localhost".to_string(),
+                port: actual_port,
+                protocol: offering_protocol.clone(),
+                agnostic_port: None,
+            },
+            mode_data: OfferingModeData::Managed(ManagedData {
+                resources: None,
+                job_id: None,
+                guidance,
+                ..Default::default()
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: None,
+            orchestration: None,
+        };
+        state.upsert_offering(unified, false).await;
+        new_id
     };
 
-    let _ = state.persist_offerings().await;
-
-    // Sync services to self_entry and broadcast chirp so topology reflects the change immediately
+    // Sync + chirp so topology reflects the change immediately
     state.sync_self_services(true).await;
+    let _ = state.persist_offerings().await;
 
     // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
     state.event_bus.emit(OfferingEvent::deployed(
@@ -1122,19 +1127,8 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             orchestration: None,
         };
 
-        {
-            let mut offerings = state.offerings.write().await;
-            if let Some(existing) = offerings.iter_mut().find(|o| o.name == service_name) {
-                *existing = unified;
-            } else {
-                offerings.push(unified);
-            }
-        }
-
-        let _ = state.persist_offerings().await;
-
-        // Sync services to self_entry and broadcast chirp so topology reflects the change immediately
-        state.sync_self_services(true).await;
+        // Upsert via gateway (handles sync + persist + chirp)
+        state.upsert_offering(unified, true).await;
 
         // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
         state.event_bus.emit(OfferingEvent::deployed(
@@ -1201,22 +1195,12 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 /// Called when a service installation fails to clean up the placeholder entry
 /// that was created before the installation job started.
 async fn remove_installing_entry(state: &AppState, offering: &str) {
-    let mut offerings = state.offerings.write().await;
-    if let Some(pos) = offerings
-        .iter()
-        .position(|o| o.name == offering && o.status == OfferingStatus::Installing)
-    {
-        offerings.remove(pos);
-        tracing::debug!(
-            offering,
-            "Removed Installing entry from offerings after failure"
-        );
-    }
-    drop(offerings);
-    let _ = state.persist_offerings().await;
-
-    // Sync services to self_entry to reflect the removal
-    state.sync_self_services(true).await;
+    // Use remove_service (gateway) — handles sync + persist + chirp
+    state.remove_service(offering, true).await;
+    tracing::debug!(
+        offering,
+        "Removed Installing entry from offerings after failure"
+    );
 }
 
 // =============================================================================

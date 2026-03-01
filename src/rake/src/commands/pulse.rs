@@ -515,25 +515,16 @@ fn render_frame(
 
     // --- Region 4: Divider ---
     if row < rows.saturating_sub(2) {
-        let divider: String = if term.supports_unicode {
-            "\u{2500}".repeat(cols.min(120))
-        } else {
-            "-".repeat(cols.min(120))
-        };
-        if color {
-            buf.push_str(&format!(" {}\n", divider.dimmed()));
-        } else {
-            buf.push_str(&format!(" {}\n", divider));
-        }
+        render_separator(&mut buf, None, cols, term.supports_unicode, color);
         row += 1;
     }
 
     // --- Region 6: Garden (if enough rows, rendered after events) ---
     // Calculate how many rows garden needs, reserve them
-    let garden_rows = if rows > 30 && !state.topology.is_empty() {
+    let garden_rows = if !state.topology.is_empty() && rows > 12 {
         // header line + one per stone, capped
         let count = state.topology.len().min(rows / 4);
-        count + 2 // "garden ---" header + divider + entries
+        count + 1 // "garden ---" header + entries
     } else {
         0
     };
@@ -546,16 +537,8 @@ fn render_frame(
 
     // --- Region 6: Garden peers ---
     if garden_rows > 0 {
-        let divider: String = if term.supports_unicode {
-            "\u{2500}".repeat(cols.min(120))
-        } else {
-            "-".repeat(cols.min(120))
-        };
-        if color {
-            buf.push_str(&format!(" {} {}\n", "garden".dimmed(), divider.dimmed()));
-        } else {
-            buf.push_str(&format!(" garden {}\n", divider));
-        }
+        let garden_label = garden_summary(&state.topology, cols);
+        render_separator(&mut buf, Some(&garden_label), cols, term.supports_unicode, color);
         row += 1;
         let garden_space = rows.saturating_sub(row);
         render_garden(&mut buf, state, cols, garden_space, color);
@@ -859,7 +842,19 @@ fn render_garden(
 ) {
     let now = chrono::Utc::now();
 
-    for (i, entry) in state.topology.iter().enumerate() {
+    // Sort: self pinned first, then by last_seen descending (freshest first)
+    let mut sorted: Vec<&TopologyEntry> = state.topology.iter().collect();
+    sorted.sort_by(|a, b| {
+        let a_self = a.stone_name == state.stone_name;
+        let b_self = b.stone_name == state.stone_name;
+        match (a_self, b_self) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => b.last_seen.cmp(&a.last_seen),
+        }
+    });
+
+    for (i, entry) in sorted.iter().enumerate() {
         if i >= max_rows {
             break;
         }
@@ -950,6 +945,62 @@ fn render_garden(
 // =============================================================================
 // Helpers
 // =============================================================================
+
+/// Build a garden section header label with health summary.
+///
+/// Wide:   "garden (12 thriving, 2 withering, 1 offline)"
+/// Narrow: "garden (14/15 ok)"
+fn garden_summary(topology: &[TopologyEntry], cols: usize) -> String {
+    let total = topology.len();
+    let mut thriving = 0u32;
+    let mut withering = 0u32;
+    let mut offline = 0u32;
+    for entry in topology {
+        match entry.health.as_str() {
+            "thriving" => thriving += 1,
+            "withering" | "degraded" => withering += 1,
+            _ => offline += 1,
+        }
+    }
+
+    if cols < 60 {
+        let ok = thriving + withering; // alive, even if degraded
+        return format!("garden ({}/{} ok)", ok, total);
+    }
+
+    let mut parts = Vec::new();
+    if thriving > 0 {
+        parts.push(format!("{} thriving", thriving));
+    }
+    if withering > 0 {
+        parts.push(format!("{} withering", withering));
+    }
+    if offline > 0 {
+        parts.push(format!("{} offline", offline));
+    }
+    format!("garden ({})", parts.join(", "))
+}
+
+/// Render a horizontal divider line, optionally with a label.
+/// Always fits within `cols` visible characters (no bleed/wrap).
+fn render_separator(buf: &mut String, label: Option<&str>, cols: usize, unicode: bool, color: bool) {
+    let bar_char = if unicode { "\u{2500}" } else { "-" };
+    let prefix = match label {
+        Some(lbl) => format!(" {} ", lbl),
+        None => " ".to_string(),
+    };
+    let bar_len = cols.saturating_sub(prefix.len());
+    let bar: String = bar_char.repeat(bar_len);
+    if color {
+        if label.is_some() {
+            buf.push_str(&format!("{}{}\n", prefix.dimmed(), bar.dimmed()));
+        } else {
+            buf.push_str(&format!("{}{}\n", prefix, bar.dimmed()));
+        }
+    } else {
+        buf.push_str(&format!("{}{}\n", prefix, bar));
+    }
+}
 
 /// Get terminal dimensions (cols, rows).
 fn terminal_size() -> (usize, usize) {

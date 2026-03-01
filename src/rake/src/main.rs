@@ -144,7 +144,7 @@ async fn async_main() -> anyhow::Result<()> {
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(60))
-        .timeout(Duration::from_secs(30));
+        .connect_timeout(Duration::from_secs(30));
 
     // Add X-Quiet header if quiet mode is active
     if global.quiet {

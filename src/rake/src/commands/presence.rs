@@ -54,10 +54,7 @@ pub async fn presence_command(
     println!("Connecting to presence stream: {}", url);
     println!("Press Ctrl+C to disconnect\n");
 
-    // Create HTTP client for SSE with no timeout (stable connection)
-    let sse_client = reqwest::Client::builder().build()?;
-
-    let response = sse_client
+    let response = client
         .get(&url)
         .header("Accept", "text/event-stream")
         .send()

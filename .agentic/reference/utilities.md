@@ -16,6 +16,22 @@ Existing utilities - don't reinvent these.
 
 ---
 
+## TUI Primitives (`common/src/ui/rendering.rs`)
+
+| Function | Purpose |
+|----------|---------|
+| `terminal_dimensions()` | `(cols, rows)` with (80, 24) fallback |
+| `visible_length(&str)` | ANSI-aware string length |
+| `pad_visible(&str, width)` | ANSI-aware right-pad to width |
+| `truncate_visible(&str, max)` | ANSI-aware truncation preserving escape codes |
+| `format_separator(label, cols, unicode)` | Horizontal divider `" ──────"` or `" label ──────"` |
+| `format_wall_clock()` | Current time as `"HH:MM:SS"` |
+| `extract_sse_time(&Value)` | ISO timestamp → `"HH:MM:SS"` from SSE event JSON |
+| `format_gauge(label, value, width, color)` | `"CPU [====----] 42%"` bar |
+| `format_net_rate(bytes_per_sec)` | `"1.4 MB/s"` |
+
+---
+
 ## Paths (`common/src/constants/paths.rs`)
 
 | Function | Linux | Windows |
@@ -81,7 +97,7 @@ generate_id("job")          // "job-01234567"
 | `fs.rs` | `ensure_dir()`, `read_file()`, `write_file()` async |
 | `platform.rs` | `PlatformPaths` trait |
 | `json.rs` | `parse<T>()`, `stringify<T>()` |
-| `strings.rs` | `truncate()`, `to_kebab_case()`, `to_snake_case()` |
+| `strings.rs` | `truncate()`, `to_kebab_case()`, `to_snake_case()`, `shorten_stone_name()` |
 | `validation.rs` | `validate_name()`, `validate_port()`, `validate_url()` |
 
 ---

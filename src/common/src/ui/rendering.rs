@@ -838,7 +838,7 @@ pub fn format_wall_clock() -> String {
 /// Calculate visible length of a string, excluding ANSI escape codes
 ///
 /// ANSI codes are sequences like `\x1b[0m`, `\x1b[1;32m`, etc.
-fn visible_length(s: &str) -> usize {
+pub fn visible_length(s: &str) -> usize {
     let mut visible = 0;
     let mut chars = s.chars().peekable();
 
@@ -918,7 +918,7 @@ pub fn place_value(left_side: &str, value: &str) -> String {
 /// Walks the string character by character. ANSI escape sequences (ESC [ ... letter)
 /// are always included without counting toward visible width. Once `max_visible`
 /// printable characters have been emitted, the string is cut.
-fn truncate_visible(s: &str, max_visible: usize) -> String {
+pub fn truncate_visible(s: &str, max_visible: usize) -> String {
     let mut result = String::with_capacity(s.len());
     let mut visible = 0;
     let mut chars = s.chars().peekable();
@@ -951,6 +951,59 @@ fn truncate_visible(s: &str, max_visible: usize) -> String {
     }
 
     result
+}
+
+// =============================================================================
+// Shared TUI primitives (reusable by pulse, observe, any full-screen view)
+// =============================================================================
+
+/// Get terminal dimensions as (columns, rows).
+///
+/// Falls back to (80, 24) if detection fails (e.g., piped output).
+pub fn terminal_dimensions() -> (usize, usize) {
+    terminal_size::terminal_size()
+        .map(|(w, h)| (w.0 as usize, h.0 as usize))
+        .unwrap_or((constants::DEFAULT_TERMINAL_WIDTH, 24))
+}
+
+/// Format a horizontal divider line, optionally with a label.
+///
+/// Always fits within `cols` visible characters (no bleed/wrap).
+/// Uses `─` (U+2500) when unicode is supported, `-` otherwise.
+///
+/// ```text
+/// " ──────────────────────"      (no label)
+/// " garden (15 ok) ──────"      (with label)
+/// ```
+pub fn format_separator(label: Option<&str>, cols: usize, unicode: bool) -> String {
+    let bar_char = if unicode { "\u{2500}" } else { "-" };
+    let prefix = match label {
+        Some(lbl) => format!(" {} ", lbl),
+        None => " ".to_string(),
+    };
+    let bar_len = cols.saturating_sub(prefix.len());
+    let bar: String = bar_char.repeat(bar_len);
+    format!("{}{}", prefix, bar)
+}
+
+/// Extract HH:MM:SS from an SSE event's ISO 8601 timestamp field.
+///
+/// Looks for a `"timestamp"` key in the JSON value and extracts the
+/// time portion from an ISO 8601 string like `"2026-02-28T14:32:01.123Z"`.
+/// Falls back to the current wall clock if parsing fails.
+pub fn extract_sse_time(parsed: &serde_json::Value) -> String {
+    parsed
+        .get("timestamp")
+        .and_then(|t| t.as_str())
+        .and_then(|t| {
+            // ISO timestamp: "2026-02-28T14:32:01.123Z" → "14:32:01"
+            if t.len() >= 19 {
+                Some(t[11..19].to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(format_wall_clock)
 }
 
 /// Constants for UI rendering

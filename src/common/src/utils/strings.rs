@@ -92,6 +92,13 @@ pub fn to_snake_case(s: &str) -> String {
         .to_string()
 }
 
+/// Strip the "stone-" prefix from a stone name for compact display.
+///
+/// "stone-crystal-forest" → "crystal-forest", "my-device" → "my-device"
+pub fn shorten_stone_name(name: &str) -> &str {
+    name.strip_prefix("stone-").unwrap_or(name)
+}
+
 /// Check if string is a valid identifier (alphanumeric + underscore/hyphen)
 pub fn is_valid_identifier(s: &str) -> bool {
     !s.is_empty()
@@ -156,5 +163,13 @@ mod tests {
         assert!(!is_valid_identifier("123invalid"));
         assert!(!is_valid_identifier("invalid name"));
         assert!(!is_valid_identifier("invalid.name"));
+    }
+
+    #[test]
+    fn test_shorten_stone_name() {
+        assert_eq!(shorten_stone_name("stone-crystal-forest"), "crystal-forest");
+        assert_eq!(shorten_stone_name("stone-a"), "a");
+        assert_eq!(shorten_stone_name("my-device"), "my-device");
+        assert_eq!(shorten_stone_name("stone-"), "");
     }
 }

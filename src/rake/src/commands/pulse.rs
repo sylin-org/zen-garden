@@ -21,6 +21,8 @@ use garden_common::presence::{
     event_types, OfferingState, PresenceSnapshot, StoneLoadUpdatedPayload, StoneState,
 };
 use garden_common::ui::gauge;
+use garden_common::ui::rendering::{self, TerminalInfo};
+use garden_common::utils::strings::shorten_stone_name;
 use garden_common::{GardenApiResponse, TopologyEntry};
 use std::collections::VecDeque;
 use std::io::Write;
@@ -103,8 +105,8 @@ impl Layout {
     ///
     /// Split mode requires enough columns for BOTH a useful wire feed AND
     /// a useful sidebar. Calculated, not hardcoded breakpoints.
-    fn detect(term: &garden_common::ui::rendering::TerminalInfo) -> Self {
-        let (cols, rows) = terminal_size();
+    fn detect(term: &TerminalInfo) -> Self {
+        let (cols, rows) = rendering::terminal_dimensions();
         let color = term.supports_color;
         let unicode = term.supports_unicode;
 
@@ -282,7 +284,7 @@ impl MonitorState {
 async fn run_pulse_monitor(
     client: &reqwest::Client,
     endpoint: &str,
-    term: &garden_common::ui::rendering::TerminalInfo,
+    term: &TerminalInfo,
 ) -> CommandResult {
     let mut state = MonitorState::new();
     let mut backoff_ms = RECONNECT_MIN_MS;
@@ -334,7 +336,7 @@ async fn run_pulse_monitor(
                 // Connection lost — fall through to reconnect
                 state.connected_since = None;
                 state.push_event(EventLine {
-                    time: wall_clock(),
+                    time: rendering::format_wall_clock(),
                     entity: "connection".to_string(),
                     message: "lost".to_string(),
                     level: EventLevel::Warn,
@@ -342,7 +344,7 @@ async fn run_pulse_monitor(
             }
             Ok(response) => {
                 state.push_event(EventLine {
-                    time: wall_clock(),
+                    time: rendering::format_wall_clock(),
                     entity: "connection".to_string(),
                     message: format!("HTTP {}", response.status()),
                     level: EventLevel::Error,
@@ -350,7 +352,7 @@ async fn run_pulse_monitor(
             }
             Err(e) => {
                 state.push_event(EventLine {
-                    time: wall_clock(),
+                    time: rendering::format_wall_clock(),
                     entity: "connection".to_string(),
                     message: format!("{}", e),
                     level: EventLevel::Error,
@@ -376,7 +378,7 @@ async fn stream_loop(
     response: reqwest::Response,
     client: &reqwest::Client,
     topology_url: &str,
-    term: &garden_common::ui::rendering::TerminalInfo,
+    term: &TerminalInfo,
 ) -> bool {
     let mut stream = response.bytes_stream();
     let mut sse_buffer = String::new();
@@ -421,7 +423,7 @@ async fn stream_loop(
 
             _ = tokio::signal::ctrl_c() => {
                 // Clean exit — restore terminal and exit
-                let (_, rows) = terminal_size();
+                let (_, rows) = rendering::terminal_dimensions();
                 println!("\x1b[{};1H\x1b[0m", rows);
                 let _ = std::io::stdout().flush();
                 std::process::exit(0);
@@ -505,7 +507,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                             .map(|s| s.memory_percent)
                             .unwrap_or(0.0);
                         state.push_event(EventLine {
-                            time: extract_time(&parsed),
+                            time: rendering::extract_sse_time(&parsed),
                             entity: "stone".to_string(),
                             message: format!("load  cpu {:.0}  mem {:.0}", cpu, mem),
                             level: EventLevel::Dim,
@@ -530,7 +532,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     _ => EventLevel::Info,
                 };
                 state.push_event(EventLine {
-                    time: extract_time(&parsed),
+                    time: rendering::extract_sse_time(&parsed),
                     entity: "stone".to_string(),
                     message: format!("health  {}", health),
                     level,
@@ -554,7 +556,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     _ => EventLevel::Info,
                 };
                 state.push_event(EventLine {
-                    time: extract_time(&parsed),
+                    time: rendering::extract_sse_time(&parsed),
                     entity: entity.to_string(),
                     message: action.to_string(),
                     level,
@@ -580,7 +582,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     EventLevel::Warn
                 };
                 state.push_event(EventLine {
-                    time: extract_time(&parsed),
+                    time: rendering::extract_sse_time(&parsed),
                     entity: entity.to_string(),
                     message: format!("health  {}", health),
                     level,
@@ -594,7 +596,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     .and_then(|m| m.as_str())
                     .unwrap_or("tended");
                 state.push_event(EventLine {
-                    time: extract_time(&parsed),
+                    time: rendering::extract_sse_time(&parsed),
                     entity: "stone".to_string(),
                     message: msg.to_string(),
                     level: EventLevel::Info,
@@ -614,7 +616,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     .and_then(|s| s.as_str())
                     .unwrap_or("stone");
                 state.push_event(EventLine {
-                    time: extract_time(&parsed),
+                    time: rendering::extract_sse_time(&parsed),
                     entity: entity.to_string(),
                     message: msg.to_string(),
                     level: EventLevel::Dim,
@@ -642,7 +644,7 @@ fn process_transport_event(state: &mut MonitorState, transport_type: &str, data:
     let level = transport_event_level(transport_type);
 
     state.push_event(EventLine {
-        time: extract_transport_time(&parsed),
+        time: rendering::extract_sse_time(&parsed),
         entity,
         message: transport_label(transport_type, &parsed),
         level,
@@ -660,7 +662,7 @@ fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String
             .or_else(|| preview.get("winner_name"))
             .and_then(|n| n.as_str())
         {
-            return shorten_stone_name(name);
+            return shorten_stone_name(name).to_string();
         }
     }
 
@@ -756,7 +758,7 @@ fn transport_event_level(transport_type: &str) -> EventLevel {
 /// Render the full monitor frame to stdout.
 fn render_frame(
     state: &MonitorState,
-    term: &garden_common::ui::rendering::TerminalInfo,
+    term: &TerminalInfo,
 ) {
     let layout = Layout::detect(term);
 
@@ -1171,7 +1173,7 @@ fn paint_sidebar(
             } else {
                 "  no topology".to_string()
             };
-            lines.push(pad_to(label, sidebar_cols, false));
+            lines.push(rendering::pad_visible(&label, sidebar_cols));
         }
         return lines;
     }
@@ -1183,7 +1185,7 @@ fn paint_sidebar(
     } else {
         format!("  {}", summary)
     };
-    lines.push(pad_to(header, sidebar_cols, false));
+    lines.push(rendering::pad_visible(&header, sidebar_cols));
 
     // Sort: self pinned first, then by last_seen descending
     let mut sorted: Vec<&TopologyEntry> = state.topology.iter().collect();
@@ -1243,7 +1245,7 @@ fn paint_sidebar(
         let display_name = if name.len() > name_width {
             &name[..name_width]
         } else {
-            &name
+            name
         };
         let name_pad = name_width.saturating_sub(display_name.len());
 
@@ -1272,7 +1274,7 @@ fn paint_sidebar(
             )
         };
 
-        lines.push(pad_to(line, sidebar_cols, false));
+        lines.push(rendering::pad_visible(&line, sidebar_cols));
     }
 
     // Pad remaining rows
@@ -1375,7 +1377,7 @@ fn composite_split(
 
         // Pad wire to fill its column width.
         // Approximate: strip ANSI for measurement.
-        let wire_visible = strip_ansi_len(wire);
+        let wire_visible = rendering::visible_length(wire);
         if wire_visible < wire_cols {
             buf.push_str(&" ".repeat(wire_cols - wire_visible));
         }
@@ -1446,7 +1448,7 @@ fn paint_garden_compact(
             let display_name = if name.len() > name_width {
                 &name[..name_width]
             } else {
-                &name
+                name
             };
 
             if color {
@@ -1460,7 +1462,7 @@ fn paint_garden_compact(
                     health_dot, n, svc_count, age.dimmed()
                 );
                 // Pad to half_cols
-                let visible = strip_ansi_len(&entry_str);
+                let visible = rendering::visible_length(&entry_str);
                 line.push_str(&entry_str);
                 if visible < half_cols {
                     line.push_str(&" ".repeat(half_cols - visible));
@@ -1487,21 +1489,12 @@ fn paint_garden_compact(
 
 /// Write a horizontal divider line directly to buffer.
 fn paint_separator(buf: &mut String, label: Option<&str>, cols: usize, unicode: bool, color: bool) {
-    let bar_char = if unicode { "\u{2500}" } else { "-" };
-    let prefix = match label {
-        Some(lbl) => format!(" {} ", lbl),
-        None => " ".to_string(),
-    };
-    let bar_len = cols.saturating_sub(prefix.len());
-    let bar: String = bar_char.repeat(bar_len);
+    let sep = rendering::format_separator(label, cols, unicode);
     if color {
-        if label.is_some() {
-            buf.push_str(&format!("{}{}\n", prefix.dimmed(), bar.dimmed()));
-        } else {
-            buf.push_str(&format!("{}{}\n", prefix, bar.dimmed()));
-        }
+        buf.push_str(&format!("{}\n", sep.dimmed()));
     } else {
-        buf.push_str(&format!("{}{}\n", prefix, bar));
+        buf.push_str(&sep);
+        buf.push('\n');
     }
 }
 
@@ -1539,75 +1532,6 @@ fn garden_summary(topology: &[TopologyEntry], cols: usize) -> String {
         parts.push(format!("{} offline", offline));
     }
     format!("garden ({})", parts.join(", "))
-}
-
-/// Shorten "stone-crystal-forest" → "crystal-forest".
-fn shorten_stone_name(name: &str) -> String {
-    name.strip_prefix("stone-")
-        .unwrap_or(name)
-        .to_string()
-}
-
-/// Pad a string (with possible ANSI) to a target visible width.
-fn pad_to(s: String, target: usize, _right_align: bool) -> String {
-    let visible = strip_ansi_len(&s);
-    if visible >= target {
-        s
-    } else {
-        format!("{}{}", s, " ".repeat(target - visible))
-    }
-}
-
-/// Approximate visible length of a string by stripping ANSI escape codes.
-fn strip_ansi_len(s: &str) -> usize {
-    let mut len = 0;
-    let mut in_escape = false;
-    for c in s.chars() {
-        if c == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if c == 'm' {
-                in_escape = false;
-            }
-        } else {
-            len += 1;
-        }
-    }
-    len
-}
-
-/// Get terminal dimensions (cols, rows).
-fn terminal_size() -> (usize, usize) {
-    terminal_size::terminal_size()
-        .map(|(w, h)| (w.0 as usize, h.0 as usize))
-        .unwrap_or((80, 24))
-}
-
-/// Get current wall clock as "HH:MM:SS".
-fn wall_clock() -> String {
-    let now = chrono::Local::now();
-    now.format("%H:%M:%S").to_string()
-}
-
-/// Extract HH:MM:SS from an SSE event's timestamp field.
-fn extract_time(parsed: &serde_json::Value) -> String {
-    parsed
-        .get("timestamp")
-        .and_then(|t| t.as_str())
-        .and_then(|t| {
-            // ISO timestamp: "2026-02-28T14:32:01.123Z" → "14:32:01"
-            if t.len() >= 19 {
-                Some(t[11..19].to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(wall_clock)
-}
-
-/// Extract time from a transport pulse event.
-fn extract_transport_time(parsed: &serde_json::Value) -> String {
-    extract_time(parsed)
 }
 
 /// Fetch topology from stone.

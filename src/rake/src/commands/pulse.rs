@@ -167,6 +167,7 @@ struct MonitorState {
     last_transport: Option<Instant>,
     last_domain: Option<Instant>,
     connected_since: Option<Instant>,
+    server_shutdown: bool,
 }
 
 /// A single event line for the wire feed
@@ -191,6 +192,14 @@ enum ConnectionStatus {
     Connecting,
 }
 
+/// Why the stream loop ended — determines whether to reconnect or exit.
+enum DisconnectReason {
+    /// Connection lost unexpectedly — reconnect with backoff.
+    ConnectionLost,
+    /// Server sent `server.shutdown` — exit cleanly to unblock updates.
+    ServerShutdown,
+}
+
 impl MonitorState {
     fn new() -> Self {
         Self {
@@ -205,6 +214,7 @@ impl MonitorState {
             last_transport: None,
             last_domain: None,
             connected_since: None,
+            server_shutdown: false,
         }
     }
 
@@ -319,7 +329,7 @@ async fn run_pulse_monitor(
                 state.connected_since = Some(Instant::now());
 
                 // Run the streaming loop
-                let disconnected = stream_loop(
+                let reason = stream_loop(
                     &mut state,
                     response,
                     client,
@@ -328,19 +338,25 @@ async fn run_pulse_monitor(
                 )
                 .await;
 
-                if !disconnected {
-                    // Clean exit (e.g., Ctrl+C propagation from server)
-                    return Ok(());
+                match reason {
+                    DisconnectReason::ServerShutdown => {
+                        // Server shutting down — exit cleanly to unblock updates
+                        let (_, rows) = rendering::terminal_dimensions();
+                        println!("\x1b[{};1H\x1b[0m", rows);
+                        let _ = std::io::stdout().flush();
+                        return Ok(());
+                    }
+                    DisconnectReason::ConnectionLost => {
+                        // Connection lost — fall through to reconnect
+                        state.connected_since = None;
+                        state.push_event(EventLine {
+                            time: rendering::format_wall_clock(),
+                            entity: "connection".to_string(),
+                            message: "lost".to_string(),
+                            level: EventLevel::Warn,
+                        });
+                    }
                 }
-
-                // Connection lost — fall through to reconnect
-                state.connected_since = None;
-                state.push_event(EventLine {
-                    time: rendering::format_wall_clock(),
-                    entity: "connection".to_string(),
-                    message: "lost".to_string(),
-                    level: EventLevel::Warn,
-                });
             }
             Ok(response) => {
                 state.push_event(EventLine {
@@ -372,14 +388,14 @@ async fn run_pulse_monitor(
     }
 }
 
-/// Stream events until disconnection. Returns true if disconnected (should reconnect).
+/// Stream events until disconnection. Returns reason for disconnect.
 async fn stream_loop(
     state: &mut MonitorState,
     response: reqwest::Response,
     client: &reqwest::Client,
     topology_url: &str,
     term: &TerminalInfo,
-) -> bool {
+) -> DisconnectReason {
     let mut stream = response.bytes_stream();
     let mut sse_buffer = String::new();
     let mut last_render = Instant::now();
@@ -404,11 +420,14 @@ async fn stream_loop(
                     }
                     Some(Err(e)) => {
                         tracing::debug!("SSE stream error: {}", e);
-                        return true;
+                        return DisconnectReason::ConnectionLost;
                     }
                     None => {
-                        // Stream ended (server closed connection)
-                        return true;
+                        // Stream ended — check if server told us it's shutting down
+                        if state.server_shutdown {
+                            return DisconnectReason::ServerShutdown;
+                        }
+                        return DisconnectReason::ConnectionLost;
                     }
                 }
             }
@@ -458,6 +477,12 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
         } else if let Some(d) = line.strip_prefix("data:") {
             data.push_str(d.trim_start());
         }
+    }
+
+    // Server shutdown: exit cleanly instead of reconnecting
+    if event_type == "server.shutdown" {
+        state.server_shutdown = true;
+        return;
     }
 
     if data.is_empty() {

@@ -107,6 +107,8 @@ pub async fn route(
             Inv::local(cmd)
         }
 
+        "pulse" => Inv::remote(commands::pulse::PulseCommand::new(g.quiet), m),
+
         // === Watch (subcommands) ===
         "watch" => {
             let cmd = match m.subcommand() {

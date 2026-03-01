@@ -40,6 +40,7 @@ pub mod nourish;
 pub mod nurturing;
 pub mod offering;
 pub mod presence;
+pub mod pulse;
 pub mod storage;
 
 use crate::context::CommandContext;

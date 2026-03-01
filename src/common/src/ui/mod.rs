@@ -1,4 +1,5 @@
-﻿pub mod layout;
+﻿pub mod gauge;
+pub mod layout;
 pub mod rendering;
 
 // Re-export commonly used types

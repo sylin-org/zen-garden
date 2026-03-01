@@ -83,6 +83,9 @@ pub mod cmd {
     pub const SLUMBER: &str = "slumber";
     pub const STIR: &str = "stir";
 
+    // Monitoring
+    pub const PULSE: &str = "pulse";
+
     // Test/Diagnostic
     pub const ELECTION: &str = "election";
     pub const PRESENCE: &str = "presence";
@@ -300,12 +303,46 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 normative_syntax: None,
             },
         ],
-        see_also: vec!["watch", "list"],
+        see_also: vec!["watch", "list", "pulse"],
         hidden: false,
         subcommand_negates_reqs: false,
         on_stone_mapping: OnStoneMapping::ToPositional,
     });
 
+    manifest.add(CommandDef {
+        name: "pulse",
+        zen_name: "pulse",
+        zen_aliases: &["monitor"],
+        normative_name: None,
+        category: CommandCategory::Discovery,
+        description: "Live terminal monitor for stone observability",
+        long_description: "Permanent, unattended terminal display for stone vitals.\n\n\
+            Shows live gauges (CPU, MEM, DSK, GPU, NET), offering status, and a scrolling \
+            event feed. Adapts to any terminal size. Designed for dedicated screens \
+            (tty1, OLED sidecar, wall monitor). Reconnects automatically on stone restart.\n\n\
+            Exit with Ctrl+C.",
+        remote_capable: true,
+        args: vec![
+            at_arg(),
+        ],
+        subcommands: vec![],
+        examples: vec![
+            CommandExample {
+                description: "Monitor tended stone",
+                zen_syntax: Some("garden-rake pulse"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Monitor a specific stone",
+                zen_syntax: Some("garden-rake pulse on stone-crystal-forest"),
+                normative_syntax: Some("garden-rake pulse --at stone-crystal-forest"),
+            },
+        ],
+        see_also: vec!["observe", "watch"],
+        hidden: false,
+        subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
+    });
 
     manifest.add(CommandDef {
         name: "watch",
@@ -2594,6 +2631,7 @@ pub fn validate_manifest() {
     let expected_commands = vec![
         // Discovery
         "observe",
+        "pulse",
         "watch",
         "list",
         "status",

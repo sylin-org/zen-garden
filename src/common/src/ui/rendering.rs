@@ -712,6 +712,53 @@ pub fn compact_offerings(
     }
 }
 
+/// Fit as many items as possible into a character budget.
+///
+/// Given plain-text items and a width budget, returns a string that fits:
+/// - All items fit: `"a, b, c"`
+/// - Partial fit:   `"a, b +2"` (as many as fit, then ` +N` for remainder)
+/// - Nothing fits:  `"+5"` (just the overflow count)
+/// - Empty input:   `""` (empty string)
+///
+/// Separator is `", "` (2 chars). Overflow suffix is ` +N`.
+pub fn fit_items(items: &[&str], budget: usize) -> String {
+    if items.is_empty() || budget == 0 {
+        return String::new();
+    }
+
+    let total = items.len();
+    let sep = ", ";
+    let sep_len = sep.len();
+
+    // Try fitting all items first
+    let full_len: usize =
+        items.iter().map(|s| s.len()).sum::<usize>() + total.saturating_sub(1) * sep_len;
+
+    if full_len <= budget {
+        return items.join(sep);
+    }
+
+    // Try fitting progressively fewer items with " +N" suffix
+    for count in (1..total).rev() {
+        let remaining = total - count;
+        let suffix = format!(" +{}", remaining);
+        let items_len: usize = items[..count].iter().map(|s| s.len()).sum::<usize>()
+            + count.saturating_sub(1) * sep_len;
+        let needed = items_len + suffix.len();
+        if needed <= budget {
+            return format!("{}{}", items[..count].join(sep), suffix);
+        }
+    }
+
+    // Nothing fits — just show overflow count
+    let overflow = format!("+{}", total);
+    if overflow.len() <= budget {
+        overflow
+    } else {
+        String::new()
+    }
+}
+
 /// Extract OS family string from runtime info for OS indicator.
 /// Handles formats like "windows/Windows 11 Pro" or "linux/Debian GNU/Linux 13".
 pub fn os_family_from_runtime(os_string: &str) -> &str {
@@ -1309,5 +1356,81 @@ mod tests {
         let output = empty_state("No items", None);
         assert!(output.contains("No items"));
         assert!(!output.contains("Try:"));
+    }
+
+    // =========================================================================
+    // fit_items tests
+    // =========================================================================
+
+    #[test]
+    fn test_fit_items_all_fit() {
+        assert_eq!(fit_items(&["a", "b", "c"], 20), "a, b, c");
+    }
+
+    #[test]
+    fn test_fit_items_exact_fit() {
+        // "a, b, c" = 7 chars
+        assert_eq!(fit_items(&["a", "b", "c"], 7), "a, b, c");
+    }
+
+    #[test]
+    fn test_fit_items_partial() {
+        // "mongodb, ollama, redis" = 22 chars, budget 20
+        // "mongodb, ollama +1" = 18 chars -> fits
+        assert_eq!(
+            fit_items(&["mongodb", "ollama", "redis"], 20),
+            "mongodb, ollama +1"
+        );
+    }
+
+    #[test]
+    fn test_fit_items_single_with_overflow() {
+        // "mongodb +2" = 10 chars
+        assert_eq!(
+            fit_items(&["mongodb", "ollama", "redis"], 10),
+            "mongodb +2"
+        );
+    }
+
+    #[test]
+    fn test_fit_items_nothing_fits() {
+        assert_eq!(fit_items(&["mongodb", "ollama", "redis"], 3), "+3");
+    }
+
+    #[test]
+    fn test_fit_items_empty() {
+        assert_eq!(fit_items(&[], 50), "");
+    }
+
+    #[test]
+    fn test_fit_items_single_item_fits() {
+        assert_eq!(fit_items(&["mongodb"], 20), "mongodb");
+    }
+
+    #[test]
+    fn test_fit_items_single_item_too_large() {
+        assert_eq!(fit_items(&["mongodb"], 3), "+1");
+    }
+
+    #[test]
+    fn test_fit_items_budget_zero() {
+        assert_eq!(fit_items(&["a"], 0), "");
+    }
+
+    #[test]
+    fn test_fit_items_realistic_services() {
+        let services = &["mongodb", "ollama", "redis", "weaviate", "postgres"];
+        // Wide: all fit
+        assert_eq!(
+            fit_items(services, 50),
+            "mongodb, ollama, redis, weaviate, postgres"
+        );
+        // Medium: partial
+        assert_eq!(
+            fit_items(services, 30),
+            "mongodb, ollama, redis +2"
+        );
+        // Narrow: just one
+        assert_eq!(fit_items(services, 12), "mongodb +4");
     }
 }

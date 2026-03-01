@@ -174,8 +174,12 @@ struct MonitorState {
 struct EventLine {
     time: String,    // "HH:MM:SS" or "HH:MM"
     entity: String,  // offering name, stone name, or "stone"
-    message: String, // human-readable
+    message: String, // base label (e.g. "chirp (3 svc)", "election req")
     level: EventLevel,
+    /// Detail items for budget-based formatting at paint time.
+    /// Pre-extracted from payload JSON. `paint_wire` appends these after
+    /// `message` using `fit_items()` with whatever character budget remains.
+    detail_items: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -357,6 +361,7 @@ async fn run_pulse_monitor(
                             entity: "connection".to_string(),
                             message: "lost".to_string(),
                             level: EventLevel::Warn,
+                            detail_items: Vec::new(),
                         });
                     }
                 }
@@ -367,6 +372,7 @@ async fn run_pulse_monitor(
                     entity: "connection".to_string(),
                     message: format!("HTTP {}", response.status()),
                     level: EventLevel::Error,
+                    detail_items: Vec::new(),
                 });
             }
             Err(e) => {
@@ -375,6 +381,7 @@ async fn run_pulse_monitor(
                     entity: "connection".to_string(),
                     message: format!("{}", e),
                     level: EventLevel::Error,
+                    detail_items: Vec::new(),
                 });
             }
         }
@@ -534,11 +541,24 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                             .as_ref()
                             .map(|s| s.memory_percent)
                             .unwrap_or(0.0);
+
+                        // Extra metrics as detail items (only non-zero to avoid clutter)
+                        let mut details = Vec::new();
+                        if let Some(stone) = state.stone.as_ref() {
+                            if stone.disk_percent > 0.0 {
+                                details.push(format!("dsk {:.0}", stone.disk_percent));
+                            }
+                            if stone.has_gpu && stone.gpu_percent > 0.0 {
+                                details.push(format!("gpu {:.0}", stone.gpu_percent));
+                            }
+                        }
+
                         state.push_event(EventLine {
                             time: rendering::extract_sse_time(&parsed),
                             entity: "stone".to_string(),
                             message: format!("load  cpu {:.0}  mem {:.0}", cpu, mem),
                             level: EventLevel::Dim,
+                            detail_items: details,
                         });
                     }
                 }
@@ -546,8 +566,8 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
         }
         "stone.health.changed" => {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                let health = parsed
-                    .get("data")
+                let data_obj = parsed.get("data");
+                let health = data_obj
                     .and_then(|d| d.get("health"))
                     .and_then(|h| h.as_str())
                     .unwrap_or("unknown");
@@ -559,11 +579,28 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     "wilting" => EventLevel::Error,
                     _ => EventLevel::Info,
                 };
+
+                // Show cpu/mem at transition time — explains *why* health changed
+                let mut details = Vec::new();
+                if let Some(cpu) = data_obj
+                    .and_then(|d| d.get("cpu_percent"))
+                    .and_then(|v| v.as_f64())
+                {
+                    details.push(format!("cpu {:.0}", cpu));
+                }
+                if let Some(mem) = data_obj
+                    .and_then(|d| d.get("memory_percent"))
+                    .and_then(|v| v.as_f64())
+                {
+                    details.push(format!("mem {:.0}", mem));
+                }
+
                 state.push_event(EventLine {
                     time: rendering::extract_sse_time(&parsed),
                     entity: "stone".to_string(),
                     message: format!("health  {}", health),
                     level,
+                    detail_items: details,
                 });
             }
         }
@@ -588,6 +625,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     entity: entity.to_string(),
                     message: action.to_string(),
                     level,
+                    detail_items: Vec::new(),
                 });
             }
         }
@@ -614,6 +652,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     entity: entity.to_string(),
                     message: format!("health  {}", health),
                     level,
+                    detail_items: Vec::new(),
                 });
             }
         }
@@ -623,11 +662,29 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     .get("message")
                     .and_then(|m| m.as_str())
                     .unwrap_or("tended");
+
+                // Who tended and from where
+                let mut details = Vec::new();
+                let data_obj = parsed.get("data");
+                if let Some(by) = data_obj
+                    .and_then(|d| d.get("by"))
+                    .and_then(|v| v.as_str())
+                {
+                    details.push(format!("by {}", by));
+                }
+                if let Some(from) = data_obj
+                    .and_then(|d| d.get("from"))
+                    .and_then(|v| v.as_str())
+                {
+                    details.push(format!("from {}", from));
+                }
+
                 state.push_event(EventLine {
                     time: rendering::extract_sse_time(&parsed),
                     entity: "stone".to_string(),
                     message: msg.to_string(),
                     level: EventLevel::Info,
+                    detail_items: details,
                 });
             }
         }
@@ -648,6 +705,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     entity: entity.to_string(),
                     message: msg.to_string(),
                     level: EventLevel::Dim,
+                    detail_items: Vec::new(),
                 });
             }
         }
@@ -671,11 +729,14 @@ fn process_transport_event(state: &mut MonitorState, transport_type: &str, data:
 
     let level = transport_event_level(transport_type);
 
+    let (label, details) = transport_label(transport_type, &parsed);
+
     state.push_event(EventLine {
         time: rendering::extract_sse_time(&parsed),
         entity,
-        message: transport_label(transport_type, &parsed),
+        message: label,
         level,
+        detail_items: details,
     });
 }
 
@@ -710,62 +771,129 @@ fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String
         .to_string()
 }
 
-/// Build a compact label for transport events.
-fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> String {
+/// Build a compact base label and optional detail items for transport events.
+///
+/// Returns `(base_label, detail_items)`:
+/// - `base_label`: short descriptor (e.g. "chirp (3 svc)", "election req")
+/// - `detail_items`: ordered list of detail strings for budget-based fitting
+fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String, Vec<String>) {
     let preview = parsed.get("payload_preview");
 
     match transport_type {
         "stone_chirp" => {
-            let svc_count = preview
-                .and_then(|p| p.get("services"))
-                .and_then(|s| {
-                    // Could be array or "[...N items]" string
-                    s.as_array().map(|a| a.len()).or_else(|| {
-                        s.as_str().and_then(|t| {
-                            // "[...5 items]" → 5
-                            t.trim_start_matches("[...")
-                                .trim_end_matches(" items]")
-                                .parse()
-                                .ok()
+            let services = preview.and_then(|p| p.get("services"));
+            match services {
+                Some(serde_json::Value::Array(arr)) => {
+                    let names: Vec<String> = arr
+                        .iter()
+                        .filter_map(|s| {
+                            s.get("offering")
+                                .or_else(|| s.get("name"))
+                                .and_then(|n| n.as_str())
+                                .map(|n| n.to_string())
                         })
-                    })
-                })
-                .unwrap_or(0);
-            format!("chirp ({} svc)", svc_count)
+                        .collect();
+                    let count = if names.is_empty() { arr.len() } else { names.len() };
+                    (format!("chirp ({} svc)", count), names)
+                }
+                Some(serde_json::Value::String(t)) => {
+                    let count = t
+                        .trim_start_matches("[...")
+                        .trim_end_matches(" items]")
+                        .parse::<usize>()
+                        .unwrap_or(0);
+                    (format!("chirp ({} svc)", count), Vec::new())
+                }
+                _ => ("chirp".to_string(), Vec::new()),
+            }
         }
-        "stone_goodbye" => "goodbye".to_string(),
-        "discovery_request" => "discovery req".to_string(),
-        "discovery_response" => "discovery rsp".to_string(),
-        "election_request" => "election request".to_string(),
-        "election_candidate" => "election candidate".to_string(),
+        "stone_goodbye" => ("goodbye".to_string(), Vec::new()),
+        "discovery_request" => ("discovery req".to_string(), Vec::new()),
+        "discovery_response" => ("discovery rsp".to_string(), Vec::new()),
+        "election_request" => {
+            let mut details = Vec::new();
+            if let Some(et) = preview.and_then(|p| p.get("election_type")) {
+                // Simple variants: "update_source" → "update source"
+                // Tuple variants: {"offering_primary": "weaviate:dev"} → "offering primary (weaviate:dev)"
+                if let Some(s) = et.as_str() {
+                    details.push(s.replace('_', " "));
+                } else if let Some(obj) = et.as_object() {
+                    if let Some(key) = obj.keys().next() {
+                        let val = obj[key].as_str().unwrap_or("");
+                        if val.is_empty() {
+                            details.push(key.replace('_', " "));
+                        } else {
+                            details.push(format!("{} ({})", key.replace('_', " "), val));
+                        }
+                    }
+                }
+            }
+            ("election req".to_string(), details)
+        }
+        "election_candidate" => {
+            let mut details = Vec::new();
+            if let Some(name) = preview
+                .and_then(|p| p.get("stone_name").or_else(|| p.get("name")))
+                .and_then(|n| n.as_str())
+            {
+                details.push(shorten_stone_name(name).to_string());
+            }
+            if let Some(score) = preview.and_then(|p| p.get("score")).and_then(|s| s.as_i64()) {
+                details.push(format!("score={}", score));
+            }
+            ("election candidate".to_string(), details)
+        }
         "election_result" => {
-            let winner = preview
-                .and_then(|p| {
-                    p.get("winner_name")
-                        .or_else(|| p.get("name"))
-                        .and_then(|n| n.as_str())
-                })
-                .unwrap_or("?");
-            format!("election winner={}", shorten_stone_name(winner))
+            let mut details = Vec::new();
+            if let Some(winner) = preview
+                .and_then(|p| p.get("winner_name").or_else(|| p.get("name")))
+                .and_then(|n| n.as_str())
+            {
+                details.push(format!("winner={}", shorten_stone_name(winner)));
+            }
+            ("election result".to_string(), details)
         }
         "storage_beacon" => {
-            let banks = preview
-                .and_then(|p| p.get("banks"))
-                .and_then(|b| {
-                    b.as_array().map(|a| a.len()).or_else(|| {
-                        b.as_str().and_then(|t| {
-                            t.trim_start_matches("[...")
-                                .trim_end_matches(" items]")
-                                .parse()
-                                .ok()
-                        })
-                    })
-                })
-                .unwrap_or(0);
-            format!("beacon ({} banks)", banks)
+            let banks = preview.and_then(|p| p.get("seed_banks").or_else(|| p.get("banks")));
+            match banks {
+                Some(serde_json::Value::Array(arr)) => {
+                    let names: Vec<String> = arr
+                        .iter()
+                        .filter_map(|b| b.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                        .collect();
+                    let count = if names.is_empty() { arr.len() } else { names.len() };
+                    (format!("beacon ({} banks)", count), names)
+                }
+                Some(serde_json::Value::String(t)) => {
+                    let count = t
+                        .trim_start_matches("[...")
+                        .trim_end_matches(" items]")
+                        .parse::<usize>()
+                        .unwrap_or(0);
+                    (format!("beacon ({} banks)", count), Vec::new())
+                }
+                _ => ("storage beacon".to_string(), Vec::new()),
+            }
         }
-        "tools_beacon" => "tools beacon".to_string(),
-        other => other.replace('_', " "),
+        "tools_beacon" => {
+            let deltas = preview.and_then(|p| p.get("deltas"));
+            match deltas {
+                Some(serde_json::Value::Array(arr)) => {
+                    let names: Vec<String> = arr
+                        .iter()
+                        .filter_map(|d| {
+                            d.get("tool_fqid")
+                                .and_then(|n| n.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
+                    let count = if names.is_empty() { arr.len() } else { names.len() };
+                    (format!("tools ({} deltas)", count), names)
+                }
+                _ => ("tools beacon".to_string(), Vec::new()),
+            }
+        }
+        other => (other.replace('_', " "), Vec::new()),
     }
 }
 
@@ -831,7 +959,6 @@ fn render_frame(
     paint_separator(&mut buf, None, layout.cols, layout.unicode, layout.color);
 
     // Content region (wire + optional sidebar/garden)
-    let mut content_lines_used;
     match layout.mode {
         LayoutMode::Split {
             wire_cols,
@@ -839,14 +966,12 @@ fn render_frame(
         } => {
             let wire_lines = paint_wire(state, wire_cols, content_rows, &layout);
             let sidebar_lines = paint_sidebar(state, sidebar_cols, content_rows, &layout);
-            content_lines_used = wire_lines.len().max(sidebar_lines.len());
             composite_split(&mut buf, &wire_lines, &sidebar_lines, wire_cols, layout.unicode);
         }
         LayoutMode::Stacked => {
             let garden_rows = layout.garden_rows(state.topology.len());
             let wire_rows = content_rows.saturating_sub(garden_rows);
             let wire_lines = paint_wire(state, layout.cols, wire_rows, &layout);
-            content_lines_used = wire_lines.len();
             for line in &wire_lines {
                 buf.push_str(line);
                 buf.push('\n');
@@ -855,7 +980,6 @@ fn render_frame(
             if garden_rows > 0 {
                 let label = garden_summary(&state.topology, layout.cols);
                 paint_separator(&mut buf, Some(&label), layout.cols, layout.unicode, layout.color);
-                content_lines_used += 1; // separator
                 paint_garden_compact(
                     &mut buf,
                     state,
@@ -863,12 +987,10 @@ fn render_frame(
                     garden_rows.saturating_sub(1),
                     &layout,
                 );
-                content_lines_used += garden_rows.saturating_sub(1);
             }
         }
         LayoutMode::Narrow => {
             let wire_lines = paint_wire(state, layout.cols, content_rows, &layout);
-            content_lines_used = wire_lines.len();
             for line in &wire_lines {
                 buf.push_str(line);
                 buf.push('\n');
@@ -876,10 +998,30 @@ fn render_frame(
         }
     }
 
-    // Pad to fill remaining rows so footer is pinned to bottom
-    let pad_rows = content_rows.saturating_sub(content_lines_used);
-    for _ in 0..pad_rows {
-        buf.push('\n');
+    // Enforce exact row budget: the buffer must have exactly (rows - 1) newlines
+    // before the footer so the frame fits the terminal without scrolling.
+    let newline_count = buf.chars().filter(|&c| c == '\n').count();
+    let target_newlines = layout.rows.saturating_sub(1);
+    if newline_count < target_newlines {
+        for _ in 0..(target_newlines - newline_count) {
+            buf.push('\n');
+        }
+    } else if newline_count > target_newlines {
+        // Too many lines — truncate buffer to fit
+        let mut keep_to = 0;
+        let mut seen = 0;
+        for (i, c) in buf.char_indices() {
+            if c == '\n' {
+                seen += 1;
+                if seen == target_newlines {
+                    keep_to = i + 1;
+                    break;
+                }
+            }
+        }
+        if keep_to > 0 {
+            buf.truncate(keep_to);
+        }
     }
 
     // Footer
@@ -1149,13 +1291,24 @@ fn paint_wire(
             event.entity[..entity_width].to_string()
         };
 
-        // Truncate message to fit
+        // Build display message: base label + budget-fitted detail items
         let prefix_len = 1 + time.len() + 2 + entity_width + 2;
         let msg_width = cols.saturating_sub(prefix_len);
-        let msg = if event.message.len() > msg_width {
-            &event.message[..msg_width]
+
+        let msg = if !event.detail_items.is_empty() && msg_width > event.message.len() + 2 {
+            // Budget for details: total width minus base label minus "  " separator
+            let detail_budget = msg_width - event.message.len() - 2;
+            let detail_refs: Vec<&str> =
+                event.detail_items.iter().map(|s| s.as_str()).collect();
+            let fitted = rendering::fit_items(&detail_refs, detail_budget);
+            if fitted.is_empty() {
+                rendering::truncate_visible(&event.message, msg_width)
+            } else {
+                let full = format!("{}  {}", event.message, fitted);
+                rendering::truncate_visible(&full, msg_width)
+            }
         } else {
-            &event.message
+            rendering::truncate_visible(&event.message, msg_width)
         };
 
         let line = if color {

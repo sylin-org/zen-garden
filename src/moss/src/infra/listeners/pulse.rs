@@ -386,7 +386,12 @@ fn summarize_transport(announcement_type: &str, payload: &serde_json::Value) -> 
     }
 }
 
-/// Create a compact payload preview by stripping large nested arrays.
+/// Create a compact payload preview by stripping large nested structures.
+///
+/// For arrays of objects with `name`, `offering`, or `tool_fqid` fields,
+/// preserves lightweight `{"name": "..."}` objects so consumers can display
+/// item names. Arrays of primitives or objects without name-like fields
+/// get the count-based `"[...N items]"` fallback. Capped at 20 items.
 fn truncate_payload_preview(payload: &serde_json::Value) -> serde_json::Value {
     match payload {
         serde_json::Value::Object(map) => {
@@ -394,10 +399,37 @@ fn truncate_payload_preview(payload: &serde_json::Value) -> serde_json::Value {
             for (k, v) in map {
                 match v {
                     serde_json::Value::Array(arr) if arr.len() > 3 => {
-                        preview.insert(
-                            k.clone(),
-                            serde_json::json!(format!("[...{} items]", arr.len())),
-                        );
+                        // Try to extract name-like fields for a lightweight summary
+                        let name_key = arr.first().and_then(|item| {
+                            if item.get("offering").and_then(|n| n.as_str()).is_some() {
+                                Some("offering")
+                            } else if item.get("name").and_then(|n| n.as_str()).is_some() {
+                                Some("name")
+                            } else if item.get("tool_fqid").and_then(|n| n.as_str()).is_some() {
+                                Some("tool_fqid")
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Some(field) = name_key {
+                            // Preserve as lightweight name-only array (capped at 20)
+                            let name_array: Vec<serde_json::Value> = arr
+                                .iter()
+                                .take(20)
+                                .filter_map(|item| {
+                                    let name = item.get(field).and_then(|n| n.as_str())?;
+                                    Some(serde_json::json!({ field: name }))
+                                })
+                                .collect();
+                            preview.insert(k.clone(), serde_json::Value::Array(name_array));
+                        } else {
+                            // No name-like field — fall back to count
+                            preview.insert(
+                                k.clone(),
+                                serde_json::json!(format!("[...{} items]", arr.len())),
+                            );
+                        }
                     }
                     serde_json::Value::Object(inner) if inner.len() > 10 => {
                         preview.insert(
@@ -652,6 +684,52 @@ mod tests {
         assert_eq!(obj["simple"], "value");
         // services should be truncated
         assert!(obj["services"].as_str().unwrap().contains("5 items"));
+    }
+
+    #[test]
+    fn test_truncate_payload_preview_named_objects() {
+        let payload = serde_json::json!({
+            "name": "stone-01",
+            "services": [
+                {"name": "mongodb", "status": "running"},
+                {"name": "ollama", "status": "running"},
+                {"name": "redis", "status": "running"},
+                {"name": "weaviate", "status": "running"},
+                {"name": "postgres", "status": "stopped"},
+            ],
+            "simple": "value"
+        });
+        let preview = truncate_payload_preview(&payload);
+        let obj = preview.as_object().unwrap();
+        assert_eq!(obj["name"], "stone-01");
+        assert_eq!(obj["simple"], "value");
+        // services should be a lightweight name-only array (not truncated to string)
+        let svc_arr = obj["services"].as_array().unwrap();
+        assert_eq!(svc_arr.len(), 5);
+        assert_eq!(svc_arr[0]["name"], "mongodb");
+        assert_eq!(svc_arr[4]["name"], "postgres");
+        // Full objects should be stripped (no "status" field)
+        assert!(svc_arr[0].get("status").is_none());
+    }
+
+    #[test]
+    fn test_truncate_payload_preview_offering_field() {
+        // Services with "offering" field (TopologyServiceEntry format)
+        let payload = serde_json::json!({
+            "services": [
+                {"offering": "mongodb", "name": "my-mongo", "status": "running"},
+                {"offering": "ollama", "name": "my-ollama", "status": "running"},
+                {"offering": "redis", "name": "my-redis", "status": "running"},
+                {"offering": "weaviate", "name": "my-weaviate", "status": "running"},
+            ]
+        });
+        let preview = truncate_payload_preview(&payload);
+        let obj = preview.as_object().unwrap();
+        let svc_arr = obj["services"].as_array().unwrap();
+        assert_eq!(svc_arr.len(), 4);
+        // Should prefer "offering" field
+        assert_eq!(svc_arr[0]["offering"], "mongodb");
+        assert!(svc_arr[0].get("name").is_none());
     }
 
     #[test]

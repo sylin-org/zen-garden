@@ -310,6 +310,9 @@ async fn run_pulse_monitor(
         endpoint.trim_end_matches('/')
     );
 
+    // Clear screen once before first frame; subsequent frames overwrite in-place
+    print!("\x1b[2J");
+
     loop {
         state.connection_status = ConnectionStatus::Connecting;
         render_frame(&state, term);

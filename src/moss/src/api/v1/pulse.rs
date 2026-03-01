@@ -102,6 +102,9 @@ pub async fn stream_pulse(
                 }
                 _ = token.cancelled() => {
                     tracing::debug!("Pulse stream: shutdown token cancelled");
+                    yield Ok::<Event, Infallible>(
+                        Event::default().event("server.shutdown").data("{}")
+                    );
                     break;
                 }
             }

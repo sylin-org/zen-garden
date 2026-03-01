@@ -79,3 +79,7 @@ pub const OFFERING_ROLE_DEMOTED: &str = "offering.role.demoted";
 pub const OFFERING_SYNC_COMPLETED: &str = "offering.sync.completed";
 /// Offering health degraded (consecutive failures)
 pub const OFFERING_HEALTH_DEGRADED: &str = "offering.health.degraded";
+
+// Server lifecycle events
+/// Server shutting down (sent as final SSE event before stream close)
+pub const SERVER_SHUTDOWN: &str = "server.shutdown";

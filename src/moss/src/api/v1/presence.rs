@@ -115,6 +115,9 @@ pub async fn stream_stone_presence(
                 }
                 _ = token.cancelled() => {
                     tracing::debug!("Presence stream: shutdown token cancelled");
+                    yield Ok::<Event, Infallible>(
+                        Event::default().event("server.shutdown").data("{}")
+                    );
                     break;
                 }
             }

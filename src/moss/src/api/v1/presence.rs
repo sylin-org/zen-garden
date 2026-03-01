@@ -125,7 +125,7 @@ pub async fn stream_stone_presence(
 }
 
 /// Generate presence snapshot from current state
-async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
+pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     let offerings_guard = state.offerings.read().await;
 
     // Map all offerings (managed + adopted + borrowed)

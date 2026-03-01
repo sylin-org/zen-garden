@@ -5,6 +5,9 @@
 // API path for presence stream (used by Companions and Rake)
 pub const PRESENCE_STREAM_PATH: &str = "/api/v1/stone/presence/stream";
 
+// API path for pulse stream (full firehose: domain + transport events)
+pub const PULSE_STREAM_PATH: &str = "/api/v1/stone/pulse/stream";
+
 // Event categories (for filtering)
 pub const CATEGORY_SERVICE: &str = "service";
 pub const CATEGORY_STONE: &str = "stone";

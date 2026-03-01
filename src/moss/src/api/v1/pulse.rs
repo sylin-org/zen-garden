@@ -34,9 +34,12 @@ pub async fn get_pulse_page() -> impl IntoResponse {
 /// GET /api/v1/stone/pulse/stream - Full firehose SSE stream
 ///
 /// Streams ALL pulse events (both transport and domain) to connected clients.
-/// Used by the pulse instrument panel for real-time observability.
+/// Used by the pulse instrument panel and `rake pulse` terminal monitor.
 ///
-/// Event types:
+/// First event is always `pulse.snapshot` with a `PresenceSnapshot` payload
+/// (same format as the presence stream snapshot).
+///
+/// Subsequent event types:
 /// - `domain.*` — Domain events (service.started, stone.tended, etc.)
 /// - `transport.*` — Raw UDP announcements (stone_chirp, election_request, etc.)
 pub async fn stream_pulse(
@@ -47,32 +50,44 @@ pub async fn stream_pulse(
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();
 
+    // Generate initial snapshot (reuse presence snapshot generator)
+    let snapshot = super::presence::generate_snapshot(&state).await;
+    let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
+
     // Subscribe to pulse channel
     let rx = state.pulse_tx.subscribe();
 
-    let inner = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|result| {
-        match result {
-            Ok(pulse_event) => {
-                let (event_type, data) = match &pulse_event {
-                    PulseEvent::Domain(d) => {
-                        let etype = format!("domain.{}", d.event_type);
-                        let data = serde_json::to_string(d).unwrap_or_default();
-                        (etype, data)
-                    }
-                    PulseEvent::Transport(t) => {
-                        let etype = format!("transport.{}", t.announcement_type);
-                        let data = serde_json::to_string(t).unwrap_or_default();
-                        (etype, data)
-                    }
-                };
-                Some(Event::default().event(event_type).data(data))
+    // Snapshot first, then full firehose
+    let inner = futures_util::stream::once(async move {
+        Event::default()
+            .event("pulse.snapshot")
+            .data(snapshot_json)
+    })
+    .chain(
+        tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|result| {
+            match result {
+                Ok(pulse_event) => {
+                    let (event_type, data) = match &pulse_event {
+                        PulseEvent::Domain(d) => {
+                            let etype = format!("domain.{}", d.event_type);
+                            let data = serde_json::to_string(d).unwrap_or_default();
+                            (etype, data)
+                        }
+                        PulseEvent::Transport(t) => {
+                            let etype = format!("transport.{}", t.announcement_type);
+                            let data = serde_json::to_string(t).unwrap_or_default();
+                            (etype, data)
+                        }
+                    };
+                    Some(Event::default().event(event_type).data(data))
+                }
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    tracing::warn!("Pulse client lagged {} events", n);
+                    None
+                }
             }
-            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                tracing::warn!("Pulse client lagged {} events", n);
-                None
-            }
-        }
-    });
+        }),
+    );
 
     // MOSS-0004: Wrap in cancellation-aware stream
     let stream = async_stream::stream! {

@@ -1,12 +1,15 @@
-//! Pulse command — permanent terminal monitor
+//! Pulse command — permanent terminal monitor (v2: frame buffer + wire feed)
 //!
 //! Full-screen, unattended live display for stone observability.
 //! Designed for dedicated Linux screens (tty1, OLED sidecar, wall monitor).
 //!
-//! Consumes the presence stream for domain events and polls topology
-//! for garden-wide awareness. Adapts to any terminal geometry.
+//! Consumes the pulse stream (domain + transport events) and polls topology
+//! for garden-wide awareness. Adapts layout to terminal geometry:
+//! - Split screen (wire left, topology sidebar right) when columns permit
+//! - Stacked (wire, then garden summary) on medium terminals
+//! - Wire-only on narrow terminals
 //!
-//! See: PULSE-0001 ADR
+//! See: PULSE-0001, PULSE-0002 ADRs
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
@@ -15,13 +18,13 @@ use async_trait::async_trait;
 use colored::Colorize;
 use futures_util::StreamExt;
 use garden_common::presence::{
-    OfferingState, PresenceSnapshot, StoneLoadUpdatedPayload, StoneState,
+    event_types, OfferingState, PresenceSnapshot, StoneLoadUpdatedPayload, StoneState,
 };
 use garden_common::ui::gauge;
 use garden_common::{GardenApiResponse, TopologyEntry};
 use std::collections::VecDeque;
 use std::io::Write;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Maximum events in the ring buffer
 const MAX_EVENTS: usize = 200;
@@ -30,11 +33,17 @@ const MAX_EVENTS: usize = 200;
 const TOPOLOGY_POLL_SECS: u64 = 10;
 
 /// Maximum redraw rate (milliseconds between redraws)
-const MIN_REDRAW_INTERVAL_MS: u64 = 500;
+const MIN_REDRAW_INTERVAL_MS: u64 = 250;
 
 /// Reconnection backoff bounds
 const RECONNECT_MIN_MS: u64 = 1000;
 const RECONNECT_MAX_MS: u64 = 30_000;
+
+/// Minimum width for the topology sidebar in split mode
+const SIDEBAR_MIN_COLS: usize = 28;
+
+/// Minimum wire columns to justify split mode
+const WIRE_MIN_COLS: usize = 50;
 
 /// Pulse monitor command
 pub struct PulseCommand {
@@ -64,6 +73,81 @@ impl Command for PulseCommand {
 }
 
 // =============================================================================
+// Layout detection
+// =============================================================================
+
+#[derive(Debug, Clone, Copy)]
+enum LayoutMode {
+    /// Wire left, topology sidebar right. `wire_cols` excludes the │ separator.
+    Split {
+        wire_cols: usize,
+        sidebar_cols: usize,
+    },
+    /// Full-width wire, then compact garden summary below.
+    Stacked,
+    /// Wire only, no garden.
+    Narrow,
+}
+
+#[derive(Debug, Clone)]
+struct Layout {
+    mode: LayoutMode,
+    cols: usize,
+    rows: usize,
+    color: bool,
+    unicode: bool,
+}
+
+impl Layout {
+    /// Detect layout based on actual terminal dimensions.
+    ///
+    /// Split mode requires enough columns for BOTH a useful wire feed AND
+    /// a useful sidebar. Calculated, not hardcoded breakpoints.
+    fn detect(term: &garden_common::ui::rendering::TerminalInfo) -> Self {
+        let (cols, rows) = terminal_size();
+        let color = term.supports_color;
+        let unicode = term.supports_unicode;
+
+        // Split mode: we need wire_min + 1 (separator) + sidebar_min
+        let split_min = WIRE_MIN_COLS + 1 + SIDEBAR_MIN_COLS;
+        let mode = if cols >= split_min {
+            // Give sidebar ~35% but cap it and ensure wire gets the lion's share
+            let sidebar = ((cols as f64 * 0.35) as usize).clamp(SIDEBAR_MIN_COLS, 40);
+            let wire = cols - sidebar - 1; // -1 for │ separator
+            LayoutMode::Split {
+                wire_cols: wire,
+                sidebar_cols: sidebar,
+            }
+        } else if cols >= WIRE_MIN_COLS {
+            LayoutMode::Stacked
+        } else {
+            LayoutMode::Narrow
+        };
+
+        Self {
+            mode,
+            cols,
+            rows,
+            color,
+            unicode,
+        }
+    }
+
+    /// How many rows the garden section needs in stacked mode.
+    fn garden_rows(&self, topology_len: usize) -> usize {
+        match self.mode {
+            LayoutMode::Split { .. } => 0, // sidebar handles garden
+            LayoutMode::Stacked if topology_len > 0 => {
+                // Separator + 2 stones per row (side by side)
+                let stone_rows = topology_len.div_ceil(2);
+                1 + stone_rows.min(self.rows / 4)
+            }
+            _ => 0,
+        }
+    }
+}
+
+// =============================================================================
 // Monitor state
 // =============================================================================
 
@@ -75,12 +159,18 @@ struct MonitorState {
     topology: Vec<TopologyEntry>,
     connection_status: ConnectionStatus,
     stone_name: String,
+    // v2: diagnostics for footer
+    event_count: u64,
+    event_window: VecDeque<Instant>,
+    last_transport: Option<Instant>,
+    last_domain: Option<Instant>,
+    connected_since: Option<Instant>,
 }
 
-/// A single event line for the feed
+/// A single event line for the wire feed
 struct EventLine {
     time: String,    // "HH:MM:SS" or "HH:MM"
-    entity: String,  // offering name or "stone"
+    entity: String,  // offering name, stone name, or "stone"
     message: String, // human-readable
     level: EventLevel,
 }
@@ -108,6 +198,11 @@ impl MonitorState {
             topology: Vec::new(),
             connection_status: ConnectionStatus::Connecting,
             stone_name: String::new(),
+            event_count: 0,
+            event_window: VecDeque::with_capacity(256),
+            last_transport: None,
+            last_domain: None,
+            connected_since: None,
         }
     }
 
@@ -116,6 +211,18 @@ impl MonitorState {
             self.events.pop_front();
         }
         self.events.push_back(event);
+        self.event_count += 1;
+        self.event_window.push_back(Instant::now());
+        // Trim window to last 60 seconds
+        let cutoff = Instant::now() - Duration::from_secs(60);
+        while self.event_window.front().is_some_and(|t| *t < cutoff) {
+            self.event_window.pop_front();
+        }
+    }
+
+    fn events_per_minute(&self) -> usize {
+        let cutoff = Instant::now() - Duration::from_secs(60);
+        self.event_window.iter().filter(|t| **t >= cutoff).count()
     }
 
     fn apply_snapshot(&mut self, snapshot: PresenceSnapshot) {
@@ -123,6 +230,9 @@ impl MonitorState {
         self.stone = Some(snapshot.stone);
         self.offerings = snapshot.offerings;
         self.connection_status = ConnectionStatus::Connected;
+        if self.connected_since.is_none() {
+            self.connected_since = Some(Instant::now());
+        }
     }
 
     fn apply_load_update(&mut self, payload: StoneLoadUpdatedPayload) {
@@ -177,10 +287,11 @@ async fn run_pulse_monitor(
     let mut state = MonitorState::new();
     let mut backoff_ms = RECONNECT_MIN_MS;
 
-    // Presence stream URL
-    let presence_url = format!(
-        "{}/api/v1/stone/presence/stream",
-        endpoint.trim_end_matches('/')
+    // Pulse stream URL (v2: full firehose — domain + transport events)
+    let pulse_url = format!(
+        "{}{}",
+        endpoint.trim_end_matches('/'),
+        event_types::PULSE_STREAM_PATH,
     );
     let topology_url = format!(
         "{}/api/v1/garden/topology",
@@ -192,9 +303,9 @@ async fn run_pulse_monitor(
         render_frame(&state, term);
 
         // Try to connect — no total timeout (SSE streams are indefinite).
-        // The client's default pool timeout handles connect-phase failures.
+        // The client's connect_timeout handles connect-phase failures.
         let connect_result = client
-            .get(&presence_url)
+            .get(&pulse_url)
             .header("Accept", "text/event-stream")
             .send()
             .await;
@@ -203,6 +314,7 @@ async fn run_pulse_monitor(
             Ok(response) if response.status().is_success() => {
                 backoff_ms = RECONNECT_MIN_MS; // reset backoff on success
                 state.connection_status = ConnectionStatus::Connected;
+                state.connected_since = Some(Instant::now());
 
                 // Run the streaming loop
                 let disconnected = stream_loop(
@@ -220,6 +332,7 @@ async fn run_pulse_monitor(
                 }
 
                 // Connection lost — fall through to reconnect
+                state.connected_since = None;
                 state.push_event(EventLine {
                     time: wall_clock(),
                     entity: "connection".to_string(),
@@ -267,7 +380,7 @@ async fn stream_loop(
 ) -> bool {
     let mut stream = response.bytes_stream();
     let mut sse_buffer = String::new();
-    let mut last_render = std::time::Instant::now();
+    let mut last_render = Instant::now();
     let mut topology_interval = tokio::time::interval(Duration::from_secs(TOPOLOGY_POLL_SECS));
     topology_interval.tick().await; // skip first immediate tick
     let mut dirty = false;
@@ -308,7 +421,6 @@ async fn stream_loop(
 
             _ = tokio::signal::ctrl_c() => {
                 // Clean exit — restore terminal and exit
-                // Move cursor below the frame so the shell prompt appears cleanly
                 let (_, rows) = terminal_size();
                 println!("\x1b[{};1H\x1b[0m", rows);
                 let _ = std::io::stdout().flush();
@@ -320,10 +432,14 @@ async fn stream_loop(
         if dirty && last_render.elapsed() >= Duration::from_millis(MIN_REDRAW_INTERVAL_MS) {
             render_frame(state, term);
             dirty = false;
-            last_render = std::time::Instant::now();
+            last_render = Instant::now();
         }
     }
 }
+
+// =============================================================================
+// SSE message processing (pulse stream: domain.* + transport.* + pulse.snapshot)
+// =============================================================================
 
 /// Process a single SSE message and update monitor state.
 fn process_sse_message(state: &mut MonitorState, message: &str) {
@@ -333,8 +449,12 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
     for line in message.lines() {
         if let Some(et) = line.strip_prefix("event: ") {
             event_type = et.to_string();
+        } else if let Some(et) = line.strip_prefix("event:") {
+            event_type = et.trim().to_string();
         } else if let Some(d) = line.strip_prefix("data: ") {
             data.push_str(d);
+        } else if let Some(d) = line.strip_prefix("data:") {
+            data.push_str(d.trim_start());
         }
     }
 
@@ -342,21 +462,42 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
         return;
     }
 
-    match event_type.as_str() {
-        "presence.snapshot" => {
-            if let Ok(snapshot) = serde_json::from_str::<PresenceSnapshot>(&data) {
-                state.apply_snapshot(snapshot);
-            }
+    // Pulse stream events: "pulse.snapshot", "domain.{type}", "transport.{type}"
+    if event_type == "pulse.snapshot" || event_type == "presence.snapshot" {
+        if let Ok(snapshot) = serde_json::from_str::<PresenceSnapshot>(&data) {
+            state.apply_snapshot(snapshot);
         }
+        return;
+    }
+
+    if let Some(domain_type) = event_type.strip_prefix("domain.") {
+        process_domain_event(state, domain_type, &data);
+        state.last_domain = Some(Instant::now());
+        return;
+    }
+
+    if let Some(transport_type) = event_type.strip_prefix("transport.") {
+        process_transport_event(state, transport_type, &data);
+        state.last_transport = Some(Instant::now());
+        return;
+    }
+
+    // Fallback: legacy presence-style event types (backward compat)
+    process_domain_event(state, &event_type, &data);
+    state.last_domain = Some(Instant::now());
+}
+
+/// Process a domain event from the pulse stream.
+fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) {
+    match event_type {
         "stone.load.updated" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 if let Some(payload_value) = parsed.get("data") {
                     if let Ok(payload) =
                         serde_json::from_value::<StoneLoadUpdatedPayload>(payload_value.clone())
                     {
                         state.apply_load_update(payload);
 
-                        // Add event line with inline values
                         let cpu = state.stone.as_ref().map(|s| s.cpu_percent).unwrap_or(0.0);
                         let mem = state
                             .stone
@@ -366,7 +507,7 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
                         state.push_event(EventLine {
                             time: extract_time(&parsed),
                             entity: "stone".to_string(),
-                            message: format!("load updated  cpu {:.0} mem {:.0}", cpu, mem),
+                            message: format!("load  cpu {:.0}  mem {:.0}", cpu, mem),
                             level: EventLevel::Dim,
                         });
                     }
@@ -374,7 +515,7 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
             }
         }
         "stone.health.changed" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 let health = parsed
                     .get("data")
                     .and_then(|d| d.get("health"))
@@ -391,21 +532,22 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
                 state.push_event(EventLine {
                     time: extract_time(&parsed),
                     entity: "stone".to_string(),
-                    message: format!("health changed  {}", health),
+                    message: format!("health  {}", health),
                     level,
                 });
             }
         }
         "service.started" | "service.stopped" | "service.sprouted" | "service.uprooted"
         | "service.updated" | "service.renamed" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 let entity = parsed
-                    .get("service")
+                    .get("entity")
+                    .or_else(|| parsed.get("service"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("unknown");
                 let action = event_type
                     .strip_prefix("service.")
-                    .unwrap_or(&event_type);
+                    .unwrap_or(event_type);
                 state.apply_offering_event(entity, action);
                 let level = match action {
                     "stopped" | "uprooted" => EventLevel::Warn,
@@ -420,9 +562,10 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
             }
         }
         "service.health.changed" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 let entity = parsed
-                    .get("service")
+                    .get("entity")
+                    .or_else(|| parsed.get("service"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("unknown");
                 let health = parsed
@@ -439,13 +582,13 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
                 state.push_event(EventLine {
                     time: extract_time(&parsed),
                     entity: entity.to_string(),
-                    message: format!("health {}", health),
+                    message: format!("health  {}", health),
                     level,
                 });
             }
         }
         "stone.tended" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 let msg = parsed
                     .get("message")
                     .and_then(|m| m.as_str())
@@ -459,14 +602,15 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
             }
         }
         _ => {
-            // Generic event — show message if available
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+            // Generic domain event
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 let msg = parsed
                     .get("message")
                     .and_then(|m| m.as_str())
-                    .unwrap_or(&event_type);
+                    .unwrap_or(event_type);
                 let entity = parsed
-                    .get("service")
+                    .get("entity")
+                    .or_else(|| parsed.get("service"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("stone");
                 state.push_event(EventLine {
@@ -480,8 +624,133 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
     }
 }
 
+/// Process a transport event from the pulse stream.
+fn process_transport_event(state: &mut MonitorState, transport_type: &str, data: &str) {
+    let parsed: serde_json::Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let summary = parsed
+        .get("summary")
+        .and_then(|s| s.as_str())
+        .unwrap_or(transport_type);
+
+    // Extract a short entity name from the summary or payload
+    let entity = extract_transport_entity(&parsed, summary);
+
+    let level = transport_event_level(transport_type);
+
+    state.push_event(EventLine {
+        time: extract_transport_time(&parsed),
+        entity,
+        message: transport_label(transport_type, &parsed),
+        level,
+    });
+}
+
+/// Extract a short entity name from transport event data.
+fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String {
+    // Try payload_preview first, then summary parsing
+    if let Some(preview) = parsed.get("payload_preview") {
+        if let Some(name) = preview
+            .get("name")
+            .or_else(|| preview.get("stone_name"))
+            .or_else(|| preview.get("requester_name"))
+            .or_else(|| preview.get("winner_name"))
+            .and_then(|n| n.as_str())
+        {
+            return shorten_stone_name(name);
+        }
+    }
+
+    // Parse from "from" address as last resort
+    if let Some(from) = parsed.get("from").and_then(|f| f.as_str()) {
+        // "192.168.1.5:7184" → extract IP
+        if let Some(ip) = from.split(':').next() {
+            return ip.to_string();
+        }
+    }
+
+    // Use first word of summary
+    summary
+        .split_whitespace()
+        .last()
+        .unwrap_or("?")
+        .to_string()
+}
+
+/// Build a compact label for transport events.
+fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> String {
+    let preview = parsed.get("payload_preview");
+
+    match transport_type {
+        "stone_chirp" => {
+            let svc_count = preview
+                .and_then(|p| p.get("services"))
+                .and_then(|s| {
+                    // Could be array or "[...N items]" string
+                    s.as_array().map(|a| a.len()).or_else(|| {
+                        s.as_str().and_then(|t| {
+                            // "[...5 items]" → 5
+                            t.trim_start_matches("[...")
+                                .trim_end_matches(" items]")
+                                .parse()
+                                .ok()
+                        })
+                    })
+                })
+                .unwrap_or(0);
+            format!("chirp ({} svc)", svc_count)
+        }
+        "stone_goodbye" => "goodbye".to_string(),
+        "discovery_request" => "discovery req".to_string(),
+        "discovery_response" => "discovery rsp".to_string(),
+        "election_request" => "election request".to_string(),
+        "election_candidate" => "election candidate".to_string(),
+        "election_result" => {
+            let winner = preview
+                .and_then(|p| {
+                    p.get("winner_name")
+                        .or_else(|| p.get("name"))
+                        .and_then(|n| n.as_str())
+                })
+                .unwrap_or("?");
+            format!("election winner={}", shorten_stone_name(winner))
+        }
+        "storage_beacon" => {
+            let banks = preview
+                .and_then(|p| p.get("banks"))
+                .and_then(|b| {
+                    b.as_array().map(|a| a.len()).or_else(|| {
+                        b.as_str().and_then(|t| {
+                            t.trim_start_matches("[...")
+                                .trim_end_matches(" items]")
+                                .parse()
+                                .ok()
+                        })
+                    })
+                })
+                .unwrap_or(0);
+            format!("beacon ({} banks)", banks)
+        }
+        "tools_beacon" => "tools beacon".to_string(),
+        other => other.replace('_', " "),
+    }
+}
+
+/// Map transport event types to display levels.
+fn transport_event_level(transport_type: &str) -> EventLevel {
+    match transport_type {
+        "stone_chirp" | "discovery_response" | "storage_beacon" | "tools_beacon" => EventLevel::Dim,
+        "discovery_request" | "stone_goodbye" => EventLevel::Info,
+        "election_request" | "election_candidate" | "election_result" => EventLevel::Warn,
+        _ => EventLevel::Dim,
+    }
+}
+
 // =============================================================================
-// Rendering
+// Frame buffer rendering (v2: paint + composite)
 // =============================================================================
 
 /// Render the full monitor frame to stdout.
@@ -489,72 +758,111 @@ fn render_frame(
     state: &MonitorState,
     term: &garden_common::ui::rendering::TerminalInfo,
 ) {
-    let (cols, rows) = terminal_size();
-    let color = term.supports_color;
+    let layout = Layout::detect(term);
 
-    // Build entire frame in a buffer, then flush once
-    let mut buf = String::with_capacity(cols * rows);
+    // Paint independent regions
+    let header_lines = paint_header(state, &layout);
+    let gauge_lines = paint_gauges(state, &layout);
+    let offering_line = paint_offerings(state, &layout);
+    let footer_line = paint_footer(state, &layout);
 
-    // Clear screen + cursor home
-    buf.push_str("\x1b[2J\x1b[H");
+    // Calculate chrome height
+    let chrome_rows = header_lines.len()
+        + gauge_lines.len()
+        + if offering_line.is_some() { 1 } else { 0 }
+        + 1 // divider
+        + 1; // footer
 
-    let mut row = 0;
+    let content_rows = layout.rows.saturating_sub(chrome_rows);
 
-    // --- Region 1: Header (1 line) ---
-    row += render_header(&mut buf, state, cols, color);
+    // Build frame buffer
+    let mut buf = String::with_capacity(layout.cols * layout.rows);
+    buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
 
-    // --- Region 2: Gauges (1-3 lines) ---
-    if row < rows.saturating_sub(4) {
-        row += render_gauges(&mut buf, state, cols, color);
+    // Header
+    for line in &header_lines {
+        buf.push_str(line);
+        buf.push('\n');
     }
 
-    // --- Region 3: Offerings (1 line) ---
-    if row < rows.saturating_sub(3) && !state.offerings.is_empty() {
-        row += render_offerings(&mut buf, state, cols, color);
+    // Gauges
+    for line in &gauge_lines {
+        buf.push_str(line);
+        buf.push('\n');
     }
 
-    // --- Region 4: Divider ---
-    if row < rows.saturating_sub(2) {
-        render_separator(&mut buf, None, cols, term.supports_unicode, color);
-        row += 1;
+    // Offerings
+    if let Some(ref line) = offering_line {
+        buf.push_str(line);
+        buf.push('\n');
     }
 
-    // --- Region 6: Garden (if enough rows, rendered after events) ---
-    // Calculate how many rows garden needs, reserve them
-    let garden_rows = if !state.topology.is_empty() && rows > 12 {
-        // header line + one per stone, capped
-        let count = state.topology.len().min(rows / 4);
-        count + 1 // "garden ---" header + entries
-    } else {
-        0
-    };
+    // Divider
+    paint_separator(&mut buf, None, layout.cols, layout.unicode, layout.color);
 
-    // --- Region 5: Events (remaining rows) ---
-    let events_available = rows.saturating_sub(row).saturating_sub(garden_rows);
-    if events_available > 0 {
-        row += render_events(&mut buf, state, cols, events_available, color);
+    // Content region (wire + optional sidebar/garden)
+    match layout.mode {
+        LayoutMode::Split {
+            wire_cols,
+            sidebar_cols,
+        } => {
+            let wire_lines = paint_wire(state, wire_cols, content_rows, &layout);
+            let sidebar_lines = paint_sidebar(state, sidebar_cols, content_rows, &layout);
+            composite_split(&mut buf, &wire_lines, &sidebar_lines, wire_cols, layout.unicode);
+        }
+        LayoutMode::Stacked => {
+            let garden_rows = layout.garden_rows(state.topology.len());
+            let wire_rows = content_rows.saturating_sub(garden_rows);
+            let wire_lines = paint_wire(state, layout.cols, wire_rows, &layout);
+            for line in &wire_lines {
+                buf.push_str(line);
+                buf.push('\n');
+            }
+            // Garden summary
+            if garden_rows > 0 {
+                let label = garden_summary(&state.topology, layout.cols);
+                paint_separator(&mut buf, Some(&label), layout.cols, layout.unicode, layout.color);
+                paint_garden_compact(
+                    &mut buf,
+                    state,
+                    layout.cols,
+                    garden_rows.saturating_sub(1),
+                    &layout,
+                );
+            }
+        }
+        LayoutMode::Narrow => {
+            let wire_lines = paint_wire(state, layout.cols, content_rows, &layout);
+            for line in &wire_lines {
+                buf.push_str(line);
+                buf.push('\n');
+            }
+        }
     }
 
-    // --- Region 6: Garden peers ---
-    if garden_rows > 0 {
-        let garden_label = garden_summary(&state.topology, cols);
-        render_separator(&mut buf, Some(&garden_label), cols, term.supports_unicode, color);
-        row += 1;
-        let garden_space = rows.saturating_sub(row);
-        render_garden(&mut buf, state, cols, garden_space, color);
-    }
+    // Footer
+    buf.push_str(&footer_line);
 
     // Flush entire frame in one write
     let _ = std::io::stdout().write_all(buf.as_bytes());
     let _ = std::io::stdout().flush();
 }
 
-/// Render header line. Returns number of rows consumed.
-fn render_header(buf: &mut String, state: &MonitorState, cols: usize, color: bool) -> usize {
+// =============================================================================
+// Paint functions — each returns pre-formatted lines
+// =============================================================================
+
+/// Paint header: stone name, health, uptime, evt/min.
+fn paint_header(state: &MonitorState, layout: &Layout) -> Vec<String> {
+    let cols = layout.cols;
+    let color = layout.color;
+
     let name = if !state.stone_name.is_empty() {
-        // In narrow mode, strip "stone-" prefix
         if cols < 60 {
-            state.stone_name.strip_prefix("stone-").unwrap_or(&state.stone_name)
+            state
+                .stone_name
+                .strip_prefix("stone-")
+                .unwrap_or(&state.stone_name)
         } else {
             &state.stone_name
         }
@@ -563,9 +871,8 @@ fn render_header(buf: &mut String, state: &MonitorState, cols: usize, color: boo
     };
 
     let (health_str, uptime_str) = if let Some(ref stone) = state.stone {
-        let health = &stone.health;
         let uptime = garden_common::format_uptime(stone.uptime_seconds);
-        (health.clone(), format!("up {}", uptime))
+        (stone.health.clone(), format!("up {}", uptime))
     } else {
         match &state.connection_status {
             ConnectionStatus::Connected => ("connected".to_string(), String::new()),
@@ -576,118 +883,128 @@ fn render_header(buf: &mut String, state: &MonitorState, cols: usize, color: boo
         }
     };
 
-    let right_part = if uptime_str.is_empty() {
-        health_str.clone()
+    // evt/min counter
+    let epm = state.events_per_minute();
+    let epm_str = if epm > 0 {
+        format!("{}evt/min", epm)
     } else {
-        format!("{}  {}", health_str, uptime_str)
+        String::new()
     };
 
-    let padding = cols.saturating_sub(name.len() + right_part.len() + 2);
+    let right_parts: Vec<&str> = [health_str.as_str(), uptime_str.as_str(), epm_str.as_str()]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect();
+    let right_plain = right_parts.join("  ");
+    let padding = cols.saturating_sub(name.len() + right_plain.len() + 2);
 
-    if color {
+    let line = if color {
         let colored_health = match health_str.as_str() {
-            "thriving" => health_str.green(),
-            "withering" => health_str.yellow(),
-            "wilting" => health_str.red(),
-            s if s.starts_with("reconnecting") => health_str.yellow(),
-            _ => health_str.normal(),
+            "thriving" => health_str.green().to_string(),
+            "withering" => health_str.yellow().to_string(),
+            "wilting" => health_str.red().to_string(),
+            s if s.starts_with("reconnecting") => health_str.yellow().to_string(),
+            _ => health_str.clone(),
         };
 
-        let right = if uptime_str.is_empty() {
-            format!("{}", colored_health)
-        } else {
-            format!("{}  {}", colored_health, uptime_str.dimmed())
-        };
-        buf.push_str(&format!(
-            " {}{}{}\n",
-            name.bold(),
-            " ".repeat(padding),
-            right,
-        ));
+        let mut right = colored_health;
+        if !uptime_str.is_empty() {
+            right = format!("{}  {}", right, uptime_str.dimmed());
+        }
+        if !epm_str.is_empty() {
+            right = format!("{}  {}", right, epm_str.dimmed());
+        }
+
+        format!(" {}{}{}", name.bold(), " ".repeat(padding), right)
     } else {
-        buf.push_str(&format!(" {}{}{}\n", name, " ".repeat(padding), right_part));
-    }
-    1
+        format!(" {}{}{}", name, " ".repeat(padding), right_plain)
+    };
+
+    vec![line]
 }
 
-/// Render gauge bars. Returns number of rows consumed.
-fn render_gauges(buf: &mut String, state: &MonitorState, cols: usize, color: bool) -> usize {
+/// Paint gauge bars.
+fn paint_gauges(state: &MonitorState, layout: &Layout) -> Vec<String> {
+    let cols = layout.cols;
+    let color = layout.color;
+
     let stone = match &state.stone {
         Some(s) => s,
         None => {
-            // No data yet — show placeholder
-            if color {
-                buf.push_str(&format!(" {}\n", "waiting for data...".dimmed()));
+            let line = if color {
+                format!(" {}", "waiting for data...".dimmed())
             } else {
-                buf.push_str(" waiting for data...\n");
-            }
-            return 1;
+                " waiting for data...".to_string()
+            };
+            return vec![line];
         }
     };
 
-    let mut rows = 0;
+    let mut lines = Vec::new();
 
     if cols >= 80 {
         // Wide: two gauges per line
-        let gauge_width = (cols - 4) / 2; // two gauges + spacing
+        let gauge_width = (cols - 4) / 2;
         let cpu = gauge::format_gauge("CPU", stone.cpu_percent, gauge_width, color);
         let mem = gauge::format_gauge("MEM", stone.memory_percent, gauge_width, color);
-        buf.push_str(&format!(" {}   {}\n", cpu, mem));
-        rows += 1;
+        lines.push(format!(" {}   {}", cpu, mem));
 
         let dsk = gauge::format_gauge("DSK", stone.disk_percent, gauge_width, color);
         if stone.has_gpu {
             let gpu = gauge::format_gauge("GPU", stone.gpu_percent, gauge_width, color);
-            buf.push_str(&format!(" {}   {}\n", dsk, gpu));
+            lines.push(format!(" {}   {}", dsk, gpu));
         } else {
-            buf.push_str(&format!(" {}\n", dsk));
+            lines.push(format!(" {}", dsk));
         }
-        rows += 1;
 
-        // Network rates on separate line if present
+        // Network rates
         if stone.net_rx_bytes_per_sec > 0 || stone.net_tx_bytes_per_sec > 0 {
             let rx = gauge::format_net_rate(stone.net_rx_bytes_per_sec);
             let tx = gauge::format_net_rate(stone.net_tx_bytes_per_sec);
             let net_line = format!("NET  {} dn  {} up", rx, tx);
             let indent = " ".repeat(gauge_width.saturating_sub(net_line.len()) + 5);
             if color {
-                buf.push_str(&format!("{}{}\n", indent, net_line.dimmed()));
+                lines.push(format!("{}{}", indent, net_line.dimmed()));
             } else {
-                buf.push_str(&format!("{}{}\n", indent, net_line));
+                lines.push(format!("{}{}", indent, net_line));
             }
-            rows += 1;
         }
     } else {
         // Narrow: one gauge per line
         let gauge_width = cols.saturating_sub(2);
-        buf.push_str(&format!(
-            " {}\n",
+        lines.push(format!(
+            " {}",
             gauge::format_gauge("CPU", stone.cpu_percent, gauge_width, color)
         ));
-        buf.push_str(&format!(
-            " {}\n",
+        lines.push(format!(
+            " {}",
             gauge::format_gauge("MEM", stone.memory_percent, gauge_width, color)
         ));
-        buf.push_str(&format!(
-            " {}\n",
+        lines.push(format!(
+            " {}",
             gauge::format_gauge("DSK", stone.disk_percent, gauge_width, color)
         ));
-        rows += 3;
 
         if stone.has_gpu {
-            buf.push_str(&format!(
-                " {}\n",
+            lines.push(format!(
+                " {}",
                 gauge::format_gauge("GPU", stone.gpu_percent, gauge_width, color)
             ));
-            rows += 1;
         }
     }
 
-    rows
+    lines
 }
 
-/// Render offerings status line. Returns number of rows consumed.
-fn render_offerings(buf: &mut String, state: &MonitorState, cols: usize, color: bool) -> usize {
+/// Paint offerings status line. Returns None if no offerings.
+fn paint_offerings(state: &MonitorState, layout: &Layout) -> Option<String> {
+    if state.offerings.is_empty() {
+        return None;
+    }
+
+    let cols = layout.cols;
+    let color = layout.color;
     let mut line = String::from(" ");
 
     for (count, offering) in state.offerings.iter().enumerate() {
@@ -715,8 +1032,6 @@ fn render_offerings(buf: &mut String, state: &MonitorState, cols: usize, color: 
             format!("{}:{}", offering.name, status_char)
         };
 
-        // Check if adding this would overflow the line
-        // Use approximate visible length (without ANSI)
         let visible_entry_len = offering.name.len() + 1 + status_char.len();
         let separator = if count > 0 { "  " } else { "" };
         let visible_line_len = line.len() + separator.len() + visible_entry_len;
@@ -737,30 +1052,27 @@ fn render_offerings(buf: &mut String, state: &MonitorState, cols: usize, color: 
         line.push_str(&entry);
     }
 
-    buf.push_str(&line);
-    buf.push('\n');
-    1
+    Some(line)
 }
 
-/// Render event feed. Returns number of rows consumed.
-fn render_events(
-    buf: &mut String,
+/// Paint wire feed events.
+fn paint_wire(
     state: &MonitorState,
     cols: usize,
     max_rows: usize,
-    color: bool,
-) -> usize {
-    if state.events.is_empty() {
-        return 0;
+    layout: &Layout,
+) -> Vec<String> {
+    let color = layout.color;
+
+    if state.events.is_empty() || max_rows == 0 {
+        return Vec::new();
     }
 
-    // Show most recent events that fit
-    let start = state.events.len().saturating_sub(max_rows);
-    let visible = &state.events.as_slices();
-    let all_events: Vec<&EventLine> = visible.0.iter().chain(visible.1.iter()).collect();
+    let all_events: Vec<&EventLine> = state.events.iter().collect();
+    let start = all_events.len().saturating_sub(max_rows);
     let display_events = &all_events[start..];
 
-    // Compute entity column width (max entity name length, capped)
+    // Compute entity column width
     let entity_width = display_events
         .iter()
         .map(|e| e.entity.len())
@@ -768,25 +1080,35 @@ fn render_events(
         .unwrap_or(6)
         .clamp(6, 16);
 
-    let mut rows = 0;
+    let mut lines = Vec::new();
     for event in display_events {
-        if rows >= max_rows {
+        if lines.len() >= max_rows {
             break;
         }
 
-        let time = if cols >= 60 { &event.time } else {
-            // Short time: strip seconds if full "HH:MM:SS"
-            if event.time.len() > 5 { &event.time[..5] } else { &event.time }
-        };
-        let entity = &event.entity;
-        let padded_entity = if entity.len() < entity_width {
-            format!("{}{}", entity, " ".repeat(entity_width - entity.len()))
+        let time = if cols >= 60 {
+            &event.time
         } else {
-            entity[..entity_width].to_string()
+            // Short time: strip seconds
+            if event.time.len() > 5 {
+                &event.time[..5]
+            } else {
+                &event.time
+            }
+        };
+
+        let padded_entity = if event.entity.len() < entity_width {
+            format!(
+                "{}{}",
+                event.entity,
+                " ".repeat(entity_width - event.entity.len())
+            )
+        } else {
+            event.entity[..entity_width].to_string()
         };
 
         // Truncate message to fit
-        let prefix_len = 1 + time.len() + 2 + entity_width + 2; // " HH:MM:SS  entity  "
+        let prefix_len = 1 + time.len() + 2 + entity_width + 2;
         let msg_width = cols.saturating_sub(prefix_len);
         let msg = if event.message.len() > msg_width {
             &event.message[..msg_width]
@@ -794,8 +1116,8 @@ fn render_events(
             &event.message
         };
 
-        if color {
-            let line = match event.level {
+        let line = if color {
+            match event.level {
                 EventLevel::Info => format!(
                     " {}  {}  {}",
                     time.dimmed(),
@@ -820,29 +1142,50 @@ fn render_events(
                     padded_entity.dimmed(),
                     msg.dimmed()
                 ),
-            };
-            buf.push_str(&line);
+            }
         } else {
-            buf.push_str(&format!(" {}  {}  {}", time, padded_entity, msg));
-        }
-        buf.push('\n');
-        rows += 1;
+            format!(" {}  {}  {}", time, padded_entity, msg)
+        };
+
+        lines.push(line);
     }
 
-    rows
+    lines
 }
 
-/// Render garden peers section.
-fn render_garden(
-    buf: &mut String,
+/// Paint topology sidebar for split mode.
+fn paint_sidebar(
     state: &MonitorState,
-    cols: usize,
+    sidebar_cols: usize,
     max_rows: usize,
-    color: bool,
-) {
+    layout: &Layout,
+) -> Vec<String> {
+    let color = layout.color;
     let now = chrono::Utc::now();
+    let mut lines = Vec::new();
 
-    // Sort: self pinned first, then by last_seen descending (freshest first)
+    if state.topology.is_empty() {
+        if max_rows > 0 {
+            let label = if color {
+                format!("  {}", "no topology".dimmed())
+            } else {
+                "  no topology".to_string()
+            };
+            lines.push(pad_to(label, sidebar_cols, false));
+        }
+        return lines;
+    }
+
+    // Header
+    let summary = garden_summary(&state.topology, sidebar_cols);
+    let header = if color {
+        format!("  {}", summary.dimmed())
+    } else {
+        format!("  {}", summary)
+    };
+    lines.push(pad_to(header, sidebar_cols, false));
+
+    // Sort: self pinned first, then by last_seen descending
     let mut sorted: Vec<&TopologyEntry> = state.topology.iter().collect();
     sorted.sort_by(|a, b| {
         let a_self = a.stone_name == state.stone_name;
@@ -854,31 +1197,32 @@ fn render_garden(
         }
     });
 
-    for (i, entry) in sorted.iter().enumerate() {
-        if i >= max_rows {
-            break;
-        }
-
-        let name = if cols < 60 {
-            entry
-                .stone_name
-                .strip_prefix("stone-")
-                .unwrap_or(&entry.stone_name)
-        } else {
-            &entry.stone_name
-        };
-
+    for entry in sorted.iter().take(max_rows.saturating_sub(1)) {
+        let name = shorten_stone_name(&entry.stone_name);
         let is_self = entry.stone_name == state.stone_name;
         let svc_count = entry.services.len();
+
         let health_dot = match entry.health.as_str() {
             "thriving" => {
-                if color { "●".green().to_string() } else { "o".to_string() }
+                if color {
+                    "●".green().to_string()
+                } else {
+                    "o".to_string()
+                }
             }
             "degraded" | "withering" => {
-                if color { "●".yellow().to_string() } else { "!".to_string() }
+                if color {
+                    "●".yellow().to_string()
+                } else {
+                    "!".to_string()
+                }
             }
             _ => {
-                if color { "○".dimmed().to_string() } else { "-".to_string() }
+                if color {
+                    "○".dimmed().to_string()
+                } else {
+                    "-".to_string()
+                }
             }
         };
 
@@ -888,102 +1232,261 @@ fn render_garden(
             let elapsed = now.signed_duration_since(entry.last_seen);
             let secs = elapsed.num_seconds().max(0) as u64;
             if secs < 60 {
-                format!("{}s ago", secs)
+                format!("{}s", secs)
             } else {
-                format!("{}m ago", secs / 60)
+                format!("{}m", secs / 60)
             }
         };
 
-        // Offering names (abbreviated)
-        let offerings: String = if cols > 80 {
-            let names: Vec<&str> = entry
-                .services
-                .iter()
-                .take(3)
-                .map(|s| s.name.as_str())
-                .collect();
-            let extra = entry.services.len().saturating_sub(3);
-            let mut s = names.join(" ");
-            if extra > 0 {
-                s.push_str(&format!(" +{}", extra));
-            }
-            s
+        // Name width: sidebar minus health dot (2) - svc (4) - age (~5) - spacing
+        let name_width = sidebar_cols.saturating_sub(16).max(8);
+        let display_name = if name.len() > name_width {
+            &name[..name_width]
         } else {
-            String::new()
+            &name
         };
+        let name_pad = name_width.saturating_sub(display_name.len());
 
-        let name_width = 24.min(cols / 3);
-        let padded_name = if name.len() < name_width {
-            format!("{}{}", name, " ".repeat(name_width - name.len()))
-        } else {
-            name[..name_width].to_string()
-        };
-
-        if color {
+        let line = if color {
             let name_display = if is_self {
-                padded_name.bold().to_string()
+                display_name.bold().to_string()
             } else {
-                padded_name.to_string()
+                display_name.to_string()
             };
-            buf.push_str(&format!(
-                " {} {}  {} svc  {}  {}\n",
+            format!(
+                "  {} {}{}  {}  {}",
                 health_dot,
                 name_display,
-                svc_count,
+                " ".repeat(name_pad),
+                format!("{}", svc_count).dimmed(),
                 age.dimmed(),
-                offerings.dimmed()
-            ));
+            )
         } else {
-            buf.push_str(&format!(
-                " {} {}  {} svc  {}  {}\n",
-                health_dot, padded_name, svc_count, age, offerings
-            ));
+            format!(
+                "  {} {}{}  {}  {}",
+                health_dot,
+                display_name,
+                " ".repeat(name_pad),
+                svc_count,
+                age,
+            )
+        };
+
+        lines.push(pad_to(line, sidebar_cols, false));
+    }
+
+    // Pad remaining rows
+    while lines.len() < max_rows {
+        lines.push(" ".repeat(sidebar_cols));
+    }
+
+    lines
+}
+
+/// Paint footer with connection diagnostics.
+fn paint_footer(state: &MonitorState, layout: &Layout) -> String {
+    let cols = layout.cols;
+    let color = layout.color;
+
+    let mut parts: Vec<String> = Vec::new();
+
+    // Connected duration
+    if let Some(since) = state.connected_since {
+        let elapsed = since.elapsed();
+        let secs = elapsed.as_secs();
+        if secs >= 3600 {
+            parts.push(format!("connected {}h {}m", secs / 3600, (secs % 3600) / 60));
+        } else if secs >= 60 {
+            parts.push(format!("connected {}m {}s", secs / 60, secs % 60));
+        } else {
+            parts.push(format!("connected {}s", secs));
         }
+    } else {
+        parts.push("disconnected".to_string());
+    }
+
+    // Events per minute
+    let epm = state.events_per_minute();
+    if cols >= 60 {
+        parts.push(format!("{} evt/min", epm));
+    } else {
+        parts.push(format!("{}/min", epm));
+    }
+
+    // Last chirp age
+    if let Some(last) = state.last_transport {
+        let age = last.elapsed().as_secs();
+        if cols >= 60 {
+            parts.push(format!("last chirp {}s", age));
+        } else {
+            parts.push(format!("chirp {}s", age));
+        }
+    }
+
+    // Last domain event age
+    if let Some(last) = state.last_domain {
+        let age = last.elapsed().as_secs();
+        if cols >= 60 {
+            parts.push(format!("last health {}s", age));
+        } else {
+            parts.push(format!("health {}s", age));
+        }
+    }
+
+    let separator = if layout.unicode { " \u{2502} " } else { " | " };
+    let text = parts.join(separator);
+
+    // Pad/truncate to fit
+    let display = if text.len() + 1 > cols {
+        format!(" {}", &text[..cols.saturating_sub(1)])
+    } else {
+        format!(" {}", text)
+    };
+
+    if color {
+        format!("{}", display.dimmed())
+    } else {
+        display
     }
 }
 
 // =============================================================================
-// Helpers
+// Composite functions
 // =============================================================================
 
-/// Build a garden section header label with health summary.
-///
-/// Wide:   "garden (12 thriving, 2 withering, 1 offline)"
-/// Narrow: "garden (14/15 ok)"
-fn garden_summary(topology: &[TopologyEntry], cols: usize) -> String {
-    let total = topology.len();
-    let mut thriving = 0u32;
-    let mut withering = 0u32;
-    let mut offline = 0u32;
-    for entry in topology {
-        match entry.health.as_str() {
-            "thriving" => thriving += 1,
-            "withering" | "degraded" => withering += 1,
-            _ => offline += 1,
+/// Composite split layout: wire left │ sidebar right.
+fn composite_split(
+    buf: &mut String,
+    wire_lines: &[String],
+    sidebar_lines: &[String],
+    wire_cols: usize,
+    unicode: bool,
+) {
+    let sep = if unicode { "\u{2502}" } else { "|" };
+    let max_lines = wire_lines.len().max(sidebar_lines.len());
+
+    for i in 0..max_lines {
+        let wire = wire_lines.get(i).map(|s| s.as_str()).unwrap_or("");
+        let sidebar = sidebar_lines.get(i).map(|s| s.as_str()).unwrap_or("");
+
+        // Wire line needs to be padded to wire_cols visible characters.
+        // Since ANSI codes make len() unreliable, we pad the raw string.
+        buf.push_str(wire);
+
+        // Pad wire to fill its column width.
+        // Approximate: strip ANSI for measurement.
+        let wire_visible = strip_ansi_len(wire);
+        if wire_visible < wire_cols {
+            buf.push_str(&" ".repeat(wire_cols - wire_visible));
         }
-    }
 
-    if cols < 60 {
-        let ok = thriving + withering; // alive, even if degraded
-        return format!("garden ({}/{} ok)", ok, total);
+        buf.push_str(sep);
+        buf.push_str(sidebar);
+        buf.push('\n');
     }
-
-    let mut parts = Vec::new();
-    if thriving > 0 {
-        parts.push(format!("{} thriving", thriving));
-    }
-    if withering > 0 {
-        parts.push(format!("{} withering", withering));
-    }
-    if offline > 0 {
-        parts.push(format!("{} offline", offline));
-    }
-    format!("garden ({})", parts.join(", "))
 }
 
-/// Render a horizontal divider line, optionally with a label.
-/// Always fits within `cols` visible characters (no bleed/wrap).
-fn render_separator(buf: &mut String, label: Option<&str>, cols: usize, unicode: bool, color: bool) {
+/// Paint compact garden for stacked mode (two stones per row).
+fn paint_garden_compact(
+    buf: &mut String,
+    state: &MonitorState,
+    cols: usize,
+    max_rows: usize,
+    layout: &Layout,
+) {
+    let color = layout.color;
+    let now = chrono::Utc::now();
+
+    // Sort: self pinned first, then by last_seen descending
+    let mut sorted: Vec<&TopologyEntry> = state.topology.iter().collect();
+    sorted.sort_by(|a, b| {
+        let a_self = a.stone_name == state.stone_name;
+        let b_self = b.stone_name == state.stone_name;
+        match (a_self, b_self) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => b.last_seen.cmp(&a.last_seen),
+        }
+    });
+
+    let half_cols = cols / 2;
+
+    for (row_count, pair) in sorted.chunks(2).enumerate() {
+        if row_count >= max_rows {
+            break;
+        }
+
+        let mut line = String::new();
+        for entry in pair {
+            let name = shorten_stone_name(&entry.stone_name);
+            let is_self = entry.stone_name == state.stone_name;
+            let svc_count = entry.services.len();
+
+            let health_dot = match entry.health.as_str() {
+                "thriving" => {
+                    if color { "●".green().to_string() } else { "o".to_string() }
+                }
+                "degraded" | "withering" => {
+                    if color { "●".yellow().to_string() } else { "!".to_string() }
+                }
+                _ => {
+                    if color { "○".dimmed().to_string() } else { "-".to_string() }
+                }
+            };
+
+            let age = if is_self {
+                "self".to_string()
+            } else {
+                let elapsed = now.signed_duration_since(entry.last_seen);
+                let secs = elapsed.num_seconds().max(0) as u64;
+                if secs < 60 { format!("{}s", secs) } else { format!("{}m", secs / 60) }
+            };
+
+            let name_width = half_cols.saturating_sub(14).max(6);
+            let display_name = if name.len() > name_width {
+                &name[..name_width]
+            } else {
+                &name
+            };
+
+            if color {
+                let n = if is_self {
+                    display_name.bold().to_string()
+                } else {
+                    display_name.to_string()
+                };
+                let entry_str = format!(
+                    " {} {}  {}  {}",
+                    health_dot, n, svc_count, age.dimmed()
+                );
+                // Pad to half_cols
+                let visible = strip_ansi_len(&entry_str);
+                line.push_str(&entry_str);
+                if visible < half_cols {
+                    line.push_str(&" ".repeat(half_cols - visible));
+                }
+            } else {
+                let entry_str = format!(" {} {}  {}  {}", health_dot, display_name, svc_count, age);
+                let padded = if entry_str.len() < half_cols {
+                    format!("{}{}", entry_str, " ".repeat(half_cols - entry_str.len()))
+                } else {
+                    entry_str[..half_cols].to_string()
+                };
+                line.push_str(&padded);
+            }
+        }
+
+        buf.push_str(&line);
+        buf.push('\n');
+    }
+}
+
+// =============================================================================
+// Separator helper
+// =============================================================================
+
+/// Write a horizontal divider line directly to buffer.
+fn paint_separator(buf: &mut String, label: Option<&str>, cols: usize, unicode: bool, color: bool) {
     let bar_char = if unicode { "\u{2500}" } else { "-" };
     let prefix = match label {
         Some(lbl) => format!(" {} ", lbl),
@@ -1000,6 +1503,77 @@ fn render_separator(buf: &mut String, label: Option<&str>, cols: usize, unicode:
     } else {
         buf.push_str(&format!("{}{}\n", prefix, bar));
     }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Build a garden section header label with health summary.
+fn garden_summary(topology: &[TopologyEntry], cols: usize) -> String {
+    let total = topology.len();
+    let mut thriving = 0u32;
+    let mut withering = 0u32;
+    let mut offline = 0u32;
+    for entry in topology {
+        match entry.health.as_str() {
+            "thriving" => thriving += 1,
+            "withering" | "degraded" => withering += 1,
+            _ => offline += 1,
+        }
+    }
+
+    if cols < 60 {
+        let ok = thriving + withering;
+        return format!("garden ({}/{} ok)", ok, total);
+    }
+
+    let mut parts = Vec::new();
+    if thriving > 0 {
+        parts.push(format!("{} thriving", thriving));
+    }
+    if withering > 0 {
+        parts.push(format!("{} withering", withering));
+    }
+    if offline > 0 {
+        parts.push(format!("{} offline", offline));
+    }
+    format!("garden ({})", parts.join(", "))
+}
+
+/// Shorten "stone-crystal-forest" → "crystal-forest".
+fn shorten_stone_name(name: &str) -> String {
+    name.strip_prefix("stone-")
+        .unwrap_or(name)
+        .to_string()
+}
+
+/// Pad a string (with possible ANSI) to a target visible width.
+fn pad_to(s: String, target: usize, _right_align: bool) -> String {
+    let visible = strip_ansi_len(&s);
+    if visible >= target {
+        s
+    } else {
+        format!("{}{}", s, " ".repeat(target - visible))
+    }
+}
+
+/// Approximate visible length of a string by stripping ANSI escape codes.
+fn strip_ansi_len(s: &str) -> usize {
+    let mut len = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            len += 1;
+        }
+    }
+    len
 }
 
 /// Get terminal dimensions (cols, rows).
@@ -1029,6 +1603,11 @@ fn extract_time(parsed: &serde_json::Value) -> String {
             }
         })
         .unwrap_or_else(wall_clock)
+}
+
+/// Extract time from a transport pulse event.
+fn extract_transport_time(parsed: &serde_json::Value) -> String {
+    extract_time(parsed)
 }
 
 /// Fetch topology from stone.

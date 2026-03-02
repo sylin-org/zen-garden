@@ -112,9 +112,9 @@ fn find_embedded_uri_scheme(template: &str) -> Option<String> {
 /// 1. `connection.protocol` when present
 /// 2. `connection.uri_template` scheme when present
 /// 3. category connection profile (protocol or uri_template)
-/// 3. `"tcp"` fallback with warning
+/// 3. `"http"` fallback (safe default — nearly all containerised services expose HTTP)
 pub fn infer_protocol_from_manifest_metadata(
-    offering_name: &str,
+    _offering_name: &str,
     category: &str,
     connection: Option<&ConnectionProfile>,
 ) -> String {
@@ -144,12 +144,7 @@ pub fn infer_protocol_from_manifest_metadata(
         }
     }
 
-    tracing::warn!(
-        offering = %offering_name,
-        category = %category,
-        "No protocol found in manifest or category, using 'tcp'"
-    );
-    "tcp".to_string()
+    "http".to_string()
 }
 
 /// Select the best URI template from offering or category connection profiles.
@@ -457,10 +452,10 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_protocol_from_manifest_metadata_unknown_category_falls_back_to_tcp() {
+    fn test_infer_protocol_from_manifest_metadata_unknown_category_falls_back_to_http() {
         let protocol =
             infer_protocol_from_manifest_metadata("mystery", "category-that-does-not-exist", None);
-        assert_eq!(protocol, "tcp");
+        assert_eq!(protocol, "http");
     }
 
     #[test]

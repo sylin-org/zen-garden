@@ -1,10 +1,9 @@
 ﻿# Zen Garden
 
+**Automatic service discovery for self-hosted infrastructure**
+
 <p align="center">
   <img src="res/zg-256.png" alt="Zen Garden" />
-  <br/>
-  <br/>
-  Automatic service discovery for self-hosted infrastructure
 </p>
 
 ## The Situation

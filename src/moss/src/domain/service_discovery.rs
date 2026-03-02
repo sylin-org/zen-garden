@@ -615,8 +615,13 @@ async fn find_services_in_topology_cache(
             // Infer protocol and resolve connection
             let protocol = connection::infer_protocol(&svc.offering, &svc.category, state).await;
 
-            // Get port from offering manifest
-            let port = get_offering_port(&svc.offering, state).await;
+            // PORT-0001: Use actual remapped port from chirp if available,
+            // otherwise fall back to manifest default.
+            let port = if let Some(&p) = svc.ports.get("default") {
+                p
+            } else {
+                get_offering_port(&svc.offering, state).await
+            };
             let connection_profile = state
                 .manifest_registry
                 .get_offering(&svc.offering)

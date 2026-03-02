@@ -727,10 +727,12 @@ pub async fn install_service_task(
         job_id,
         offering,
     );
+    // Capture named port info before compiled is partially moved into spec
+    let manifest_ports_named = compiled.ports_vec_named();
     let spec = crate::docker::ContainerSpec {
         image: compiled.image.clone(),
         command: None,
-        ports: compiled.ports_vec(),
+        ports: manifest_ports_named.iter().map(|(_, h, c)| (*h, *c)).collect(),
         environment: compiled.environment,
         volumes: compiled.volumes,
         config_files: vec![],
@@ -776,6 +778,23 @@ pub async fn install_service_task(
         .map(|(h, _)| *h)
         .unwrap_or(native_port);
 
+    // PORT-0001: Build port_map with only remapped ports (actual != manifest default)
+    let port_map: std::collections::HashMap<String, u16> = manifest_ports_named
+        .iter()
+        .filter_map(|(name, manifest_host, container)| {
+            actual_ports
+                .iter()
+                .find(|(_, c)| c == container)
+                .and_then(|(actual_host, _)| {
+                    if *actual_host != *manifest_host {
+                        Some((name.clone(), *actual_host))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
+
     emit_job_progress(
         state,
         "info",
@@ -789,12 +808,14 @@ pub async fn install_service_task(
     let image_version_clone = image_version.clone();
     let offering_protocol_clone = offering_protocol.clone();
     let guidance_clone = guidance.clone();
+    let port_map_clone = port_map.clone();
     let updated = state.update_offering_by_name(offering, false, |o| {
         o.status = OfferingStatus::Running;
         o.health = ServiceHealthStatus::Healthy;
         o.version = image_version_clone;
         o.location.port = actual_port;
         o.location.protocol = offering_protocol_clone;
+        o.location.port_map = port_map_clone;
         if let Some(ref mut managed) = o.managed_data_mut() {
             managed.job_id = None;
             managed.guidance = guidance_clone;
@@ -823,6 +844,7 @@ pub async fn install_service_task(
                 port: actual_port,
                 protocol: offering_protocol.clone(),
                 agnostic_port: None,
+                port_map: port_map.clone(),
             },
             mode_data: OfferingModeData::Managed(ManagedData {
                 resources: None,
@@ -1065,11 +1087,14 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             _ => {}
         }
 
+        // Capture named port info before compiled is partially moved into spec
+        let manifest_ports_named = compiled.ports_vec_named();
+
         // Install via Docker
         let spec = crate::docker::ContainerSpec {
             image: compiled.image.clone(),
             command: None,
-            ports: compiled.ports_vec(),
+            ports: manifest_ports_named.iter().map(|(_, h, c)| (*h, *c)).collect(),
             environment: compiled.environment,
             volumes: compiled.volumes,
             config_files: vec![],
@@ -1100,6 +1125,23 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             .map(|(h, _)| *h)
             .unwrap_or(native_port);
 
+        // PORT-0001: Build port_map with only remapped ports
+        let port_map: std::collections::HashMap<String, u16> = manifest_ports_named
+            .iter()
+            .filter_map(|(name, manifest_host, container)| {
+                actual_ports
+                    .iter()
+                    .find(|(_, c)| c == container)
+                    .and_then(|(actual_host, _)| {
+                        if *actual_host != *manifest_host {
+                            Some((name.clone(), *actual_host))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .collect();
+
         // Add to offerings registry
         let offering_id = generate_guidv7();
         let unified = Offering {
@@ -1115,6 +1157,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
                 port: actual_port,
                 protocol: offering_protocol,
                 agnostic_port: None,
+                port_map,
             },
             mode_data: OfferingModeData::Managed(ManagedData {
                 resources: None,

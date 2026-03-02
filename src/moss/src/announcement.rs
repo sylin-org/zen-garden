@@ -268,6 +268,7 @@ mod tests {
             category: "data".to_string(),
             status: "Running".to_string(),
             role: None,
+            ports: std::collections::HashMap::new(),
         });
         let hash2 = calculate_state_hash(&entry);
 

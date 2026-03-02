@@ -188,6 +188,7 @@ pub async fn adopt_offering_container(
             port: actual_port,
             protocol,
             agnostic_port: None,
+            port_map: std::collections::HashMap::new(),
         },
         mode_data: OfferingModeData::Managed(ManagedData {
             resources: None,

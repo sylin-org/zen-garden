@@ -727,6 +727,11 @@ pub struct TopologyServiceEntry {
     /// `None` when orchestration is not active for this offering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Actual host ports, keyed by port name (e.g., "default", "management").
+    /// Only includes ports that differ from manifest defaults (PORT-0001).
+    /// Empty/absent = all ports match manifest defaults.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub ports: std::collections::HashMap<String, u16>,
 }
 
 impl TopologyServiceEntry {
@@ -748,6 +753,7 @@ impl TopologyServiceEntry {
             }
             .to_string(),
             role: None, // ServiceInfo doesn't carry orchestration state
+            ports: std::collections::HashMap::new(), // ServiceInfo doesn't carry port_map
         }
     }
 
@@ -781,6 +787,7 @@ impl TopologyServiceEntry {
             }
             .to_string(),
             role: offering.orchestration.as_ref().map(|o| o.role.to_string()),
+            ports: offering.location.port_map.clone(),
         }
     }
 
@@ -1429,6 +1436,12 @@ pub struct OfferingLocation {
     /// Optional agnostic port (managed containers only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agnostic_port: Option<u16>,
+
+    /// Named port map: port_name → actual_host_port (PORT-0001).
+    /// Only populated when at least one port was remapped from manifest defaults.
+    /// Empty map = all ports match manifest defaults.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub port_map: std::collections::HashMap<String, u16>,
 }
 
 fn default_localhost() -> String {

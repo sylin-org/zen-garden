@@ -273,8 +273,13 @@ async fn remediate_port_with_handler(port: u16, handler: &PortConflictHandler) -
 
 /// Resolve a port conflict - either remediate or remap
 ///
-/// Returns the actual host port to use (may be different if remapped)
-async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
+/// Returns the actual host port to use (may be different if remapped).
+/// `docker_occupied` maps host ports already claimed by Docker containers
+/// (including stopped ones) to avoid silent conflicts on restart.
+async fn resolve_port_conflict(
+    requested_port: u16,
+    docker_occupied: &HashMap<u16, String>,
+) -> Result<u16> {
     // First, check for platform-specific handler
     if let Some(handler) = get_conflict_handler(requested_port) {
         // Platform-specific handling (Auto, Manual, Fail)
@@ -332,14 +337,24 @@ async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
         }
     }
 
-    // No catalog entry at all - generic error
+    // No catalog entry — universal increment-by-one fallback.
+    // Try requested_port+1 through +100, checking both TCP bind and Docker occupancy.
+    for candidate in (requested_port + 1)..=(requested_port.saturating_add(100)) {
+        if is_port_available(candidate) && !docker_occupied.contains_key(&candidate) {
+            tracing::info!(
+                original_port = requested_port,
+                remapped_port = candidate,
+                "Port remapped via universal increment fallback"
+            );
+            return Ok(candidate);
+        }
+    }
+
     anyhow::bail!(
-        "Port {} is already in use. Check what's using it with:\n\
-         Linux/macOS: sudo lsof -i :{}\n\
-         Windows: netstat -ano | findstr :{}",
+        "Port {} is in use and no available port found in range {}-{}",
         requested_port,
-        requested_port,
-        requested_port
+        requested_port + 1,
+        requested_port.saturating_add(100)
     );
 }
 
@@ -348,21 +363,28 @@ async fn resolve_port_conflict(requested_port: u16) -> Result<u16> {
 /// Uses the well-known ports catalog to determine how to handle conflicts:
 /// - For ports with auto-remediation (e.g., DNS port 53), runs commands to free the port
 /// - For ports with remap configuration, finds the next available port in range
+/// - For uncatalogued ports, increments by one until a vacant port is found
 /// - For manual or fail types, returns an actionable error message
+///
+/// `docker_occupied` maps host ports claimed by any Docker container (including
+/// stopped ones) so we avoid conflicts that TCP bind alone would miss.
 ///
 /// Returns the resolved port mappings - (actual_host_port, container_port).
 /// The actual_host_port may differ from the requested port if it was remapped.
-pub async fn check_and_remediate_ports(ports: &[(u16, u16)]) -> Result<Vec<(u16, u16)>> {
+pub async fn check_and_remediate_ports(
+    ports: &[(u16, u16)],
+    docker_occupied: &HashMap<u16, String>,
+) -> Result<Vec<(u16, u16)>> {
     let mut resolved_ports = Vec::with_capacity(ports.len());
 
     for (host_port, container_port) in ports {
-        if is_port_available(*host_port) {
-            // Port is available, use as-is
+        if is_port_available(*host_port) && !docker_occupied.contains_key(host_port) {
+            // Port is available (both TCP-bindable and not claimed by a stopped container)
             resolved_ports.push((*host_port, *container_port));
         } else {
             // Port conflict - attempt resolution
             tracing::info!(port = host_port, "Port is in use, attempting resolution");
-            let actual_host_port = resolve_port_conflict(*host_port).await?;
+            let actual_host_port = resolve_port_conflict(*host_port, docker_occupied).await?;
             resolved_ports.push((actual_host_port, *container_port));
         }
     }
@@ -560,8 +582,11 @@ impl DockerManager {
             anyhow::bail!("Container '{}' already exists", container_name);
         }
 
+        // Scan Docker port occupancy (including stopped containers), excluding our own
+        let docker_occupied = self.scan_port_occupancy(Some(&container_name)).await?;
+
         // Pre-flight port availability check with automatic remediation/remapping
-        let resolved_ports = check_and_remediate_ports(&spec.ports).await?;
+        let resolved_ports = check_and_remediate_ports(&spec.ports, &docker_occupied).await?;
 
         // Log any port remappings
         for ((original, _), (actual, _)) in spec.ports.iter().zip(resolved_ports.iter()) {
@@ -808,8 +833,11 @@ impl DockerManager {
 
         tracing::info!(service = %name, "Old container removed (volumes preserved)");
 
+        // Scan Docker port occupancy (old container just removed, so its ports are freed)
+        let docker_occupied = self.scan_port_occupancy(None).await?;
+
         // Resolve ports (same logic as install_service)
-        let resolved_ports = check_and_remediate_ports(&spec.ports).await?;
+        let resolved_ports = check_and_remediate_ports(&spec.ports, &docker_occupied).await?;
 
         // Configure port bindings
         let mut port_bindings = HashMap::new();
@@ -1805,6 +1833,62 @@ impl DockerManager {
         ).await.context("exec write resolv.conf")?;
 
         Ok(())
+    }
+
+    /// Scan ALL Docker containers (running + stopped) and return a map of
+    /// host_port → container_name for every port binding.
+    ///
+    /// Used during port allocation to avoid conflicts with stopped containers
+    /// whose ports are not TCP-bindable but will conflict on restart.
+    /// Optionally excludes a specific container (e.g., the one being reinstalled).
+    pub async fn scan_port_occupancy(
+        &self,
+        exclude_container: Option<&str>,
+    ) -> Result<HashMap<u16, String>> {
+        let options = ListContainersOptions::<String> {
+            all: true,
+            ..Default::default()
+        };
+
+        let containers = self
+            .docker
+            .list_containers(Some(options))
+            .await
+            .context("Failed to list containers for port occupancy scan")?;
+
+        let mut occupied = HashMap::new();
+        for container in containers {
+            let name = container
+                .names
+                .as_ref()
+                .and_then(|names| names.first())
+                .map(|n| n.trim_start_matches('/').to_string())
+                .unwrap_or_default();
+
+            if name.is_empty() {
+                continue;
+            }
+
+            // Skip the container we're about to redeploy
+            if let Some(exclude) = exclude_container {
+                if name == exclude {
+                    continue;
+                }
+            }
+
+            // Extract port bindings from the container summary's ports field
+            if let Some(ports) = container.ports {
+                for port in ports {
+                    if let Some(public_port) = port.public_port {
+                        if public_port > 0 {
+                            occupied.insert(public_port, name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(occupied)
     }
 
     /// Get the actual port bindings from a running container.

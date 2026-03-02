@@ -404,6 +404,7 @@ pub async fn create_service_v1(
                 port: native_port,
                 protocol: offering_protocol,
                 agnostic_port: None,
+                port_map: std::collections::HashMap::new(),
             },
             mode_data: OfferingModeData::Managed(ManagedData {
                 resources: None,

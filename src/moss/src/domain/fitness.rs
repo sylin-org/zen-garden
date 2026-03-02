@@ -215,6 +215,7 @@ mod tests {
                 port: 8080,
                 protocol: "http".to_string(),
                 agnostic_port: None,
+                port_map: std::collections::HashMap::new(),
             },
             mode_data: OfferingModeData::Managed(ManagedData::default()),
             registered_at: chrono::Utc::now(),

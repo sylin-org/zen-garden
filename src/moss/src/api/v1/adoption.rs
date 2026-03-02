@@ -177,6 +177,7 @@ pub async fn adopt_offering_v1(
         port: req.port.unwrap_or_else(|| offering_def.default_host_port()),
         protocol: offering_protocol,
         agnostic_port: None,
+        port_map: std::collections::HashMap::new(),
     };
 
     let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
@@ -433,6 +434,7 @@ pub async fn borrow_service_v1(
         port,
         protocol,
         agnostic_port: None,
+        port_map: std::collections::HashMap::new(),
     };
 
     let unified = Offering {

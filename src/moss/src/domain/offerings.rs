@@ -51,24 +51,33 @@ impl CompiledOffering {
         self.default_port().map(|(host, _)| *host).unwrap_or(30000)
     }
 
-    /// Get ports as a flat Vec for Docker (port order: default first, then sorted by name)
-    pub fn ports_vec(&self) -> Vec<(u16, u16)> {
+    /// Get ports as named tuples: (name, host_port, container_port).
+    /// Order: "default" first, then remaining ports sorted by name.
+    pub fn ports_vec_named(&self) -> Vec<(String, u16, u16)> {
         let mut ports = Vec::with_capacity(self.ports.len());
 
         // Default port first (if present)
-        if let Some(p) = self.ports.get("default") {
-            ports.push(*p);
+        if let Some(&(h, c)) = self.ports.get("default") {
+            ports.push(("default".to_string(), h, c));
         }
 
         // Then other ports sorted by name
         let mut other_ports: Vec<_> = self.ports.iter().filter(|(k, _)| *k != "default").collect();
         other_ports.sort_by_key(|(k, _)| *k);
 
-        for (_, port) in other_ports {
-            ports.push(*port);
+        for (name, &(h, c)) in other_ports {
+            ports.push((name.clone(), h, c));
         }
 
         ports
+    }
+
+    /// Get ports as a flat Vec for Docker (port order: default first, then sorted by name)
+    pub fn ports_vec(&self) -> Vec<(u16, u16)> {
+        self.ports_vec_named()
+            .into_iter()
+            .map(|(_, h, c)| (h, c))
+            .collect()
     }
 }
 

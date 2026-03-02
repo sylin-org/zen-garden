@@ -147,6 +147,7 @@ mod normalize_tests {
                 port: 11434,
                 protocol: "http".to_string(),
                 agnostic_port: None,
+                port_map: std::collections::HashMap::new(),
             },
             mode_data: OfferingModeData::Adopted(AdoptedData {
                 control_level: AdoptedControlLevel::Monitor,

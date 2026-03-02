@@ -273,6 +273,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         port: manifest.default_host_port(),
                         protocol,
                         agnostic_port: None,
+                        port_map: std::collections::HashMap::new(),
                     };
 
                     // Get control config from adopted mode

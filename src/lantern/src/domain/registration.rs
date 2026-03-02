@@ -40,6 +40,7 @@ pub fn register_stone(
             category: String::new(),
             status: svc.status,
             role: None,
+            ports: std::collections::HashMap::new(),
         })
         .collect();
 

@@ -1,14 +1,12 @@
 ﻿# Zen Garden
 
-**Automatic service discovery for self-hosted infrastructure**
-
 <p align="center">
   <img src="res/zg-256.png" alt="Zen Garden" />
-</p>
+  <br/>
+  <br/>
+  **Automatic service discovery for self-hosted infrastructure**
 
-Turn old laptops into database servers. Swap failed hardware without updating configs. Understand what you're running.
-
----
+## </p>
 
 ## The Situation
 

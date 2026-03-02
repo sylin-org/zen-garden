@@ -45,6 +45,27 @@ Stones (devices running Moss) provide service discovery, orchestration, and fail
 
 ---
 
+## Features
+
+Zen Garden runs on Linux and Windows, detects GPU hardware automatically, and ships intelligent orchestrators for distributed workloads.
+
+| Category                | What's included                                                          | Docs                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Platform                | Linux (managed containers), Windows (adopted native services)            | [Offering Modes](docs/decisions/OFFER-0005-offering-modes.md)                           |
+| GPU acceleration        | NVIDIA CUDA, AMD ROCm, Intel OpenVINO, Windows DirectML — auto-detected | [Stone Hardware](docs/guides/stone-hardware.md)                                         |
+| Ollama orchestrator     | VRAM-aware routing, demand-weighted model placement, auto-tiering        | [AI Capability Router](docs/proposals/offering-orchestration/ORCH-0002-ai-capability-router.md) |
+| MongoDB orchestrator    | Automatic replica sets, dynamic membership, placement scoring            | [Database Choreographer](docs/proposals/offering-orchestration/ORCH-0003-database-choreographer.md) |
+| Storage                 | Seed banks with replication, S3-compatible gateway                       | [Seed Bank Spec](docs/specs/STORAGE-0001-seed-bank-onboarding.md)                      |
+| Updates                 | Multi-phase safe updates for software and firmware (fwupd/LVFS)          | [Nourishment Spec](docs/specs/nourishment-v0-spec.md)                                  |
+| Security                | Pond mTLS with TOTP enrollment and certificate rotation                  | [Pond Setup](docs/security/pond-setup.md)                                               |
+| Monitoring              | `rake pulse` live terminal, SSE event streams, garden-wide topology      | [Pulse ADR](docs/decisions/PULSE-0001-terminal-monitor.md)                              |
+| Companions              | Audio (Cricket) and LED (Firefly) feedback via companion SDK             | [Companion Overview](docs/guides/companion-overview.md)                                 |
+| State transfer          | Replant offerings between stones (harvest → collect → plant)             | [Replant Ceremony](docs/decisions/ORCH-0001-replant-ceremony.md)                        |
+| Maintenance             | Automated sweeps for staging, images, and stale binaries                 | [Caretaking Spec](docs/specs/caretaking-maintenance-sweeps.md)                          |
+| Hardware profiling      | CPU flags, VRAM, disk type, GPU utilization — per-offering compatibility | [Fitness Profiler](docs/decisions/ORCH-0003-fitness-profiler.md)                        |
+
+---
+
 ## Vocabulary
 
 | Term        | What It Is                                                              |
@@ -74,14 +95,16 @@ garden-rake find mongodb
 
 ## Examples
 
-A typical garden runs on whatever hardware you have.
+A typical garden runs on whatever hardware you have. 31 offering templates ship across 17 categories including databases, AI, networking, observability, storage, and search.
 
-| Hardware                  | Service    | Notes                  |
-| ------------------------- | ---------- | ---------------------- |
-| 2015 laptop               | MongoDB    | Handles 1,000+ req/sec |
-| Dell Wyse thin client     | Redis      | 2 GB RAM, 5 watts      |
-| Old desktop               | MinIO      | File storage           |
-| Raspberry Pi              | Prometheus | Monitoring             |
+| Hardware              | Service    | Notes                  |
+| --------------------- | ---------- | ---------------------- |
+| 2015 laptop           | MongoDB    | Handles 1,000+ req/sec |
+| Dell Wyse thin client | Redis      | 2 GB RAM, 5 watts      |
+| Old desktop           | Ollama     | Local LLM inference    |
+| Raspberry Pi          | Prometheus | Monitoring             |
+
+- [Full offerings catalog](docs/reference/offerings.md)
 
 ---
 
@@ -89,12 +112,13 @@ A typical garden runs on whatever hardware you have.
 
 | If you want to...               | Start here                                                            |
 | ------------------------------- | --------------------------------------------------------------------- |
+| Install Moss on hardware        | [Installing Moss](docs/guides/installing-moss.md)                     |
 | Set up your first Stone         | [First Stone Guide](docs/guides/first-stone.md)                       |
-| Understand the philosophy       | [Humanist Infrastructure](docs/philosophy/humanist-infrastructure.md) |
 | See what services are available | [Offerings Catalog](docs/reference/offerings.md)                      |
 | Learn the CLI                   | [Rake Commands](docs/specs/rake-commands.md)                          |
+| Use companions (audio, LEDs)    | [Companion Overview](docs/guides/companion-overview.md)               |
 | Understand security options     | [Security Overview](docs/security/overview.md)                        |
-| Read the specifications         | [Moss Daemon Lifecycle](docs/specs/moss-daemon-lifecycle.md)          |
+| Troubleshoot issues             | [Troubleshooting](docs/guides/troubleshooting.md)                     |
 | See architecture decisions      | [Decision Records](docs/decisions/)                                   |
 
 [Documentation Hub](docs/README.md)
@@ -103,16 +127,19 @@ A typical garden runs on whatever hardware you have.
 
 ## Project Status
 
-Version 0.1.0 — active development.
+Version 0.2.0 — active development.
 
-| Component        | Description                         |
-| ---------------- | ----------------------------------- |
-| `garden-moss`    | Daemon with 14-phase startup        |
-| `garden-rake`    | CLI with full command taxonomy      |
-| `garden-lantern` | Registry for cross-subnet discovery |
-| Offerings        | 30+ curated service templates       |
+| Component        | Description                                    |
+| ---------------- | ---------------------------------------------- |
+| `garden-moss`    | Stone daemon — discovery, orchestration, API   |
+| `garden-rake`    | CLI with `pulse` live terminal monitor         |
+| `garden-lantern` | Registry for cross-subnet discovery            |
+| `garden-cricket` | Audio companion (sound feedback)               |
+| `garden-firefly` | LED companion (visual status on RP2040-Matrix) |
+| Offerings        | 31 curated service templates across 17 categories |
 
 - [Release Notes](docs/ops/release-notes.md)
+- [Roadmap](docs/ops/roadmap.md)
 
 ---
 

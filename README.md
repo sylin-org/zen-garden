@@ -1,5 +1,9 @@
 ﻿# Zen Garden
 
+<p align="center">
+  <img src="res/zg-256.png" alt="Zen Garden" />
+</p>
+
 **Automatic service discovery for self-hosted infrastructure.**
 
 Turn old laptops into database servers. Swap failed hardware without updating configs. Understand what you're running.
@@ -120,8 +124,8 @@ Zen Garden is for people who want their feet on the ground. Not because the clou
 
 ## Documentation
 
-| If you want to...               | Start here                                                         |
-| ------------------------------- | ------------------------------------------------------------------ |
+| If you want to...               | Start here                                                            |
+| ------------------------------- | --------------------------------------------------------------------- |
 | Set up your first Stone         | [First Stone Guide](docs/guides/first-stone.md)                       |
 | Understand the philosophy       | [Humanist Infrastructure](docs/philosophy/humanist-infrastructure.md) |
 | See what services are available | [Offerings Catalog](docs/reference/offerings.md)                      |

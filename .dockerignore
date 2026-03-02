@@ -1,0 +1,38 @@
+# Build artifacts (hundreds of MB)
+target/
+src/orchestrators/common/target/
+src/orchestrators/ollama/target/
+src/orchestrators/mongodb/target/
+
+# Git history
+.git/
+
+# Build outputs
+dist/
+packages/
+staging/
+
+# IDE / tooling
+.vscode/
+.agentic/
+.claude/
+
+# Documentation (not needed in Docker builds)
+docs/
+
+# Installer scripts (not needed in Docker builds)
+installer/
+
+# Debug files
+check-*.txt
+*.pdb
+
+# Crates not needed by orchestrators (they only use src/common/ + src/orchestrators/)
+src/moss/
+src/rake/
+src/lantern/
+src/cricket/
+src/firefly/
+src/companion-sdk/
+src/build-utils/
+src/probe/

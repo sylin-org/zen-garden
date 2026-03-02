@@ -223,20 +223,67 @@ async fn topology_refresh_loop(
                 for topo_stone in &ollama_stones {
                     let endpoint = topo_stone.ollama_endpoint();
 
-                    let (known, needs_hw_update) = {
+                    // Look up by endpoint first, then by stone identity
+                    // (name/id).  A stone that rebooted with a new IP won't
+                    // match its old endpoint but will match by name.
+                    let (known, needs_hw_update, existing_endpoint) = {
                         let instances = state.instances.read().await;
-                        match instances.get(&endpoint) {
-                            Some(inst) => {
-                                let stale = (inst.vram_total_bytes == 0
+                        let found = instances
+                            .get(&endpoint)
+                            .map(|inst| (endpoint.clone(), inst))
+                            .or_else(|| {
+                                instances.iter().find(|(_, inst)| {
+                                    inst.stone_name == topo_stone.stone_name
+                                        || (!topo_stone.stone_id.is_empty()
+                                            && !inst.stone_id.is_empty()
+                                            && inst.stone_id == topo_stone.stone_id)
+                                }).map(|(ep, inst)| (ep.clone(), inst))
+                            });
+                        match found {
+                            Some((ep, inst)) => {
+                                let stale_hw = (inst.vram_total_bytes == 0
                                     && topo_stone.vram_total_bytes > 0)
-                                    || (inst.gpu_name.is_none() && topo_stone.gpu_name.is_some());
-                                (true, stale)
+                                    || (inst.gpu_name.is_none()
+                                        && topo_stone.gpu_name.is_some());
+                                let ip_changed = ep != endpoint;
+                                (true, stale_hw, Some((ep, ip_changed)))
                             }
-                            None => (false, false),
+                            None => (false, false, None),
                         }
                     };
 
-                    if known && needs_hw_update {
+                    // Stone is known but its IP changed — re-profile at the
+                    // new endpoint.  upsert_instance will evict the old entry.
+                    let ip_changed = existing_endpoint
+                        .as_ref()
+                        .map(|(_, changed)| *changed)
+                        .unwrap_or(false);
+
+                    if known && ip_changed {
+                        tracing::info!(
+                            stone = %topo_stone.stone_name,
+                            old_endpoint = %existing_endpoint.as_ref().unwrap().0,
+                            new_endpoint = %endpoint,
+                            "topology refresh: stone IP changed, re-profiling"
+                        );
+                        let state = state.clone();
+                        let client = client.clone();
+                        let stone_id = topo_stone.stone_id.clone();
+                        let stone_name = topo_stone.stone_name.clone();
+                        let vram_total = topo_stone.vram_total_bytes;
+                        let gpu_name = topo_stone.gpu_name.clone();
+                        let moss_ep = topo_stone.moss_endpoint();
+                        tokio::spawn(async move {
+                            profile_instance(
+                                state, client, stone_id, stone_name, endpoint,
+                                Some(moss_ep), vram_total, gpu_name,
+                            )
+                            .await;
+                        });
+                    } else if known && needs_hw_update {
+                        let hw_endpoint = existing_endpoint
+                            .map(|(ep, _)| ep)
+                            .unwrap_or(endpoint);
                         tracing::info!(
                             stone = %topo_stone.stone_name,
                             vram_mb = topo_stone.vram_total_bytes / 1_048_576,
@@ -245,7 +292,7 @@ async fn topology_refresh_loop(
                         );
                         state
                             .update_instance_hw(
-                                &endpoint,
+                                &hw_endpoint,
                                 topo_stone.vram_total_bytes,
                                 topo_stone.gpu_name.clone(),
                             )

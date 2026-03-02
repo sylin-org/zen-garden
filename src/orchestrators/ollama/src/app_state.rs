@@ -150,8 +150,14 @@ impl AppState {
     // ── Instance Management ──────────────────────────────────────
 
     /// Register or update an Ollama instance. Recomputes tiers afterward.
-    pub async fn upsert_instance(&self, instance: OllamaInstance) {
+    ///
+    /// If an existing instance for the same stone (matched by `stone_id` or
+    /// `stone_name`) is registered under a different endpoint — e.g. after a
+    /// DHCP lease change — the stale entry is evicted first.
+    pub async fn upsert_instance(&self, mut instance: OllamaInstance) {
         let endpoint = instance.endpoint.clone();
+        let stone_name = instance.stone_name.clone();
+        let stone_id = instance.stone_id.clone();
 
         // Ensure queue-depth counter exists
         {
@@ -161,8 +167,53 @@ impl AppState {
                 .or_insert_with(|| Arc::new(AtomicU32::new(0)));
         }
 
+        // Evict any existing instance for the same stone but at a different
+        // endpoint (e.g. stone rebooted and received a new IP from DHCP).
+        let stale_endpoint = {
+            let reg = self.instances.read().await;
+            reg.iter()
+                .find(|(ep, existing)| {
+                    *ep != &endpoint
+                        && (existing.stone_name == stone_name
+                            || (!stone_id.is_empty()
+                                && !existing.stone_id.is_empty()
+                                && existing.stone_id == stone_id))
+                })
+                .map(|(ep, _)| ep.clone())
+        };
+        if let Some(ref stale_ep) = stale_endpoint {
+            tracing::info!(
+                stone = %stone_name,
+                old_endpoint = %stale_ep,
+                new_endpoint = %endpoint,
+                "evicting stale instance (IP changed)"
+            );
+            let mut depths = self.queue_depths.write().await;
+            depths.remove(stale_ep);
+        }
+
         {
             let mut reg = self.instances.write().await;
+
+            // Preserve known HW data when the incoming instance has zeroes.
+            // This prevents the SSE re-discovery path (which may fetch HW
+            // before Moss has GPU data ready) from overwriting good values
+            // that were set by the topology query.
+            let donor = stale_endpoint
+                .as_ref()
+                .and_then(|ep| reg.remove(ep))
+                .or_else(|| reg.get(&endpoint).cloned());
+
+            if let Some(existing) = donor {
+                if instance.vram_total_bytes == 0 && existing.vram_total_bytes > 0 {
+                    instance.vram_total_bytes = existing.vram_total_bytes;
+                    instance.vram_budget_bytes = existing.vram_budget_bytes;
+                }
+                if instance.gpu_name.is_none() && existing.gpu_name.is_some() {
+                    instance.gpu_name = existing.gpu_name;
+                }
+            }
+
             reg.insert(endpoint.clone(), instance);
         }
 

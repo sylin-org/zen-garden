@@ -1,7 +1,7 @@
 use chrono::Utc;
 use garden_common::tools::{
-    CapabilityDelta, CapabilitySelector, ToolDelta, ToolDeltaKind, ToolProjection, ToolState,
-    ToolType, ToolsBeacon,
+    build_tool_key, fqid_matches, CapabilitySelector, GardenTool, ToolDelta, ToolDeltaKind,
+    ToolsBeacon,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -17,50 +17,38 @@ pub fn new_tools_cache() -> ToolsCache {
 
 #[derive(Debug, Clone, Default)]
 pub struct ToolQuery {
-    pub tool_type: Option<ToolType>,
-    pub tool_fqid: Option<String>,
-    pub state: Option<ToolState>,
+    /// Filter by fqid (bare name = type match, instance = exact match).
+    pub fqid: Option<String>,
+    /// Filter by category: "orchestrator", "offering", "storage".
+    pub category: Option<String>,
+    /// Filter by status: "running", "degraded", "stopped".
+    pub status: Option<String>,
+    /// Capability selectors (AND semantics).
     pub capabilities: Vec<CapabilitySelector>,
 }
 
 impl ToolQuery {
-    pub fn matches_projection(&self, projection: &ToolProjection) -> bool {
-        if let Some(tool_type) = self.tool_type {
-            if projection.tool_type != tool_type {
+    pub fn matches_tool(&self, tool: &GardenTool) -> bool {
+        if let Some(ref fqid) = self.fqid {
+            if !fqid_matches(fqid, tool) {
                 return false;
             }
         }
 
-        if let Some(tool_fqid) = &self.tool_fqid {
-            let fqid_matches = projection.tool_fqid.eq_ignore_ascii_case(tool_fqid)
-                || projection
-                    .aliases
-                    .iter()
-                    .any(|a| a.eq_ignore_ascii_case(tool_fqid));
-            if !fqid_matches {
+        if let Some(ref category) = self.category {
+            if !tool.tool.category.eq_ignore_ascii_case(category) {
                 return false;
             }
         }
 
-        if let Some(state) = self.state {
-            if projection.state != state {
+        if let Some(ref status) = self.status {
+            if !tool.service.status.eq_ignore_ascii_case(status) {
                 return false;
             }
         }
 
         for selector in &self.capabilities {
-            let cap_type = selector.cap_type.to_ascii_lowercase();
-            let item = selector.item.to_ascii_lowercase();
-            let has_item = projection
-                .capabilities
-                .get(&cap_type)
-                .map(|items| {
-                    items
-                        .iter()
-                        .any(|existing| existing.eq_ignore_ascii_case(&item))
-                })
-                .unwrap_or(false);
-            if !has_item {
+            if !tool.has_capability(&selector.cap_type, &selector.item) {
                 return false;
             }
         }
@@ -69,33 +57,32 @@ impl ToolQuery {
     }
 
     pub fn matches_delta(&self, delta: &ToolDelta) -> bool {
-        if let Some(tool_fqid) = &self.tool_fqid {
-            let fqid_matches = delta.tool_fqid.eq_ignore_ascii_case(tool_fqid)
-                || delta
-                    .projection
-                    .as_ref()
-                    .map(|p| {
-                        p.aliases
-                            .iter()
-                            .any(|a| a.eq_ignore_ascii_case(tool_fqid))
-                    })
-                    .unwrap_or(false);
-            if !fqid_matches {
-                return false;
+        if let Some(ref fqid) = self.fqid {
+            if !delta.fqid.eq_ignore_ascii_case(fqid) {
+                // For deltas we also check if the embedded tool matches
+                if let Some(ref tool) = delta.tool {
+                    if !fqid_matches(fqid, tool) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
             }
         }
 
         match delta.kind {
             ToolDeltaKind::Upsert => delta
-                .projection
+                .tool
                 .as_ref()
-                .map(|projection| self.matches_projection(projection))
+                .map(|tool| self.matches_tool(tool))
                 .unwrap_or(false),
             ToolDeltaKind::Remove => {
-                // Remove events only carry tool_fqid + tool_uid. Only tool_fqid filtering
-                // is meaningful without the removed projection payload.
-                (self.tool_type.is_none() && self.state.is_none() && self.capabilities.is_empty())
-                    || self.tool_fqid.is_some()
+                // Remove events only carry fqid + tool_key.
+                // Only fqid filtering is meaningful without the tool payload.
+                (self.category.is_none()
+                    && self.status.is_none()
+                    && self.capabilities.is_empty())
+                    || self.fqid.is_some()
             }
         }
     }
@@ -103,7 +90,8 @@ impl ToolQuery {
 
 #[derive(Debug)]
 pub struct ToolsCacheInner {
-    projections: BTreeMap<String, ToolProjection>,
+    /// Keyed by tool_key: `"{stone_id}:{fqid}:{category}"`.
+    tools: BTreeMap<String, GardenTool>,
     cursor: u64,
     history_limit: usize,
     history: VecDeque<ToolDelta>,
@@ -112,7 +100,7 @@ pub struct ToolsCacheInner {
 impl Default for ToolsCacheInner {
     fn default() -> Self {
         Self {
-            projections: BTreeMap::new(),
+            tools: BTreeMap::new(),
             cursor: 0,
             history_limit: DEFAULT_HISTORY_LIMIT,
             history: VecDeque::with_capacity(DEFAULT_HISTORY_LIMIT),
@@ -133,13 +121,16 @@ impl ToolsCacheInner {
             .map(|delta| delta.cursor)
     }
 
-    pub fn snapshot(&self, query: &ToolQuery) -> (u64, Vec<ToolProjection>) {
-        let tools = self
-            .projections
+    pub fn snapshot(&self, query: &ToolQuery) -> (u64, Vec<GardenTool>) {
+        let mut tools: Vec<GardenTool> = self
+            .tools
             .values()
-            .filter(|projection| query.matches_projection(projection))
+            .filter(|tool| query.matches_tool(tool))
             .cloned()
             .collect();
+
+        // Sort: orchestrators first, then offerings, then storage.
+        tools.sort_by_key(|t| t.category_priority());
 
         (self.cursor, tools)
     }
@@ -152,35 +143,35 @@ impl ToolsCacheInner {
             .collect()
     }
 
+    /// Reconcile a fresh batch of local tools against what's cached.
+    /// Returns deltas for anything that changed (upserts + removals of stale entries).
     pub fn reconcile_local(
         &mut self,
         local_stone_id: &str,
-        mut local_projections: Vec<ToolProjection>,
+        incoming: Vec<GardenTool>,
     ) -> Vec<ToolDelta> {
-        for projection in &mut local_projections {
-            normalize_projection(projection);
-        }
-        local_projections.sort_by(|a, b| a.tool_fqid.cmp(&b.tool_fqid));
-
         let mut applied = Vec::new();
-        let mut seen = BTreeSet::new();
-        for projection in local_projections {
-            seen.insert(projection.tool_fqid.clone());
-            if let Some(delta) = self.local_upsert(projection) {
+        let mut seen_keys = BTreeSet::new();
+
+        for tool in incoming {
+            let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
+            seen_keys.insert(key.clone());
+            if let Some(delta) = self.local_upsert(key, tool) {
                 applied.push(delta);
             }
         }
 
+        // Remove stale entries belonging to this stone that weren't in the incoming batch.
         let stale: Vec<String> = self
-            .projections
+            .tools
             .iter()
-            .filter(|(_, projection)| projection.stone_id == local_stone_id)
-            .filter(|(tool_fqid, _)| !seen.contains(*tool_fqid))
-            .map(|(tool_fqid, _)| tool_fqid.clone())
+            .filter(|(_, tool)| tool.stone.id == local_stone_id)
+            .filter(|(key, _)| !seen_keys.contains(*key))
+            .map(|(key, _)| key.clone())
             .collect();
 
-        for tool_fqid in stale {
-            if let Some(delta) = self.local_remove(&tool_fqid) {
+        for key in stale {
+            if let Some(delta) = self.local_remove(&key) {
                 applied.push(delta);
             }
         }
@@ -190,15 +181,15 @@ impl ToolsCacheInner {
 
     pub fn remove_stone_tools(&mut self, stone_id: &str) -> Vec<ToolDelta> {
         let stale: Vec<String> = self
-            .projections
+            .tools
             .iter()
-            .filter(|(_, projection)| projection.stone_id == stone_id)
-            .map(|(tool_fqid, _)| tool_fqid.clone())
+            .filter(|(_, tool)| tool.stone.id == stone_id)
+            .map(|(key, _)| key.clone())
             .collect();
 
         let mut removed = Vec::new();
-        for tool_fqid in stale {
-            if let Some(delta) = self.local_remove(&tool_fqid) {
+        for key in stale {
+            if let Some(delta) = self.local_remove(&key) {
                 removed.push(delta);
             }
         }
@@ -206,19 +197,18 @@ impl ToolsCacheInner {
     }
 
     pub fn local_snapshot_for_beacon(&self, stone_id: &str) -> Vec<ToolDelta> {
-        self.projections
-            .values()
-            .filter(|projection| projection.stone_id == stone_id)
-            .cloned()
-            .map(|projection| ToolDelta {
+        self.tools
+            .iter()
+            .filter(|(_, tool)| tool.stone.id == stone_id)
+            .map(|(key, tool)| ToolDelta {
                 event_id: garden_common::utils::ids::generate_guidv7(),
                 cursor: self.cursor,
                 timestamp: Utc::now(),
                 kind: ToolDeltaKind::Upsert,
-                tool_fqid: projection.tool_fqid.clone(),
-                tool_uid: projection.tool_uid.clone(),
-                revision: projection.revision,
-                projection: Some(projection),
+                fqid: tool.fqid.clone(),
+                tool_key: key.clone(),
+                revision: 0,
+                tool: Some(tool.clone()),
             })
             .collect()
     }
@@ -229,63 +219,51 @@ impl ToolsCacheInner {
         for incoming in &beacon.deltas {
             match incoming.kind {
                 ToolDeltaKind::Upsert => {
-                    let Some(mut projection) = incoming.projection.clone() else {
+                    let Some(tool) = incoming.tool.clone() else {
                         continue;
                     };
-                    normalize_projection(&mut projection);
+
+                    let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
                     let should_apply = self
-                        .projections
-                        .get(&projection.tool_fqid)
-                        .map(|existing| projection.revision > existing.revision)
+                        .tools
+                        .get(&key)
+                        .map(|_existing| incoming.revision > 0)
                         .unwrap_or(true);
 
                     if !should_apply {
                         continue;
                     }
 
-                    self.projections
-                        .insert(projection.tool_fqid.clone(), projection.clone());
+                    self.tools.insert(key.clone(), tool.clone());
 
                     let delta = self.append_history(ToolDelta {
                         event_id: incoming.event_id.clone(),
                         cursor: 0,
                         timestamp: incoming.timestamp,
                         kind: ToolDeltaKind::Upsert,
-                        tool_fqid: projection.tool_fqid.clone(),
-                        tool_uid: projection.tool_uid.clone(),
-                        revision: projection.revision,
-                        projection: Some(projection),
+                        fqid: tool.fqid.clone(),
+                        tool_key: key,
+                        revision: incoming.revision,
+                        tool: Some(tool),
                     });
                     applied.push(delta);
                 }
                 ToolDeltaKind::Remove => {
-                    let should_apply = self
-                        .projections
-                        .get(&incoming.tool_fqid)
-                        .map(|existing| incoming.revision > existing.revision)
-                        .unwrap_or(true);
-                    if !should_apply {
-                        continue;
+                    let key = &incoming.tool_key;
+                    if self.tools.remove(key).is_some() {
+                        let delta = self.append_history(ToolDelta {
+                            event_id: incoming.event_id.clone(),
+                            cursor: 0,
+                            timestamp: incoming.timestamp,
+                            kind: ToolDeltaKind::Remove,
+                            fqid: incoming.fqid.clone(),
+                            tool_key: key.clone(),
+                            revision: incoming.revision,
+                            tool: None,
+                        });
+                        applied.push(delta);
                     }
-
-                    let removed_uid = self
-                        .projections
-                        .remove(&incoming.tool_fqid)
-                        .map(|p| p.tool_uid)
-                        .unwrap_or_else(|| incoming.tool_uid.clone());
-
-                    let delta = self.append_history(ToolDelta {
-                        event_id: incoming.event_id.clone(),
-                        cursor: 0,
-                        timestamp: incoming.timestamp,
-                        kind: ToolDeltaKind::Remove,
-                        tool_fqid: incoming.tool_fqid.clone(),
-                        tool_uid: removed_uid,
-                        revision: incoming.revision,
-                        projection: None,
-                    });
-                    applied.push(delta);
                 }
             }
         }
@@ -293,77 +271,42 @@ impl ToolsCacheInner {
         applied
     }
 
-    fn local_upsert(&mut self, mut projection: ToolProjection) -> Option<ToolDelta> {
-        normalize_projection(&mut projection);
+    fn local_upsert(&mut self, key: String, tool: GardenTool) -> Option<ToolDelta> {
+        let previous = self.tools.get(&key);
 
-        let previous = self.projections.get(&projection.tool_fqid).cloned();
-        let (revision, capability_revision, capability_delta) = match &previous {
-            Some(previous) => {
-                let caps_changed = previous.capabilities != projection.capabilities;
-                let capability_delta = caps_changed.then(|| {
-                    build_capability_delta(&previous.capabilities, &projection.capabilities)
-                });
-                let capability_revision = if caps_changed {
-                    previous.capability_revision.saturating_add(1)
-                } else {
-                    previous.capability_revision
-                };
-
-                (
-                    previous.revision.saturating_add(1),
-                    capability_revision,
-                    capability_delta,
-                )
-            }
-            None => {
-                let capability_delta = (!projection.capabilities.is_empty())
-                    .then(|| build_capability_delta(&BTreeMap::new(), &projection.capabilities));
-                let capability_revision = if projection.capabilities.is_empty() {
-                    0
-                } else {
-                    1
-                };
-                (1, capability_revision, capability_delta)
-            }
-        };
-
-        projection.revision = revision;
-        projection.capability_revision = capability_revision;
-        projection.capability_delta = capability_delta;
-        projection.updated_at = Utc::now();
-
-        if let Some(previous) = previous {
-            if projection_equivalent(&previous, &projection) {
+        if let Some(prev) = previous {
+            if tool_equivalent(prev, &tool) {
                 return None;
             }
         }
 
-        self.projections
-            .insert(projection.tool_fqid.clone(), projection.clone());
+        let revision = previous.map(|_| 1u64).unwrap_or(1);
+
+        self.tools.insert(key.clone(), tool.clone());
 
         Some(self.append_history(ToolDelta {
             event_id: garden_common::utils::ids::generate_guidv7(),
             cursor: 0,
             timestamp: Utc::now(),
             kind: ToolDeltaKind::Upsert,
-            tool_fqid: projection.tool_fqid.clone(),
-            tool_uid: projection.tool_uid.clone(),
-            revision: projection.revision,
-            projection: Some(projection),
+            fqid: tool.fqid.clone(),
+            tool_key: key,
+            revision,
+            tool: Some(tool),
         }))
     }
 
-    fn local_remove(&mut self, tool_fqid: &str) -> Option<ToolDelta> {
-        let existing = self.projections.remove(tool_fqid)?;
+    fn local_remove(&mut self, key: &str) -> Option<ToolDelta> {
+        let existing = self.tools.remove(key)?;
         let delta = ToolDelta {
             event_id: garden_common::utils::ids::generate_guidv7(),
             cursor: 0,
             timestamp: Utc::now(),
             kind: ToolDeltaKind::Remove,
-            tool_fqid: existing.tool_fqid.clone(),
-            tool_uid: existing.tool_uid.clone(),
-            revision: existing.revision.saturating_add(1),
-            projection: None,
+            fqid: existing.fqid.clone(),
+            tool_key: key.to_string(),
+            revision: 1,
+            tool: None,
         };
         Some(self.append_history(delta))
     }
@@ -381,120 +324,63 @@ impl ToolsCacheInner {
     }
 }
 
-fn normalize_projection(projection: &mut ToolProjection) {
-    projection.aliases = projection
-        .aliases
-        .iter()
-        .map(|alias| alias.trim().to_ascii_lowercase())
-        .filter(|alias| !alias.is_empty())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-
-    let mut normalized_caps = BTreeMap::new();
-    for (cap_type, items) in &projection.capabilities {
-        let key = cap_type.trim().to_ascii_lowercase();
-        if key.is_empty() {
-            continue;
-        }
-        let values: Vec<String> = items
-            .iter()
-            .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if !values.is_empty() {
-            normalized_caps.insert(key, values);
-        }
-    }
-    projection.capabilities = normalized_caps;
-}
-
-fn projection_equivalent(lhs: &ToolProjection, rhs: &ToolProjection) -> bool {
-    lhs.tool_fqid == rhs.tool_fqid
-        && lhs.tool_uid == rhs.tool_uid
-        && lhs.tool_type == rhs.tool_type
-        && lhs.state == rhs.state
-        && lhs.ready == rhs.ready
-        && lhs.stone_id == rhs.stone_id
-        && lhs.stone_name == rhs.stone_name
-        && lhs.aliases == rhs.aliases
-        && lhs.connection == rhs.connection
+fn tool_equivalent(lhs: &GardenTool, rhs: &GardenTool) -> bool {
+    lhs.fqid == rhs.fqid
+        && lhs.tool == rhs.tool
+        && lhs.stone == rhs.stone
+        && lhs.service == rhs.service
         && lhs.capabilities == rhs.capabilities
-        && lhs.job_id == rhs.job_id
-        && lhs.request_id == rhs.request_id
-}
-
-fn build_capability_delta(
-    previous: &BTreeMap<String, Vec<String>>,
-    next: &BTreeMap<String, Vec<String>>,
-) -> CapabilityDelta {
-    let mut added = BTreeMap::new();
-    let mut removed = BTreeMap::new();
-
-    for (cap_type, items) in next {
-        let previous_items: BTreeSet<String> = previous
-            .get(cap_type)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        let next_items: BTreeSet<String> = items.iter().cloned().collect();
-        let added_items: Vec<String> = next_items.difference(&previous_items).cloned().collect();
-        if !added_items.is_empty() {
-            added.insert(cap_type.clone(), added_items);
-        }
-    }
-
-    for (cap_type, items) in previous {
-        let next_items: BTreeSet<String> = next
-            .get(cap_type)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        let previous_items: BTreeSet<String> = items.iter().cloned().collect();
-        let removed_items: Vec<String> = previous_items.difference(&next_items).cloned().collect();
-        if !removed_items.is_empty() {
-            removed.insert(cap_type.clone(), removed_items);
-        }
-    }
-
-    CapabilityDelta { added, removed }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
+    use garden_common::tools::{Capability, ServiceInfo, Stone, ToolIdentity};
 
-    fn sample_projection(tool_fqid: &str, revision: u64) -> ToolProjection {
-        ToolProjection {
-            tool_fqid: tool_fqid.to_string(),
-            tool_uid: format!("uid-{}", tool_fqid),
-            tool_type: ToolType::Offering,
-            state: ToolState::Ready,
-            ready: true,
-            revision,
-            stone_id: "stone-a".to_string(),
-            stone_name: "stone-a".to_string(),
-            aliases: vec![],
-            connection: None,
-            capabilities: BTreeMap::from([("model".to_string(), vec!["llama3".to_string()])]),
-            capability_revision: 0,
-            capability_delta: None,
-            job_id: None,
-            request_id: None,
-            updated_at: Utc::now(),
+    fn sample_tool(fqid: &str, category: &str) -> GardenTool {
+        let tool_type = if fqid.contains(':') {
+            fqid.split_once(':').unwrap().0
+        } else {
+            fqid
+        };
+        let name = if fqid.contains(':') {
+            fqid.split_once(':').unwrap().1
+        } else {
+            ""
+        };
+        GardenTool {
+            fqid: fqid.to_string(),
+            tool: ToolIdentity {
+                name: name.to_string(),
+                tool_type: tool_type.to_string(),
+                category: category.to_string(),
+                id: format!("uid-{}", fqid),
+                tags: Vec::new(),
+            },
+            stone: Stone {
+                id: "stone-a".to_string(),
+                name: "stone-a".to_string(),
+                endpoint: "http://192.168.1.100:7185".to_string(),
+            },
+            service: ServiceInfo {
+                status: "running".to_string(),
+                ready: true,
+                protocol: tool_type.to_string(),
+                uris: Vec::new(),
+            },
+            capabilities: vec![Capability {
+                cap_type: "model".to_string(),
+                items: vec!["llama3".to_string()],
+            }],
         }
     }
 
     #[test]
     fn local_reconcile_creates_upsert_then_remove() {
         let mut cache = ToolsCacheInner::default();
-        let projection = sample_projection("offering:ollama", 0);
-        let deltas = cache.reconcile_local("stone-a", vec![projection.clone()]);
+        let tool = sample_tool("ollama", "offering");
+        let deltas = cache.reconcile_local("stone-a", vec![tool.clone()]);
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[0].kind, ToolDeltaKind::Upsert);
 
@@ -504,15 +390,12 @@ mod tests {
     }
 
     #[test]
-    fn remote_beacon_ignores_older_revisions() {
+    fn remote_beacon_applies_upsert() {
         let mut cache = ToolsCacheInner::default();
-        let projection = sample_projection("offering:ollama", 0);
-        cache.reconcile_local("stone-a", vec![projection]);
 
-        let mut remote_projection = sample_projection("offering:ollama", 1);
-        remote_projection.revision = 1;
-        remote_projection.stone_id = "stone-b".to_string();
-        remote_projection.stone_name = "stone-b".to_string();
+        let mut tool = sample_tool("ollama", "offering");
+        tool.stone.id = "stone-b".to_string();
+        tool.stone.name = "stone-b".to_string();
 
         let beacon = ToolsBeacon {
             stone_id: "stone-b".to_string(),
@@ -523,94 +406,100 @@ mod tests {
                 cursor: 1,
                 timestamp: Utc::now(),
                 kind: ToolDeltaKind::Upsert,
-                tool_fqid: remote_projection.tool_fqid.clone(),
-                tool_uid: remote_projection.tool_uid.clone(),
+                fqid: "ollama".to_string(),
+                tool_key: build_tool_key("stone-b", "ollama", "offering"),
                 revision: 1,
-                projection: Some(remote_projection.clone()),
-            }],
-            timestamp: Utc::now(),
-        };
-
-        let applied = cache.apply_remote_beacon(&beacon);
-        assert!(applied.is_empty());
-
-        remote_projection.revision = 3;
-        let beacon = ToolsBeacon {
-            stone_id: "stone-b".to_string(),
-            stone_name: "stone-b".to_string(),
-            endpoint: "http://stone-b.local:7185".to_string(),
-            deltas: vec![ToolDelta {
-                event_id: "evt-2".to_string(),
-                cursor: 2,
-                timestamp: Utc::now(),
-                kind: ToolDeltaKind::Upsert,
-                tool_fqid: remote_projection.tool_fqid.clone(),
-                tool_uid: remote_projection.tool_uid.clone(),
-                revision: 3,
-                projection: Some(remote_projection),
+                tool: Some(tool),
             }],
             timestamp: Utc::now(),
         };
 
         let applied = cache.apply_remote_beacon(&beacon);
         assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].kind, ToolDeltaKind::Upsert);
     }
 
     #[test]
-    fn tool_fqid_filter_matches_aliases() {
-        let mut projection = sample_projection("offering:ollama:adopted", 1);
-        projection.aliases = vec![
-            "offering:ollama".to_string(),
-            "offering:ollama:adopted".to_string(),
-        ];
+    fn fqid_filter_matches_tool() {
+        let tool = sample_tool("ollama:adopted", "offering");
 
         let query = ToolQuery {
-            tool_fqid: Some("offering:ollama".to_string()),
+            fqid: Some("ollama".to_string()),
             ..Default::default()
         };
+        // bare "ollama" matches tool_type "ollama"
+        assert!(query.matches_tool(&tool));
 
-        // Should match via alias even though FQID is "offering:ollama:adopted"
-        assert!(query.matches_projection(&projection));
-
-        // Should also match the exact FQID
         let query_exact = ToolQuery {
-            tool_fqid: Some("offering:ollama:adopted".to_string()),
+            fqid: Some("ollama:adopted".to_string()),
             ..Default::default()
         };
-        assert!(query_exact.matches_projection(&projection));
+        assert!(query_exact.matches_tool(&tool));
 
-        // Should NOT match an unrelated FQID
         let query_miss = ToolQuery {
-            tool_fqid: Some("offering:redis".to_string()),
+            fqid: Some("redis".to_string()),
             ..Default::default()
         };
-        assert!(!query_miss.matches_projection(&projection));
+        assert!(!query_miss.matches_tool(&tool));
     }
 
     #[test]
-    fn tool_fqid_delta_filter_matches_aliases() {
-        let mut projection = sample_projection("offering:ollama:adopted", 1);
-        projection.aliases = vec![
-            "offering:ollama".to_string(),
-            "offering:ollama:adopted".to_string(),
-        ];
-
-        let delta = ToolDelta {
-            event_id: "evt-alias".to_string(),
-            cursor: 1,
-            timestamp: Utc::now(),
-            kind: ToolDeltaKind::Upsert,
-            tool_fqid: "offering:ollama:adopted".to_string(),
-            tool_uid: "uid-test".to_string(),
-            revision: 1,
-            projection: Some(projection),
-        };
+    fn category_filter_matches() {
+        let tool = sample_tool("mongodb", "orchestrator");
 
         let query = ToolQuery {
-            tool_fqid: Some("offering:ollama".to_string()),
+            category: Some("orchestrator".to_string()),
             ..Default::default()
         };
+        assert!(query.matches_tool(&tool));
 
-        assert!(query.matches_delta(&delta));
+        let query_miss = ToolQuery {
+            category: Some("offering".to_string()),
+            ..Default::default()
+        };
+        assert!(!query_miss.matches_tool(&tool));
+    }
+
+    #[test]
+    fn snapshot_sorts_by_category_priority() {
+        let mut cache = ToolsCacheInner::default();
+
+        let offering = sample_tool("mongodb", "offering");
+        let mut orchestrator = sample_tool("mongodb", "orchestrator");
+        orchestrator.stone.id = "stone-b".to_string();
+        orchestrator.stone.name = "stone-b".to_string();
+
+        cache.reconcile_local("stone-a", vec![offering]);
+        // Manually insert orchestrator on different stone
+        let key = build_tool_key("stone-b", "mongodb", "orchestrator");
+        cache.local_upsert(key, orchestrator);
+
+        let (_, tools) = cache.snapshot(&ToolQuery::default());
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].tool.category, "orchestrator");
+        assert_eq!(tools[1].tool.category, "offering");
+    }
+
+    #[test]
+    fn capability_filter_matches() {
+        let tool = sample_tool("ollama", "offering");
+
+        let query = ToolQuery {
+            capabilities: vec![CapabilitySelector {
+                cap_type: "model".to_string(),
+                item: "llama3".to_string(),
+            }],
+            ..Default::default()
+        };
+        assert!(query.matches_tool(&tool));
+
+        let query_miss = ToolQuery {
+            capabilities: vec![CapabilitySelector {
+                cap_type: "model".to_string(),
+                item: "gpt-4".to_string(),
+            }],
+            ..Default::default()
+        };
+        assert!(!query_miss.matches_tool(&tool));
     }
 }

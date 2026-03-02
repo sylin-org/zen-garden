@@ -1,110 +1,97 @@
-use crate::domain::connection;
-use crate::domain::tools::readiness::{offering_readiness, seed_bank_readiness};
-use crate::AppState;
-use chrono::Utc;
-use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
-use garden_common::tools::{build_tool_fqid, ToolConnection, ToolProjection, ToolType};
-use std::collections::{BTreeMap, BTreeSet};
+//! Tools projector — builds GardenTool snapshots from service discovery and storage.
+//!
+//! TOOLS-0002: Offerings are projected through `find_services()` (same path as
+//! garden-rake find) to get gateway/orchestrator-aware resolution.
+//! Seed-banks are projected directly from the storage cache.
 
-pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
-    let endpoint = state.self_entry.read().await.address.http_base();
-    let offerings = state.offerings.read().await.clone();
+use crate::domain::connection;
+use crate::domain::service_discovery::{self, FoundService};
+use crate::domain::tools::readiness::seed_bank_readiness;
+use crate::AppState;
+use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
+use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
+use std::collections::BTreeSet;
+
+/// Project all local tools (offerings + seed-banks) as GardenTool instances.
+///
+/// Offerings go through the services path (gateway/orchestrator aware).
+/// Seed-banks are projected directly from the storage beacon cache.
+pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
+    let mut tools = Vec::new();
+
+    // ── Offerings via service discovery (TOOLS-0002) ─────────────
+    let svc_response = service_discovery::list_all_local_services(state).await;
+    for svc in svc_response.services {
+        tools.push(found_service_to_garden_tool(svc));
+    }
+
+    // ── Gateway / orchestrator entries ───────────────────────────
+    // Gateways registered via Koi mDNS that handle offerings (e.g. MongoDB orchestrator).
+    // These appear as category=orchestrator tools.
+    {
+        let gateways = state.gateways.read().await;
+        for (offering, gw) in gateways.iter() {
+            let category = gw.category.as_deref().unwrap_or("orchestrator");
+            let tags = if gw.tags.is_empty() {
+                vec!["orchestrator".to_string()]
+            } else {
+                gw.tags.clone()
+            };
+
+            let fqid = build_offering_fqid(&gw.fqn, offering);
+
+            let conn = connection::resolve_connection(
+                &gw.hostname,
+                &format!("http://{}:{}", gw.ip, gw.port),
+                gw.port,
+                &gw.protocol,
+                gw.uri_template.as_deref(),
+            );
+
+            tools.push(GardenTool {
+                fqid: fqid.clone(),
+                tool: ToolIdentity {
+                    name: instance_name_from_fqid(&fqid),
+                    tool_type: offering.to_ascii_lowercase(),
+                    category: category.to_string(),
+                    id: String::new(),
+                    tags,
+                },
+                stone: Stone {
+                    id: state.stone_id.clone(),
+                    name: state.stone_name.clone(),
+                    endpoint: state.self_entry.read().await.address.http_base(),
+                },
+                service: ServiceInfo {
+                    status: garden_common::SERVICE_RUNNING.to_string(),
+                    ready: true,
+                    protocol: conn.protocol.clone(),
+                    uris: conn.uris,
+                },
+                capabilities: Vec::new(),
+            });
+        }
+    }
+
+    // ── Seed-banks via storage cache ─────────────────────────────
     let local_storage = {
         let cache = state.storage_cache.read().await;
         cache.get_beacon(&state.stone_id).cloned()
     };
 
-    let mut projections = Vec::new();
-
-    for offering in &offerings {
-        let Ok(tool_fqid) = build_tool_fqid(ToolType::Offering, &offering.name) else {
-            continue;
-        };
-        let (tool_state, ready) = offering_readiness(offering);
-
-        let (protocol, uri_template) = if let Some(manifest) =
-            state.manifest_registry.get_offering(&offering.offering)
-        {
-            let protocol = connection::infer_protocol_from_manifest_metadata(
-                &offering.offering,
-                &manifest.category,
-                manifest.connection.as_ref(),
-            );
-            let template =
-                connection::select_uri_template(manifest.connection.as_ref(), &manifest.category);
-            (protocol, template)
-        } else {
-            let location_protocol = offering.location.protocol.trim().to_ascii_lowercase();
-            if location_protocol.is_empty() {
-                ("tcp".to_string(), None)
-            } else {
-                (location_protocol, None)
-            }
-        };
-
-        let connection = if offering.location.port > 0 {
-            let resolved = connection::resolve_connection(
-                &state.stone_name,
-                &endpoint,
-                offering.location.port,
-                &protocol,
-                uri_template.as_deref(),
-            );
-            Some(ToolConnection {
-                protocol: resolved.protocol,
-                hostname: Some(resolved.hostname),
-                ip: Some(resolved.ip),
-                port: resolved.port,
-                uris: resolved.uris,
-            })
-        } else {
-            None
-        };
-
-        let mut aliases = vec![format!(
-            "offering:{}",
-            offering.offering.to_ascii_lowercase()
-        )];
-        if offering.name != offering.offering {
-            aliases.push(format!("offering:{}", offering.name.to_ascii_lowercase()));
-        }
-
-        projections.push(ToolProjection {
-            tool_fqid,
-            tool_uid: offering.offering_id.clone(),
-            tool_type: ToolType::Offering,
-            state: tool_state,
-            ready,
-            revision: 0,
-            stone_id: state.stone_id.clone(),
-            stone_name: state.stone_name.clone(),
-            aliases: normalize_aliases(aliases),
-            connection,
-            capabilities: to_capability_map(&offering.sub_capabilities),
-            capability_revision: 0,
-            capability_delta: None,
-            job_id: None,
-            request_id: None,
-            updated_at: Utc::now(),
-        });
-    }
-
     if let Some(beacon) = local_storage {
         for seed_bank in beacon.seed_banks {
-            let canonical_name = canonical_seed_bank_name(&seed_bank.name);
-            let Ok(tool_fqid) = build_tool_fqid(ToolType::SeedBank, &canonical_name) else {
-                continue;
-            };
-            let (tool_state, ready) = seed_bank_readiness(&seed_bank);
+            let canonical = canonical_seed_bank_name(&seed_bank.name);
+            let (status, ready) = seed_bank_readiness(&seed_bank);
             let protocol = seed_bank
                 .protocols
                 .iter()
-                .find(|proto| proto.eq_ignore_ascii_case("s3"))
+                .find(|p| p.eq_ignore_ascii_case("s3"))
                 .cloned()
                 .or_else(|| seed_bank.protocols.first().cloned())
                 .unwrap_or_else(|| "storage".to_string())
                 .to_ascii_lowercase();
-            let port = parse_port_from_endpoint(&beacon.endpoint).unwrap_or(0);
+            let _port = parse_port_from_endpoint(&beacon.endpoint).unwrap_or(0);
 
             let mut uris = Vec::new();
             uris.push(format!(
@@ -123,54 +110,104 @@ pub async fn project_local_tools(state: &AppState) -> Vec<ToolProjection> {
                 .into_iter()
                 .collect();
 
-            let connection = ToolConnection {
-                protocol,
-                hostname: Some(connection::build_hostname(&beacon.stone_name)),
-                ip: Some(connection::extract_ip(&beacon.endpoint)),
-                port,
-                uris,
-            };
-
-            let mut aliases = vec![format!("seed-bank:{}", seed_bank.name.to_ascii_lowercase())];
-            if canonical_name == "default" {
-                aliases.push(format!(
-                    "seed-bank:{}",
-                    DEFAULT_PUBLIC_SEED_BANK_NAME.to_ascii_lowercase()
-                ));
-            }
-
-            projections.push(ToolProjection {
-                tool_fqid,
-                tool_uid: seed_bank.id.clone(),
-                tool_type: ToolType::SeedBank,
-                state: tool_state,
-                ready,
-                revision: 0,
-                stone_id: state.stone_id.clone(),
-                stone_name: state.stone_name.clone(),
-                aliases: normalize_aliases(aliases),
-                connection: Some(connection),
-                capabilities: BTreeMap::new(),
-                capability_revision: 0,
-                capability_delta: None,
-                job_id: None,
-                request_id: None,
-                updated_at: Utc::now(),
+            tools.push(GardenTool {
+                fqid: canonical.clone(),
+                tool: ToolIdentity {
+                    name: String::new(),
+                    tool_type: "seed-bank".to_string(),
+                    category: "storage".to_string(),
+                    id: seed_bank.id.clone(),
+                    tags: Vec::new(),
+                },
+                stone: Stone {
+                    id: state.stone_id.clone(),
+                    name: state.stone_name.clone(),
+                    endpoint: beacon.endpoint.clone(),
+                },
+                service: ServiceInfo {
+                    status: status.to_string(),
+                    ready,
+                    protocol,
+                    uris,
+                },
+                capabilities: Vec::new(),
             });
         }
     }
 
-    projections
+    tools
 }
 
-fn normalize_aliases(aliases: Vec<String>) -> Vec<String> {
-    aliases
-        .into_iter()
-        .map(|alias| alias.trim().to_ascii_lowercase())
-        .filter(|alias| !alias.is_empty())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+/// Convert a `FoundService` (from service discovery) into a `GardenTool`.
+fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
+    let fqid = build_offering_fqid(&svc.name, &svc.offering);
+
+    let capabilities: Vec<Capability> = svc
+        .sub_capabilities
+        .iter()
+        .filter(|cap| !cap.cap_type.trim().is_empty())
+        .map(|cap| Capability {
+            cap_type: cap.cap_type.trim().to_ascii_lowercase(),
+            items: cap
+                .items
+                .iter()
+                .map(|i| i.trim().to_string())
+                .filter(|i| !i.is_empty())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+        })
+        .filter(|cap| !cap.items.is_empty())
+        .collect();
+
+    GardenTool {
+        fqid: fqid.clone(),
+        tool: ToolIdentity {
+            name: instance_name_from_fqid(&fqid),
+            tool_type: svc.offering.to_ascii_lowercase(),
+            category: svc.category.to_ascii_lowercase(),
+            id: svc.offering_id,
+            tags: svc.tags,
+        },
+        stone: Stone {
+            id: svc.stone.id,
+            name: svc.stone.name,
+            endpoint: svc.stone.endpoint,
+        },
+        service: ServiceInfo {
+            status: svc.status.to_ascii_lowercase(),
+            ready: svc.status.eq_ignore_ascii_case(garden_common::SERVICE_RUNNING),
+            protocol: svc.connection.protocol,
+            uris: svc.connection.uris,
+        },
+        capabilities,
+    }
+}
+
+/// Build the bare fqid from a service name and offering type.
+///
+/// If the name and offering are the same (default instance), fqid is just the offering.
+/// If different (named instance like "mongodb:prod"), fqid is "offering:name".
+fn build_offering_fqid(name: &str, offering: &str) -> String {
+    let name_lower = name.to_ascii_lowercase();
+    let offering_lower = offering.to_ascii_lowercase();
+
+    if name_lower == offering_lower || name_lower.is_empty() {
+        offering_lower
+    } else if name_lower.starts_with(&format!("{}:", offering_lower)) {
+        // Already qualified: "mongodb:prod" → keep as-is
+        name_lower
+    } else {
+        format!("{}:{}", offering_lower, name_lower)
+    }
+}
+
+/// Extract the instance name from a fqid.
+/// `"mongodb:prod"` → `"prod"`, `"mongodb"` → `""`.
+fn instance_name_from_fqid(fqid: &str) -> String {
+    fqid.split_once(':')
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_default()
 }
 
 fn canonical_seed_bank_name(name: &str) -> String {
@@ -193,66 +230,51 @@ fn parse_port_from_endpoint(endpoint: &str) -> Option<u16> {
         .and_then(|(_, port)| port.parse().ok())
 }
 
-fn to_capability_map(
-    sub_capabilities: &[garden_common::SubCapability],
-) -> BTreeMap<String, Vec<String>> {
-    let mut caps = BTreeMap::new();
-
-    for cap in sub_capabilities {
-        let key = cap.cap_type.trim().to_ascii_lowercase();
-        if key.is_empty() {
-            continue;
-        }
-        let entry = caps.entry(key).or_insert_with(Vec::new);
-        entry.extend(
-            cap.items
-                .iter()
-                .map(|item| item.trim().to_string())
-                .filter(|item| !item.is_empty()),
-        );
-    }
-
-    for values in caps.values_mut() {
-        let normalized: Vec<String> = values
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        *values = normalized;
-    }
-
-    caps
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn offering_projection_connection_contract_examples() {
-        let endpoint = "http://192.168.1.20:7185";
-        let cases = [
-            ("mongodb", 27017),
-            ("redis", 6379),
-            ("amqp", 5672),
-            ("http", 11434),
-        ];
+    fn build_offering_fqid_default_instance() {
+        assert_eq!(build_offering_fqid("mongodb", "mongodb"), "mongodb");
+        assert_eq!(build_offering_fqid("MongoDB", "mongodb"), "mongodb");
+    }
 
-        for (protocol, port) in cases {
-            let resolved =
-                connection::resolve_connection("stone-indigo", endpoint, port, protocol, None);
-            assert!(!resolved.uris.is_empty());
-            assert_eq!(resolved.protocol, protocol);
+    #[test]
+    fn build_offering_fqid_named_instance() {
+        assert_eq!(build_offering_fqid("prod", "mongodb"), "mongodb:prod");
+        assert_eq!(
+            build_offering_fqid("mongodb:prod", "mongodb"),
+            "mongodb:prod"
+        );
+    }
 
-            for uri in resolved.uris {
-                let scheme = uri
-                    .split("://")
-                    .next()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                assert_eq!(scheme, protocol);
-            }
-        }
+    #[test]
+    fn instance_name_extraction() {
+        assert_eq!(instance_name_from_fqid("mongodb"), "");
+        assert_eq!(instance_name_from_fqid("mongodb:prod"), "prod");
+        assert_eq!(instance_name_from_fqid("ollama:adopted"), "adopted");
+    }
+
+    #[test]
+    fn parse_port_examples() {
+        assert_eq!(
+            parse_port_from_endpoint("http://192.168.1.20:7185"),
+            Some(7185)
+        );
+        assert_eq!(
+            parse_port_from_endpoint("http://192.168.1.20:7185/"),
+            Some(7185)
+        );
+        assert_eq!(parse_port_from_endpoint("http://localhost"), None);
+    }
+
+    #[test]
+    fn canonical_seed_bank() {
+        assert_eq!(
+            canonical_seed_bank_name(DEFAULT_PUBLIC_SEED_BANK_NAME),
+            "default"
+        );
+        assert_eq!(canonical_seed_bank_name("custom-bank"), "custom-bank");
     }
 }

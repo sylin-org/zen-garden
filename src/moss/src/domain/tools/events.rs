@@ -1,5 +1,5 @@
 use garden_common::tools::event_types;
-use garden_common::tools::{ToolDelta, ToolDeltaKind, ToolProjection};
+use garden_common::tools::{GardenTool, ToolDelta, ToolDeltaKind};
 use serde::Serialize;
 
 pub fn stream_event_type_for_delta(delta: &ToolDelta) -> &'static str {
@@ -12,5 +12,5 @@ pub fn stream_event_type_for_delta(delta: &ToolDelta) -> &'static str {
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSnapshotPayload {
     pub cursor: u64,
-    pub tools: Vec<ToolProjection>,
+    pub tools: Vec<GardenTool>,
 }

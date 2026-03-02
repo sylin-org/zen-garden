@@ -388,7 +388,7 @@ fn summarize_transport(announcement_type: &str, payload: &serde_json::Value) -> 
 
 /// Create a compact payload preview by stripping large nested structures.
 ///
-/// For arrays of objects with `name`, `offering`, or `tool_fqid` fields,
+/// For arrays of objects with `name`, `offering`, or `fqid` fields,
 /// preserves lightweight `{"name": "..."}` objects so consumers can display
 /// item names. Arrays of primitives or objects without name-like fields
 /// get the count-based `"[...N items]"` fallback. Capped at 20 items.
@@ -405,8 +405,8 @@ fn truncate_payload_preview(payload: &serde_json::Value) -> serde_json::Value {
                                 Some("offering")
                             } else if item.get("name").and_then(|n| n.as_str()).is_some() {
                                 Some("name")
-                            } else if item.get("tool_fqid").and_then(|n| n.as_str()).is_some() {
-                                Some("tool_fqid")
+                            } else if item.get("fqid").and_then(|n| n.as_str()).is_some() {
+                                Some("fqid")
                             } else {
                                 None
                             }

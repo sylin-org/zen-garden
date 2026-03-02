@@ -9,7 +9,7 @@ use axum::{
 use futures_util::stream::{self, Stream, StreamExt};
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::tools::event_types;
-use garden_common::tools::{CapabilitySelector, ToolDelta, ToolState, ToolType};
+use garden_common::tools::{CapabilitySelector, GardenTool, ToolDelta};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::time::Duration;
@@ -17,14 +17,19 @@ use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ToolsQueryParams {
+    /// Filter by fqid: bare name (type match) or instance name (exact match).
     #[serde(default)]
-    pub tool_type: Option<String>,
+    pub fqid: Option<String>,
+    /// Filter by category: "orchestrator", "offering", "storage".
     #[serde(default)]
-    pub tool_fqid: Option<String>,
+    pub category: Option<String>,
+    /// Filter by status: "running", "degraded", "stopped".
     #[serde(default)]
-    pub state: Option<String>,
+    pub status: Option<String>,
+    /// Capability filter: "model:llama3" or "model:llama3,model:nomic".
     #[serde(default)]
     pub capability: Option<String>,
+    /// Resume cursor for delta replay / SSE resume.
     #[serde(default)]
     pub since: Option<u64>,
 }
@@ -32,7 +37,7 @@ pub struct ToolsQueryParams {
 #[derive(Debug, Serialize)]
 pub struct ToolsSnapshotResponse {
     pub cursor: u64,
-    pub tools: Vec<garden_common::tools::ToolProjection>,
+    pub tools: Vec<GardenTool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replay: Vec<ToolDelta>,
 }
@@ -170,35 +175,6 @@ pub async fn stream_garden_tools_v1(
 fn parse_query(
     query: &ToolsQueryParams,
 ) -> Result<ToolQuery, (StatusCode, Json<ApiErrorResponse>)> {
-    let tool_type = match query.tool_type.as_deref() {
-        Some("offering") => Some(ToolType::Offering),
-        Some("seed-bank") => Some(ToolType::SeedBank),
-        Some(other) => {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                "INVALID_TOOL_TYPE",
-                format!("Unsupported tool_type '{}'", other),
-                None,
-            ));
-        }
-        None => None,
-    };
-
-    let state = match query.state.as_deref() {
-        Some("ready") => Some(ToolState::Ready),
-        Some("degraded") => Some(ToolState::Degraded),
-        Some("unavailable") => Some(ToolState::Unavailable),
-        Some(other) => {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                "INVALID_TOOL_STATE",
-                format!("Unsupported state '{}'", other),
-                None,
-            ));
-        }
-        None => None,
-    };
-
     let capabilities = query
         .capability
         .as_deref()
@@ -206,13 +182,21 @@ fn parse_query(
         .transpose()?;
 
     Ok(ToolQuery {
-        tool_type,
-        tool_fqid: query
-            .tool_fqid
+        fqid: query
+            .fqid
             .as_deref()
             .map(|fqid| fqid.trim().to_ascii_lowercase())
             .filter(|fqid| !fqid.is_empty()),
-        state,
+        category: query
+            .category
+            .as_deref()
+            .map(|c| c.trim().to_ascii_lowercase())
+            .filter(|c| !c.is_empty()),
+        status: query
+            .status
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty()),
         capabilities: capabilities.unwrap_or_default(),
     })
 }

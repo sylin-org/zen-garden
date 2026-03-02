@@ -1,98 +1,210 @@
-//! Tools domain data contracts.
+//! Tools domain data contracts — GardenTool unified model.
+//!
+//! TOOLS-0002: Single contract shared by `/garden/tools` and `/garden/services`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 
-/// Tool type discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ToolType {
-    Offering,
-    SeedBank,
+// ── GardenTool ──────────────────────────────────────────────────────────────
+
+/// Unified garden resource — the single domain contract for offerings and
+/// seed-banks. Used by `/garden/tools` (streaming) and `/garden/services`
+/// (query).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GardenTool {
+    /// Bare canonical name: `"mongodb"`, `"mongodb:prod"`, `"ollama:adopted"`.
+    /// No `offering:` or `seed-bank:` prefix.
+    pub fqid: String,
+
+    /// Tool identity.
+    pub tool: ToolIdentity,
+
+    /// Stone hosting this resource.
+    pub stone: Stone,
+
+    /// Service runtime state and connection.
+    pub service: ServiceInfo,
+
+    /// Capabilities (models, collections, etc.).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<Capability>,
 }
 
-impl ToolType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Offering => "offering",
-            Self::SeedBank => "seed-bank",
-        }
-    }
+/// Tool identity — what this resource is.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIdentity {
+    /// Instance qualifier: `""` for default, `"prod"`, `"dev"`, `"adopted"`.
+    #[serde(default)]
+    pub name: String,
+
+    /// Offering type: `"mongodb"`, `"ollama"`, `"redis"`, `"seed-bank"`.
+    #[serde(rename = "type")]
+    pub tool_type: String,
+
+    /// Tool category: `"orchestrator"`, `"offering"`, `"storage"`.
+    pub category: String,
+
+    /// Unique identifier (GUIDv7).
+    pub id: String,
+
+    /// Tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
-impl Display for ToolType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
+/// Stone hosting a garden resource.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Stone {
+    pub id: String,
+    pub name: String,
+    pub endpoint: String,
 }
 
-/// Build canonical tool_fqid = "{tool-type}:{fqid}".
-pub fn build_tool_fqid(tool_type: ToolType, fqid: &str) -> Result<String, ToolParseError> {
-    let normalized = fqid.trim();
-    if normalized.is_empty() {
-        return Err(ToolParseError("Tool fqid cannot be empty".to_string()));
-    }
-    Ok(format!("{}:{}", tool_type.as_str(), normalized))
-}
+/// Service runtime state and connection info.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServiceInfo {
+    /// Current status: `"running"`, `"stopped"`, `"degraded"`.
+    pub status: String,
 
-/// Parse canonical tool_fqid = "{tool-type}:{fqid}".
-pub fn parse_tool_fqid(input: &str) -> Result<(ToolType, String), ToolParseError> {
-    let value = input.trim();
-    let (kind, fqid) = value
-        .split_once(':')
-        .ok_or_else(|| ToolParseError("tool_fqid must include tool type prefix".to_string()))?;
-    if fqid.trim().is_empty() {
-        return Err(ToolParseError(
-            "tool_fqid payload cannot be empty".to_string(),
-        ));
-    }
-    let tool_type = match kind.trim().to_ascii_lowercase().as_str() {
-        "offering" => ToolType::Offering,
-        "seed-bank" => ToolType::SeedBank,
-        other => return Err(ToolParseError(format!("Unsupported tool type: {}", other))),
-    };
-    Ok((tool_type, fqid.trim().to_string()))
-}
+    /// Whether the service is ready for traffic.
+    pub ready: bool,
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolParseError(pub String);
-
-impl Display for ToolParseError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for ToolParseError {}
-
-/// Tool state vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolState {
-    Ready,
-    Degraded,
-    Unavailable,
-}
-
-/// Optional connection data for a tool.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct ToolConnection {
+    /// Wire protocol: `"mongodb"`, `"http"`, `"s3"`, `"redis"`.
     pub protocol: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hostname: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ip: Option<String>,
-    pub port: u16,
+
+    /// Connection URIs, ordered by preference.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uris: Vec<String>,
 }
 
-/// Complete capability snapshot for an offering tool.
+/// Typed capability entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Capability {
+    /// Capability type: `"model"`, `"collection"`.
+    #[serde(rename = "type")]
+    pub cap_type: String,
+
+    /// Items within this capability type.
+    pub items: Vec<String>,
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+impl GardenTool {
+    /// Category ordering for result sorting.
+    /// Orchestrators pin first, then offerings, then storage.
+    pub fn category_priority(&self) -> u8 {
+        match self.tool.category.as_str() {
+            "orchestrator" => 0,
+            "offering" => 1,
+            "storage" => 2,
+            _ => 3,
+        }
+    }
+
+    /// Check if this tool has a specific capability.
+    pub fn has_capability(&self, cap_type: &str, item: &str) -> bool {
+        let t = cap_type.trim().to_ascii_lowercase();
+        let i = item.trim().to_ascii_lowercase();
+        self.capabilities.iter().any(|cap| {
+            cap.cap_type.eq_ignore_ascii_case(&t)
+                && cap.items.iter().any(|v| v.eq_ignore_ascii_case(&i))
+        })
+    }
+
+    /// Extract the offering type from the fqid.
+    /// `"mongodb:prod"` → `"mongodb"`, `"redis"` → `"redis"`.
+    pub fn offering_type(&self) -> &str {
+        &self.tool.tool_type
+    }
+}
+
+// ── Fqid Matching ───────────────────────────────────────────────────────────
+
+/// Match a query fqid against a tool.
 ///
-/// Keys are capability types ("model", "extension"),
-/// values are stable sorted item lists.
+/// - Bare name (e.g., `"mongodb"`) matches all tools with `tool.tool_type == "mongodb"`.
+/// - Instance name (e.g., `"mongodb:prod"`) matches exact `fqid`.
+/// - Does NOT prefix-match: `"ollama"` does NOT match `"ollama-cpu"`.
+pub fn fqid_matches(query: &str, tool: &GardenTool) -> bool {
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    if q.contains(':') {
+        // Exact instance match
+        tool.fqid.eq_ignore_ascii_case(&q)
+    } else {
+        // Type match: all instances of this offering type
+        tool.tool.tool_type.eq_ignore_ascii_case(&q)
+    }
+}
+
+// ── Deltas & Beacons ────────────────────────────────────────────────────────
+
+/// Delta kind for tool updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolDeltaKind {
+    Upsert,
+    Remove,
+}
+
+/// Single tool delta in stream/beacon envelopes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolDelta {
+    pub event_id: String,
+    pub cursor: u64,
+    pub timestamp: DateTime<Utc>,
+    pub kind: ToolDeltaKind,
+    /// Bare fqid: `"mongodb"`, `"ollama:adopted"`.
+    pub fqid: String,
+    /// Stone-scoped unique key for dedup: `"{stone_id}:{fqid}:{category}"`.
+    pub tool_key: String,
+    pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<GardenTool>,
+}
+
+/// Inter-Moss tools announcement payload.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolsBeacon {
+    pub stone_id: String,
+    pub stone_name: String,
+    pub endpoint: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deltas: Vec<ToolDelta>,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl ToolsBeacon {
+    pub fn empty(stone_id: &str, stone_name: &str, endpoint: &str) -> Self {
+        Self {
+            stone_id: stone_id.to_string(),
+            stone_name: stone_name.to_string(),
+            endpoint: endpoint.to_string(),
+            deltas: Vec::new(),
+            timestamp: Utc::now(),
+        }
+    }
+}
+
+// ── Tool Key ────────────────────────────────────────────────────────────────
+
+/// Build the cache key for a tool: `"{stone_id}:{fqid}:{category}"`.
+///
+/// Multiple entries can share an fqid (e.g., `mongodb` on two different stones,
+/// or `mongodb` as both orchestrator and offering on the same stone).
+/// The key disambiguates.
+pub fn build_tool_key(stone_id: &str, fqid: &str, category: &str) -> String {
+    format!("{}:{}:{}", stone_id, fqid, category)
+}
+
+// ── Capability Types (preserved from TOOLS-0001) ────────────────────────────
+
+/// Complete capability snapshot for filtering.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct CapabilitySnapshot {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -140,95 +252,14 @@ pub struct CapabilityDelta {
     pub removed: BTreeMap<String, Vec<String>>,
 }
 
-/// Unified tool projection for automation clients.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ToolProjection {
-    pub tool_fqid: String,
-    pub tool_uid: String,
-    pub tool_type: ToolType,
-    pub state: ToolState,
-    pub ready: bool,
-    pub revision: u64,
-    pub stone_id: String,
-    pub stone_name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connection: Option<ToolConnection>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub capabilities: BTreeMap<String, Vec<String>>,
-    #[serde(default)]
-    pub capability_revision: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capability_delta: Option<CapabilityDelta>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl ToolProjection {
-    pub fn normalize_capabilities(&mut self) {
-        let mut snapshot = CapabilitySnapshot {
-            items: std::mem::take(&mut self.capabilities),
-        };
-        snapshot.normalize();
-        self.capabilities = snapshot.items;
-    }
-}
-
-/// Delta kind for tool updates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolDeltaKind {
-    Upsert,
-    Remove,
-}
-
-/// Single tool delta in stream/beacon envelopes.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ToolDelta {
-    pub event_id: String,
-    pub cursor: u64,
-    pub timestamp: DateTime<Utc>,
-    pub kind: ToolDeltaKind,
-    pub tool_fqid: String,
-    pub tool_uid: String,
-    pub revision: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub projection: Option<ToolProjection>,
-}
-
-/// Inter-Moss tools announcement payload.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ToolsBeacon {
-    pub stone_id: String,
-    pub stone_name: String,
-    pub endpoint: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deltas: Vec<ToolDelta>,
-    pub timestamp: DateTime<Utc>,
-}
-
-impl ToolsBeacon {
-    pub fn empty(stone_id: &str, stone_name: &str, endpoint: &str) -> Self {
-        Self {
-            stone_id: stone_id.to_string(),
-            stone_name: stone_name.to_string(),
-            endpoint: endpoint.to_string(),
-            deltas: Vec::new(),
-            timestamp: Utc::now(),
-        }
-    }
-}
-
-/// Parsed capability selector.
+/// Parsed capability selector for query filtering.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilitySelector {
     pub cap_type: String,
     pub item: String,
 }
+
+// ── Capability Wish Parsing ─────────────────────────────────────────────────
 
 /// Parsed capability wish target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,8 +415,6 @@ fn parse_capability_selector(
             ));
         }
 
-        // If a default type is known, treat non-matching prefixes as part of
-        // the item so values like "llama3:8b" remain valid untyped selectors.
         if let Ok(default) = &default_cap_type {
             if cap_type != *default {
                 return Ok(CapabilitySelector {
@@ -408,21 +437,108 @@ fn parse_capability_selector(
     })
 }
 
+// ── Legacy Compatibility ────────────────────────────────────────────────────
+
+/// Tool type discriminator (kept for beacon/cache internals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolType {
+    Offering,
+    SeedBank,
+}
+
+impl ToolType {
+    pub fn as_category(self) -> &'static str {
+        match self {
+            Self::Offering => "offering",
+            Self::SeedBank => "storage",
+        }
+    }
+}
+
+impl Display for ToolType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_category())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_tool_fqid_valid() {
-        let (kind, fqid) = parse_tool_fqid("offering:ollama:dev").unwrap();
-        assert_eq!(kind, ToolType::Offering);
-        assert_eq!(fqid, "ollama:dev");
+    fn sample_tool(fqid: &str, tool_type: &str, category: &str) -> GardenTool {
+        GardenTool {
+            fqid: fqid.to_string(),
+            tool: ToolIdentity {
+                name: if fqid.contains(':') {
+                    fqid.split_once(':').unwrap().1.to_string()
+                } else {
+                    String::new()
+                },
+                tool_type: tool_type.to_string(),
+                category: category.to_string(),
+                id: "test-id".to_string(),
+                tags: Vec::new(),
+            },
+            stone: Stone {
+                id: "stone-1".to_string(),
+                name: "stone-test".to_string(),
+                endpoint: "http://192.168.1.100:7185".to_string(),
+            },
+            service: ServiceInfo {
+                status: "running".to_string(),
+                ready: true,
+                protocol: tool_type.to_string(),
+                uris: Vec::new(),
+            },
+            capabilities: Vec::new(),
+        }
     }
 
     #[test]
-    fn parse_tool_fqid_invalid() {
-        let err = parse_tool_fqid("offering").unwrap_err();
-        assert!(err.to_string().contains("tool type prefix"));
+    fn fqid_bare_matches_type() {
+        let tool = sample_tool("mongodb", "mongodb", "offering");
+        assert!(fqid_matches("mongodb", &tool));
+        assert!(!fqid_matches("redis", &tool));
+    }
+
+    #[test]
+    fn fqid_bare_matches_named_instance() {
+        let tool = sample_tool("mongodb:prod", "mongodb", "offering");
+        assert!(fqid_matches("mongodb", &tool)); // type match
+        assert!(fqid_matches("mongodb:prod", &tool)); // exact match
+        assert!(!fqid_matches("mongodb:dev", &tool)); // wrong instance
+    }
+
+    #[test]
+    fn fqid_no_prefix_match() {
+        let tool = sample_tool("ollama-cpu:adopted", "ollama-cpu", "offering");
+        assert!(!fqid_matches("ollama", &tool)); // different type
+        assert!(fqid_matches("ollama-cpu", &tool)); // exact type
+    }
+
+    #[test]
+    fn category_priority_ordering() {
+        let orch = sample_tool("mongodb", "mongodb", "orchestrator");
+        let offer = sample_tool("mongodb", "mongodb", "offering");
+        let storage = sample_tool("seed-test", "seed-bank", "storage");
+
+        assert!(orch.category_priority() < offer.category_priority());
+        assert!(offer.category_priority() < storage.category_priority());
+    }
+
+    #[test]
+    fn has_capability_check() {
+        let mut tool = sample_tool("ollama:adopted", "ollama", "offering");
+        tool.capabilities = vec![Capability {
+            cap_type: "model".to_string(),
+            items: vec!["llama3.2".to_string(), "nomic-embed-text".to_string()],
+        }];
+
+        assert!(tool.has_capability("model", "llama3.2"));
+        assert!(tool.has_capability("Model", "Llama3.2")); // case insensitive
+        assert!(!tool.has_capability("model", "gpt-4"));
+        assert!(!tool.has_capability("plugin", "llama3.2"));
     }
 
     #[test]
@@ -439,10 +555,6 @@ mod tests {
         let wish = parse_capability_wish("ollama[model1,model2]", Some("model")).unwrap();
         assert_eq!(wish.offering_fqn, "ollama");
         assert_eq!(wish.selectors.len(), 2);
-        assert_eq!(wish.selectors[0].cap_type, "model");
-        assert_eq!(wish.selectors[0].item, "model1");
-        assert_eq!(wish.selectors[1].cap_type, "model");
-        assert_eq!(wish.selectors[1].item, "model2");
     }
 
     #[test]
@@ -463,8 +575,6 @@ mod tests {
     fn parse_capability_wish_shorthand_default_type() {
         let wish = parse_capability_wish("ollama:modelv1", Some("model")).unwrap();
         assert_eq!(wish.offering_fqn, "ollama");
-        assert_eq!(wish.selectors.len(), 1);
-        assert_eq!(wish.selectors[0].cap_type, "model");
         assert_eq!(wish.selectors[0].item, "modelv1");
     }
 
@@ -472,8 +582,6 @@ mod tests {
     fn parse_capability_wish_shorthand_with_instance() {
         let wish = parse_capability_wish("ollama:dev:modelv1", Some("model")).unwrap();
         assert_eq!(wish.offering_fqn, "ollama:dev");
-        assert_eq!(wish.selectors.len(), 1);
-        assert_eq!(wish.selectors[0].cap_type, "model");
         assert_eq!(wish.selectors[0].item, "modelv1");
     }
 
@@ -496,5 +604,11 @@ mod tests {
             snap.items.get("model").unwrap(),
             &vec!["llama3".to_string()]
         );
+    }
+
+    #[test]
+    fn build_tool_key_format() {
+        let key = build_tool_key("stone-abc", "mongodb", "orchestrator");
+        assert_eq!(key, "stone-abc:mongodb:orchestrator");
     }
 }

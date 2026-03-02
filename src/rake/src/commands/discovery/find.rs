@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use garden_common::offerings::parse_offering_fqn;
 use garden_common::tools::{
-    event_types as tools_event_types, parse_capability_wish, CapabilitySelector, ToolDelta,
-    ToolProjection,
+    event_types as tools_event_types, parse_capability_wish, CapabilitySelector, GardenTool,
+    ToolDelta,
 };
 use garden_common::ui::rendering as ui;
 use serde::{Deserialize, Serialize};
@@ -146,7 +146,7 @@ pub struct ServiceDiscoveryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ToolsSnapshotEvent {
     pub cursor: u64,
-    pub tools: Vec<ToolProjection>,
+    pub tools: Vec<GardenTool>,
 }
 
 // Use shared ApiResponse from garden-common
@@ -395,8 +395,8 @@ impl FindCommand {
             tracing::debug!(job_id = %job_id, offering, "Install job accepted, waiting on tools stream");
         }
 
-        let tool_fqid = format!("offering:{}", offering.to_ascii_lowercase());
-        self.wait_for_tool_ready(ctx, &tool_fqid, &[], Duration::from_secs(240))
+        let fqid = offering.to_ascii_lowercase();
+        self.wait_for_tool_ready(ctx, &fqid, &[], Duration::from_secs(240))
             .await?;
         println!(
             "{}{} Service ready",
@@ -496,8 +496,8 @@ impl FindCommand {
 
         self.ensure_capabilities(ctx, &wish).await?;
 
-        let tool_fqid = format!("offering:{}", wish.offering_fqn);
-        self.wait_for_tool_ready(ctx, &tool_fqid, &wish.selectors, Duration::from_secs(240))
+        let fqid = wish.offering_fqn.to_ascii_lowercase();
+        self.wait_for_tool_ready(ctx, &fqid, &wish.selectors, Duration::from_secs(240))
             .await?;
 
         let required_items = wish
@@ -666,7 +666,7 @@ impl FindCommand {
     async fn wait_for_tool_ready(
         &self,
         ctx: &CommandContext,
-        tool_fqid: &str,
+        fqid: &str,
         requirements: &[CapabilitySelector],
         timeout: Duration,
     ) -> anyhow::Result<()> {
@@ -675,9 +675,9 @@ impl FindCommand {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No endpoint available"))?;
         let mut url = format!(
-            "{}/api/v1/garden/tools/stream?tool_fqid={}",
+            "{}/api/v1/garden/tools/stream?fqid={}",
             endpoint.trim_end_matches('/'),
-            urlencoding::encode(tool_fqid)
+            urlencoding::encode(fqid)
         );
         if !requirements.is_empty() {
             let selector = requirements
@@ -741,9 +741,9 @@ impl FindCommand {
                 let data = data_lines.join("\n");
                 if event_name == tools_event_types::TOOLS_SNAPSHOT {
                     if let Ok(snapshot) = serde_json::from_str::<ToolsSnapshotEvent>(&data) {
-                        if snapshot.tools.iter().any(|projection| {
-                            projection.tool_fqid.eq_ignore_ascii_case(tool_fqid)
-                                && projection_ready(projection, requirements)
+                        if snapshot.tools.iter().any(|tool| {
+                            garden_common::tools::fqid_matches(fqid, tool)
+                                && tool_ready(tool, requirements)
                         }) {
                             return Ok(());
                         }
@@ -753,9 +753,9 @@ impl FindCommand {
 
                 if event_name == tools_event_types::TOOL_UPSERT {
                     if let Ok(delta) = serde_json::from_str::<ToolDelta>(&data) {
-                        if let Some(projection) = delta.projection.as_ref() {
-                            if projection.tool_fqid.eq_ignore_ascii_case(tool_fqid)
-                                && projection_ready(projection, requirements)
+                        if let Some(tool) = delta.tool.as_ref() {
+                            if garden_common::tools::fqid_matches(fqid, tool)
+                                && tool_ready(tool, requirements)
                             {
                                 return Ok(());
                             }
@@ -1057,8 +1057,8 @@ fn capability_wish_offering_hint(query: &str) -> Option<String> {
     parse_offering_fqn(offering).ok().map(|fqn| fqn.fqn())
 }
 
-fn projection_ready(projection: &ToolProjection, requirements: &[CapabilitySelector]) -> bool {
-    if !projection.ready {
+fn tool_ready(tool: &GardenTool, requirements: &[CapabilitySelector]) -> bool {
+    if !tool.service.ready {
         return false;
     }
 
@@ -1066,17 +1066,7 @@ fn projection_ready(projection: &ToolProjection, requirements: &[CapabilitySelec
         return true;
     }
 
-    requirements.iter().all(|requirement| {
-        let cap_type = requirement.cap_type.to_ascii_lowercase();
-        let item = requirement.item.to_ascii_lowercase();
-        projection
-            .capabilities
-            .get(&cap_type)
-            .map(|items| {
-                items
-                    .iter()
-                    .any(|candidate| candidate.eq_ignore_ascii_case(&item))
-            })
-            .unwrap_or(false)
-    })
+    requirements
+        .iter()
+        .all(|req| tool.has_capability(&req.cap_type, &req.item))
 }

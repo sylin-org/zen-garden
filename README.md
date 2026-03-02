@@ -30,17 +30,18 @@ MONGODB_URI=mongodb://old-laptop-01.local:27017
 MONGODB_URI=zen-garden:mongodb/mydb
 ```
 
-Your app asks "Where's MongoDB?" — a Stone answers, connection established. When hardware fails, swap in a replacement. The new Stone announces the same service and apps reconnect automatically.
+Stones (devices running Moss) provide service discovery, orchestration, and failure recovery using mDNS multicast, Docker, and curated offering templates. Security and multi-subnet scaling are opt-in.
 
-**Discovery** — Stones announce services via mDNS multicast (same protocol as AirPlay and Chromecast). No central registry required for small gardens.
+| Layer            | What happens                                                       |
+| ---------------- | ------------------------------------------------------------------ |
+| Discovery        | mDNS multicast (same protocol as AirPlay, Chromecast)              |
+| Orchestration    | Docker containers from curated offering templates                  |
+| Failure recovery | Clients retry mDNS — new Stone, same service type, auto-reconnect |
+| Security         | Optional mTLS via Pond (explicit trust boundary)                   |
+| Scaling          | mDNS for up to 30 Stones; Lantern registry recommended beyond 20  |
 
-**Orchestration** — Each Stone runs Docker. Services are defined as "offerings" — curated templates with sensible defaults selected from a catalog.
-
-**Failure handling** — When a Stone disappears, apps retry discovery. When a new Stone offers the same service, apps reconnect. Hardware becomes interchangeable.
-
-**Security** (optional) — Fill a Pond to add mTLS. Stones inside the pond trust each other.
-
-**Scale** — 3–10 Stones work with mDNS alone. Beyond that, add a Lantern (registry service).
+- **Set up real hardware** — [First Stone Guide](docs/guides/first-stone.md)
+- **Understand the protocol** — [Discovery Spec](docs/specs/discovery.md)
 
 ---
 
@@ -69,21 +70,18 @@ garden-rake find mongodb
 # => Found: mongodb on stone-01 (192.168.1.42:27017)
 ```
 
-**Set up real hardware** — [First Stone Guide](docs/guides/first-stone.md)
-**Understand the protocol** — [Discovery Spec](docs/specs/discovery.md)
-
 ---
 
 ## Examples
 
-A typical garden: 3–10 Stones running on whatever hardware you have.
+A typical garden runs on whatever hardware you have.
 
-- A 2015 laptop running MongoDB (handles 1,000+ req/sec)
-- A Dell Wyse thin client running Redis (2GB RAM, 5 watts, silent)
-- An old desktop serving files via MinIO
-- A Raspberry Pi running Prometheus
-
-All discovered automatically via mDNS. All managed through `garden-rake`.
+| Hardware                  | Service    | Notes                  |
+| ------------------------- | ---------- | ---------------------- |
+| 2015 laptop               | MongoDB    | Handles 1,000+ req/sec |
+| Dell Wyse thin client     | Redis      | 2 GB RAM, 5 watts      |
+| Old desktop               | MinIO      | File storage           |
+| Raspberry Pi              | Prometheus | Monitoring             |
 
 ---
 
@@ -105,14 +103,16 @@ All discovered automatically via mDNS. All managed through `garden-rake`.
 
 ## Project Status
 
-**Version**: 0.1.0 — Active development
+Version 0.1.0 — active development.
 
-- `garden-moss` daemon with 14-phase startup orchestration
-- `garden-rake` CLI with full command taxonomy
-- `garden-lantern` registry for cross-subnet discovery
-- 30+ service offering templates
+| Component        | Description                         |
+| ---------------- | ----------------------------------- |
+| `garden-moss`    | Daemon with 14-phase startup        |
+| `garden-rake`    | CLI with full command taxonomy      |
+| `garden-lantern` | Registry for cross-subnet discovery |
+| Offerings        | 30+ curated service templates       |
 
-See [Release Notes](docs/ops/release-notes.md) for details.
+- [Release Notes](docs/ops/release-notes.md)
 
 ---
 
@@ -121,8 +121,7 @@ See [Release Notes](docs/ops/release-notes.md) for details.
 - Run Stones on your old hardware and tell us what breaks
 - Write offering templates for services you use
 - Improve documentation where it confused you
-
-See [Maintainer Docs](docs/ops/maintainers.md) for architecture invariants.
+- [Maintainer Docs](docs/ops/maintainers.md)
 
 ---
 

@@ -4,9 +4,8 @@
   <img src="res/zg-256.png" alt="Zen Garden" />
   <br/>
   <br/>
-  **Automatic service discovery for self-hosted infrastructure**
-
-## </p>
+  Automatic service discovery for self-hosted infrastructure
+</p>
 
 ## The Situation
 

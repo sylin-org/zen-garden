@@ -44,7 +44,7 @@ use crate::{
     ServerConfig,
 };
 use garden_common::console;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -1637,7 +1637,7 @@ async fn start_preinstall_handler(state: &AppState) {
     // Validate all offerings exist before creating job (supports FQN)
     let mut invalid_offerings = Vec::new();
     for offering in &manifest.offerings {
-        match parse_offering_fqn(offering) {
+        match OfferingFqn::parse(offering) {
             Ok(fqn) => {
                 if state.manifest_registry.sw.get(&fqn.offering).is_none() {
                     invalid_offerings.push(offering.clone());

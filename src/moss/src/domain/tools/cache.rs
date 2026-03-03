@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn fqid_filter_matches_tool() {
-        let tool = sample_tool("ollama:adopted", "offering");
+        let tool = sample_tool("ollama::adopted", "offering");
 
         let query = ToolQuery {
             fqid: Some("ollama".to_string()),
@@ -431,10 +431,17 @@ mod tests {
         assert!(query.matches_tool(&tool));
 
         let query_exact = ToolQuery {
-            fqid: Some("ollama:adopted".to_string()),
+            fqid: Some("ollama::adopted".to_string()),
             ..Default::default()
         };
         assert!(query_exact.matches_tool(&tool));
+
+        // V1 legacy query also normalizes and matches
+        let query_v1 = ToolQuery {
+            fqid: Some("ollama:adopted".to_string()),
+            ..Default::default()
+        };
+        assert!(query_v1.matches_tool(&tool));
 
         let query_miss = ToolQuery {
             fqid: Some("redis".to_string()),

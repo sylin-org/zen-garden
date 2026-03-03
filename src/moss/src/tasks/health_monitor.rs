@@ -63,7 +63,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 .map(|o| {
                     (
                         o.offering_id.clone(),
-                        o.name.clone(),
+                        o.name.to_string(),
                         o.status,
                         o.health.clone(),
                     )
@@ -215,7 +215,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 offerings
                     .iter()
                     .filter(|o| o.is_managed() && o.status == OfferingStatus::Running)
-                    .map(|o| o.name.clone())
+                    .map(|o| o.name.to_string())
                     .collect()
             };
 
@@ -284,7 +284,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     // Check if already in offerings (acquire read lock briefly)
                     let exists = {
                         let offerings = state.offerings.read().await;
-                        offerings.iter().any(|o| o.name == *container_name)
+                        offerings.iter().any(|o| o.name.to_string() == *container_name)
                     };
 
                     if !exists {

@@ -692,7 +692,7 @@ async fn execute_offering_update(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == name && o.is_managed())
+            .find(|o| o.name.to_string() == name && o.is_managed())
             .and_then(|o| o.managed_data())
             .map(|d| d.config_patches.clone())
             .unwrap_or_default()
@@ -864,7 +864,8 @@ async fn check_offering_updates(
     // Only check managed offerings (Docker containers) for updates
     for offering in offerings.iter().filter(|o| o.is_managed()) {
         // Get the template image reference (e.g., "redis:latest")
-        let template_image = match state.docker.get_service_image(&offering.name).await {
+        let offering_name_str = offering.name.to_string();
+        let template_image = match state.docker.get_service_image(&offering_name_str).await {
             Ok(img) => img,
             Err(_) => continue,
         };
@@ -941,14 +942,14 @@ async fn check_offering_updates(
             // This handles rolling tags (e.g., "1.6" pointing to "1.6.40")
             if current_digest != newer_digest {
                 let update = Update::Offering {
-                    name: offering.name.clone(),
+                    name: offering.name.to_string(),
                     current: current_tag.to_string(),
                     available: newer_tag.clone(),
                     age_days: None, // Requires registry API v2 created-timestamp (not available from digest alone)
                 };
 
                 // Check constraints (example: MongoDB 5.0+ requires AVX)
-                let requirements = get_offering_requirements(&offering.name);
+                let requirements = get_offering_requirements(&offering_name_str);
 
                 match check_constraints(&requirements, capabilities) {
                     Ok(()) => results.push(Ok(update)),

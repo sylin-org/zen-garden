@@ -11,7 +11,7 @@ use futures_util::stream::{Stream, StreamExt, TryStreamExt};
 use garden_common::console::{self, ConsolePrinter};
 use garden_common::constants::{OFFERING_CONTAINER_PREFIX, OFFERING_FQN_CONTAINER_SEPARATOR};
 use garden_common::manifests::get_ports_catalog;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use garden_common::types::{PortConflictHandler, PortRemediation};
 use garden_common::{ServiceHealthStatus, ServiceStatus};
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 pub fn zen_offering_container_name(offering_name: &str) -> Result<String> {
-    let fqn = parse_offering_fqn(offering_name)
+    let fqn = OfferingFqn::parse(offering_name)
         .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering_name, e))?;
     Ok(format!(
         "{}{}",
@@ -36,13 +36,19 @@ pub fn decode_zen_offering_container_name(container_name: &str) -> Option<String
 }
 
 fn decode_offering_container_suffix(encoded: &str) -> String {
+    // Image-direct containers: img-nginx-latest → image:nginx-latest (best-effort)
+    if let Some(rest) = encoded.strip_prefix("img-") {
+        if let Some((sanitized_ref, instance)) =
+            rest.split_once(OFFERING_FQN_CONTAINER_SEPARATOR)
+        {
+            return format!("image:{}::{}", sanitized_ref, instance);
+        }
+        return format!("image:{}", rest);
+    }
+
+    // Curated containers: mongodb--prod → mongodb::prod
     if let Some((offering, instance)) = encoded.split_once(OFFERING_FQN_CONTAINER_SEPARATOR) {
-        format!(
-            "{}{}{}",
-            offering,
-            garden_common::constants::OFFERING_FQN_SEPARATOR,
-            instance
-        )
+        format!("{}::{}", offering, instance)
     } else {
         encoded.to_string()
     }
@@ -1169,6 +1175,19 @@ impl DockerManager {
         }
         tracing::info!(image = %image, "Image pulled successfully");
         Ok(())
+    }
+
+    /// Inspect an image's OCI metadata (config, labels, architecture).
+    ///
+    /// The image must already be pulled locally.
+    pub async fn inspect_image_metadata(
+        &self,
+        image: &str,
+    ) -> Result<bollard::models::ImageInspect> {
+        self.docker
+            .inspect_image(image)
+            .await
+            .with_context(|| format!("Failed to inspect image '{}'", image))
     }
 
     /// Get the status of a service by checking its Docker container

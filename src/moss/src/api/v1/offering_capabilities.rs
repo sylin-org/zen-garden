@@ -9,7 +9,7 @@ use axum::{
     Json,
 };
 use garden_common::{
-    api_utils::ApiErrorResponse, offerings::parse_offering_fqn, CapabilityCollection, Offering,
+    api_utils::ApiErrorResponse, offerings::OfferingFqn, CapabilityCollection, Offering,
     OfferingMode, OfferingStatus, Ports, ServiceInfo, ServiceStatus,
 };
 use reqwest::Client;
@@ -883,7 +883,7 @@ pub async fn mirror_offering_capabilities_v1(
     Path(offering_name): Path<String>,
     Json(request): Json<MirrorCapabilitiesRequest>,
 ) -> Result<Json<ApiResponse<MirrorCapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&offering_name).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&offering_name).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -1171,7 +1171,7 @@ async fn offering_to_service_info(offering: &Offering, state: &AppState) -> Serv
 
     ServiceInfo {
         offering_id: offering.offering_id.clone(),
-        name: offering.name.clone(),
+        name: offering.name.to_string(),
         offering: offering.offering.clone(),
         version: offering.version.clone(),
         status: match offering.status {
@@ -1218,7 +1218,7 @@ async fn resolve_offering_for_capability(
     offering_name: &str,
 ) -> Result<(Offering, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
     let normalized = normalize_offering_selector(offering_name);
-    let offering_fqn = parse_offering_fqn(&normalized).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&normalized).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -1234,7 +1234,7 @@ async fn resolve_offering_for_capability(
     if offering_fqn.instance.is_some() {
         let found = offerings
             .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn_str))
+            .find(|o| o.name.to_string().eq_ignore_ascii_case(&offering_fqn_str))
             .cloned();
         return match found {
             Some(offering) => Ok((offering.clone(), offering.mode())),
@@ -1253,7 +1253,7 @@ async fn resolve_offering_for_capability(
     // If a default instance exists (exact offering name), prefer it.
     if let Some(default_instance) = offerings
         .iter()
-        .find(|o| o.name.eq_ignore_ascii_case(&offering_fqn_str))
+        .find(|o| o.name.to_string().eq_ignore_ascii_case(&offering_fqn_str))
         .cloned()
     {
         return Ok((default_instance.clone(), default_instance.mode()));
@@ -1296,7 +1296,7 @@ async fn resolve_offering_for_capability(
         return Ok((offering.clone(), offering.mode()));
     }
 
-    let candidates: Vec<String> = selected.iter().map(|o| o.name.clone()).collect();
+    let candidates: Vec<String> = selected.iter().map(|o| o.name.to_string()).collect();
     Err(error_response(
         StatusCode::CONFLICT,
         "OFFERING_AMBIGUOUS",

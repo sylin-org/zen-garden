@@ -9,6 +9,7 @@ use crate::domain::service_discovery::{self, FoundService};
 use crate::domain::tools::readiness::seed_bank_readiness;
 use crate::AppState;
 use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
+use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
 use std::collections::BTreeSet;
 
@@ -38,7 +39,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 gw.tags.clone()
             };
 
-            let fqid = build_offering_fqid(&gw.fqn, offering);
+            let fqn = parse_fqn_for_fqid(&gw.fqn, offering);
+            let fqid = fqn.fqn();
 
             let conn = connection::resolve_connection(
                 &gw.hostname,
@@ -51,7 +53,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
             tools.push(GardenTool {
                 fqid: fqid.clone(),
                 tool: ToolIdentity {
-                    name: instance_name_from_fqid(&fqid),
+                    name: fqn.instance.clone().unwrap_or_default(),
                     tool_type: offering.to_ascii_lowercase(),
                     category: category.to_string(),
                     id: String::new(),
@@ -140,7 +142,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 
 /// Convert a `FoundService` (from service discovery) into a `GardenTool`.
 fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
-    let fqid = build_offering_fqid(&svc.name, &svc.offering);
+    let fqn = parse_fqn_for_fqid(&svc.name, &svc.offering);
+    let fqid = fqn.fqn();
 
     let capabilities: Vec<Capability> = svc
         .sub_capabilities
@@ -163,7 +166,7 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
     GardenTool {
         fqid: fqid.clone(),
         tool: ToolIdentity {
-            name: instance_name_from_fqid(&fqid),
+            name: fqn.instance.clone().unwrap_or_default(),
             tool_type: svc.offering.to_ascii_lowercase(),
             category: svc.category.to_ascii_lowercase(),
             id: svc.offering_id,
@@ -184,30 +187,38 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
     }
 }
 
-/// Build the bare fqid from a service name and offering type.
+/// Parse an FQN from a service name and offering type.
 ///
-/// If the name and offering are the same (default instance), fqid is just the offering.
-/// If different (named instance like "mongodb:prod"), fqid is "offering:name".
-fn build_offering_fqid(name: &str, offering: &str) -> String {
+/// Tries parsing `name` as an FQN first; falls back to constructing
+/// `offering::name` if the name is an unqualified instance identifier.
+fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     let name_lower = name.to_ascii_lowercase();
     let offering_lower = offering.to_ascii_lowercase();
 
+    // Default instance — name matches offering type
     if name_lower == offering_lower || name_lower.is_empty() {
-        offering_lower
-    } else if name_lower.starts_with(&format!("{}:", offering_lower)) {
-        // Already qualified: "mongodb:prod" → keep as-is
-        name_lower
-    } else {
-        format!("{}:{}", offering_lower, name_lower)
+        return OfferingFqn::new(&offering_lower).unwrap_or(OfferingFqn {
+            source: None,
+            offering: offering_lower,
+            instance: None,
+            image_ref: None,
+        });
     }
-}
 
-/// Extract the instance name from a fqid.
-/// `"mongodb:prod"` → `"prod"`, `"mongodb"` → `""`.
-fn instance_name_from_fqid(fqid: &str) -> String {
-    fqid.split_once(':')
-        .map(|(_, name)| name.to_string())
-        .unwrap_or_default()
+    // Already a qualified FQN (V2 "mongodb::prod" or V1 "mongodb:prod") — parse it
+    if let Ok(fqn) = OfferingFqn::parse(&name_lower) {
+        if fqn.offering == offering_lower {
+            return fqn;
+        }
+    }
+
+    // Bare instance name — construct qualified FQN
+    OfferingFqn::with_instance(&offering_lower, &name_lower).unwrap_or(OfferingFqn {
+        source: None,
+        offering: offering_lower,
+        instance: Some(name_lower),
+        image_ref: None,
+    })
 }
 
 fn canonical_seed_bank_name(name: &str) -> String {
@@ -235,25 +246,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_offering_fqid_default_instance() {
-        assert_eq!(build_offering_fqid("mongodb", "mongodb"), "mongodb");
-        assert_eq!(build_offering_fqid("MongoDB", "mongodb"), "mongodb");
+    fn fqid_default_instance() {
+        let fqn = parse_fqn_for_fqid("mongodb", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb");
+        assert_eq!(fqn.instance, None);
+
+        let fqn = parse_fqn_for_fqid("MongoDB", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb");
     }
 
     #[test]
-    fn build_offering_fqid_named_instance() {
-        assert_eq!(build_offering_fqid("prod", "mongodb"), "mongodb:prod");
-        assert_eq!(
-            build_offering_fqid("mongodb:prod", "mongodb"),
-            "mongodb:prod"
-        );
-    }
+    fn fqid_named_instance() {
+        // Bare instance name
+        let fqn = parse_fqn_for_fqid("prod", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb::prod");
+        assert_eq!(fqn.instance, Some("prod".to_string()));
 
-    #[test]
-    fn instance_name_extraction() {
-        assert_eq!(instance_name_from_fqid("mongodb"), "");
-        assert_eq!(instance_name_from_fqid("mongodb:prod"), "prod");
-        assert_eq!(instance_name_from_fqid("ollama:adopted"), "adopted");
+        // V2 qualified
+        let fqn = parse_fqn_for_fqid("mongodb::prod", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb::prod");
+        assert_eq!(fqn.instance, Some("prod".to_string()));
+
+        // V1 legacy qualified (auto-normalized)
+        let fqn = parse_fqn_for_fqid("mongodb:prod", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb::prod");
+        assert_eq!(fqn.instance, Some("prod".to_string()));
     }
 
     #[test]

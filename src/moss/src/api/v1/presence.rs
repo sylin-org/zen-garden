@@ -135,7 +135,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     let offerings: Vec<OfferingState> = offerings_guard
         .iter()
         .map(|o| OfferingState {
-            name: o.name.clone(),
+            name: o.name.to_string(),
             status: format!("{:?}", o.status).to_lowercase(),
             health: format!("{:?}", o.health).to_lowercase(),
         })

@@ -38,7 +38,7 @@ use crate::infra::storage::SeedBankRegistry;
 use crate::tasks::{trigger_all_nurturing, trigger_nurturing, NurturingWorkflowResult};
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 
 /// Request for creating a snapshot
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -94,7 +94,7 @@ pub async fn get_offering_slots(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
@@ -149,8 +149,8 @@ pub async fn create_snapshot(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup)
-            .map(|o| (o.offering_id.clone(), o.name.clone()))
+            .find(|o| o.name.to_string() == offering_lookup)
+            .map(|o| (o.offering_id.clone(), o.name.to_string()))
             .ok_or_else(|| {
                 crate::infra::error_response(
                     StatusCode::NOT_FOUND,
@@ -225,7 +225,7 @@ pub async fn restore_snapshot(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup)
+            .find(|o| o.name.to_string() == offering_lookup)
             .map(|o| o.offering_id.clone())
             .ok_or_else(|| {
                 crate::infra::error_response(
@@ -317,7 +317,7 @@ pub async fn delete_nurturing(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
@@ -382,7 +382,7 @@ pub async fn replicate_to_seed_bank(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
             .cloned()
             .ok_or_else(|| {
                 crate::infra::error_response(
@@ -506,8 +506,8 @@ pub async fn restore_from_seed_bank(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
-            .map(|o| (o.offering_id.clone(), o.name.clone()))
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
+            .map(|o| (o.offering_id.clone(), o.name.to_string()))
             .ok_or_else(|| {
                 crate::infra::error_response(
                     StatusCode::NOT_FOUND,
@@ -587,7 +587,7 @@ pub async fn restore_from_seed_bank(
 }
 
 fn normalize_offering_for_lookup(offering: &str) -> Option<String> {
-    parse_offering_fqn(offering).ok().map(|fqn| fqn.fqn())
+    OfferingFqn::parse(offering).ok().map(|fqn| fqn.fqn())
 }
 
 // ============================================================================

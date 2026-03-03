@@ -49,7 +49,7 @@ pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{
     add_capability_task, backfill_missing_guidance, build_adopted_guidance, build_guidance,
-    install_batch_task, install_service_task, refresh_capabilities_task,
+    install_batch_task, install_image_direct_task, install_service_task, refresh_capabilities_task,
 };
 pub use metrics_collector::run_metrics_collector;
 pub use network_monitor::{NetworkEvent, NetworkMonitor, NetworkMonitorConfig};

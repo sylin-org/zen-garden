@@ -407,7 +407,7 @@ pub fn start_registry_loader(state: AppState) {
             offerings
                 .iter()
                 .filter(|o| o.is_managed())
-                .map(|o| (o.offering_id.clone(), o.name.clone()))
+                .map(|o| (o.offering_id.clone(), o.name.to_string()))
                 .collect()
         };
         let mut any_changed = false;

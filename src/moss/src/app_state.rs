@@ -563,7 +563,7 @@ impl AppState {
     pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
         {
             let mut offerings = self.offerings.write().await;
-            offerings.retain(|o| o.name != service_name);
+            offerings.retain(|o| o.name.to_string() != service_name);
         }
 
         self.sync_self_services(auto_chirp).await;
@@ -590,7 +590,8 @@ impl AppState {
             let mut best: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for (i, o) in offerings.iter().enumerate() {
-                let dominated = best.get(&o.name).is_some_and(|&prev| {
+                let key = o.name.to_string();
+                let dominated = best.get(&key).is_some_and(|&prev| {
                     let prev_ts = offerings[prev]
                         .updated_at
                         .unwrap_or(offerings[prev].registered_at);
@@ -598,7 +599,7 @@ impl AppState {
                     cur_ts <= prev_ts
                 });
                 if !dominated {
-                    best.insert(o.name.clone(), i);
+                    best.insert(key, i);
                 }
             }
 
@@ -696,7 +697,7 @@ impl AppState {
     {
         let changed = {
             let mut offerings = self.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
+            if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
                 mutator(o)
             } else {
                 false
@@ -789,7 +790,7 @@ impl AppState {
             .read()
             .await
             .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(name))
+            .find(|o| o.name.to_string().eq_ignore_ascii_case(name))
             .cloned()
     }
 

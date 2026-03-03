@@ -9,7 +9,7 @@
 //! and can be used for rollback or manual restoration.
 
 use chrono::{DateTime, Utc};
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -65,7 +65,7 @@ impl HarvestManifest {
         // Use timestamp + random suffix to ensure unique IDs
         let now = Utc::now();
         let random_suffix: u16 = rand::thread_rng().gen();
-        let safe_offering = parse_offering_fqn(offering)
+        let safe_offering = OfferingFqn::parse(offering)
             .map(|fqn| fqn.encoded_for_container())
             .unwrap_or_else(|_| offering.to_string());
         let id = format!(

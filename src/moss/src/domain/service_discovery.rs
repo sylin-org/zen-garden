@@ -305,7 +305,7 @@ pub async fn find_local_services(
         // Check if matches criteria
         if !matches_criteria(
             criteria,
-            &offering.name,
+            &offering.name.to_string(),
             &offering.offering,
             &category,
             &tags,
@@ -334,7 +334,7 @@ pub async fn find_local_services(
 
         results.push(FoundService {
             offering_id: offering.offering_id.clone(),
-            name: offering.name.clone(),
+            name: offering.name.to_string(),
             offering: offering.offering.clone(),
             category,
             tags,
@@ -391,7 +391,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
 
         services.push(FoundService {
             offering_id: offering.offering_id.clone(),
-            name: offering.name.clone(),
+            name: offering.name.to_string(),
             offering: offering.offering.clone(),
             category,
             tags,
@@ -608,7 +608,7 @@ async fn find_services_in_topology_cache(
             // Check if matches criteria
             // Note: Remote services don't include sub_capabilities in chirps yet
             // Sub-capability filtering only works for local services
-            if !matches_criteria(criteria, &svc.name, &svc.offering, &svc.category, &[], &[]) {
+            if !matches_criteria(criteria, &svc.name.to_string(), &svc.offering, &svc.category, &[], &[]) {
                 continue;
             }
 
@@ -638,7 +638,7 @@ async fn find_services_in_topology_cache(
 
             results.push(FoundService {
                 offering_id: svc.offering_id.clone(),
-                name: svc.name.clone(),
+                name: svc.name.to_string(),
                 offering: svc.offering.clone(),
                 category: svc.category.clone(),
                 tags: vec![],

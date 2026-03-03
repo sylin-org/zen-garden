@@ -204,7 +204,7 @@ mod tests {
     fn make_offering(pinned: bool) -> Offering {
         Offering {
             offering_id: "test-id".to_string(),
-            name: "test-offering".to_string(),
+            name: garden_common::offerings::OfferingFqn::new("test-offering").unwrap(),
             offering: "test".to_string(),
             version: "1.0".to_string(),
             status: OfferingStatus::Running,

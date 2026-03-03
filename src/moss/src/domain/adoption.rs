@@ -13,7 +13,7 @@ use crate::domain::{
 };
 use crate::infra::ManifestRegistry;
 use crate::AppState;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     HardwareCapabilities, ManagedData, Offering, OfferingGuidance, OfferingLocation,
@@ -45,7 +45,7 @@ pub async fn adopt_offering_container(
     stone_name: &str,
     cached_capabilities: Option<&HardwareCapabilities>,
 ) -> anyhow::Result<Option<Offering>> {
-    let fqn = parse_offering_fqn(offering)
+    let fqn = OfferingFqn::parse(offering)
         .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering, e))?;
     let offering_name = fqn.fqn();
     let offering_type = fqn.offering.clone();
@@ -177,7 +177,7 @@ pub async fn adopt_offering_container(
 
     let adopted = Offering {
         offering_id: generate_guidv7(),
-        name: offering_name,
+        name: fqn,
         offering: offering_type,
         version,
         status,
@@ -245,7 +245,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
     for offering in existing {
         let already = {
             let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name == offering)
+            offerings.iter().any(|o| o.name.to_string() == offering)
         };
         if already {
             continue;

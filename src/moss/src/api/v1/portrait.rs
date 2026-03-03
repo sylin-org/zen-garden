@@ -524,7 +524,7 @@ pub async fn get_portrait_data(
                 };
 
                 PortraitOffering {
-                    name: o.name.clone(),
+                    name: o.name.to_string(),
                     // Managed offerings have containers, adopted/borrowed don't
                     container: if o.is_managed() {
                         Some(o.offering.clone())
@@ -708,7 +708,7 @@ pub async fn get_portrait_guidance(State(state): State<AppState>) -> axum::respo
                 o.managed_data()
                     .and_then(|m| m.guidance.as_ref())
                     .or_else(|| o.adopted_data().and_then(|a| a.guidance.as_ref()))
-                    .map(|g| (o.name.clone(), g.content.clone()))
+                    .map(|g| (o.name.to_string(), g.content.clone()))
             })
             .collect()
     };

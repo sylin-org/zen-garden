@@ -144,14 +144,14 @@ impl NurturingScheduler {
             let offerings = self.state.offerings.read().await;
             offerings
                 .iter()
-                .find(|o| o.name == offering_name || o.offering_id == offering_name)
+                .find(|o| o.name.to_string() == offering_name || o.offering_id == offering_name)
                 .cloned()
                 .ok_or_else(|| {
                     anyhow::anyhow!("Offering '{}' not found in registry", offering_name)
                 })?
         };
         let offering_id = offering_entry.offering_id.clone();
-        let actual_name = offering_entry.name.clone();
+        let actual_name = offering_entry.name.to_string();
 
         // Phase 1: Local snapshot
         let local_result = self.create_local_snapshot(&offering_id, &actual_name).await;
@@ -238,7 +238,7 @@ impl NurturingScheduler {
         let seed_banks = match self.find_available_seed_banks().await {
             Ok(banks) if banks.is_empty() => {
                 tracing::debug!(
-                    offering = offering.name,
+                    offering = %offering.name,
                     "No seed banks available for replication"
                 );
                 return Vec::new();
@@ -246,7 +246,7 @@ impl NurturingScheduler {
             Ok(banks) => banks,
             Err(e) => {
                 tracing::warn!(
-                    offering = offering.name,
+                    offering = %offering.name,
                     error = ?e,
                     "Failed to find seed banks"
                 );
@@ -258,7 +258,7 @@ impl NurturingScheduler {
         let targets = self.select_targets(&seed_banks).await;
 
         tracing::debug!(
-            offering = offering.name,
+            offering = %offering.name,
             target_count = targets.len(),
             available_count = seed_banks.len(),
             strategy = ?self.config.routing_strategy,
@@ -383,7 +383,7 @@ impl NurturingScheduler {
         hydration_manifest: &garden_common::storage::MemoriesOfferingManifest,
     ) -> ReplicationAttempt {
         tracing::debug!(
-            offering = offering.name,
+            offering = %offering.name,
             seed_bank = %seed_bank.name,
             "Attempting replication"
         );
@@ -415,7 +415,7 @@ impl NurturingScheduler {
         match result {
             Ok(replication_result) => {
                 tracing::info!(
-                    offering = offering.name,
+                    offering = %offering.name,
                     seed_bank = %seed_bank.name,
                     size = replication_result.size_bytes,
                     pruned = replication_result.pruned_harvest_ids.len(),
@@ -431,7 +431,7 @@ impl NurturingScheduler {
             }
             Err(e) => {
                 tracing::warn!(
-                    offering = offering.name,
+                    offering = %offering.name,
                     seed_bank = %seed_bank.name,
                     error = ?e,
                     "Replication failed"
@@ -509,7 +509,7 @@ pub async fn trigger_all_nurturing(state: &AppState) -> Vec<NurturingWorkflowRes
         offerings
             .iter()
             .filter(|o| o.status == garden_common::OfferingStatus::Running)
-            .map(|o| o.name.clone())
+            .map(|o| o.name.to_string())
             .collect()
     };
 

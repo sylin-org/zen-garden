@@ -73,7 +73,7 @@ async fn build_nourish_spec(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering && o.is_managed())
+            .find(|o| o.name.to_string() == offering && o.is_managed())
             .and_then(|o| o.managed_data())
             .map(|d| d.config_patches.clone())
             .unwrap_or_default()

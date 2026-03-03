@@ -16,6 +16,7 @@ use crate::domain::membership;
 use crate::domain::oplog;
 use crate::domain::types::*;
 use crate::infra::mongo_client::MongoClient;
+use garden_common::offerings::OfferingFqn;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -35,9 +36,9 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(HEALTH_INTERVAL_SECS));
-    let mut cache_log_state: HashMap<String, (cache_advisor::CacheHealth, Instant)> =
+    let mut cache_log_state: HashMap<OfferingFqn, (cache_advisor::CacheHealth, Instant)> =
         HashMap::new();
-    let mut oplog_log_state: HashMap<String, (oplog::OplogSeverity, Instant)> = HashMap::new();
+    let mut oplog_log_state: HashMap<OfferingFqn, (oplog::OplogSeverity, Instant)> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -55,8 +56,8 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
 /// Run a single health check cycle across all replica sets.
 async fn health_cycle(
     state: &AppState,
-    cache_log_state: &mut HashMap<String, (cache_advisor::CacheHealth, Instant)>,
-    oplog_log_state: &mut HashMap<String, (oplog::OplogSeverity, Instant)>,
+    cache_log_state: &mut HashMap<OfferingFqn, (cache_advisor::CacheHealth, Instant)>,
+    oplog_log_state: &mut HashMap<OfferingFqn, (oplog::OplogSeverity, Instant)>,
 ) {
     let fqns = state.distinct_fqns().await;
 
@@ -140,7 +141,7 @@ async fn health_cycle(
 
                 // ── Rate-limited cache logging + event emission ──
                 if let Some(ref cache) = new_rs_state.cache {
-                    let should_log = match cache_log_state.get(fqn.as_str()) {
+                    let should_log = match cache_log_state.get(fqn) {
                         Some((prev_health, last_logged)) => {
                             *prev_health != cache.health
                                 || last_logged.elapsed() >= LOG_COOLDOWN
@@ -175,7 +176,7 @@ async fn health_cycle(
 
                 // ── Rate-limited oplog logging ──
                 if let Some(ref oplog_health) = new_rs_state.oplog {
-                    let should_log = match oplog_log_state.get(fqn.as_str()) {
+                    let should_log = match oplog_log_state.get(fqn) {
                         Some((prev_severity, last_logged)) => {
                             *prev_severity != oplog_health.severity
                                 || last_logged.elapsed() >= LOG_COOLDOWN
@@ -221,7 +222,7 @@ async fn health_cycle(
 async fn probe_and_update(
     state: &AppState,
     instances: &[MongoInstance],
-    fqn: &str,
+    fqn: &OfferingFqn,
 ) -> Option<ReplicaSetState> {
     let rs_name = derive_replica_set_name(fqn);
 

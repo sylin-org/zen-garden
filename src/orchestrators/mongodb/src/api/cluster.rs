@@ -6,6 +6,7 @@ use crate::infra::mongo_client::MongoClient;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
+use garden_common::offerings::OfferingFqn;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -66,7 +67,7 @@ pub async fn get_cluster_members(State(state): State<AppState>) -> Json<Value> {
     let catalog = state.catalog.read().await;
 
     // Group instances by FQN
-    let mut fqn_groups: std::collections::HashMap<String, Vec<&MongoInstance>> =
+    let mut fqn_groups: std::collections::HashMap<OfferingFqn, Vec<&MongoInstance>> =
         std::collections::HashMap::new();
     for instance in instances.values() {
         fqn_groups
@@ -78,7 +79,7 @@ pub async fn get_cluster_members(State(state): State<AppState>) -> Json<Value> {
     let mut logical_sets: Vec<Value> = Vec::new();
 
     for (fqn, group) in &fqn_groups {
-        let rs = replica_sets.get(fqn.as_str());
+        let rs = replica_sets.get(fqn);
         let rs_name = rs
             .map(|r| r.rs_name.clone())
             .unwrap_or_else(|| derive_replica_set_name(fqn));
@@ -187,15 +188,24 @@ pub async fn post_stepdown(
     State(state): State<AppState>,
     Json(req): Json<StepdownRequest>,
 ) -> Result<Json<StepdownResponse>, (StatusCode, Json<StepdownResponse>)> {
-    let fqn = req.fqn.as_deref().unwrap_or("mongodb");
+    let fqn_str = req.fqn.as_deref().unwrap_or("mongodb");
+    let fqn = OfferingFqn::parse(fqn_str).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(StepdownResponse {
+                success: false,
+                message: format!("invalid FQN '{}': {}", fqn_str, e),
+            }),
+        )
+    })?;
     let seconds = req.seconds.unwrap_or(60);
 
-    let rs = state.replica_set_for(fqn).await.ok_or_else(|| {
+    let rs = state.replica_set_for(&fqn).await.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(StepdownResponse {
                 success: false,
-                message: format!("replica set for FQN '{fqn}' not found"),
+                message: format!("replica set for FQN '{}' not found", fqn),
             }),
         )
     })?;
@@ -279,8 +289,15 @@ pub async fn post_install(
     Json(req): Json<InstallRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let fqn = match &req.fqn_suffix {
-        Some(suffix) if !suffix.is_empty() => format!("mongodb:{suffix}"),
-        _ => "mongodb".to_string(),
+        Some(suffix) if !suffix.is_empty() => {
+            OfferingFqn::with_instance("mongodb", suffix).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "success": false, "message": format!("invalid FQN suffix: {e}") })),
+                )
+            })?
+        }
+        _ => OfferingFqn::new("mongodb").unwrap(),
     };
 
     let url = format!(
@@ -303,7 +320,7 @@ pub async fn post_install(
 
     let resp = client
         .post(&url)
-        .json(&json!({ "offering": fqn }))
+        .json(&json!({ "offering": fqn.to_string() }))
         .send()
         .await
         .map_err(|e| {

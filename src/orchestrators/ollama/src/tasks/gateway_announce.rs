@@ -115,7 +115,9 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     };
 
     let gw_params = GatewayParams {
-        fqn: format!("{}:orchestrator", OFFERING),
+        fqn: garden_common::offerings::OfferingFqn::with_instance(OFFERING, "orchestrator")
+            .expect("valid FQN")
+            .to_string(),
         hostname: hostname.clone(),
         ip: self_ip.clone(),
         port: state.proxy_port,

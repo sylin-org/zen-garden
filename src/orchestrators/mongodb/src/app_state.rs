@@ -4,6 +4,7 @@
 //! Mutation goes through methods that acquire write locks.
 
 use crate::domain::types::*;
+use garden_common::offerings::OfferingFqn;
 use orchestrator_common::events::DashboardEvent;
 use orchestrator_common::persistence::TendedStone;
 use orchestrator_common::stone_catalog::{StoneCatalog, StoneIdentity};
@@ -35,8 +36,8 @@ pub struct AppState {
     pub catalog: Arc<RwLock<StoneCatalog>>,
     /// All discovered MongoDB instances, keyed by stone_name.
     pub instances: Arc<RwLock<HashMap<String, MongoInstance>>>,
-    /// Replica set states, keyed by FQN (e.g. "mongodb", "mongodb:analytics").
-    pub replica_sets: Arc<RwLock<HashMap<String, ReplicaSetState>>>,
+    /// Replica set states, keyed by FQN (e.g. `mongodb`, `mongodb::analytics`).
+    pub replica_sets: Arc<RwLock<HashMap<OfferingFqn, ReplicaSetState>>>,
     /// Pending membership actions (persisted across restarts).
     pub pending_actions: Arc<RwLock<Vec<PendingAction>>>,
 
@@ -196,19 +197,19 @@ impl AppState {
     }
 
     /// Get all instances for a specific FQN.
-    pub async fn instances_for_fqn(&self, fqn: &str) -> Vec<MongoInstance> {
+    pub async fn instances_for_fqn(&self, fqn: &OfferingFqn) -> Vec<MongoInstance> {
         let reg = self.instances.read().await;
         reg.values()
-            .filter(|i| i.fqn == fqn)
+            .filter(|i| i.fqn == *fqn)
             .cloned()
             .collect()
     }
 
     /// Get all distinct FQNs from registered instances.
-    pub async fn distinct_fqns(&self) -> Vec<String> {
+    pub async fn distinct_fqns(&self) -> Vec<OfferingFqn> {
         let reg = self.instances.read().await;
-        let mut fqns: Vec<String> = reg.values().map(|i| i.fqn.clone()).collect();
-        fqns.sort();
+        let mut fqns: Vec<OfferingFqn> = reg.values().map(|i| i.fqn.clone()).collect();
+        fqns.sort_by_key(|a| a.to_string());
         fqns.dedup();
         fqns
     }
@@ -276,13 +277,13 @@ impl AppState {
     // ── Replica Set State ────────────────────────────────────────
 
     /// Update the replica set state for a given FQN.
-    pub async fn update_replica_set(&self, fqn: &str, state: ReplicaSetState) {
+    pub async fn update_replica_set(&self, fqn: &OfferingFqn, state: ReplicaSetState) {
         let mut rs_map = self.replica_sets.write().await;
-        rs_map.insert(fqn.to_string(), state);
+        rs_map.insert(fqn.clone(), state);
     }
 
     /// Get the replica set state for a given FQN.
-    pub async fn replica_set_for(&self, fqn: &str) -> Option<ReplicaSetState> {
+    pub async fn replica_set_for(&self, fqn: &OfferingFqn) -> Option<ReplicaSetState> {
         let rs_map = self.replica_sets.read().await;
         rs_map.get(fqn).cloned()
     }

@@ -5,6 +5,7 @@
 //! bootstrap task in `tasks/bootstrap.rs`.
 
 use super::types::*;
+use garden_common::offerings::OfferingFqn;
 
 /// Action: initialize a new replica set on a single member.
 #[derive(Debug)]
@@ -33,7 +34,7 @@ pub struct AddMemberAction {
 pub fn should_initiate(
     instances: &[MongoInstance],
     rs_state: &Option<ReplicaSetState>,
-    fqn: &str,
+    fqn: &OfferingFqn,
 ) -> Option<InitiateAction> {
     // Already initialized — nothing to do
     if rs_state.as_ref().is_some_and(|rs| rs.initialized) {

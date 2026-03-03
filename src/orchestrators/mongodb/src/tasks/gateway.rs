@@ -26,7 +26,7 @@ impl GatewayProvider for AppState {
         let mut entries = Vec::with_capacity(fqns.len());
 
         for fqn in &fqns {
-            let rs = replica_sets.get(fqn.as_str());
+            let rs = replica_sets.get(fqn);
             let rs_name = rs
                 .map(|r| r.rs_name.clone())
                 .unwrap_or_else(|| derive_replica_set_name(fqn));
@@ -70,7 +70,7 @@ impl GatewayProvider for AppState {
                 .map(|i| format!("{}.local", i.stone_name));
 
             entries.push(FqnGatewayEntry {
-                fqn: fqn.clone(),
+                fqn: fqn.to_string(),
                 protocol: "mongodb".to_string(),
                 port,
                 uri_template,

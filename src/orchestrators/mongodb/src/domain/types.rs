@@ -3,6 +3,7 @@
 use crate::domain::cache_advisor::{CacheHealth, CacheRecommendation, CacheStatus};
 use crate::domain::oplog::OplogHealth;
 use chrono::{DateTime, Utc};
+use garden_common::offerings::OfferingFqn;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
@@ -18,8 +19,8 @@ pub struct MongoInstance {
     pub moss_endpoint: String,
     /// MongoDB wire protocol endpoint (e.g. `192.168.1.5:27017`).
     pub mongo_endpoint: String,
-    /// FQN of the offering instance (e.g. `mongodb`, `mongodb:analytics`).
-    pub fqn: String,
+    /// FQN of the offering instance (e.g. `mongodb`, `mongodb::analytics`).
+    pub fqn: OfferingFqn,
     /// Current health status.
     pub health: InstanceHealth,
     /// Replica set role (if known from rs.status()).
@@ -130,13 +131,13 @@ pub struct MemberState {
 
 /// Derives a replica set name from a MongoDB FQN.
 ///
-/// - `"mongodb"` → `"zen-garden"`
-/// - `"mongodb:analytics"` → `"zen-garden-analytics"`
-/// - `"mongodb:logs"` → `"zen-garden-logs"`
-pub fn derive_replica_set_name(fqn: &str) -> String {
-    match fqn.strip_prefix("mongodb:") {
-        Some(suffix) if !suffix.is_empty() => format!("zen-garden-{suffix}"),
-        _ => "zen-garden".to_string(),
+/// - `mongodb` (no instance) → `"zen-garden"`
+/// - `mongodb::analytics`    → `"zen-garden-analytics"`
+/// - `mongodb::logs`         → `"zen-garden-logs"`
+pub fn derive_replica_set_name(fqn: &OfferingFqn) -> String {
+    match &fqn.instance {
+        Some(instance) => format!("zen-garden-{instance}"),
+        None => "zen-garden".to_string(),
     }
 }
 
@@ -160,8 +161,8 @@ pub enum PendingAction {
     RemoveMember {
         /// MongoDB wire endpoint (e.g. "stone-quartz-fen.local:27017").
         mongo_endpoint: String,
-        /// FQN of the logical set (e.g. "mongodb", "mongodb:analytics").
-        fqn: String,
+        /// FQN of the logical set (e.g. "mongodb", "mongodb::analytics").
+        fqn: OfferingFqn,
         /// When the action was requested.
         requested_at: DateTime<Utc>,
     },
@@ -206,13 +207,17 @@ mod tests {
 
     #[test]
     fn test_derive_replica_set_name() {
-        assert_eq!(derive_replica_set_name("mongodb"), "zen-garden");
+        let fqn_default = OfferingFqn::new("mongodb").unwrap();
+        assert_eq!(derive_replica_set_name(&fqn_default), "zen-garden");
+
+        let fqn_analytics = OfferingFqn::with_instance("mongodb", "analytics").unwrap();
         assert_eq!(
-            derive_replica_set_name("mongodb:analytics"),
+            derive_replica_set_name(&fqn_analytics),
             "zen-garden-analytics"
         );
-        assert_eq!(derive_replica_set_name("mongodb:logs"), "zen-garden-logs");
-        assert_eq!(derive_replica_set_name("mongodb:"), "zen-garden");
+
+        let fqn_logs = OfferingFqn::with_instance("mongodb", "logs").unwrap();
+        assert_eq!(derive_replica_set_name(&fqn_logs), "zen-garden-logs");
     }
 
     #[test]

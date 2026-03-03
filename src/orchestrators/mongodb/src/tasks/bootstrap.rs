@@ -14,6 +14,7 @@ use crate::app_state::AppState;
 use crate::domain::bootstrap as bs;
 use crate::domain::types::*;
 use crate::infra::mongo_client::MongoClient;
+use garden_common::offerings::OfferingFqn;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -188,7 +189,7 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
 async fn execute_pending_removals(
     state: &AppState,
     rs_state: &ReplicaSetState,
-    fqn: &str,
+    fqn: &OfferingFqn,
 ) {
     if !rs_state.initialized {
         return;
@@ -210,7 +211,7 @@ async fn execute_pending_removals(
                 mongo_endpoint,
                 fqn: action_fqn,
                 ..
-            } => (mongo_endpoint.as_str(), action_fqn.as_str()),
+            } => (mongo_endpoint.as_str(), action_fqn),
         };
 
         if action_fqn != fqn {
@@ -301,9 +302,10 @@ async fn apply_repl_set_patch(
 ) -> anyhow::Result<()> {
     let service_name = extract_service_name(&instance.fqn);
     let base_url = instance.moss_endpoint.trim_end_matches('/');
+    let encoded_name = urlencoding::encode(&service_name);
     let config_url = format!(
         "{}/api/v1/stone/services/{}/config",
-        base_url, service_name
+        base_url, encoded_name
     );
 
     // Check if patch already exists
@@ -375,11 +377,13 @@ async fn apply_repl_set_patch(
     Ok(())
 }
 
-/// Extract the service name from an FQN.
-/// For multi-instance FQNs like "mongodb:analytics", uses the full FQN
-/// as the service name (since that's what Moss registers).
-fn extract_service_name(fqn: &str) -> &str {
-    fqn
+/// Extract the service name from an FQN for use in Moss API paths.
+///
+/// Returns the canonical FQN string (e.g. `mongodb::prod`). Callers must
+/// URL-encode this when embedding in path segments (the `::` separator is
+/// not path-safe).
+fn extract_service_name(fqn: &OfferingFqn) -> String {
+    fqn.fqn()
 }
 
 // ============================================================================

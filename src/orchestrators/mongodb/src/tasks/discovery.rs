@@ -11,6 +11,7 @@
 
 use crate::app_state::AppState;
 use crate::domain::types::{InstanceHealth, MongoInstance, PendingAction};
+use garden_common::offerings::OfferingFqn;
 use orchestrator_common::resilient_stream::{self, StreamConfig, StreamContext};
 use orchestrator_common::stone_catalog::{ServiceKey, StoneIdentity};
 use orchestrator_common::tools_stream::ToolStreamEvent;
@@ -41,7 +42,7 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         explicit_stone: state.explicit_stone.clone(),
 
         fqid_filter: |fqid: &str| {
-            fqid == "offering:mongodb" || fqid.starts_with("offering:mongodb:")
+            fqid == "offering:mongodb" || fqid.starts_with("offering:mongodb::")
         },
 
         on_event: {
@@ -126,7 +127,7 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                     stone_name: s.stone_name.clone(),
                     moss_endpoint,
                     mongo_endpoint,
-                    fqn: "mongodb".to_string(), // Default FQN; refined by tools stream
+                    fqn: s.fqn.clone(),
                     health: InstanceHealth::Unknown,
                     role: None,
                     last_seen: Instant::now(),
@@ -151,12 +152,12 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
             ready,
         } => {
             // Derive FQN from tool_fqid:
-            //   "offering:mongodb"           → "mongodb"
-            //   "offering:mongodb:analytics"  → "mongodb:analytics"
+            //   "offering:mongodb"             → mongodb (default)
+            //   "offering:mongodb::analytics"  → mongodb::analytics
             let fqn = tool_fqid
                 .strip_prefix("offering:")
-                .unwrap_or("mongodb")
-                .to_string();
+                .and_then(|s| OfferingFqn::parse(s).ok())
+                .unwrap_or_else(|| OfferingFqn::new("mongodb").unwrap());
 
             // Extract host:port from endpoint URL.
             // The tools stream constructs endpoints using the connection protocol
@@ -232,7 +233,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     tracing::info!(
                         stone = %stone_name,
                         endpoint = %endpoint,
-                        fqn = %fqn,
+                        fqn = %fqn.to_string(),
                         ready = ready,
                         "MongoDB instance discovered via tools stream"
                     );

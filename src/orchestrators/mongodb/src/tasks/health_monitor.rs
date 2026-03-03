@@ -205,6 +205,8 @@ async fn health_cycle(
                     }
                 }
 
+                // Persist known members for drift detection across restarts
+                state.update_group_members(fqn, &new_rs_state).await;
                 state.update_replica_set(fqn, new_rs_state).await;
             }
             None => {

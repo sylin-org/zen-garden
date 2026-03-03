@@ -3,6 +3,7 @@
 //! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
 //! Mutation goes through methods that acquire write locks.
 
+use crate::domain::group_state::{self, GroupState, KnownMember};
 use crate::domain::types::*;
 use garden_common::offerings::OfferingFqn;
 use orchestrator_common::events::DashboardEvent;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub replica_sets: Arc<RwLock<HashMap<OfferingFqn, ReplicaSetState>>>,
     /// Pending membership actions (persisted across restarts).
     pub pending_actions: Arc<RwLock<Vec<PendingAction>>>,
+    /// Per-FQN group state (persisted across restarts).
+    pub groups: Arc<RwLock<HashMap<String, GroupState>>>,
 
     // ── Events ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
@@ -71,6 +74,7 @@ impl AppState {
             instances: Arc::new(RwLock::new(HashMap::new())),
             replica_sets: Arc::new(RwLock::new(HashMap::new())),
             pending_actions: Arc::new(RwLock::new(Vec::new())),
+            groups: Arc::new(RwLock::new(HashMap::new())),
             dashboard_tx,
             shutdown,
             start_time: Instant::now(),
@@ -286,6 +290,68 @@ impl AppState {
     pub async fn replica_set_for(&self, fqn: &OfferingFqn) -> Option<ReplicaSetState> {
         let rs_map = self.replica_sets.read().await;
         rs_map.get(fqn).cloned()
+    }
+
+    // ── Group State (Persisted) ─────────────────────────────────
+
+    /// Update the group state for a given FQN. Persists to disk.
+    pub async fn update_group(&self, fqn: &OfferingFqn, state: GroupState) {
+        let mut groups = self.groups.write().await;
+        groups.insert(fqn.fqn(), state);
+        group_state::save_groups(&self.data_dir, &groups).await;
+    }
+
+    /// Get the group state for a given FQN.
+    pub async fn group_for(&self, fqn: &OfferingFqn) -> Option<GroupState> {
+        let groups = self.groups.read().await;
+        groups.get(&fqn.fqn()).cloned()
+    }
+
+    /// Update the known members for a group from a successful RS probe.
+    ///
+    /// Called by the health monitor after `rs.status()` succeeds, so the
+    /// persisted state stays current for drift detection on restart.
+    pub async fn update_group_members(&self, fqn: &OfferingFqn, rs_state: &ReplicaSetState) {
+        let mut groups = self.groups.write().await;
+        let key = fqn.fqn();
+        let group = groups.entry(key).or_insert_with(|| GroupState {
+            rs_name: rs_state.rs_name.clone(),
+            phase: group_state::GroupPhase::Healthy,
+            known_members: vec![],
+            last_updated: chrono::Utc::now(),
+        });
+
+        // Update known members from the RS member list.
+        // We don't have member _ids from rs.status() — those come from rs.conf().
+        // Preserve existing _ids if the stone_name matches.
+        let existing_ids: HashMap<String, i32> = group
+            .known_members
+            .iter()
+            .map(|km| (km.stone_name.clone(), km.member_id))
+            .collect();
+
+        group.known_members = rs_state
+            .members
+            .iter()
+            .map(|m| KnownMember {
+                stone_name: m.stone_name.clone(),
+                endpoint: m.endpoint.clone(),
+                member_id: existing_ids.get(&m.stone_name).copied().unwrap_or(-1),
+            })
+            .collect();
+        group.phase = group_state::GroupPhase::Healthy;
+        group.last_updated = chrono::Utc::now();
+
+        group_state::save_groups(&self.data_dir, &groups).await;
+    }
+
+    /// Load persisted group states from disk.
+    pub async fn load_groups(&self) {
+        let groups = group_state::load_groups(&self.data_dir).await;
+        if !groups.is_empty() {
+            tracing::info!(count = groups.len(), "restored group states from disk");
+            *self.groups.write().await = groups;
+        }
     }
 
     // ── Events ───────────────────────────────────────────────────

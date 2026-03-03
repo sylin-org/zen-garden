@@ -121,7 +121,10 @@ impl MongoClient {
     /// Initialize a new replica set with this node as the sole member.
     ///
     /// Equivalent to `rs.initiate({_id: rs_name, members: [{_id: 0, host: self.endpoint}]})`.
-    pub async fn rs_initiate(&self, rs_name: &str) -> Result<()> {
+    ///
+    /// Returns `Ok(true)` if freshly initiated, `Ok(false)` if already initialized
+    /// (MongoDB error code 23 / `AlreadyInitialized`).
+    pub async fn rs_initiate(&self, rs_name: &str) -> Result<bool> {
         let config = doc! {
             "_id": rs_name,
             "members": [
@@ -130,15 +133,40 @@ impl MongoClient {
         };
 
         let db = self.client.database("admin");
-        let result = db
+        let result = match db
             .run_command(doc! { "replSetInitiate": config })
             .await
-            .with_context(|| format!("replSetInitiate on {}", self.endpoint))?;
+        {
+            Ok(doc) => doc,
+            Err(e) => {
+                let err_str = e.to_string();
+                // AlreadyInitialized (code 23) — the replica set exists, treat as success
+                if err_str.contains("AlreadyInitialized") || err_str.contains("already initialized")
+                {
+                    tracing::info!(
+                        endpoint = %self.endpoint,
+                        rs_name = %rs_name,
+                        "replica set already initialized — treating as success"
+                    );
+                    return Ok(false);
+                }
+                return Err(e).with_context(|| format!("replSetInitiate on {}", self.endpoint));
+            }
+        };
 
         // Check for success (ok: 1.0)
         let ok = result.get_f64("ok").unwrap_or(0.0);
         if ok != 1.0 {
             let errmsg = result.get_str("errmsg").unwrap_or("unknown error");
+            // AlreadyInitialized can also come through the ok!=1 path
+            if errmsg.contains("already initialized") {
+                tracing::info!(
+                    endpoint = %self.endpoint,
+                    rs_name = %rs_name,
+                    "replica set already initialized — treating as success"
+                );
+                return Ok(false);
+            }
             anyhow::bail!(
                 "replSetInitiate failed on {}: {}",
                 self.endpoint,
@@ -146,7 +174,7 @@ impl MongoClient {
             );
         }
 
-        Ok(())
+        Ok(true)
     }
 
     /// Add a new member to the replica set.
@@ -417,9 +445,59 @@ impl MongoClient {
         })
     }
 
+    /// Read the replica set config via `replSetGetConfig`.
+    ///
+    /// Unlike `rs_status()`, this succeeds even when the node reports
+    /// `InvalidReplicaSetConfig` (error 93) — the local config is still
+    /// readable even though the node isn't an active member.
+    ///
+    /// Returns `(rs_name, members)` where each member has its MongoDB
+    /// `_id` and host string.
+    pub async fn rs_config(&self) -> Result<(String, Vec<RsConfigMember>)> {
+        let db = self.client.database("admin");
+        let result = db
+            .run_command(doc! { "replSetGetConfig": 1 })
+            .await
+            .with_context(|| format!("replSetGetConfig on {}", self.endpoint))?;
+
+        let config = result
+            .get_document("config")
+            .context("missing config in replSetGetConfig response")?;
+
+        let rs_name = config
+            .get_str("_id")
+            .unwrap_or("unknown")
+            .to_string();
+
+        let members = match config.get_array("members") {
+            Ok(arr) => arr
+                .iter()
+                .filter_map(|m| {
+                    let doc = m.as_document()?;
+                    Some(RsConfigMember {
+                        id: doc.get_i32("_id").ok()?,
+                        host: doc.get_str("host").ok()?.to_string(),
+                    })
+                })
+                .collect(),
+            Err(_) => vec![],
+        };
+
+        Ok((rs_name, members))
+    }
+
     /// Ping the server to check connectivity.
     pub async fn ping(&self) -> bool {
         let db = self.client.database("admin");
         db.run_command(doc! { "ping": 1 }).await.is_ok()
     }
+}
+
+/// A member entry from `replSetGetConfig`.
+#[derive(Debug, Clone)]
+pub struct RsConfigMember {
+    /// MongoDB member `_id` (stable across reconfigs).
+    pub id: i32,
+    /// Host endpoint (e.g. `"192.168.1.5:27017"`).
+    pub host: String,
 }

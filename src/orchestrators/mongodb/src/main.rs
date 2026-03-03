@@ -85,6 +85,7 @@ async fn main() -> Result<()> {
     // Load any cached tending state from a previous run
     state.load_tending().await;
     state.load_pending_actions().await;
+    state.load_groups().await;
 
     // ── Background Tasks ─────────────────────────────────────────
     let discovery_handle = tokio::spawn(tasks::discovery::run(

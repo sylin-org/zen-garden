@@ -1,17 +1,18 @@
-//! Bootstrap task — monitors instances and manages replica set lifecycle.
+//! Bootstrap task — state machine for replica set lifecycle management.
 //!
-//! Watches for new MongoDB instances and:
-//! 1. Ensures each instance has the replica set config file patch applied
-//!    (writes mongod.conf via Moss config API → Moss restarts container)
-//! 2. Groups by FQN
-//! 3. For each FQN, checks if replica set exists (rs.status())
-//! 4. If not initialized → rs.initiate()
-//! 5. If initialized and new member not in set → rs.add()
-//! 6. Updates replica set state
-//! 7. Publishes connection string
+//! Each bootstrap cycle, for every FQN group:
+//! 1. Ensure config patches (writes `--replSet` to mongod.conf)
+//! 2. Probe each instance individually (per-instance classification)
+//! 3. Classify the group state via pure domain logic
+//! 4. Execute the determined action (initiate / reconfig / add / wait)
+//! 5. Persist the updated group state to disk
 
 use crate::app_state::AppState;
 use crate::domain::bootstrap as bs;
+use crate::domain::group_state::{
+    classify_group, compute_drift_mapping, GroupAction, GroupPhase, GroupState, InstanceProbe,
+    KnownMember,
+};
 use crate::domain::types::*;
 use crate::infra::mongo_client::MongoClient;
 use garden_common::offerings::OfferingFqn;
@@ -84,84 +85,109 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
             ensure_repl_set_config(&active_instances, &rs_name).await;
         }
 
+        // Step 2: Probe each instance individually
+        let probes = probe_instances(&active_instances).await;
+
+        tracing::info!(
+            fqn = %fqn,
+            probes = ?probes.iter().map(|(ep, p)| format!("{}={:?}", ep, p)).collect::<Vec<_>>(),
+            "bootstrap probe results"
+        );
+
+        // Step 3: Classify — pure domain logic decides the action
+        let action = classify_group(&probes, &rs_name);
+
+        // Load persisted group state for drift mapping
+        let group_state = state.group_for(fqn).await;
+
+        // Step 4: Execute pending removals (if we have RS state from a previous cycle)
         let rs_state = state.replica_set_for(fqn).await;
-
-        // Try to probe current state from any reachable instance
-        let probed_state = probe_replica_set(&active_instances, &rs_name).await;
-
-        // If we got a successful probe, update state
-        if let Some(ref probed) = probed_state {
-            state.update_replica_set(fqn, probed.clone()).await;
-        }
-
-        let effective_state = probed_state.or(rs_state);
-
-        // Step 2: Execute pending removal actions
-        if let Some(ref rs) = effective_state {
+        if let Some(ref rs) = rs_state {
             execute_pending_removals(state, rs, fqn).await;
         }
 
-        // Check if we need to initiate
-        if let Some(action) = bs::should_initiate(&instances, &effective_state, fqn) {
-            tracing::info!(
-                rs_name = %action.rs_name,
-                endpoint = %action.endpoint,
-                "initiating replica set"
-            );
-
-            match initiate_replica_set(&action.endpoint, &action.rs_name).await {
-                Ok(new_state) => {
-                    tracing::info!(
-                        rs_name = %action.rs_name,
-                        "replica set initiated successfully"
-                    );
-                    state.update_replica_set(fqn, new_state).await;
-                    state
-                        .emit_event(
-                            "rs.initiated",
-                            &serde_json::json!({
-                                "fqn": fqn,
-                                "rs_name": action.rs_name,
-                            })
-                            .to_string(),
-                        )
-                        .await;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        rs_name = %action.rs_name,
-                        "replica set initiation failed"
-                    );
+        // Step 5: Execute the classified action
+        let is_healthy = matches!(action, GroupAction::Healthy);
+        match action {
+            GroupAction::Healthy => {
+                tracing::info!(fqn = %fqn, rs_name = %rs_name, "RS operational — delegating to health monitor");
+                // RS is operational — health monitor handles steady state.
+                // Update phase if it was previously something else.
+                if group_state.as_ref().map(|g| &g.phase) != Some(&GroupPhase::Healthy) {
+                    if let Some(mut gs) = group_state {
+                        gs.phase = GroupPhase::Healthy;
+                        gs.last_updated = chrono::Utc::now();
+                        state.update_group(fqn, gs).await;
+                    }
                 }
             }
-            continue; // Let the newly initiated RS stabilize before adding members
-        }
 
-        // Check if we need to add members
-        if let Some(ref rs) = effective_state {
-            let add_actions =
-                bs::should_add_members(&instances, rs, &pending_removal_endpoints);
-            for action in add_actions {
+            GroupAction::WaitForConfig => {
                 tracing::info!(
-                    rs_name = %action.rs_name,
-                    new_member = %action.new_member_endpoint,
-                    primary = %action.primary_endpoint,
-                    "adding member to replica set"
+                    fqn = %fqn,
+                    rs_name = %rs_name,
+                    "waiting — config file patch pending on one or more instances"
+                );
+                // Update phase
+                let gs = group_state.unwrap_or_else(|| GroupState {
+                    rs_name: rs_name.clone(),
+                    phase: GroupPhase::Configuring,
+                    known_members: vec![],
+                    last_updated: chrono::Utc::now(),
+                });
+                state
+                    .update_group(
+                        fqn,
+                        GroupState {
+                            phase: GroupPhase::Configuring,
+                            last_updated: chrono::Utc::now(),
+                            ..gs
+                        },
+                    )
+                    .await;
+            }
+
+            GroupAction::Initiate { endpoint, rs_name } => {
+                tracing::info!(
+                    rs_name = %rs_name,
+                    endpoint = %endpoint,
+                    "initiating replica set"
                 );
 
-                match add_member(&action.primary_endpoint, &action.new_member_endpoint).await {
-                    Ok(()) => {
+                match initiate_replica_set(&endpoint, &rs_name).await {
+                    Ok(new_state) => {
                         tracing::info!(
-                            member = %action.new_member_endpoint,
-                            "member added successfully"
+                            rs_name = %rs_name,
+                            "replica set initiated successfully"
                         );
+                        // Persist group state with the new members
+                        let known = new_state
+                            .members
+                            .iter()
+                            .map(|m| KnownMember {
+                                stone_name: m.stone_name.clone(),
+                                endpoint: m.endpoint.clone(),
+                                member_id: -1, // Will be updated by health monitor
+                            })
+                            .collect();
+                        state
+                            .update_group(
+                                fqn,
+                                GroupState {
+                                    rs_name: new_state.rs_name.clone(),
+                                    phase: GroupPhase::Healthy,
+                                    known_members: known,
+                                    last_updated: chrono::Utc::now(),
+                                },
+                            )
+                            .await;
+                        state.update_replica_set(fqn, new_state).await;
                         state
                             .emit_event(
-                                "rs.member.added",
+                                "rs.initiated",
                                 &serde_json::json!({
                                     "fqn": fqn,
-                                    "member": action.new_member_endpoint,
+                                    "rs_name": rs_name,
                                 })
                                 .to_string(),
                             )
@@ -170,9 +196,186 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
                     Err(e) => {
                         tracing::warn!(
                             error = ?e,
-                            member = %action.new_member_endpoint,
-                            "failed to add member"
+                            rs_name = %rs_name,
+                            "replica set initiation failed"
                         );
+                    }
+                }
+                continue; // Let the newly initiated RS stabilize before adding members
+            }
+
+            GroupAction::ReconfigDrift {
+                connect_to,
+                rs_name,
+                desired,
+            } => {
+                tracing::warn!(
+                    rs_name = %rs_name,
+                    connect_to = %connect_to,
+                    desired = ?desired,
+                    "IP drift detected — all nodes report stale config, reconfiguring"
+                );
+
+                match execute_reconfig_drift(
+                    &connect_to,
+                    &rs_name,
+                    &desired,
+                    &active_instances,
+                    group_state.as_ref(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        // Build new known members from the desired list
+                        let known: Vec<KnownMember> = desired
+                            .iter()
+                            .map(|ep| {
+                                let stone_name = active_instances
+                                    .iter()
+                                    .find(|i| i.mongo_endpoint == *ep)
+                                    .map(|i| i.stone_name.clone())
+                                    .unwrap_or_else(|| ep.clone());
+                                KnownMember {
+                                    stone_name,
+                                    endpoint: ep.clone(),
+                                    member_id: -1, // Will be updated next health cycle
+                                }
+                            })
+                            .collect();
+
+                        state
+                            .update_group(
+                                fqn,
+                                GroupState {
+                                    rs_name: rs_name.clone(),
+                                    phase: GroupPhase::Healthy,
+                                    known_members: known,
+                                    last_updated: chrono::Utc::now(),
+                                },
+                            )
+                            .await;
+
+                        state
+                            .emit_event(
+                                "rs.reconfig",
+                                &serde_json::json!({
+                                    "fqn": fqn,
+                                    "reason": "ip_drift",
+                                    "members": desired,
+                                })
+                                .to_string(),
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        // Persist IpDrift phase so we remember the situation across restarts
+                        state
+                            .update_group(
+                                fqn,
+                                GroupState {
+                                    rs_name: rs_name.clone(),
+                                    phase: GroupPhase::IpDrift,
+                                    known_members: group_state
+                                        .map(|g| g.known_members)
+                                        .unwrap_or_default(),
+                                    last_updated: chrono::Utc::now(),
+                                },
+                            )
+                            .await;
+
+                        tracing::warn!(
+                            error = ?e,
+                            rs_name = %rs_name,
+                            "IP drift reconfig failed — will retry next cycle"
+                        );
+                    }
+                }
+            }
+
+            GroupAction::AddMembers {
+                primary,
+                new_members,
+                rs_name,
+            } => {
+                for member in &new_members {
+                    tracing::info!(
+                        rs_name = %rs_name,
+                        new_member = %member,
+                        primary = %primary,
+                        "adding member to replica set"
+                    );
+
+                    match add_member(&primary, member).await {
+                        Ok(()) => {
+                            tracing::info!(member = %member, "member added successfully");
+                            state
+                                .emit_event(
+                                    "rs.member.added",
+                                    &serde_json::json!({
+                                        "fqn": fqn,
+                                        "member": member,
+                                    })
+                                    .to_string(),
+                                )
+                                .await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = ?e,
+                                member = %member,
+                                "failed to add member"
+                            );
+                        }
+                    }
+                }
+            }
+
+            GroupAction::Wait => {
+                tracing::info!(fqn = %fqn, rs_name = %rs_name, "all instances unreachable — waiting");
+            }
+        }
+
+        // If we have a valid RS state but the classifier said Healthy,
+        // also check if there are members to add (classifier only detects
+        // the broad group state, member addition needs RS-level detail).
+        if is_healthy {
+            if let Some(ref rs) = rs_state {
+                let add_actions =
+                    bs::should_add_members(&instances, rs, &pending_removal_endpoints);
+                for add_action in add_actions {
+                    tracing::info!(
+                        rs_name = %add_action.rs_name,
+                        new_member = %add_action.new_member_endpoint,
+                        primary = %add_action.primary_endpoint,
+                        "adding member to replica set"
+                    );
+
+                    match add_member(&add_action.primary_endpoint, &add_action.new_member_endpoint)
+                        .await
+                    {
+                        Ok(()) => {
+                            tracing::info!(
+                                member = %add_action.new_member_endpoint,
+                                "member added successfully"
+                            );
+                            state
+                                .emit_event(
+                                    "rs.member.added",
+                                    &serde_json::json!({
+                                        "fqn": fqn,
+                                        "member": add_action.new_member_endpoint,
+                                    })
+                                    .to_string(),
+                                )
+                                .await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = ?e,
+                                member = %add_action.new_member_endpoint,
+                                "failed to add member"
+                            );
+                        }
                     }
                 }
             }
@@ -387,106 +590,143 @@ fn extract_service_name(fqn: &OfferingFqn) -> String {
 }
 
 // ============================================================================
-// Replica set operations
+// Instance probing
 // ============================================================================
 
-/// Probe the replica set status from any reachable instance.
-async fn probe_replica_set(
+/// Probe each instance individually and return per-instance classification.
+///
+/// Unlike the old `probe_replica_set()` which returned the first success,
+/// this probes every instance and returns a result for each — giving the
+/// classifier the full picture.
+async fn probe_instances(
     instances: &[MongoInstance],
-    rs_name: &str,
-) -> Option<ReplicaSetState> {
+) -> Vec<(String, InstanceProbe)> {
+    let mut results = Vec::with_capacity(instances.len());
+
     for instance in instances {
         let client = match MongoClient::connect(&instance.mongo_endpoint).await {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(
+                    endpoint = %instance.mongo_endpoint,
+                    error = %e,
+                    "could not connect to MongoDB instance"
+                );
+                results.push((instance.mongo_endpoint.clone(), InstanceProbe::Unreachable));
+                continue;
+            }
         };
 
         match client.rs_status().await {
-            Ok(status) => {
-                let members: Vec<MemberState> = status
-                    .members
-                    .iter()
-                    .map(|m| {
-                        let role = match m.state {
-                            1 => ReplicaRole::Primary,
-                            2 => ReplicaRole::Secondary,
-                            7 => ReplicaRole::Arbiter,
-                            3 | 5 => ReplicaRole::Recovering,
-                            0 | 6 => ReplicaRole::Startup,
-                            _ => ReplicaRole::Unknown,
-                        };
-
-                        MemberState {
-                            endpoint: m.name.clone(),
-                            stone_name: instances
-                                .iter()
-                                .find(|i| i.mongo_endpoint == m.name)
-                                .map(|i| i.stone_name.clone())
-                                .unwrap_or_else(|| m.name.clone()),
-                            role,
-                            healthy: m.health == 1.0,
-                            lag_seconds: None, // Computed separately by health monitor
-                            last_heartbeat: m.last_heartbeat,
-                        }
-                    })
-                    .collect();
-
-                let conn_string = if !members.is_empty() {
-                    Some(build_connection_string(&members, &status.set_name))
-                } else {
-                    None
-                };
-
-                return Some(ReplicaSetState {
-                    rs_name: status.set_name,
-                    initialized: true,
-                    members,
-                    connection_string: conn_string,
-                    last_updated: chrono::Utc::now(),
-                    cache: None,
-                    oplog: None,
-                });
+            Ok(_status) => {
+                results.push((instance.mongo_endpoint.clone(), InstanceProbe::Active));
             }
             Err(e) => {
-                let err_str = e.to_string();
+                // Use {:#} to include the full anyhow error chain —
+                // e.to_string() only shows the .with_context() wrapper,
+                // not the underlying MongoDB error code/name.
+                let err_str = format!("{:#}", e);
 
-                // NotYetInitialized is expected for fresh instances started with --replSet
                 if err_str.contains("NotYetInitialized")
                     || err_str.contains("no replset config")
                 {
-                    return Some(ReplicaSetState {
-                        rs_name: rs_name.to_string(),
-                        initialized: false,
-                        members: vec![],
-                        connection_string: None,
-                        last_updated: chrono::Utc::now(),
-                        cache: None,
-                        oplog: None,
-                    });
-                }
-
-                // NoReplicationEnabled (error 76) means the instance doesn't have
-                // replication enabled in its config. The ensure_repl_set_config step
-                // should write the config file and restart on the next cycle.
-                if err_str.contains("NoReplicationEnabled") || err_str.contains("error 76") {
+                    results.push((
+                        instance.mongo_endpoint.clone(),
+                        InstanceProbe::NotInitialized,
+                    ));
+                } else if err_str.contains("NoReplicationEnabled")
+                    || err_str.contains("error 76")
+                {
                     tracing::debug!(
                         endpoint = %instance.mongo_endpoint,
                         "instance not configured for replication (config file patch pending)"
                     );
-                    continue;
+                    results
+                        .push((instance.mongo_endpoint.clone(), InstanceProbe::ConfigPending));
+                } else if err_str.contains("InvalidReplicaSetConfig")
+                    || err_str.contains("error 93")
+                {
+                    tracing::debug!(
+                        endpoint = %instance.mongo_endpoint,
+                        "instance has stale RS config (IP drift)"
+                    );
+                    results
+                        .push((instance.mongo_endpoint.clone(), InstanceProbe::StaleConfig));
+                } else {
+                    tracing::warn!(
+                        endpoint = %instance.mongo_endpoint,
+                        error = %e,
+                        "rs.status() returned unrecognized error"
+                    );
+                    results
+                        .push((instance.mongo_endpoint.clone(), InstanceProbe::Unreachable));
                 }
-
-                tracing::debug!(
-                    endpoint = %instance.mongo_endpoint,
-                    error = %e,
-                    "could not probe rs.status()"
-                );
-                continue;
             }
         }
     }
 
-    None
+    results
+}
+
+// ============================================================================
+// Replica set operations
+// ============================================================================
+
+/// Execute a force-reconfig to fix IP drift.
+///
+/// 1. Connect to any reachable instance
+/// 2. Read `replSetGetConfig` (works even with error 93)
+/// 3. Compute old→new IP mapping using persisted known members
+/// 4. Call `rs_reconfig_members_with_mapping` with `force: true`
+async fn execute_reconfig_drift(
+    connect_to: &str,
+    rs_name: &str,
+    desired: &[String],
+    active_instances: &[MongoInstance],
+    group_state: Option<&GroupState>,
+) -> anyhow::Result<()> {
+    let client = MongoClient::connect(connect_to).await?;
+
+    // Read the current (stale) RS config to get member _ids
+    let (_config_rs_name, config_members) = client.rs_config().await?;
+
+    // Build old→new mapping for _id preservation
+    let old_to_new = if let Some(gs) = group_state {
+        // Use persisted known members for stone_name→endpoint resolution
+        let current: Vec<(String, String)> = active_instances
+            .iter()
+            .map(|i| (i.stone_name.clone(), i.mongo_endpoint.clone()))
+            .collect();
+        let rs_members: Vec<(i32, String)> = config_members
+            .iter()
+            .map(|m| (m.id, m.host.clone()))
+            .collect();
+        compute_drift_mapping(&rs_members, &current, &gs.known_members)
+    } else {
+        // No persisted state — can't map by stone name, reconfig will assign new _ids
+        std::collections::HashMap::new()
+    };
+
+    if !old_to_new.is_empty() {
+        tracing::info!(
+            rs_name = %rs_name,
+            mapping = ?old_to_new,
+            "applying IP drift reconfig with _id preservation"
+        );
+    }
+
+    let desired_refs: Vec<&str> = desired.iter().map(|s| s.as_str()).collect();
+    client
+        .rs_reconfig_members_with_mapping(rs_name, &desired_refs, &old_to_new)
+        .await?;
+
+    tracing::info!(
+        rs_name = %rs_name,
+        members = ?desired,
+        "RS config updated — IP drift resolved"
+    );
+
+    Ok(())
 }
 
 /// Initiate a replica set on a single member.
@@ -495,10 +735,12 @@ async fn initiate_replica_set(
     rs_name: &str,
 ) -> anyhow::Result<ReplicaSetState> {
     let client = MongoClient::connect(endpoint).await?;
-    client.rs_initiate(rs_name).await?;
+    let freshly_initiated = client.rs_initiate(rs_name).await?;
 
-    // Wait a moment for election, then probe status
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    if freshly_initiated {
+        // Wait a moment for election, then probe status
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
 
     let status = client.rs_status().await?;
 

@@ -9,6 +9,7 @@ pub mod events;
 pub mod garden;
 pub mod garden_storage;
 pub mod gateway;
+pub mod greenhouse;
 pub mod health;
 pub mod helpers;
 pub mod jobs;

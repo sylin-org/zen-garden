@@ -362,18 +362,30 @@ fn normalize_service_name(
 }
 
 /// Resolve the `ServiceTemplate` for a managed offering from the manifest registry.
+///
+/// Accepts full FQN strings (e.g., `mongodb::prod`) — strips the instance part
+/// to look up the base offering name in the manifest registry.
 fn get_service_template(
     state: &AppState,
     name: &str,
 ) -> Result<ServiceTemplate, (StatusCode, Json<ApiErrorResponse>)> {
-    let manifest = state.manifest_registry.get_offering(name).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
-            "TEMPLATE_NOT_FOUND",
-            format!("No manifest template for '{}'", name),
-            None,
-        )
-    })?;
+    // Manifest registry keys by base offering name (e.g., "mongodb"),
+    // but callers pass the full FQN (e.g., "mongodb::prod").
+    let base_name = OfferingFqn::parse(name)
+        .map(|fqn| fqn.offering)
+        .unwrap_or_else(|_| name.to_string());
+
+    let manifest = state
+        .manifest_registry
+        .get_offering(&base_name)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "TEMPLATE_NOT_FOUND",
+                format!("No manifest template for '{}'", name),
+                None,
+            )
+        })?;
 
     manifest.parse_template().map_err(|e| {
         error_response(

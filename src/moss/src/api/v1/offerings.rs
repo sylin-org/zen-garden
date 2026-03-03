@@ -682,3 +682,248 @@ fn offering_relevance_score(
     }
     score
 }
+
+// ============================================================================
+// Manifest Authoring (OFFER-0006 Phase 2)
+// ============================================================================
+
+/// Request body for test-deploying a manifest.
+#[derive(Debug, Deserialize)]
+pub struct ManifestTestRequest {
+    /// Offering name for the test deployment.
+    pub name: String,
+    /// Raw snippet YAML content.
+    pub snippet_yaml: String,
+    /// Optional frontmatter JSON content.
+    pub frontmatter_json: Option<String>,
+    /// Optional compatibility YAML content.
+    pub compatibility_yaml: Option<String>,
+}
+
+/// POST /api/v1/stone/manifests/test
+///
+/// Validate and test-deploy a manifest from raw content. Parses the snippet,
+/// builds a temporary Offering, and deploys via the standard pipeline.
+pub async fn test_manifest_v1(
+    State(state): State<AppState>,
+    Json(payload): Json<ManifestTestRequest>,
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
+    use garden_common::manifests::validation;
+
+    // Validate snippet content
+    let findings = validation::validate_snippet(&payload.snippet_yaml, "snippet.yaml");
+    let errors: Vec<_> = findings
+        .iter()
+        .filter(|f| f.severity == validation::Severity::Error)
+        .collect();
+
+    if !errors.is_empty() {
+        let error_msgs: Vec<String> = errors.iter().map(|e| format!("[{}] {}", e.code, e.message)).collect();
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "MANIFEST_VALIDATION_FAILED",
+            format!("Manifest has {} error(s): {}", errors.len(), error_msgs.join("; ")),
+            Some({
+                let mut details = HashMap::new();
+                details.insert(
+                    "findings".to_string(),
+                    serde_json::to_value(&findings).unwrap_or_default(),
+                );
+                details
+            }),
+        ));
+    }
+
+    // Validate frontmatter if provided
+    if let Some(ref fm) = payload.frontmatter_json {
+        let fm_findings = validation::validate_frontmatter(fm, "frontmatter.json");
+        let fm_errors: Vec<_> = fm_findings
+            .iter()
+            .filter(|f| f.severity == validation::Severity::Error)
+            .collect();
+        if !fm_errors.is_empty() {
+            let error_msgs: Vec<String> = fm_errors.iter().map(|e| format!("[{}] {}", e.code, e.message)).collect();
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "MANIFEST_VALIDATION_FAILED",
+                format!("Frontmatter has {} error(s): {}", fm_errors.len(), error_msgs.join("; ")),
+                None,
+            ));
+        }
+    }
+
+    // Extract image reference from snippet YAML to deploy via image-direct
+    let offering_name = payload.name.trim().to_string();
+    if offering_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            "Offering name cannot be empty".to_string(),
+            None,
+        ));
+    }
+
+    // Parse snippet to extract the image field
+    let snippet_value: serde_yaml::Value =
+        serde_yaml::from_str(&payload.snippet_yaml).map_err(|e| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_SNIPPET",
+                format!("Failed to parse snippet YAML: {}", e),
+                None,
+            )
+        })?;
+
+    let image_ref = snippet_value
+        .get("image")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "MISSING_IMAGE",
+                "Snippet YAML must contain an 'image' field".to_string(),
+                None,
+            )
+        })?
+        .to_string();
+
+    // Deploy via image-direct using the existing create pipeline.
+    // The image-direct path handles container creation, port mapping, etc.
+    let fqn_str = format!("image:{}", image_ref);
+    let create_req = crate::api::responses::CreateServiceRequest {
+        offering: fqn_str,
+    };
+
+    let result = crate::api::v1::services::create_service_v1(
+        axum::extract::State(state.clone()),
+        axum::http::HeaderMap::new(),
+        axum::Json(create_req),
+    )
+    .await;
+
+    match result {
+        Ok(Json(resp)) => Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "name": offering_name,
+                "status": resp.data.status,
+                "service": resp.data.service,
+                "message": resp.data.message,
+            })),
+        )),
+        Err((status, err)) => Err((status, err)),
+    }
+}
+
+/// GET /api/v1/stone/offerings/{name}/export
+///
+/// Export all manifest files for an offering as a JSON envelope.
+/// Works for both curated offerings (from registry) and image-direct
+/// offerings (synthesized from running container).
+pub async fn export_offering_manifest_v1(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
+    let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", name, e),
+            None,
+        )
+    })?;
+
+    // Try curated manifest first
+    if let Some(offering) = state.manifest_registry.sw.get(&offering_fqn.offering) {
+        let snippet_yaml = offering
+            .managed
+            .as_ref()
+            .map(|m| m.snippet_yaml.clone())
+            .unwrap_or_default();
+
+        let frontmatter_json = serde_json::to_string_pretty(&serde_json::json!({
+            "name": offering.name,
+            "description": offering.metadata.description,
+            "category": offering.category,
+            "tags": offering.metadata.tags,
+        }))
+        .unwrap_or_default();
+
+        let compatibility_yaml = offering
+            .compatibility
+            .as_ref()
+            .map(|c| serde_yaml::to_string(c).unwrap_or_default())
+            .unwrap_or_default();
+
+        let guidance_md = offering.guidance.clone().unwrap_or_default();
+
+        return Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "name": offering.name,
+                "category": offering.category,
+                "snippet_yaml": snippet_yaml,
+                "frontmatter_json": frontmatter_json,
+                "compatibility_yaml": compatibility_yaml,
+                "guidance_md": guidance_md,
+            })),
+        ));
+    }
+
+    // Try image-direct: inspect the running container and synthesize
+    let offerings = state.offerings.read().await;
+    let running = offerings
+        .iter()
+        .find(|o| o.name.fqn() == offering_fqn.fqn());
+
+    if let Some(offering_entry) = running {
+        // If it's an image-direct offering, use the image ref to inspect
+        if let Some(image_ref) = &offering_entry.name.image_ref {
+            match crate::infra::image_inspect::inspect_image(&state.docker, image_ref).await {
+                Ok(inspection) => {
+                    let inspection_json = serde_json::to_value(&inspection).unwrap_or_default();
+                    match garden_common::manifests::generate::generate_from_inspection(
+                        Some(&offering_fqn.offering),
+                        None,
+                        &inspection_json,
+                    ) {
+                        Ok(generated) => {
+                            return Ok((
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "name": generated.name,
+                                    "category": "custom",
+                                    "snippet_yaml": generated.snippet_yaml,
+                                    "frontmatter_json": generated.frontmatter_json,
+                                    "compatibility_yaml": generated.compatibility_yaml,
+                                    "guidance_md": generated.guidance_md,
+                                })),
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to generate manifest for export");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, image = %image_ref, "Failed to inspect image for export");
+                }
+            }
+        }
+    }
+
+    let mut details = HashMap::new();
+    details.insert("name".to_string(), serde_json::json!(name));
+    Err(error_response(
+        StatusCode::NOT_FOUND,
+        garden_common::constants::TEMPLATE_NOT_FOUND,
+        format!("Offering '{}' not found in registry or running services", name),
+        Some(details),
+    ))
+}

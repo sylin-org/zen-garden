@@ -9,10 +9,12 @@ pub mod ceremony;
 pub mod connection;
 pub mod connectivity;
 pub mod detection;
+pub mod generate;
 pub mod hw;
 pub mod offering;
 pub mod ports;
 pub mod registry;
+pub mod validation;
 
 pub use category::{
     get_category_registry, init_category_registry, load_categories, CategoryConfig,

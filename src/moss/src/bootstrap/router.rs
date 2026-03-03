@@ -79,6 +79,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::offerings::get_offering_manifest_v1),
         )
         .route(
+            "/api/v1/stone/offerings/{name}/export",
+            get(api::v1::offerings::export_offering_manifest_v1),
+        )
+        .route(
             "/api/v1/stone/services",
             get(api::v1::services::list_services_v1),
         )
@@ -117,6 +121,13 @@ pub fn configure_public(state: AppState) -> Router {
         .route(
             "/api/v1/stone/companions",
             get(api::v1::companions::get_companions),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Greenhouse (read-only)
+        // ══════════════════════════════════════════════════════════════════
+        .route(
+            "/api/v1/stone/greenhouse/containers",
+            get(api::v1::greenhouse::list_containers_v1),
         )
         // ══════════════════════════════════════════════════════════════════
         // Garden topology (read-only discovery)
@@ -306,6 +317,27 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/offerings/{name}/manifest",
             get(api::v1::offerings::get_offering_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/export",
+            get(api::v1::offerings::export_offering_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/manifests/test",
+            post(api::v1::offerings::test_manifest_v1),
+        )
+        // Greenhouse — manifest authoring (OFFER-0006 Phase 3)
+        .route(
+            "/api/v1/stone/greenhouse/containers",
+            get(api::v1::greenhouse::list_containers_v1),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/validate",
+            post(api::v1::greenhouse::validate_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/generate",
+            post(api::v1::greenhouse::generate_manifest_v1),
         )
         .route(
             "/api/v1/stone/offerings/{name}/capabilities",

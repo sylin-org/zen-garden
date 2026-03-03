@@ -12,7 +12,7 @@ use crate::context::CommandContext;
 use crate::discovery;
 use anyhow::Result;
 use async_trait::async_trait;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use garden_common::ui::rendering as ui;
 use garden_common::{
     CliFormatter, GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo,
@@ -107,6 +107,12 @@ pub enum OfferAction {
     QueryAnywhere { query: String },
     /// Get intelligent placement recommendation
     PlacementRecommend { name: String, quiet: bool },
+    /// Deploy a Docker image directly (OFFER-0006)
+    Image {
+        image_ref: String,
+        instance: Option<String>,
+        info_only: bool,
+    },
 }
 
 pub struct OfferCommand {
@@ -1373,9 +1379,22 @@ impl OfferCommand {
         }
     }
 
+    pub fn image(image_ref: String, instance: Option<String>, info_only: bool, quiet_mode: bool) -> Self {
+        Self {
+            action: OfferAction::Image {
+                image_ref,
+                instance,
+                info_only,
+            },
+            prefer: vec![],
+            anywhere_on_fail: false,
+            quiet_mode,
+        }
+    }
+
     /// Check if the given name is a known offering (for query detection)
     pub async fn is_known_offering(client: &reqwest::Client, endpoint: &str, name: &str) -> bool {
-        let offering_type = match parse_offering_fqn(name) {
+        let offering_type = match OfferingFqn::parse(name) {
             Ok(fqn) => fqn.offering,
             Err(_) => return false,
         };
@@ -1441,7 +1460,7 @@ impl Command for OfferCommand {
                     .endpoint
                     .as_ref()
                     .expect("endpoint required for install");
-                let offering_fqn = parse_offering_fqn(name)
+                let offering_fqn = OfferingFqn::parse(name)
                     .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", name, e))?;
                 let service_name = offering_fqn.fqn();
                 let offering_type = offering_fqn.offering.clone();
@@ -1717,6 +1736,147 @@ impl Command for OfferCommand {
                             " ".repeat(ui::constants::DEFAULT_INDENT),
                             ui::status_indicator("error", term.supports_color),
                             status
+                        );
+                    }
+                }
+            }
+            OfferAction::Image {
+                image_ref,
+                instance,
+                info_only,
+            } => {
+                let endpoint = ctx
+                    .endpoint
+                    .as_ref()
+                    .expect("endpoint required for image");
+
+                if *info_only {
+                    // Info-only: inspect the image without deploying
+                    let url = format!(
+                        "{}/api/v1/stone/offerings/inspect?image={}",
+                        endpoint.trim_end_matches('/'),
+                        urlencoding::encode(image_ref)
+                    );
+                    let response = ctx.client.get(&url).send().await?;
+                    let status = response.status();
+                    let body: serde_json::Value = response.json().await?;
+
+                    if status.is_success() {
+                        let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+                        println!();
+                        println!("{}Image: {}", indent, image_ref);
+                        if let Some(arch) = body.get("architecture").and_then(|v| v.as_str()) {
+                            println!("{}Architecture: {}", indent, arch);
+                        }
+                        if let Some(ports) = body.get("exposed_ports").and_then(|v| v.as_array()) {
+                            if !ports.is_empty() {
+                                let port_strs: Vec<String> = ports
+                                    .iter()
+                                    .filter_map(|p| p.as_u64().map(|n| n.to_string()))
+                                    .collect();
+                                println!("{}Ports: {}", indent, port_strs.join(", "));
+                            }
+                        }
+                        if let Some(vols) = body.get("volumes").and_then(|v| v.as_array()) {
+                            if !vols.is_empty() {
+                                println!("{}Volumes:", indent);
+                                for v in vols {
+                                    if let Some(s) = v.as_str() {
+                                        println!("{}  {}", indent, s);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(alt) = body.get("curated_alternative") {
+                            if !alt.is_null() {
+                                let alt_name =
+                                    alt.get("offering_name").and_then(|v| v.as_str()).unwrap_or("?");
+                                let alt_desc =
+                                    alt.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                                println!();
+                                println!(
+                                    "{}{} A curated manifest '{}' exists for this image.",
+                                    indent,
+                                    ui::status_indicator("info", term.supports_color),
+                                    alt_name
+                                );
+                                if !alt_desc.is_empty() {
+                                    println!("{}  {}", indent, alt_desc);
+                                }
+                                println!(
+                                    "{}  Use: garden-rake offer {}",
+                                    indent, alt_name
+                                );
+                            }
+                        }
+                        println!();
+                    } else {
+                        let msg = body
+                            .get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Inspection failed");
+                        println!(
+                            "{}{} {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", term.supports_color),
+                            msg
+                        );
+                    }
+                } else {
+                    // Deploy: construct image-direct FQN and POST to services API
+                    let fqn_string = if let Some(inst) = instance {
+                        format!("image:{}::{}", image_ref, inst)
+                    } else {
+                        format!("image:{}", image_ref)
+                    };
+
+                    let url =
+                        format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                    let payload = serde_json::json!({
+                        "offering": fqn_string,
+                    });
+
+                    let response = ctx.client.post(&url).json(&payload).send().await?;
+                    let status = response.status();
+                    let body: serde_json::Value = response.json().await?;
+
+                    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+
+                    if status.is_success() {
+                        let svc = body
+                            .get("data")
+                            .and_then(|d| d.get("service"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(image_ref);
+                        let api_status = body
+                            .get("data")
+                            .and_then(|d| d.get("status"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("accepted");
+                        let message = body
+                            .get("data")
+                            .and_then(|d| d.get("message"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        println!();
+                        println!("{}{}  [{}]", indent, svc, api_status);
+                        if !message.is_empty() {
+                            println!("{}{}", indent, message);
+                        }
+                        println!();
+                    } else {
+                        let msg = body
+                            .get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Deployment failed");
+                        println!(
+                            "{}{} {}",
+                            indent,
+                            ui::status_indicator("error", term.supports_color),
+                            msg
                         );
                     }
                 }

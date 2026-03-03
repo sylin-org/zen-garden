@@ -480,12 +480,27 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             ArgSpec::option("placement-mode", "Placement strategy (interactive, auto)")
                 .zen("--placement-mode <mode>"),
         ],
-        subcommands: vec![SubDef {
-            name: "info",
-            description: "Show offering details and compatibility",
-            args: vec![],
-            subcommands: vec![],
-        }],
+        subcommands: vec![
+            SubDef {
+                name: "info",
+                description: "Show offering details and compatibility",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "image",
+                description: "Deploy a Docker image directly (without manifest)",
+                args: vec![
+                    ArgSpec::positional("image-ref", "Docker image reference (e.g., nginx:latest)")
+                        .required(),
+                    ArgSpec::option("instance", "Named instance (e.g., staging)")
+                        .zen("--instance <name>"),
+                    ArgSpec::flag("info-only", "Inspect image without deploying")
+                        .zen("--info"),
+                ],
+                subcommands: vec![],
+            },
+        ],
         examples: vec![
             CommandExample {
                 description: "List all available offerings by category",
@@ -505,6 +520,16 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             CommandExample {
                 description: "Show offering details and compatibility",
                 zen_syntax: Some("garden-rake offer mongodb info"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Deploy a Docker image directly",
+                zen_syntax: Some("garden-rake offer image nginx:latest"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Inspect a Docker image without deploying",
+                zen_syntax: Some("garden-rake offer image nginx:latest --info"),
                 normative_syntax: None,
             },
             CommandExample {

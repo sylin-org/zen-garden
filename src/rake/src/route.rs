@@ -638,6 +638,20 @@ async fn route_offer(
     let placement_mode = opt(m, "placement-mode");
     let has_info_sub = m.subcommand_matches("info").is_some();
 
+    // ── image subcommand ──
+    if let Some(image_m) = m.subcommand_matches("image") {
+        let image_ref = image_m
+            .get_one::<String>("image-ref")
+            .expect("image-ref required")
+            .clone();
+        let instance = image_m.get_one::<String>("instance").cloned();
+        let info_only = image_m.get_flag("info-only");
+        return Ok(Some(Inv::remote_at(
+            commands::offering::OfferCommand::image(image_ref, instance, info_only, g.quiet),
+            at,
+        )));
+    }
+
     // ── --placement-mode ──
     if let Some(mode) = &placement_mode {
         if let Some(name) = &offering {

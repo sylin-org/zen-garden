@@ -126,16 +126,25 @@ impl GardenTool {
 /// Match a query fqid against a tool.
 ///
 /// - Bare name (e.g., `"mongodb"`) matches all tools with `tool.tool_type == "mongodb"`.
-/// - Instance name (e.g., `"mongodb:prod"`) matches exact `fqid`.
+/// - Instance-qualified (e.g., `"mongodb::prod"`) matches exact `fqid`.
+/// - Legacy V1 queries (`"mongodb:prod"`) are normalized to V2 before matching.
 /// - Does NOT prefix-match: `"ollama"` does NOT match `"ollama-cpu"`.
 pub fn fqid_matches(query: &str, tool: &GardenTool) -> bool {
     let q = query.trim().to_ascii_lowercase();
     if q.is_empty() {
         return true;
     }
-    if q.contains(':') {
-        // Exact instance match
+    if q.contains("::") {
+        // V2 instance-qualified match
         tool.fqid.eq_ignore_ascii_case(&q)
+    } else if q.contains(':') {
+        // Could be V1 legacy ("mongodb:prod") or source scheme ("image:nginx").
+        // Try normalizing through OfferingFqn::parse to get canonical form.
+        if let Ok(parsed) = crate::offerings::OfferingFqn::parse(&q) {
+            tool.fqid.eq_ignore_ascii_case(&parsed.fqn())
+        } else {
+            tool.fqid.eq_ignore_ascii_case(&q)
+        }
     } else {
         // Type match: all instances of this offering type
         tool.tool.tool_type.eq_ignore_ascii_case(&q)
@@ -310,7 +319,7 @@ pub fn parse_capability_wish(
         let offering_part = &trimmed[..start];
         let selectors_raw = &trimmed[start + 1..trimmed.len() - 1];
 
-        let offering_fqn = crate::offerings::parse_offering_fqn(offering_part)
+        let offering_fqn = crate::offerings::OfferingFqn::parse(offering_part)
             .map_err(|e| CapabilityWishParseError(e.to_string()))?
             .fqn();
 
@@ -336,7 +345,7 @@ pub fn parse_capability_wish(
         ));
     }
 
-    let offering_fqn = crate::offerings::parse_offering_fqn(offering_part)
+    let offering_fqn = crate::offerings::OfferingFqn::parse(offering_part)
         .map_err(|e| CapabilityWishParseError(e.to_string()))?
         .fqn();
 
@@ -503,16 +512,17 @@ mod tests {
     }
 
     #[test]
-    fn fqid_bare_matches_named_instance() {
-        let tool = sample_tool("mongodb:prod", "mongodb", "offering");
+    fn fqid_v2_matches_named_instance() {
+        let tool = sample_tool("mongodb::prod", "mongodb", "offering");
         assert!(fqid_matches("mongodb", &tool)); // type match
-        assert!(fqid_matches("mongodb:prod", &tool)); // exact match
-        assert!(!fqid_matches("mongodb:dev", &tool)); // wrong instance
+        assert!(fqid_matches("mongodb::prod", &tool)); // V2 exact match
+        assert!(fqid_matches("mongodb:prod", &tool)); // V1 legacy normalized
+        assert!(!fqid_matches("mongodb::dev", &tool)); // wrong instance
     }
 
     #[test]
     fn fqid_no_prefix_match() {
-        let tool = sample_tool("ollama-cpu:adopted", "ollama-cpu", "offering");
+        let tool = sample_tool("ollama-cpu::adopted", "ollama-cpu", "offering");
         assert!(!fqid_matches("ollama", &tool)); // different type
         assert!(fqid_matches("ollama-cpu", &tool)); // exact type
     }
@@ -544,7 +554,7 @@ mod tests {
     #[test]
     fn parse_capability_wish_bracket() {
         let wish = parse_capability_wish("ollama:dev[model:modelv1]", None).unwrap();
-        assert_eq!(wish.offering_fqn, "ollama:dev");
+        assert_eq!(wish.offering_fqn, "ollama::dev");
         assert_eq!(wish.selectors.len(), 1);
         assert_eq!(wish.selectors[0].cap_type, "model");
         assert_eq!(wish.selectors[0].item, "modelv1");
@@ -581,7 +591,7 @@ mod tests {
     #[test]
     fn parse_capability_wish_shorthand_with_instance() {
         let wish = parse_capability_wish("ollama:dev:modelv1", Some("model")).unwrap();
-        assert_eq!(wish.offering_fqn, "ollama:dev");
+        assert_eq!(wish.offering_fqn, "ollama::dev");
         assert_eq!(wish.selectors[0].item, "modelv1");
     }
 

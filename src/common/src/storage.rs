@@ -462,7 +462,7 @@ impl MemoriesOfferingManifest {
     ) -> Self {
         Self {
             offering_id: offering.offering_id.clone(),
-            offering_name: offering.name.clone(),
+            offering_name: offering.name.to_string(),
             offering: offering.offering.clone(),
             mode: offering.mode(),
             version: offering.version.clone(),

@@ -117,9 +117,9 @@ pub const LANTERN_SERVICE: &str = "garden-lantern.service";
 // Offering Naming
 // ============================================================================
 
-/// Separator for offering fully-qualified instance names (FQN).
-/// Example: "ollama:dev"
-pub const OFFERING_FQN_SEPARATOR: char = ':';
+/// Separator for offering fully-qualified instance names (FQN v2).
+/// Example: "ollama::dev"
+pub(crate) const OFFERING_FQN_SEPARATOR: &str = "::";
 
 /// Prefix for managed offering containers.
 pub const OFFERING_CONTAINER_PREFIX: &str = "zen-offering-";

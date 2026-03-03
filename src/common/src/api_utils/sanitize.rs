@@ -72,18 +72,29 @@ pub fn sanitize_name(input: &str) -> SanitizeResult {
     SanitizeResult::new(cleaned, input)
 }
 
-/// Sanitize a service or resource name allowing a single colon separator
+/// Sanitize an offering FQN input.
+///
+/// Permits the full FQN character set: alphanumerics, `_`, `-`, `:`, `/`, `.`
+/// (supporting instance separators, source scheme prefixes, and image refs).
 ///
 /// - Trims whitespace
 /// - Converts to lowercase
-/// - Removes characters not in [a-z0-9_:-]
+/// - Removes characters not in [a-z0-9_:/.@-]
 /// - Limits length to MAX_NAME_LENGTH
-pub fn sanitize_name_allow_colon(input: &str) -> SanitizeResult {
+pub fn sanitize_fqn_input(input: &str) -> SanitizeResult {
     let cleaned: String = input
         .trim()
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == ':')
+        .filter(|c| {
+            c.is_ascii_alphanumeric()
+                || *c == '_'
+                || *c == '-'
+                || *c == ':'
+                || *c == '/'
+                || *c == '.'
+                || *c == '@'
+        })
         .take(MAX_NAME_LENGTH)
         .collect();
 
@@ -231,14 +242,21 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_name_allow_colon() {
-        let result = sanitize_name_allow_colon("ollama:dev");
-        assert_eq!(result.value, "ollama:dev");
+    fn test_sanitize_fqn_input() {
+        // V2 FQN with double-colon
+        let result = sanitize_fqn_input("ollama::dev");
+        assert_eq!(result.value, "ollama::dev");
 
-        let result = sanitize_name_allow_colon("My-Service:Dev");
-        assert_eq!(result.value, "my-service:dev");
+        // Case normalization
+        let result = sanitize_fqn_input("My-Service::Dev");
+        assert_eq!(result.value, "my-service::dev");
 
-        let result = sanitize_name_allow_colon("bad name!");
+        // Image-direct with registry path
+        let result = sanitize_fqn_input("image:ghcr.io/org/app:v2::prod");
+        assert_eq!(result.value, "image:ghcr.io/org/app:v2::prod");
+
+        // Strips invalid chars
+        let result = sanitize_fqn_input("bad name!");
         assert_eq!(result.value, "badname");
         assert!(result.was_modified);
     }

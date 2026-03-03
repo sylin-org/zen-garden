@@ -1,19 +1,35 @@
-//! Greenhouse API — manifest authoring endpoints for the Portrait SPA.
+//! Greenhouse API — offering upkeep module.
 //!
-//! Thin API layer for Phase 3 (OFFER-0006). Reuses Phase 2 validation
-//! and Phase 1 inspection; no duplicated logic.
+//! Standalone module (like Pulse) providing an omni-catalog of all offerings
+//! (installed, available, image-direct) and file-level CRUD for manifest
+//! authoring and customization.
 //!
 //! Endpoints:
-//! - `GET  /api/v1/stone/greenhouse/containers` — running offerings for picker
-//! - `POST /api/v1/stone/greenhouse/validate`   — real-time manifest validation
+//! - `GET  /greenhouse`                          — standalone SPA page
+//! - `GET  /api/v1/stone/greenhouse/catalog`     — unified offering inventory
+//! - `GET  /api/v1/stone/greenhouse/file`        — read a manifest file
+//! - `PUT  /api/v1/stone/greenhouse/file`        — write/create a manifest file
+//! - `DELETE /api/v1/stone/greenhouse/file`       — delete custom file (reset to built-in)
+//! - `GET  /api/v1/stone/greenhouse/containers`  — running offerings for picker
+//! - `POST /api/v1/stone/greenhouse/validate`    — real-time manifest validation
 //! - `POST /api/v1/stone/greenhouse/generate`    — generate manifest from inspection
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Query, State},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse},
+    Json,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use crate::{error_response, AppState};
+use crate::infra::embedded::EmbeddedManifests;
 use garden_common::api_utils::ApiErrorResponse;
-use garden_common::manifests::{generate, validation};
+use garden_common::manifests::{generate, runtime_manifests_dir, validation};
+
+const GREENHOUSE_HTML: &str = include_str!("../../../assets/greenhouse.html");
 
 // ============================================================================
 // DTOs
@@ -63,8 +79,608 @@ pub struct GenerateResponse {
     pub guidance_md: String,
 }
 
+/// A single offering in the greenhouse catalog.
+#[derive(Debug, Serialize)]
+pub struct CatalogEntry {
+    /// Offering name (e.g. "ollama", "pihole", "my-nginx").
+    pub name: String,
+    /// Category (e.g. "ai", "networking").
+    pub category: String,
+    /// Description from frontmatter or compiled index.
+    pub description: String,
+    /// Source: "curated" (embedded), "custom" (user-authored).
+    pub source: String,
+    /// State: "installed" or "available".
+    pub state: String,
+    /// Whether the container is currently running (only meaningful when installed).
+    pub running: bool,
+    /// Compatibility check result.
+    pub compatibility: CompatResult,
+    /// Whether a runtime overlay exists for a built-in offering.
+    pub customized: bool,
+    /// Files that exist for this offering.
+    pub files: Vec<FileEntry>,
+}
+
+/// Compatibility evaluation result for an offering on this stone.
+#[derive(Debug, Serialize)]
+pub struct CompatResult {
+    /// "compatible", "warning", "incompatible", or "unknown".
+    pub status: String,
+    /// Human-readable reason (for warnings and failures).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// A single file in an offering's manifest bundle.
+#[derive(Debug, Serialize)]
+pub struct FileEntry {
+    /// File type: "snippet", "frontmatter", "compatibility", "guidance",
+    /// "research", "adopted", "adopted-guidance", "capabilities".
+    pub file_type: String,
+    /// File extension: "yaml", "json", "md".
+    pub extension: String,
+    /// Origin: "built-in", "custom", or "customized" (overlay of built-in).
+    pub origin: String,
+}
+
+/// Query parameters for file CRUD endpoints.
+#[derive(Debug, Deserialize)]
+pub struct FileQuery {
+    /// Offering name (e.g. "pihole").
+    pub offering: String,
+    /// File type (e.g. "guidance", "research", "snippet").
+    #[serde(rename = "type")]
+    pub file_type: String,
+}
+
 // ============================================================================
-// Handlers
+// Known file types and their extensions
+// ============================================================================
+
+/// Returns (suffix, extension) for a given file type name.
+fn file_type_to_suffix(file_type: &str) -> Option<(&'static str, &'static str)> {
+    match file_type {
+        "snippet" => Some((".snippet.yaml", "yaml")),
+        "frontmatter" => Some((".frontmatter.json", "json")),
+        "compatibility" => Some((".compatibility.yaml", "yaml")),
+        "guidance" => Some((".guidance.md", "md")),
+        "research" => Some((".research.md", "md")),
+        "adopted" => Some((".adopted.yaml", "yaml")),
+        "adopted-guidance" => Some((".adopted.guidance.md", "md")),
+        "capabilities" => Some((".capabilities.yaml", "yaml")),
+        _ => None,
+    }
+}
+
+/// All known file type suffixes for scanning.
+const FILE_SUFFIXES: &[(&str, &str, &str)] = &[
+    (".snippet.yaml", "snippet", "yaml"),
+    (".frontmatter.json", "frontmatter", "json"),
+    (".compatibility.yaml", "compatibility", "yaml"),
+    (".guidance.md", "guidance", "md"),
+    (".research.md", "research", "md"),
+    (".adopted.yaml", "adopted", "yaml"),
+    (".adopted.guidance.md", "adopted-guidance", "md"),
+    (".capabilities.yaml", "capabilities", "yaml"),
+];
+
+// ============================================================================
+// Page Handler
+// ============================================================================
+
+/// `GET /greenhouse` — Greenhouse standalone SPA.
+pub async fn get_greenhouse_page() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        Html(GREENHOUSE_HTML),
+    )
+}
+
+// ============================================================================
+// Catalog
+// ============================================================================
+
+/// `GET /api/v1/stone/greenhouse/catalog`
+///
+/// Returns a unified inventory of all offerings: installed services, available
+/// manifests (embedded + runtime), with compatibility checks and file inventory.
+pub async fn get_catalog(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<CatalogEntry>>, (StatusCode, Json<ApiErrorResponse>)> {
+    // 1. Scan embedded manifest files → group by offering name
+    let mut embedded_files: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut embedded_categories: HashMap<String, String> = HashMap::new();
+
+    for path in EmbeddedManifests::iter() {
+        let path_str = path.as_ref();
+        if !path_str.starts_with("sw/") {
+            continue;
+        }
+
+        // Extract offering name and file type from path like "sw/ai/ollama.snippet.yaml"
+        let filename = match path_str.rsplit('/').next() {
+            Some(f) => f,
+            None => continue,
+        };
+
+        // Extract category from path (sw/{category}/{file})
+        let parts: Vec<&str> = path_str.split('/').collect();
+        let category = if parts.len() >= 3 {
+            parts[1].to_string()
+        } else {
+            "custom".to_string()
+        };
+
+        // Skip category.json files
+        if filename == "category.json" {
+            continue;
+        }
+
+        // Match against known suffixes to find offering name + file type
+        for &(suffix, file_type, ext) in FILE_SUFFIXES {
+            if let Some(name) = filename.strip_suffix(suffix) {
+                if name.is_empty() {
+                    continue;
+                }
+                embedded_files
+                    .entry(name.to_string())
+                    .or_default()
+                    .push((file_type.to_string(), ext.to_string()));
+                embedded_categories
+                    .entry(name.to_string())
+                    .or_insert(category.clone());
+                break;
+            }
+        }
+    }
+
+    // 2. Scan runtime manifests dir for custom/overlay files
+    let rt_dir = runtime_manifests_dir();
+    let sw_dir = PathBuf::from(&rt_dir).join("sw");
+    let mut runtime_files: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut runtime_categories: HashMap<String, String> = HashMap::new();
+
+    if sw_dir.exists() {
+        if let Ok(categories) = tokio::fs::read_dir(&sw_dir).await {
+            let mut cats = categories;
+            while let Ok(Some(cat_entry)) = cats.next_entry().await {
+                let cat_path = cat_entry.path();
+                if !cat_path.is_dir() {
+                    continue;
+                }
+                let cat_name = cat_entry.file_name().to_string_lossy().to_string();
+
+                if let Ok(files) = tokio::fs::read_dir(&cat_path).await {
+                    let mut fs = files;
+                    while let Ok(Some(file_entry)) = fs.next_entry().await {
+                        let fname = file_entry.file_name().to_string_lossy().to_string();
+                        if fname == "category.json" {
+                            continue;
+                        }
+                        for &(suffix, file_type, ext) in FILE_SUFFIXES {
+                            if let Some(name) = fname.strip_suffix(suffix) {
+                                if name.is_empty() {
+                                    continue;
+                                }
+                                runtime_files
+                                    .entry(name.to_string())
+                                    .or_default()
+                                    .push((file_type.to_string(), ext.to_string()));
+                                runtime_categories
+                                    .entry(name.to_string())
+                                    .or_insert(cat_name.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Get installed offerings from AppState
+    let installed = state.offerings.read().await;
+    let installed_names: HashSet<String> = installed.iter().map(|o| o.offering.clone()).collect();
+    let installed_running: HashSet<String> = installed
+        .iter()
+        .filter(|o| o.status.to_string() == "running")
+        .map(|o| o.offering.clone())
+        .collect();
+    drop(installed);
+
+    // 4. Get compiled offerings index for compatibility info
+    let index = state.offerings_index.read().await;
+    let compat_map: HashMap<String, CompatResult> = match index.as_ref() {
+        Some(cache) => cache
+            .offerings
+            .iter()
+            .map(|o| {
+                let status = match o.compatibility.decision.as_str() {
+                    "pass" | "fallback" => "compatible",
+                    "warning" => "warning",
+                    "fail" => "incompatible",
+                    _ => "unknown",
+                };
+                (
+                    o.name.clone(),
+                    CompatResult {
+                        status: status.to_string(),
+                        reason: o.compatibility.reason.clone(),
+                    },
+                )
+            })
+            .collect(),
+        None => HashMap::new(),
+    };
+    let description_map: HashMap<String, String> = match index.as_ref() {
+        Some(cache) => cache
+            .offerings
+            .iter()
+            .map(|o| (o.name.clone(), o.description.clone()))
+            .collect(),
+        None => HashMap::new(),
+    };
+    drop(index);
+
+    // 5. Merge into unified catalog
+    let all_names: HashSet<String> = embedded_files
+        .keys()
+        .chain(runtime_files.keys())
+        .cloned()
+        .collect();
+
+    let mut catalog: Vec<CatalogEntry> = Vec::new();
+
+    for name in &all_names {
+        let has_embedded = embedded_files.contains_key(name);
+        let has_runtime = runtime_files.contains_key(name);
+
+        let source = if has_embedded { "curated" } else { "custom" };
+        let customized = has_embedded && has_runtime;
+
+        let category = embedded_categories
+            .get(name)
+            .or_else(|| runtime_categories.get(name))
+            .cloned()
+            .unwrap_or_else(|| "custom".to_string());
+
+        let is_installed = installed_names.contains(name);
+        let is_running = installed_running.contains(name);
+
+        let compat = compat_map.get(name).map_or_else(
+            || CompatResult {
+                status: "unknown".to_string(),
+                reason: None,
+            },
+            |c| CompatResult {
+                status: c.status.clone(),
+                reason: c.reason.clone(),
+            },
+        );
+
+        let description = description_map.get(name).cloned().unwrap_or_default();
+
+        // Build file inventory with origin info
+        let mut files = Vec::new();
+        let mut seen_types: HashSet<String> = HashSet::new();
+
+        // Runtime files (custom or overlay)
+        if let Some(rt_files) = runtime_files.get(name) {
+            for (ft, ext) in rt_files {
+                let origin = if has_embedded
+                    && embedded_files
+                        .get(name)
+                        .is_some_and(|ef| ef.iter().any(|(t, _)| t == ft))
+                {
+                    "customized"
+                } else {
+                    "custom"
+                };
+                files.push(FileEntry {
+                    file_type: ft.clone(),
+                    extension: ext.clone(),
+                    origin: origin.to_string(),
+                });
+                seen_types.insert(ft.clone());
+            }
+        }
+
+        // Embedded files (only add if not already covered by runtime overlay)
+        if let Some(em_files) = embedded_files.get(name) {
+            for (ft, ext) in em_files {
+                if !seen_types.contains(ft) {
+                    files.push(FileEntry {
+                        file_type: ft.clone(),
+                        extension: ext.clone(),
+                        origin: "built-in".to_string(),
+                    });
+                }
+            }
+        }
+
+        catalog.push(CatalogEntry {
+            name: name.clone(),
+            category,
+            description,
+            source: source.to_string(),
+            state: if is_installed {
+                "installed".to_string()
+            } else {
+                "available".to_string()
+            },
+            running: is_running,
+            compatibility: compat,
+            customized,
+            files,
+        });
+    }
+
+    // Sort: installed first, then by name
+    catalog.sort_by(|a, b| {
+        let state_ord = |s: &str| -> u8 {
+            match s {
+                "installed" => 0,
+                _ => 1,
+            }
+        };
+        state_ord(&a.state)
+            .cmp(&state_ord(&b.state))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    Ok(Json(catalog))
+}
+
+// ============================================================================
+// File CRUD
+// ============================================================================
+
+/// Resolve the embedded path for an offering + file type.
+/// Searches `sw/{category}/{offering}{suffix}` across embedded files.
+fn find_embedded_path(offering: &str, suffix: &str) -> Option<String> {
+    let target = format!("{offering}{suffix}");
+    EmbeddedManifests::iter()
+        .find(|p| {
+            let path_str = p.as_ref();
+            path_str.starts_with("sw/") && path_str.ends_with(&target)
+        })
+        .map(|p| p.to_string())
+}
+
+/// Resolve the runtime path for an offering + file type.
+/// Searches `{runtime_dir}/sw/{category}/{offering}{suffix}`.
+fn find_runtime_path(offering: &str, suffix: &str) -> Option<PathBuf> {
+    let rt_dir = PathBuf::from(runtime_manifests_dir()).join("sw");
+    if !rt_dir.exists() {
+        return None;
+    }
+    // Walk category dirs
+    if let Ok(entries) = std::fs::read_dir(&rt_dir) {
+        for entry in entries.flatten() {
+            let cat_path = entry.path();
+            if !cat_path.is_dir() {
+                continue;
+            }
+            let file_path = cat_path.join(format!("{offering}{suffix}"));
+            if file_path.exists() {
+                return Some(file_path);
+            }
+        }
+    }
+    None
+}
+
+/// Determine the category directory for an offering (embedded path, then runtime).
+fn offering_category_dir(offering: &str) -> String {
+    // Check embedded first
+    for path in EmbeddedManifests::iter() {
+        let path_str = path.as_ref();
+        if !path_str.starts_with("sw/") {
+            continue;
+        }
+        let parts: Vec<&str> = path_str.split('/').collect();
+        if parts.len() >= 3 {
+            if let Some(filename) = parts.last() {
+                if filename.starts_with(offering) {
+                    return parts[1].to_string();
+                }
+            }
+        }
+    }
+    // Fallback: check runtime dir
+    let rt_dir = PathBuf::from(runtime_manifests_dir()).join("sw");
+    if rt_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&rt_dir) {
+            for entry in entries.flatten() {
+                let cat_path = entry.path();
+                if !cat_path.is_dir() {
+                    continue;
+                }
+                if let Ok(files) = std::fs::read_dir(&cat_path) {
+                    for file in files.flatten() {
+                        let fname = file.file_name().to_string_lossy().to_string();
+                        if fname.starts_with(offering) {
+                            return cat_path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "custom".to_string()
+}
+
+/// `GET /api/v1/stone/greenhouse/file?offering=pihole&type=guidance`
+///
+/// Reads a manifest file. Checks runtime directory first (custom/overlay),
+/// falls back to embedded (built-in).
+pub async fn get_file(
+    Query(params): Query<FileQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiErrorResponse>)> {
+    let (suffix, _ext) = file_type_to_suffix(&params.file_type).ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_FILE_TYPE",
+            format!("Unknown file type: {}", params.file_type),
+            None,
+        )
+    })?;
+
+    // Try runtime dir first (overlay)
+    if let Some(rt_path) = find_runtime_path(&params.offering, suffix) {
+        let content = tokio::fs::read_to_string(&rt_path).await.map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "READ_FAILED",
+                format!("Failed to read file: {e}"),
+                None,
+            )
+        })?;
+        return Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            content,
+        ));
+    }
+
+    // Fall back to embedded
+    if let Some(embedded_path) = find_embedded_path(&params.offering, suffix) {
+        if let Some(content) = EmbeddedManifests::get_string(&embedded_path) {
+            return Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                content,
+            ));
+        }
+    }
+
+    Err(error_response(
+        StatusCode::NOT_FOUND,
+        "FILE_NOT_FOUND",
+        format!(
+            "No {} file found for offering '{}'",
+            params.file_type, params.offering
+        ),
+        None,
+    ))
+}
+
+/// `PUT /api/v1/stone/greenhouse/file?offering=pihole&type=guidance`
+///
+/// Writes a manifest file to the runtime directory. Creates directories
+/// as needed. If the offering is built-in (embedded), this creates a
+/// custom overlay.
+pub async fn put_file(
+    Query(params): Query<FileQuery>,
+    body: String,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (suffix, _ext) = file_type_to_suffix(&params.file_type).ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_FILE_TYPE",
+            format!("Unknown file type: {}", params.file_type),
+            None,
+        )
+    })?;
+
+    let category = offering_category_dir(&params.offering);
+    let dir = PathBuf::from(runtime_manifests_dir())
+        .join("sw")
+        .join(&category);
+
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DIR_CREATE_FAILED",
+            format!("Failed to create directory: {e}"),
+            None,
+        )
+    })?;
+
+    let file_path = dir.join(format!("{}{}", params.offering, suffix));
+    tokio::fs::write(&file_path, &body).await.map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WRITE_FAILED",
+            format!("Failed to write file: {e}"),
+            None,
+        )
+    })?;
+
+    tracing::info!(
+        offering = %params.offering,
+        file_type = %params.file_type,
+        path = %file_path.display(),
+        "greenhouse file saved"
+    );
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "path": file_path.display().to_string(),
+    })))
+}
+
+/// `DELETE /api/v1/stone/greenhouse/file?offering=pihole&type=guidance`
+///
+/// Deletes a custom/overlay file from the runtime directory. If a built-in
+/// (embedded) version exists, it will show through again ("reset to default").
+/// Returns 404 if no custom file exists.
+pub async fn delete_file(
+    Query(params): Query<FileQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (suffix, _ext) = file_type_to_suffix(&params.file_type).ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_FILE_TYPE",
+            format!("Unknown file type: {}", params.file_type),
+            None,
+        )
+    })?;
+
+    let rt_path = find_runtime_path(&params.offering, suffix).ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "NO_CUSTOM_FILE",
+            format!(
+                "No custom {} file for '{}' to delete",
+                params.file_type, params.offering
+            ),
+            None,
+        )
+    })?;
+
+    tokio::fs::remove_file(&rt_path).await.map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DELETE_FAILED",
+            format!("Failed to delete file: {e}"),
+            None,
+        )
+    })?;
+
+    let has_builtin = find_embedded_path(&params.offering, suffix).is_some();
+
+    tracing::info!(
+        offering = %params.offering,
+        file_type = %params.file_type,
+        reset_to_builtin = has_builtin,
+        "greenhouse file deleted"
+    );
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "reset_to_builtin": has_builtin,
+    })))
+}
+
+// ============================================================================
+// Existing Handlers (unchanged)
 // ============================================================================
 
 /// `GET /api/v1/stone/greenhouse/containers`

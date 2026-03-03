@@ -39,6 +39,7 @@ pub fn configure_public(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
         .route("/pulse", get(api::v1::pulse::get_pulse_page))
+        .route("/greenhouse", get(api::v1::greenhouse::get_greenhouse_page))
         .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
@@ -123,8 +124,16 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::companions::get_companions),
         )
         // ══════════════════════════════════════════════════════════════════
-        // Greenhouse (read-only)
+        // Greenhouse (catalog + file read)
         // ══════════════════════════════════════════════════════════════════
+        .route(
+            "/api/v1/stone/greenhouse/catalog",
+            get(api::v1::greenhouse::get_catalog),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/file",
+            get(api::v1::greenhouse::get_file),
+        )
         .route(
             "/api/v1/stone/greenhouse/containers",
             get(api::v1::greenhouse::list_containers_v1),
@@ -326,7 +335,7 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/manifests/test",
             post(api::v1::offerings::test_manifest_v1),
         )
-        // Greenhouse — manifest authoring (OFFER-0006 Phase 3)
+        // Greenhouse — manifest authoring + file CRUD
         .route(
             "/api/v1/stone/greenhouse/containers",
             get(api::v1::greenhouse::list_containers_v1),
@@ -338,6 +347,16 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/greenhouse/generate",
             post(api::v1::greenhouse::generate_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/file",
+            get(api::v1::greenhouse::get_file)
+                .put(api::v1::greenhouse::put_file)
+                .delete(api::v1::greenhouse::delete_file),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/catalog",
+            get(api::v1::greenhouse::get_catalog),
         )
         .route(
             "/api/v1/stone/offerings/{name}/capabilities",

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Greenhouse</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0d8c8;
+  --text-dim: #8a8070;
+  --accent: #7eb09b;
+  --accent-dim: rgba(126,176,155,0.15);
+  --border: rgba(255,255,255,0.06);
+  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.header h1 { font-size: 18px; font-weight: 600; }
+.header-back {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13px;
+}
+.header-back:hover { color: var(--accent); }
+.content { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.loading { color: var(--text-dim); font-size: 13px; padding: 40px; text-align: center; }
+
+/* Catalog table */
+.catalog-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.catalog-bar input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.catalog-bar input:focus { border-color: var(--accent); }
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.accent { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 12px; text-align: left; font-size: 13px; }
+th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+tr { border-bottom: 1px solid var(--border); }
+tr:hover { background: rgba(255,255,255,0.02); }
+
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.tag-curated { background: var(--accent-dim); color: var(--accent); }
+.tag-custom { background: rgba(200,170,100,0.15); color: #c8aa64; }
+.tag-customized { background: rgba(180,130,200,0.15); color: #b482c8; }
+.tag-installed { background: rgba(100,180,120,0.15); color: #64b478; }
+.tag-running { background: rgba(100,180,120,0.25); color: #64b478; }
+.tag-stopped { background: rgba(200,100,100,0.15); color: #c86464; }
+.tag-available { background: rgba(100,140,200,0.15); color: #648cc8; }
+
+.compat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.compat-compatible { background: #64b478; }
+.compat-warning { background: #c8aa64; }
+.compat-incompatible { background: #c86464; }
+.compat-unknown { background: var(--text-dim); }
+
+.offering-name {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.offering-name:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="header-back" href="/">&larr; portrait</a>
+  <h1>Greenhouse</h1>
+</div>
+
+<div class="content">
+  <div class="catalog-bar">
+    <input type="text" id="search" placeholder="Search offerings..." oninput="filterCatalog()">
+    <button class="btn accent" onclick="newFromImage()">New from image</button>
+  </div>
+  <div id="catalog-area"><div class="loading">Loading catalog...</div></div>
+</div>
+
+<script>
+let catalog = [];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+async function loadCatalog() {
+  try {
+    const r = await fetch('/api/v1/stone/greenhouse/catalog');
+    catalog = await r.json();
+    renderCatalog(catalog);
+  } catch(e) {
+    document.getElementById('catalog-area').innerHTML = '<div class="empty-state">Failed to load catalog</div>';
+  }
+}
+
+function filterCatalog() {
+  const q = document.getElementById('search').value.toLowerCase();
+  if (!q) { renderCatalog(catalog); return; }
+  const filtered = catalog.filter(o =>
+    o.name.toLowerCase().includes(q) ||
+    o.category.toLowerCase().includes(q) ||
+    o.description.toLowerCase().includes(q)
+  );
+  renderCatalog(filtered);
+}
+
+function renderCatalog(items) {
+  if (!items.length) {
+    document.getElementById('catalog-area').innerHTML = '<div class="empty-state">No offerings found</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Offering</th><th>Category</th><th>Source</th><th>Status</th><th>Compat</th><th>Files</th><th></th></tr></thead><tbody>';
+  for (const o of items) {
+    // Source tags
+    let tags = '<span class="tag tag-' + o.source + '">' + esc(o.source) + '</span>';
+    if (o.customized) tags += '<span class="tag tag-customized">customized</span>';
+
+    // Status tags
+    let status = '';
+    if (o.state === 'installed') {
+      status = '<span class="tag tag-installed">installed</span>';
+      if (o.running) status += '<span class="tag tag-running">running</span>';
+      else status += '<span class="tag tag-stopped">stopped</span>';
+    } else {
+      status = '<span class="tag tag-available">available</span>';
+    }
+
+    // Compat
+    const cs = o.compatibility.status;
+    let compat = '<span class="compat-dot compat-' + cs + '" title="' + esc(o.compatibility.reason || cs) + '"></span>' + esc(cs);
+
+    // File count
+    const fc = o.files.length;
+
+    html += '<tr>';
+    html += '<td><span class="offering-name" onclick="openOffering(\'' + esc(o.name) + '\')">' + esc(o.name) + '</span>';
+    if (o.description) html += '<br><span style="font-size:11px;color:var(--text-dim)">' + esc(o.description).substring(0, 80) + '</span>';
+    html += '</td>';
+    html += '<td>' + esc(o.category) + '</td>';
+    html += '<td>' + tags + '</td>';
+    html += '<td>' + status + '</td>';
+    html += '<td>' + compat + '</td>';
+    html += '<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">' + fc + '</td>';
+    html += '<td><button class="btn" onclick="openOffering(\'' + esc(o.name) + '\')">Open</button></td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('catalog-area').innerHTML = html;
+}
+
+function openOffering(name) {
+  // Phase 3: detail view
+  alert('Detail view for ' + name + ' — coming in Phase 3');
+}
+
+function newFromImage() {
+  // Phase 3: inspect flow
+  alert('New from image — coming in Phase 3');
+}
+
+loadCatalog();
+</script>
+</body>
+</html>

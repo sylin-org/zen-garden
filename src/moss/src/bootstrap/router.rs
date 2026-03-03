@@ -135,6 +135,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::greenhouse::get_file),
         )
         .route(
+            "/api/v1/stone/greenhouse/export",
+            get(api::v1::greenhouse::export_offering),
+        )
+        .route(
             "/api/v1/stone/greenhouse/containers",
             get(api::v1::greenhouse::list_containers_v1),
         )
@@ -358,6 +362,10 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/greenhouse/catalog",
             get(api::v1::greenhouse::get_catalog),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/export",
+            get(api::v1::greenhouse::export_offering),
         )
         .route(
             "/api/v1/stone/offerings/{name}/capabilities",

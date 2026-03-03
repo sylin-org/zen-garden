@@ -1,734 +1,465 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Greenhouse</title>
 <style>
 :root {
-  --bg: #1a1a2e;
-  --surface: #16213e;
-  --surface-2: #1e2a45;
-  --text: #e0d8c8;
-  --text-dim: #8a8070;
-  --accent: #7eb09b;
-  --accent-dim: rgba(126,176,155,0.15);
-  --warn: #c8aa64;
-  --err: #c86464;
-  --border: rgba(255,255,255,0.06);
-  --border-2: rgba(255,255,255,0.10);
-  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    --bg-base: #f4f2ee;
+    --stone-900: #1a1a1a;
+    --stone-600: #57534e;
+    --stone-400: #a8a29e;
+    --stone-200: #d6d3d1;
+    --vellum-white: rgba(255, 255, 255, 0.45);
+    --vellum-border: rgba(255, 255, 255, 0.6);
+    --accent-sage: #84a59d;
+    --accent-clay: #d4a373;
+    --accent-hopeful: #c4b060;
+    --accent-muted: #a8a29e;
+    --accent-purple: #9b7db8;
+    --glass-blur: blur(14px);
+    --transition-soft: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-base: #1a1a1a;
+        --stone-900: #fafaf9;
+        --stone-600: #a8a29e;
+        --stone-400: #78716c;
+        --stone-200: #44403c;
+        --vellum-white: rgba(40, 40, 40, 0.6);
+        --vellum-border: rgba(255, 255, 255, 0.1);
+        --accent-hopeful: #d4c170;
+    }
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
+    background-color: var(--bg-base);
+    background-image:
+        radial-gradient(circle at 20% 20%, rgba(200, 200, 190, 0.3) 0%, transparent 40%),
+        radial-gradient(circle at 80% 80%, rgba(190, 185, 175, 0.3) 0%, transparent 40%);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--stone-900);
+    min-height: 100vh;
+    display: flex; justify-content: center;
+    padding: 2rem 1.5rem;
+    line-height: 1.5;
 }
+@media (prefers-color-scheme: dark) {
+    body {
+        background-image:
+            radial-gradient(circle at 20% 20%, rgba(60, 60, 55, 0.5) 0%, transparent 40%),
+            radial-gradient(circle at 80% 80%, rgba(50, 50, 45, 0.5) 0%, transparent 40%);
+    }
+}
+.vellum-grain {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 9999; opacity: 0.03;
+}
+.container {
+    width: 100%; max-width: 1000px;
+    display: flex; flex-direction: column; gap: 2rem;
+    animation: fadeIn 0.8s ease-out;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 
-/* Header */
 .header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--stone-200); padding-bottom: 1rem;
 }
-.header h1 { font-size: 18px; font-weight: 600; }
+.header-left { display: flex; align-items: baseline; gap: 1rem; }
+.header-title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
 .header-back {
-  color: var(--text-dim);
-  text-decoration: none;
-  font-size: 13px;
+    font-family: ui-monospace, monospace; font-size: 0.8rem;
+    color: var(--accent-sage); text-decoration: none;
 }
-.header-back:hover { color: var(--accent); }
-.header-crumb { color: var(--text-dim); font-size: 13px; }
-.header-offering { font-family: var(--mono); font-size: 14px; font-weight: 600; }
-.content { padding: 24px; max-width: 1200px; margin: 0 auto; }
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--text-dim);
-  font-size: 14px;
-}
-.loading { color: var(--text-dim); font-size: 13px; padding: 40px; text-align: center; }
-
-/* Buttons */
-.btn {
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn:disabled { opacity: 0.4; cursor: default; }
-.btn.accent { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
-.btn.sm { padding: 3px 8px; font-size: 11px; }
-.btn.danger { border-color: var(--err); color: var(--err); }
-.btn.danger:hover { background: rgba(200,100,100,0.1); }
-
-/* Catalog */
-.catalog-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.catalog-bar input {
-  flex: 1;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 13px;
-  outline: none;
-}
-.catalog-bar input:focus { border-color: var(--accent); }
-
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 10px 12px; text-align: left; font-size: 13px; }
-th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
-tr { border-bottom: 1px solid var(--border); }
-tr:hover { background: rgba(255,255,255,0.02); }
+.header-back:hover { text-decoration: underline; }
+.header-crumb { color: var(--stone-400); font-size: 0.8rem; }
+.header-offering { font-family: ui-monospace, monospace; font-size: 1.1rem; font-weight: 600; }
 
 .tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  margin-right: 4px;
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 0.65rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
 }
-.tag-curated { background: var(--accent-dim); color: var(--accent); }
-.tag-custom { background: rgba(200,170,100,0.15); color: #c8aa64; }
-.tag-customized { background: rgba(180,130,200,0.15); color: #b482c8; }
-.tag-installed { background: rgba(100,180,120,0.15); color: #64b478; }
-.tag-running { background: rgba(100,180,120,0.25); color: #64b478; }
-.tag-stopped { background: rgba(200,100,100,0.15); color: #c86464; }
-.tag-available { background: rgba(100,140,200,0.15); color: #648cc8; }
+.tag-curated { background: rgba(132,165,157,0.15); color: var(--accent-sage); }
+.tag-custom { background: rgba(212,163,115,0.15); color: var(--accent-clay); }
+.tag-customized { background: rgba(155,125,184,0.15); color: var(--accent-purple); }
+.tag-installed { background: rgba(132,165,157,0.2); color: var(--accent-sage); }
+.tag-running { background: rgba(132,165,157,0.3); color: var(--accent-sage); }
+.tag-stopped { background: rgba(212,163,115,0.2); color: var(--accent-clay); }
+.tag-available { background: rgba(168,162,158,0.15); color: var(--stone-600); }
 
-.compat-dot {
-  display: inline-block; width: 8px; height: 8px;
-  border-radius: 50%; margin-right: 4px; vertical-align: middle;
+.btn {
+    padding: 6px 14px; border: 1px solid var(--stone-200); border-radius: 3px;
+    background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+    color: var(--stone-900); font-size: 0.75rem; cursor: pointer;
+    font-family: ui-monospace, monospace; transition: var(--transition-soft);
 }
-.compat-compatible { background: #64b478; }
-.compat-warning { background: #c8aa64; }
-.compat-incompatible { background: #c86464; }
-.compat-unknown { background: var(--text-dim); }
+.btn:hover { border-color: var(--accent-sage); color: var(--accent-sage); transform: translateY(-1px); }
+.btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+.btn.accent { background: rgba(132,165,157,0.15); color: var(--accent-sage); border-color: var(--accent-sage); }
+.btn.sm { padding: 3px 8px; font-size: 0.7rem; }
 
-.offering-name {
-  font-family: var(--mono); font-weight: 600;
-  color: var(--text); cursor: pointer;
-}
-.offering-name:hover { color: var(--accent); }
+.compat-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.compat-compatible { background: var(--accent-sage); }
+.compat-warning { background: var(--accent-hopeful); }
+.compat-incompatible { background: var(--accent-clay); }
+.compat-unknown { background: var(--stone-400); }
 
-/* Detail view */
-.detail-bar {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 16px; flex-wrap: wrap;
+.card {
+    background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--vellum-border); border-radius: 3px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.03), inset 0 0 20px rgba(255,255,255,0.1);
+    transition: var(--transition-soft);
 }
-.detail-bar .tags { flex: 1; }
 
-/* Tabs */
-.tabs {
-  display: flex; gap: 0; border-bottom: 1px solid var(--border);
-  margin-bottom: 0;
+.catalog-bar { display: flex; align-items: center; gap: 12px; }
+.catalog-bar input {
+    flex: 1; padding: 8px 12px;
+    background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--vellum-border); border-radius: 3px;
+    color: var(--stone-900); font-size: 0.85rem; outline: none;
+    font-family: ui-monospace, monospace;
 }
+.catalog-bar input:focus { border-color: var(--accent-sage); }
+
+.filter-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.pill {
+    padding: 2px 10px; border-radius: 12px; font-size: 0.7rem;
+    cursor: pointer; border: 1px solid var(--stone-200);
+    background: transparent; color: var(--stone-600);
+    font-family: ui-monospace, monospace; transition: var(--transition-soft);
+}
+.pill:hover { border-color: var(--accent-sage); color: var(--accent-sage); }
+.pill.active { background: rgba(132,165,157,0.15); border-color: var(--accent-sage); color: var(--accent-sage); }
+
+.offering-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.offering-row {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: center; gap: 1rem;
+    padding: 1rem 1.25rem; cursor: pointer;
+}
+.offering-row:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(0,0,0,0.05); }
+.offering-name { font-family: ui-monospace, monospace; font-weight: 600; font-size: 0.95rem; }
+.offering-desc { font-size: 0.8rem; color: var(--stone-600); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.offering-meta { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; align-items: center; }
+.offering-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.offering-compat { font-size: 0.75rem; color: var(--stone-600); font-family: ui-monospace, monospace; }
+
+.empty-state { text-align: center; padding: 4rem 2rem; color: var(--stone-600); font-size: 0.9rem; }
+.empty-state .hint { font-size: 0.8rem; color: var(--stone-400); margin-top: 0.5rem; }
+.loading { color: var(--stone-600); font-size: 0.85rem; padding: 3rem; text-align: center; }
+
+.detail-summary { padding: 1rem 1.25rem; }
+.detail-desc { font-size: 0.85rem; color: var(--stone-600); margin-bottom: 0.5rem; }
+.detail-facts {
+    display: flex; gap: 1.5rem; flex-wrap: wrap;
+    font-family: ui-monospace, monospace; font-size: 0.75rem; color: var(--stone-400);
+}
+.detail-fact-label { color: var(--stone-400); margin-right: 4px; }
+.detail-fact-value { color: var(--stone-600); }
+.detail-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 0.75rem; }
+.detail-bar .spacer { flex: 1; }
+
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--stone-200); overflow-x: auto; }
 .tab {
-  padding: 8px 16px; font-size: 12px; cursor: pointer;
-  border: 1px solid transparent; border-bottom: none;
-  border-radius: 6px 6px 0 0; color: var(--text-dim);
-  background: transparent; font-family: inherit;
+    padding: 8px 16px; font-size: 0.75rem; cursor: pointer;
+    border: 1px solid transparent; border-bottom: none;
+    border-radius: 3px 3px 0 0; color: var(--stone-400);
+    background: transparent; font-family: ui-monospace, monospace;
+    white-space: nowrap; transition: color 0.2s;
 }
-.tab:hover { color: var(--text); background: var(--surface); }
-.tab.active {
-  color: var(--accent); background: var(--surface);
-  border-color: var(--border); position: relative;
-}
-.tab.active::after {
-  content: ''; position: absolute; bottom: -1px; left: 0; right: 0;
-  height: 1px; background: var(--surface);
-}
-.tab.ghost { opacity: 0.35; font-style: italic; }
-.tab.ghost:hover { opacity: 0.6; }
-.tab .origin-dot {
-  display: inline-block; width: 6px; height: 6px;
-  border-radius: 50%; margin-left: 6px; vertical-align: middle;
-}
-.origin-builtin { background: var(--accent); }
-.origin-custom { background: #c8aa64; }
-.origin-customized { background: #b482c8; }
+.tab:hover { color: var(--stone-900); }
+.tab.active { color: var(--accent-sage); background: var(--vellum-white); border-color: var(--vellum-border); position: relative; }
+.tab.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 1px; background: var(--bg-base); }
+.tab.ghost { opacity: 0.3; font-style: italic; }
+.tab.ghost:hover { opacity: 0.55; }
+.tab .origin-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+.origin-built-in { background: var(--accent-sage); }
+.origin-custom { background: var(--accent-clay); }
+.origin-customized { background: var(--accent-purple); }
 
-/* Editor area */
 .editor-wrap {
-  background: var(--surface); border: 1px solid var(--border);
-  border-top: none; border-radius: 0 0 6px 6px;
-  min-height: 300px; display: flex; flex-direction: column;
+    background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--vellum-border); border-top: none;
+    border-radius: 0 0 3px 3px; min-height: 300px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.03);
 }
 .editor-toolbar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-bottom: 1px solid var(--border);
-  font-size: 11px; color: var(--text-dim);
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-bottom: 1px solid var(--vellum-border);
+    font-size: 0.7rem; color: var(--stone-400); font-family: ui-monospace, monospace;
 }
 .editor-toolbar .spacer { flex: 1; }
-
-.editor-area {
-  flex: 1; position: relative;
+.dirty-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-hopeful); margin-right: 4px;
+    opacity: 0; transition: opacity 0.3s;
 }
-.editor-area textarea {
-  width: 100%; min-height: 350px; padding: 12px 16px;
-  background: transparent; border: none; color: var(--text);
-  font-family: var(--mono); font-size: 13px; line-height: 1.5;
-  resize: vertical; outline: none;
-  tab-size: 2;
-}
-.editor-area textarea:focus { background: rgba(255,255,255,0.01); }
+.dirty-dot.visible { opacity: 1; }
 
-/* Validation panel */
+.editor-body { display: flex; flex: 1; }
+.line-numbers {
+    padding: 12px 0; text-align: right; user-select: none;
+    font-family: ui-monospace, monospace; font-size: 0.8rem;
+    line-height: 1.5; color: var(--stone-400); opacity: 0.4;
+    min-width: 36px; padding-right: 8px; border-right: 1px solid var(--vellum-border);
+    overflow: hidden;
+}
+.editor-body textarea {
+    flex: 1; min-height: 350px; padding: 12px 16px;
+    background: transparent; border: none; color: var(--stone-900);
+    font-family: ui-monospace, monospace; font-size: 0.8rem; line-height: 1.5;
+    resize: vertical; outline: none; tab-size: 2;
+}
+
 .validation-panel {
-  border-top: 1px solid var(--border);
-  padding: 8px 12px; font-size: 12px;
-  max-height: 150px; overflow-y: auto;
+    border-top: 1px solid var(--vellum-border);
+    padding: 8px 12px; font-size: 0.75rem; max-height: 140px; overflow-y: auto;
 }
-.finding { display: flex; gap: 8px; padding: 3px 0; }
+.finding { display: flex; gap: 8px; padding: 2px 0; }
 .finding-icon { flex-shrink: 0; }
-.finding.error .finding-icon { color: var(--err); }
-.finding.warning .finding-icon { color: var(--warn); }
-.finding.info .finding-icon { color: var(--accent); }
-.finding-msg { color: var(--text-dim); }
-.finding-code { font-family: var(--mono); font-size: 10px; color: var(--text-dim); opacity: 0.6; }
-.valid-msg { color: var(--accent); padding: 3px 0; }
+.finding.error .finding-icon { color: var(--accent-clay); }
+.finding.warning .finding-icon { color: var(--accent-hopeful); }
+.finding.info .finding-icon { color: var(--accent-sage); }
+.finding-msg { color: var(--stone-600); }
+.finding-code { font-family: ui-monospace, monospace; font-size: 0.65rem; color: var(--stone-400); }
+.valid-msg { color: var(--accent-sage); }
 
-/* Status toast */
 .toast {
-  position: fixed; bottom: 24px; right: 24px;
-  padding: 8px 16px; border-radius: 6px;
-  background: var(--surface-2); border: 1px solid var(--border-2);
-  font-size: 12px; color: var(--text);
-  opacity: 0; transition: opacity 0.3s;
-  pointer-events: none; z-index: 100;
+    position: fixed; bottom: 24px; right: 24px;
+    padding: 8px 16px; border-radius: 3px;
+    background: var(--vellum-white); backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--vellum-border);
+    font-size: 0.8rem; color: var(--stone-900);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+    opacity: 0; transition: opacity 0.3s, transform 0.3s;
+    transform: translateY(8px); pointer-events: none; z-index: 100;
 }
-.toast.visible { opacity: 1; }
+.toast.visible { opacity: 1; transform: translateY(0); }
 
-/* New from image modal */
 .modal-overlay {
-  display: none; position: fixed; inset: 0;
-  background: rgba(0,0,0,0.5); z-index: 50;
-  align-items: center; justify-content: center;
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.3); backdrop-filter: blur(4px);
+    z-index: 50; align-items: center; justify-content: center;
 }
 .modal-overlay.visible { display: flex; }
 .modal {
-  background: var(--surface); border: 1px solid var(--border-2);
-  border-radius: 8px; padding: 20px; width: 420px; max-width: 90vw;
+    background: var(--bg-base); border: 1px solid var(--stone-200);
+    border-radius: 6px; padding: 24px; width: 440px; max-width: 90vw;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15); animation: fadeIn 0.3s ease-out;
 }
-.modal h3 { font-size: 15px; margin-bottom: 12px; }
+.modal h3 { font-size: 1rem; margin-bottom: 16px; font-weight: 600; }
 .modal input {
-  width: 100%; padding: 8px 10px; margin-bottom: 12px;
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: 4px; color: var(--text); font-family: var(--mono);
-  font-size: 13px; outline: none;
+    width: 100%; padding: 8px 12px; margin-bottom: 12px;
+    background: var(--vellum-white); border: 1px solid var(--vellum-border);
+    border-radius: 3px; color: var(--stone-900);
+    font-family: ui-monospace, monospace; font-size: 0.85rem; outline: none;
 }
-.modal input:focus { border-color: var(--accent); }
+.modal input:focus { border-color: var(--accent-sage); }
 .modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal .progress { font-size: 0.8rem; color: var(--stone-600); margin-bottom: 12px; font-family: ui-monospace, monospace; }
+
+.view-enter { animation: viewEnter 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes viewEnter { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
-
+<svg class="vellum-grain"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+<div class="container">
 <div class="header" id="header">
-  <a class="header-back" href="/">&larr; portrait</a>
-  <h1>Greenhouse</h1>
-</div>
-
-<div class="content">
-  <!-- Catalog View -->
-  <div id="catalog-view">
-    <div class="catalog-bar">
-      <input type="text" id="search" placeholder="Search offerings..." oninput="filterCatalog()">
-      <button class="btn accent" onclick="showImageModal()">New from image</button>
-    </div>
-    <div id="catalog-area"><div class="loading">Loading catalog...</div></div>
-  </div>
-
-  <!-- Detail View (hidden by default) -->
-  <div id="detail-view" style="display:none">
-    <div class="detail-bar">
-      <div class="tags" id="detail-tags"></div>
-      <button class="btn sm" onclick="exportOffering()">Export</button>
-      <button class="btn sm accent" id="detail-install-btn" style="display:none" onclick="installOffering()">Install</button>
-    </div>
-    <div class="tabs" id="detail-tabs"></div>
-    <div class="editor-wrap">
-      <div class="editor-toolbar">
-        <span id="editor-origin"></span>
-        <span class="spacer"></span>
-        <button class="btn sm" id="btn-reset" style="display:none" onclick="resetFile()">Reset to default</button>
-        <button class="btn sm accent" id="btn-save" onclick="saveFile()">Save</button>
-      </div>
-      <div class="editor-area">
-        <textarea id="editor" spellcheck="false" oninput="onEditorInput()"></textarea>
-      </div>
-      <div class="validation-panel" id="validation-panel" style="display:none"></div>
-    </div>
+  <div class="header-left">
+    <a class="header-back" href="/">portrait</a>
+    <span class="header-title">Greenhouse</span>
   </div>
 </div>
-
+<div id="catalog-view">
+  <div class="catalog-bar">
+    <input type="text" id="search" placeholder="search offerings..." oninput="filterCatalog()">
+    <button class="btn accent" onclick="showImageModal()">new from image</button>
+  </div>
+  <div class="filter-pills" id="filter-pills"></div>
+  <div id="catalog-area" style="margin-top:1rem"><div class="loading">loading catalog...</div></div>
+</div>
+<div id="detail-view" style="display:none" class="view-enter">
+  <div class="card detail-summary" id="detail-summary"></div>
+  <div class="tabs" id="detail-tabs"></div>
+  <div class="editor-wrap">
+    <div class="editor-toolbar">
+      <span class="dirty-dot" id="dirty-dot"></span>
+      <span id="editor-origin"></span>
+      <span class="spacer"></span>
+      <span style="opacity:0.4;font-size:0.65rem">ctrl+s</span>
+      <button class="btn sm" id="btn-reset" style="display:none" onclick="resetFile()">reset</button>
+      <button class="btn sm accent" id="btn-save" onclick="saveFile()">save</button>
+    </div>
+    <div class="editor-body">
+      <div class="line-numbers" id="line-numbers"></div>
+      <textarea id="editor" spellcheck="false" oninput="onEditorInput()" onscroll="syncLineNumbers()"></textarea>
+    </div>
+    <div class="validation-panel" id="validation-panel" style="display:none"></div>
+  </div>
+</div>
+</div>
 <div class="toast" id="toast"></div>
-
-<!-- New from image modal -->
 <div class="modal-overlay" id="image-modal">
   <div class="modal">
     <h3>New from image</h3>
     <input type="text" id="image-ref-input" placeholder="nginx:latest or ghcr.io/org/app:v2" />
+    <div class="progress" id="image-progress" style="display:none"></div>
     <div class="actions">
-      <button class="btn" onclick="hideImageModal()">Cancel</button>
-      <button class="btn accent" id="image-inspect-btn" onclick="inspectImage()">Inspect</button>
+      <button class="btn" onclick="hideImageModal()">cancel</button>
+      <button class="btn accent" id="image-inspect-btn" onclick="inspectImage()">inspect</button>
     </div>
   </div>
 </div>
-
 <script>
-// ========================================================================
-// State
-// ========================================================================
-let catalog = [];
-let currentOffering = null; // catalog entry for the open offering
-let currentTab = null;      // active file_type
-let editorDirty = false;
-let validateTimer = null;
+let catalog=[],currentOffering=null,currentTab=null,editorDirty=false,validateTimer=null,activeFilter=null;
+const FILE_TYPES=['snippet','frontmatter','compatibility','guidance','research','adopted','adopted-guidance','capabilities'];
+const FILE_LABELS={snippet:'Config',frontmatter:'Frontmatter',compatibility:'Compatibility',guidance:'Guidance',research:'Research',adopted:'Adopted','adopted-guidance':'Adopted Guide',capabilities:'Capabilities'};
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('visible');setTimeout(()=>e.classList.remove('visible'),2500);}
 
-const FILE_TYPES = ['snippet', 'frontmatter', 'compatibility', 'guidance', 'research', 'adopted', 'adopted-guidance', 'capabilities'];
-const FILE_LABELS = {
-  snippet: 'Config', frontmatter: 'Frontmatter', compatibility: 'Compatibility',
-  guidance: 'Guidance', research: 'Research', adopted: 'Adopted',
-  'adopted-guidance': 'Adopted Guide', capabilities: 'Capabilities'
-};
+async function loadCatalog(){try{catalog=await(await fetch('/api/v1/stone/greenhouse/catalog')).json();buildFilterPills();renderCatalog(getFiltered());}catch(e){document.getElementById('catalog-area').innerHTML='<div class="empty-state">Failed to load catalog</div>';}}
+function buildFilterPills(){const cats=new Set(catalog.map(o=>o.category));let h='<button class="pill'+(activeFilter===null?' active':'')+'" onclick="setFilter(null)">all</button>';for(const c of[...cats].sort())h+='<button class="pill'+(activeFilter===c?' active':'')+'" onclick="setFilter(\''+esc(c)+'\')">'+esc(c)+'</button>';document.getElementById('filter-pills').innerHTML=h;}
+function setFilter(c){activeFilter=c;buildFilterPills();renderCatalog(getFiltered());}
+function getFiltered(){let items=catalog;const q=document.getElementById('search').value.toLowerCase();if(q)items=items.filter(o=>o.name.toLowerCase().includes(q)||o.category.toLowerCase().includes(q)||(o.description||'').toLowerCase().includes(q));if(activeFilter)items=items.filter(o=>o.category===activeFilter);return items;}
+function filterCatalog(){renderCatalog(getFiltered());}
 
-function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('visible');
-  setTimeout(() => el.classList.remove('visible'), 2500);
+function renderCatalog(items){
+  if(!items.length){document.getElementById('catalog-area').innerHTML='<div class="empty-state">No offerings found<div class="hint">Use "new from image" to create your first offering, or adjust your search.</div></div>';return;}
+  let h='<div class="offering-list">';
+  for(const o of items){
+    h+='<div class="card offering-row" onclick="openOffering(\''+esc(o.name)+'\')">';
+    h+='<div><div class="offering-name">'+esc(o.name)+'</div>';
+    if(o.description)h+='<div class="offering-desc">'+esc(o.description)+'</div>';
+    h+='<div class="offering-meta">';
+    h+='<span class="tag tag-'+o.source+'">'+esc(o.source)+'</span>';
+    if(o.customized)h+='<span class="tag tag-customized">customized</span>';
+    if(o.state==='installed'){h+=o.running?'<span class="tag tag-running">running</span>':'<span class="tag tag-stopped">stopped</span>';}
+    else h+='<span class="tag tag-available">available</span>';
+    h+='</div></div>';
+    h+='<div class="offering-right"><span class="offering-compat"><span class="compat-dot compat-'+o.compatibility.status+'" title="'+esc(o.compatibility.reason||o.compatibility.status)+'"></span>'+esc(o.compatibility.status)+'</span>';
+    h+='<span style="font-size:0.7rem;color:var(--stone-400)">'+esc(o.category)+'</span></div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  document.getElementById('catalog-area').innerHTML=h;
 }
 
-// ========================================================================
-// Catalog View
-// ========================================================================
-async function loadCatalog() {
-  try {
-    const r = await fetch('/api/v1/stone/greenhouse/catalog');
-    catalog = await r.json();
-    renderCatalog(catalog);
-  } catch(e) {
-    document.getElementById('catalog-area').innerHTML = '<div class="empty-state">Failed to load catalog</div>';
-  }
-}
-
-function filterCatalog() {
-  const q = document.getElementById('search').value.toLowerCase();
-  if (!q) { renderCatalog(catalog); return; }
-  renderCatalog(catalog.filter(o =>
-    o.name.toLowerCase().includes(q) ||
-    o.category.toLowerCase().includes(q) ||
-    (o.description || '').toLowerCase().includes(q)
-  ));
-}
-
-function renderCatalog(items) {
-  if (!items.length) {
-    document.getElementById('catalog-area').innerHTML = '<div class="empty-state">No offerings found</div>';
-    return;
-  }
-  let html = '<table><thead><tr><th>Offering</th><th>Category</th><th>Source</th><th>Status</th><th>Compat</th><th>Files</th><th></th></tr></thead><tbody>';
-  for (const o of items) {
-    let tags = '<span class="tag tag-' + o.source + '">' + esc(o.source) + '</span>';
-    if (o.customized) tags += '<span class="tag tag-customized">customized</span>';
-    let status = '';
-    if (o.state === 'installed') {
-      status = '<span class="tag tag-installed">installed</span>';
-      status += o.running ? '<span class="tag tag-running">running</span>' : '<span class="tag tag-stopped">stopped</span>';
-    } else {
-      status = '<span class="tag tag-available">available</span>';
-    }
-    const cs = o.compatibility.status;
-    const compat = '<span class="compat-dot compat-' + cs + '" title="' + esc(o.compatibility.reason || cs) + '"></span>' + esc(cs);
-
-    html += '<tr>';
-    html += '<td><span class="offering-name" onclick="openOffering(\'' + esc(o.name) + '\')">' + esc(o.name) + '</span>';
-    if (o.description) html += '<br><span style="font-size:11px;color:var(--text-dim)">' + esc(o.description).substring(0, 80) + '</span>';
-    html += '</td>';
-    html += '<td>' + esc(o.category) + '</td>';
-    html += '<td>' + tags + '</td>';
-    html += '<td>' + status + '</td>';
-    html += '<td>' + compat + '</td>';
-    html += '<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">' + o.files.length + '</td>';
-    html += '<td><button class="btn" onclick="openOffering(\'' + esc(o.name) + '\')">Open</button></td>';
-    html += '</tr>';
-  }
-  html += '</tbody></table>';
-  document.getElementById('catalog-area').innerHTML = html;
-}
-
-// ========================================================================
-// Detail View
-// ========================================================================
-function openOffering(name) {
-  currentOffering = catalog.find(o => o.name === name);
-  if (!currentOffering) return;
-
-  // Update header
-  document.getElementById('header').innerHTML =
-    '<a class="header-back" href="javascript:backToCatalog()">&larr; catalog</a>' +
-    '<span class="header-crumb">/</span>' +
-    '<span class="header-offering">' + esc(name) + '</span>';
-
-  // Tags bar
-  let tags = '<span class="tag tag-' + currentOffering.source + '">' + esc(currentOffering.source) + '</span>';
-  if (currentOffering.customized) tags += '<span class="tag tag-customized">customized</span>';
-  if (currentOffering.state === 'installed') {
-    tags += '<span class="tag tag-installed">installed</span>';
-    tags += currentOffering.running ? '<span class="tag tag-running">running</span>' : '<span class="tag tag-stopped">stopped</span>';
-  }
-  document.getElementById('detail-tags').innerHTML = tags;
-  document.getElementById('detail-install-btn').style.display =
-    currentOffering.state === 'available' ? '' : 'none';
-
-  // Build tabs
+function openOffering(name){
+  currentOffering=catalog.find(o=>o.name===name);if(!currentOffering)return;
+  document.title='Greenhouse \u2014 '+name;
+  document.getElementById('header').innerHTML='<div class="header-left"><a class="header-back" href="javascript:backToCatalog()">catalog</a><span class="header-crumb">/</span><span class="header-offering">'+esc(name)+'</span></div>';
+  const o=currentOffering;let s='';
+  if(o.description)s+='<div class="detail-desc">'+esc(o.description)+'</div>';
+  s+='<div class="detail-facts">';
+  if(o.image)s+='<span><span class="detail-fact-label">image</span><span class="detail-fact-value">'+esc(o.image)+'</span></span>';
+  if(o.ports&&o.ports.length)s+='<span><span class="detail-fact-label">ports</span><span class="detail-fact-value">'+o.ports.map(p=>p[1]).join(', ')+'</span></span>';
+  if(o.volume_count)s+='<span><span class="detail-fact-label">volumes</span><span class="detail-fact-value">'+o.volume_count+'</span></span>';
+  s+='<span><span class="detail-fact-label">category</span><span class="detail-fact-value">'+esc(o.category)+'</span></span>';
+  s+='</div><div class="detail-bar">';
+  s+='<span class="tag tag-'+o.source+'">'+esc(o.source)+'</span>';
+  if(o.customized)s+='<span class="tag tag-customized">customized</span>';
+  if(o.state==='installed'){s+=o.running?'<span class="tag tag-running">running</span>':'<span class="tag tag-stopped">stopped</span>';}
+  s+='<span class="spacer"></span><button class="btn sm" onclick="exportOffering()">export</button></div>';
+  document.getElementById('detail-summary').innerHTML=s;
   renderTabs();
-
-  // Show first available tab
-  const firstFile = currentOffering.files[0];
-  const firstType = firstFile ? firstFile.file_type : 'snippet';
-  switchTab(firstType);
-
-  document.getElementById('catalog-view').style.display = 'none';
-  document.getElementById('detail-view').style.display = '';
+  switchTab(o.files.length?o.files[0].file_type:'snippet');
+  document.getElementById('catalog-view').style.display='none';
+  const dv=document.getElementById('detail-view');dv.style.display='';dv.classList.remove('view-enter');void dv.offsetWidth;dv.classList.add('view-enter');
 }
 
-function backToCatalog() {
-  if (editorDirty && !confirm('Unsaved changes will be lost. Continue?')) return;
-  editorDirty = false;
-  currentOffering = null;
-  currentTab = null;
-  document.getElementById('header').innerHTML =
-    '<a class="header-back" href="/">&larr; portrait</a><h1>Greenhouse</h1>';
-  document.getElementById('catalog-view').style.display = '';
-  document.getElementById('detail-view').style.display = 'none';
-  document.getElementById('validation-panel').style.display = 'none';
-  loadCatalog(); // refresh
+function backToCatalog(){
+  if(editorDirty)autoSave();
+  editorDirty=false;currentOffering=null;currentTab=null;
+  document.title='Greenhouse';
+  document.getElementById('header').innerHTML='<div class="header-left"><a class="header-back" href="/">portrait</a><span class="header-title">Greenhouse</span></div>';
+  document.getElementById('catalog-view').style.display='';document.getElementById('detail-view').style.display='none';
+  document.getElementById('validation-panel').style.display='none';loadCatalog();
 }
 
-function renderTabs() {
-  const existing = new Map();
-  for (const f of currentOffering.files) {
-    existing.set(f.file_type, f);
-  }
-
-  let html = '';
-  for (const ft of FILE_TYPES) {
-    const file = existing.get(ft);
-    const label = FILE_LABELS[ft] || ft;
-    const ghost = !file ? ' ghost' : '';
-    const active = ft === currentTab ? ' active' : '';
-
-    let dot = '';
-    if (file) {
-      const cls = 'origin-' + file.origin;
-      dot = '<span class="origin-dot ' + cls + '" title="' + file.origin + '"></span>';
-    }
-
-    html += '<button class="tab' + ghost + active + '" onclick="switchTab(\'' + ft + '\')">' + esc(label) + dot + '</button>';
-  }
-  document.getElementById('detail-tabs').innerHTML = html;
+function renderTabs(){
+  const ex=new Map();for(const f of currentOffering.files)ex.set(f.file_type,f);
+  let h='';for(const ft of FILE_TYPES){const file=ex.get(ft);const label=FILE_LABELS[ft]||ft;
+  let dot='';if(file)dot='<span class="origin-dot origin-'+file.origin+'" title="'+file.origin+'"></span>';
+  h+='<button class="tab'+(file?'':' ghost')+(ft===currentTab?' active':'')+'" onclick="switchTab(\''+ft+'\')">'+esc(label)+dot+'</button>';}
+  document.getElementById('detail-tabs').innerHTML=h;
 }
 
-async function switchTab(fileType) {
-  if (editorDirty && currentTab !== fileType) {
-    if (!confirm('Unsaved changes will be lost. Switch tab?')) return;
-  }
-  currentTab = fileType;
-  editorDirty = false;
-  renderTabs();
-
-  const editor = document.getElementById('editor');
-  const file = currentOffering.files.find(f => f.file_type === fileType);
-
-  // Update toolbar
-  if (file) {
-    const originLabel = file.origin === 'built-in' ? 'built-in' :
-                        file.origin === 'customized' ? 'customized (overlay)' : 'custom';
-    document.getElementById('editor-origin').textContent = originLabel;
-    document.getElementById('btn-reset').style.display =
-      (file.origin === 'customized' || file.origin === 'custom') ? '' : 'none';
-  } else {
-    document.getElementById('editor-origin').textContent = 'new file';
-    document.getElementById('btn-reset').style.display = 'none';
-  }
-
-  // Show validation panel only for snippet
-  document.getElementById('validation-panel').style.display =
-    fileType === 'snippet' ? '' : 'none';
-
-  // Load content
-  if (file) {
-    try {
-      const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
-        encodeURIComponent(currentOffering.name) + '&type=' + encodeURIComponent(fileType));
-      if (r.ok) {
-        editor.value = await r.text();
-      } else {
-        editor.value = '# Failed to load file';
-      }
-    } catch(e) {
-      editor.value = '# Error: ' + e.message;
-    }
-  } else {
-    // Ghost tab — empty editor for lazy creation
-    editor.value = '';
-    editor.placeholder = 'Start typing to create this file...';
-  }
-
-  if (fileType === 'snippet') {
-    runValidation();
-  }
+async function switchTab(ft){
+  if(editorDirty&&currentTab!==ft)await autoSave();
+  currentTab=ft;editorDirty=false;updateDirtyDot();renderTabs();
+  const editor=document.getElementById('editor');const file=currentOffering.files.find(f=>f.file_type===ft);
+  if(file){
+    const ol=file.origin==='built-in'?'built-in':file.origin==='customized'?'customized (overlay)':'custom';
+    document.getElementById('editor-origin').textContent=ol;
+    document.getElementById('btn-reset').style.display=(file.origin==='customized'||file.origin==='custom')?'':'none';
+  }else{document.getElementById('editor-origin').textContent='new file';document.getElementById('btn-reset').style.display='none';}
+  document.getElementById('validation-panel').style.display=ft==='snippet'?'':'none';
+  if(file){try{const r=await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(ft));editor.value=r.ok?await r.text():'# Failed to load';}catch(e){editor.value='# Error: '+e.message;}}
+  else{editor.value='';editor.placeholder='Start typing to create this file...';}
+  updateLineNumbers();if(ft==='snippet')runValidation();
 }
 
-// ========================================================================
-// Editor Actions
-// ========================================================================
-function onEditorInput() {
-  editorDirty = true;
-  if (currentTab === 'snippet') {
-    clearTimeout(validateTimer);
-    validateTimer = setTimeout(runValidation, 800);
-  }
+function onEditorInput(){editorDirty=true;updateDirtyDot();updateLineNumbers();if(currentTab==='snippet'){clearTimeout(validateTimer);validateTimer=setTimeout(runValidation,800);}}
+function updateDirtyDot(){document.getElementById('dirty-dot').classList.toggle('visible',editorDirty);}
+function updateLineNumbers(){const e=document.getElementById('editor');const n=e.value.split('\n').length;const a=[];for(let i=1;i<=n;i++)a.push(i);document.getElementById('line-numbers').textContent=a.join('\n');}
+function syncLineNumbers(){document.getElementById('line-numbers').scrollTop=document.getElementById('editor').scrollTop;}
+
+async function autoSave(){if(!editorDirty||!currentOffering||!currentTab)return;const c=document.getElementById('editor').value;if(!c.trim())return;
+try{await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(currentTab),{method:'PUT',headers:{'Content-Type':'text/plain'},body:c});editorDirty=false;updateDirtyDot();updateFileEntry();toast('auto-saved '+currentTab);}catch(e){}}
+
+async function saveFile(){const c=document.getElementById('editor').value;if(!currentOffering||!currentTab)return;
+try{const r=await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(currentTab),{method:'PUT',headers:{'Content-Type':'text/plain'},body:c});if(!r.ok)throw new Error('HTTP '+r.status);editorDirty=false;updateDirtyDot();updateFileEntry();renderTabs();toast('saved '+currentTab);}catch(e){toast('save failed: '+e.message);}}
+
+function updateFileEntry(){
+  const ex=currentOffering.files.find(f=>f.file_type===currentTab);
+  if(ex){if(ex.origin==='built-in')ex.origin='customized';}
+  else{const ext=currentTab.endsWith('guidance')||currentTab==='research'?'md':currentTab==='frontmatter'?'json':'yaml';currentOffering.files.push({file_type:currentTab,extension:ext,origin:'custom'});}
+  if(currentOffering.source==='curated')currentOffering.customized=true;
+  const file=currentOffering.files.find(f=>f.file_type===currentTab);
+  if(file){document.getElementById('editor-origin').textContent=file.origin==='built-in'?'built-in':file.origin==='customized'?'customized (overlay)':'custom';document.getElementById('btn-reset').style.display=(file.origin==='customized'||file.origin==='custom')?'':'none';}
 }
 
-async function saveFile() {
-  const content = document.getElementById('editor').value;
-  if (!currentOffering || !currentTab) return;
+async function resetFile(){if(!confirm('Reset this file to the built-in version?'))return;
+try{const r=await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(currentTab),{method:'DELETE'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();toast(d.reset_to_builtin?'reset to built-in':'file deleted');
+const idx=currentOffering.files.findIndex(f=>f.file_type===currentTab);if(d.reset_to_builtin&&idx>=0)currentOffering.files[idx].origin='built-in';else if(!d.reset_to_builtin&&idx>=0)currentOffering.files.splice(idx,1);
+editorDirty=false;updateDirtyDot();renderTabs();switchTab(currentTab);}catch(e){toast('reset failed: '+e.message);}}
 
-  try {
-    const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
-      encodeURIComponent(currentOffering.name) + '&type=' + encodeURIComponent(currentTab), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'text/plain' },
-      body: content,
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    editorDirty = false;
-    toast('Saved ' + currentTab);
+async function runValidation(){const c=document.getElementById('editor').value;if(!c.trim()){document.getElementById('validation-panel').innerHTML='';return;}
+try{const r=await fetch('/api/v1/stone/greenhouse/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({snippet_yaml:c})});if(!r.ok)return;renderValidation(await r.json());}catch(e){}}
+function renderValidation(d){const el=document.getElementById('validation-panel');if(d.valid&&d.findings.length===0){el.innerHTML='<div class="valid-msg">valid \u2014 no issues.</div>';return;}
+const icons={error:'\u25cf',warning:'\u25d0',info:'\u25cb'};el.innerHTML=d.findings.map(f=>'<div class="finding '+f.severity+'"><span class="finding-icon">'+(icons[f.severity]||'\u25cb')+'</span><span class="finding-msg">'+esc(f.message)+'</span><span class="finding-code">'+esc(f.code)+'</span></div>').join('')+(d.valid?'<div class="valid-msg">valid (warnings only).</div>':'');}
 
-    // Update file list in current offering (add if new)
-    const existing = currentOffering.files.find(f => f.file_type === currentTab);
-    if (existing) {
-      if (existing.origin === 'built-in') existing.origin = 'customized';
-    } else {
-      const extMap = { yaml: 'yaml', json: 'json', md: 'md' };
-      const ext = currentTab.endsWith('guidance') || currentTab === 'research' ? 'md' :
-                  currentTab === 'frontmatter' ? 'json' : 'yaml';
-      currentOffering.files.push({ file_type: currentTab, extension: ext, origin: 'custom' });
-    }
-    if (currentOffering.source === 'curated') currentOffering.customized = true;
+async function exportOffering(){if(!currentOffering)return;
+try{const r=await fetch('/api/v1/stone/greenhouse/export?offering='+encodeURIComponent(currentOffering.name));if(!r.ok)throw new Error('HTTP '+r.status);const bundle=await r.json();
+for(const[fn,content]of Object.entries(bundle)){const b=new Blob([content],{type:'text/plain'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=fn;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(u);}
+toast('exported '+Object.keys(bundle).length+' files');}catch(e){toast('export failed: '+e.message);}}
 
-    renderTabs();
-    // Update toolbar origin
-    const file = currentOffering.files.find(f => f.file_type === currentTab);
-    if (file) {
-      const originLabel = file.origin === 'built-in' ? 'built-in' :
-                          file.origin === 'customized' ? 'customized (overlay)' : 'custom';
-      document.getElementById('editor-origin').textContent = originLabel;
-      document.getElementById('btn-reset').style.display =
-        (file.origin === 'customized' || file.origin === 'custom') ? '' : 'none';
-    }
-  } catch(e) {
-    toast('Save failed: ' + e.message);
-  }
-}
+function showImageModal(){document.getElementById('image-ref-input').value='';document.getElementById('image-progress').style.display='none';document.getElementById('image-modal').classList.add('visible');document.getElementById('image-ref-input').focus();}
+function hideImageModal(){document.getElementById('image-modal').classList.remove('visible');}
 
-async function resetFile() {
-  if (!confirm('Reset this file to the built-in version?')) return;
-  try {
-    const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
-      encodeURIComponent(currentOffering.name) + '&type=' + encodeURIComponent(currentTab), {
-      method: 'DELETE',
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    toast(data.reset_to_builtin ? 'Reset to built-in' : 'File deleted');
+async function inspectImage(){const ref=document.getElementById('image-ref-input').value.trim();if(!ref)return;
+const btn=document.getElementById('image-inspect-btn');const prog=document.getElementById('image-progress');btn.disabled=true;prog.style.display='';prog.textContent='pulling image...';
+try{const ir=await fetch('/api/v1/stone/offerings/inspect?image='+encodeURIComponent(ref));if(!ir.ok){const e=await ir.json().catch(()=>({}));throw new Error(e.message||'HTTP '+ir.status);}
+prog.textContent='inspecting metadata...';const insp=(await ir.json()).data||(await ir.json());
+prog.textContent='generating manifest...';const gr=await fetch('/api/v1/stone/greenhouse/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inspection:insp})});if(!gr.ok)throw new Error('generation failed');const gen=await gr.json();
+prog.textContent='saving files...';for(const[t,c]of[['snippet',gen.snippet_yaml],['frontmatter',gen.frontmatter_json],['compatibility',gen.compatibility_yaml],['guidance',gen.guidance_md]]){await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(gen.name)+'&type='+t,{method:'PUT',headers:{'Content-Type':'text/plain'},body:c});}
+hideImageModal();toast('created: '+gen.name);await loadCatalog();openOffering(gen.name);}catch(e){toast('failed: '+e.message);prog.textContent='failed: '+e.message;}finally{btn.disabled=false;}}
 
-    // Update file entry
-    const idx = currentOffering.files.findIndex(f => f.file_type === currentTab);
-    if (data.reset_to_builtin && idx >= 0) {
-      currentOffering.files[idx].origin = 'built-in';
-    } else if (!data.reset_to_builtin && idx >= 0) {
-      currentOffering.files.splice(idx, 1);
-    }
-
-    editorDirty = false;
-    renderTabs();
-    switchTab(currentTab);
-  } catch(e) {
-    toast('Reset failed: ' + e.message);
-  }
-}
-
-// ========================================================================
-// Validation (snippet tab only)
-// ========================================================================
-async function runValidation() {
-  const content = document.getElementById('editor').value;
-  if (!content.trim()) {
-    document.getElementById('validation-panel').innerHTML = '';
-    return;
-  }
-  try {
-    const r = await fetch('/api/v1/stone/greenhouse/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ snippet_yaml: content }),
-    });
-    if (!r.ok) return;
-    const data = await r.json();
-    renderValidation(data);
-  } catch(e) { /* silent */ }
-}
-
-function renderValidation(data) {
-  const el = document.getElementById('validation-panel');
-  if (data.valid && data.findings.length === 0) {
-    el.innerHTML = '<div class="valid-msg">Valid &mdash; no issues found.</div>';
-    return;
-  }
-  const icons = { error: '&#9679;', warning: '&#9680;', info: '&#9675;' };
-  el.innerHTML = data.findings.map(f =>
-    '<div class="finding ' + f.severity + '">' +
-    '<span class="finding-icon">' + (icons[f.severity] || '&#9675;') + '</span>' +
-    '<span class="finding-msg">' + esc(f.message) + '</span>' +
-    '<span class="finding-code">' + esc(f.code) + '</span></div>'
-  ).join('') + (data.valid ? '<div class="valid-msg">Valid (warnings only).</div>' : '');
-}
-
-// ========================================================================
-// Export
-// ========================================================================
-function exportOffering() {
-  if (!currentOffering) return;
-  for (const f of currentOffering.files) {
-    fetchAndDownload(currentOffering.name, f.file_type,
-      currentOffering.name + '.' + f.file_type.replace('-', '.') + '.' + f.extension);
-  }
-  toast('Exporting ' + currentOffering.files.length + ' files');
-}
-
-async function fetchAndDownload(offering, fileType, filename) {
-  try {
-    const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
-      encodeURIComponent(offering) + '&type=' + encodeURIComponent(fileType));
-    if (!r.ok) return;
-    const content = await r.text();
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch(e) { /* skip */ }
-}
-
-// ========================================================================
-// Install (placeholder — delegates to portrait/stone API)
-// ========================================================================
-function installOffering() {
-  if (!currentOffering) return;
-  toast('Install: use portrait to deploy ' + currentOffering.name);
-}
-
-// ========================================================================
-// New from image
-// ========================================================================
-function showImageModal() {
-  document.getElementById('image-ref-input').value = '';
-  document.getElementById('image-modal').classList.add('visible');
-  document.getElementById('image-ref-input').focus();
-}
-function hideImageModal() {
-  document.getElementById('image-modal').classList.remove('visible');
-}
-
-async function inspectImage() {
-  const ref = document.getElementById('image-ref-input').value.trim();
-  if (!ref) return;
-  const btn = document.getElementById('image-inspect-btn');
-  btn.disabled = true; btn.textContent = 'Inspecting...';
-
-  try {
-    // Inspect the image
-    const ir = await fetch('/api/v1/stone/offerings/inspect?image=' + encodeURIComponent(ref));
-    if (!ir.ok) {
-      const err = await ir.json().catch(() => ({}));
-      throw new Error(err.message || 'HTTP ' + ir.status);
-    }
-    const inspData = await ir.json();
-    const inspection = inspData.data || inspData;
-
-    // Generate manifest files
-    const gr = await fetch('/api/v1/stone/greenhouse/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inspection }),
-    });
-    if (!gr.ok) throw new Error('Generation failed');
-    const gen = await gr.json();
-
-    // Save generated files to runtime dir
-    const saves = [
-      { type: 'snippet', content: gen.snippet_yaml },
-      { type: 'frontmatter', content: gen.frontmatter_json },
-      { type: 'compatibility', content: gen.compatibility_yaml },
-      { type: 'guidance', content: gen.guidance_md },
-    ];
-    for (const s of saves) {
-      await fetch('/api/v1/stone/greenhouse/file?offering=' +
-        encodeURIComponent(gen.name) + '&type=' + s.type, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/plain' },
-        body: s.content,
-      });
-    }
-
-    hideImageModal();
-    toast('Created offering: ' + gen.name);
-
-    // Reload catalog and open the new offering
-    await loadCatalog();
-    openOffering(gen.name);
-  } catch(e) {
-    toast('Inspect failed: ' + e.message);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Inspect';
-  }
-}
-
-// Close modal on overlay click
-document.getElementById('image-modal').addEventListener('click', function(e) {
-  if (e.target === this) hideImageModal();
+document.addEventListener('keydown',function(e){
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();if(currentOffering&&currentTab)saveFile();}
+  if(e.key==='Escape'){if(document.getElementById('image-modal').classList.contains('visible')){hideImageModal();return;}if(currentOffering){backToCatalog();return;}}
+  if(currentOffering&&(e.ctrlKey||e.metaKey)&&(e.key==='['||e.key===']')){e.preventDefault();const fts=FILE_TYPES.filter(ft=>currentOffering.files.some(f=>f.file_type===ft));if(!fts.length)return;const idx=fts.indexOf(currentTab);const n=e.key===']'?(idx+1)%fts.length:(idx-1+fts.length)%fts.length;switchTab(fts[n]);}
+  if(e.key==='/'&&!currentOffering&&document.activeElement.tagName!=='INPUT'){e.preventDefault();document.getElementById('search').focus();}
 });
-// Enter key in image input
-document.getElementById('image-ref-input').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') inspectImage();
-});
-
-// ========================================================================
-// Init
-// ========================================================================
+document.getElementById('editor').addEventListener('keydown',function(e){if(e.key==='Tab'){e.preventDefault();const s=this.selectionStart,end=this.selectionEnd;this.value=this.value.substring(0,s)+'  '+this.value.substring(end);this.selectionStart=this.selectionEnd=s+2;onEditorInput();}});
+document.getElementById('image-modal').addEventListener('click',function(e){if(e.target===this)hideImageModal();});
+document.getElementById('image-ref-input').addEventListener('keydown',function(e){if(e.key==='Enter')inspectImage();});
 loadCatalog();
 </script>
 </body>

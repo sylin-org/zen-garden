@@ -88,6 +88,17 @@ pub struct CatalogEntry {
     pub category: String,
     /// Description from frontmatter or compiled index.
     pub description: String,
+    /// Docker image reference (e.g. "pihole/pihole:2024.07.0").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Tags from frontmatter (e.g. ["dns", "ad-blocking"]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Port mappings: name → (host, container).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<(String, u16, u16)>,
+    /// Volume count.
+    pub volume_count: usize,
     /// Source: "curated" (embedded), "custom" (user-authored).
     pub source: String,
     /// State: "installed" or "available".
@@ -314,11 +325,30 @@ pub async fn get_catalog(
             .collect(),
         None => HashMap::new(),
     };
-    let description_map: HashMap<String, String> = match index.as_ref() {
+    // Extract rich metadata from compiled offerings
+    struct OfferingMeta {
+        description: String,
+        image: String,
+        tags: Vec<String>,
+        ports: Vec<(String, u16, u16)>,
+        volume_count: usize,
+    }
+    let meta_map: HashMap<String, OfferingMeta> = match index.as_ref() {
         Some(cache) => cache
             .offerings
             .iter()
-            .map(|o| (o.name.clone(), o.description.clone()))
+            .map(|o| {
+                (
+                    o.name.clone(),
+                    OfferingMeta {
+                        description: o.description.clone(),
+                        image: o.image.clone(),
+                        tags: o.tags.clone(),
+                        ports: o.ports_vec_named(),
+                        volume_count: o.volumes.len(),
+                    },
+                )
+            })
             .collect(),
         None => HashMap::new(),
     };
@@ -360,7 +390,7 @@ pub async fn get_catalog(
             },
         );
 
-        let description = description_map.get(name).cloned().unwrap_or_default();
+        let meta = meta_map.get(name);
 
         // Build file inventory with origin info
         let mut files = Vec::new();
@@ -403,7 +433,11 @@ pub async fn get_catalog(
         catalog.push(CatalogEntry {
             name: name.clone(),
             category,
-            description,
+            description: meta.map(|m| m.description.clone()).unwrap_or_default(),
+            image: meta.map(|m| m.image.clone()),
+            tags: meta.map(|m| m.tags.clone()).unwrap_or_default(),
+            ports: meta.map(|m| m.ports.clone()).unwrap_or_default(),
+            volume_count: meta.map(|m| m.volume_count).unwrap_or(0),
             source: source.to_string(),
             state: if is_installed {
                 "installed".to_string()
@@ -677,6 +711,53 @@ pub async fn delete_file(
         "success": true,
         "reset_to_builtin": has_builtin,
     })))
+}
+
+// ============================================================================
+// Export
+// ============================================================================
+
+/// Query parameter for export endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    pub offering: String,
+}
+
+/// `GET /api/v1/stone/greenhouse/export?offering=pihole`
+///
+/// Returns all manifest files for an offering as a single JSON bundle.
+/// Each file is included as a key-value pair (filename → content).
+pub async fn export_offering(
+    Query(params): Query<ExportQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let mut bundle: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+    for &(suffix, _file_type, _ext) in FILE_SUFFIXES {
+        // Try runtime first, then embedded
+        let content = if let Some(rt_path) = find_runtime_path(&params.offering, suffix) {
+            tokio::fs::read_to_string(&rt_path).await.ok()
+        } else if let Some(em_path) = find_embedded_path(&params.offering, suffix) {
+            EmbeddedManifests::get_string(&em_path)
+        } else {
+            None
+        };
+
+        if let Some(text) = content {
+            let filename = format!("{}{}", params.offering, suffix);
+            bundle.insert(filename, serde_json::Value::String(text));
+        }
+    }
+
+    if bundle.is_empty() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "OFFERING_NOT_FOUND",
+            format!("No manifest files found for '{}'", params.offering),
+            None,
+        ));
+    }
+
+    Ok(Json(serde_json::Value::Object(bundle)))
 }
 
 // ============================================================================

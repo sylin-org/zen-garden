@@ -36,6 +36,7 @@ pub mod election;
 pub mod lifecycle;
 pub mod local;
 pub mod management;
+pub mod manifest;
 pub mod nourish;
 pub mod nurturing;
 pub mod offering;

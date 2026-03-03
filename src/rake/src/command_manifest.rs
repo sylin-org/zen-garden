@@ -96,6 +96,9 @@ pub mod cmd {
     // Developer Tools
     pub const API: &str = "api";
 
+    // Manifest authoring
+    pub const MANIFEST_CMD: &str = "manifest";
+
     // Storage (Seed Bank operations)
     pub const PREPARE: &str = "prepare";
     pub const RELEASE_SEED_BANK: &str = "release-seed-bank";
@@ -2646,6 +2649,119 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         on_stone_mapping: OnStoneMapping::Ignore,
     });
 
+    // === MANIFEST AUTHORING COMMANDS ===
+
+    manifest.add(CommandDef {
+        name: cmd::MANIFEST_CMD,
+        zen_name: "manifest",
+        zen_aliases: &[],
+        normative_name: None,
+        category: CommandCategory::Lifecycle,
+        description: "Scaffold, validate, test, and export offering manifests",
+        long_description:
+            "Author and manage offering manifest files.\n\n\
+            Subcommands:\n\
+            - init: Scaffold manifest files from a Docker image via inspection\n\
+            - validate: Check manifest files for errors (runs locally)\n\
+            - test: Validate and test-deploy a manifest on a stone\n\
+            - export: Download manifest files for an installed offering\n\
+            - enrich: Add missing compatibility/guidance templates",
+        remote_capable: true,
+        args: vec![],
+        subcommands: vec![
+            SubDef {
+                name: "init",
+                description: "Scaffold manifest files from a Docker image",
+                args: vec![
+                    ArgSpec::positional("image-ref", "Docker image reference (e.g., nginx:latest)")
+                        .required(),
+                    ArgSpec::option("output", "Output directory (default: ./<name>)")
+                        .zen("--output <dir>"),
+                    ArgSpec::option("name", "Override offering name")
+                        .zen("--name <name>"),
+                    ArgSpec::option("category", "Override category (default: custom)")
+                        .zen("--category <cat>"),
+                    at_arg(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "validate",
+                description: "Check manifest files for errors (local)",
+                args: vec![
+                    ArgSpec::positional("path", "Path to manifest directory (default: .)")
+                        .zen("[path]"),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "test",
+                description: "Validate and test-deploy manifest on a stone",
+                args: vec![
+                    ArgSpec::positional("path", "Path to manifest directory (default: .)")
+                        .zen("[path]"),
+                    at_arg(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "export",
+                description: "Download manifest files for an installed offering",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name to export")
+                        .zen("<offering>")
+                        .required(),
+                    ArgSpec::option("output", "Output directory (default: ./<offering>)")
+                        .zen("--output <dir>"),
+                    at_arg(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "enrich",
+                description: "Add missing compatibility/guidance templates",
+                args: vec![
+                    ArgSpec::positional("path", "Path to manifest directory (default: .)")
+                        .zen("[path]"),
+                    ArgSpec::flag("auto", "Auto-generate without prompting")
+                        .zen("--auto"),
+                ],
+                subcommands: vec![],
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Scaffold manifest from Docker image",
+                zen_syntax: Some("garden-rake manifest init nginx:latest on stone-01"),
+                normative_syntax: Some("garden-rake manifest init nginx:latest --at stone-01"),
+            },
+            CommandExample {
+                description: "Validate manifest files in current directory",
+                zen_syntax: Some("garden-rake manifest validate"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Test-deploy manifest on a stone",
+                zen_syntax: Some("garden-rake manifest test . on stone-01"),
+                normative_syntax: Some("garden-rake manifest test . --at stone-01"),
+            },
+            CommandExample {
+                description: "Export installed offering's manifest",
+                zen_syntax: Some("garden-rake manifest export mongodb on stone-01"),
+                normative_syntax: Some("garden-rake manifest export mongodb --at stone-01"),
+            },
+            CommandExample {
+                description: "Add missing templates automatically",
+                zen_syntax: Some("garden-rake manifest enrich . --auto"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["offer"],
+        hidden: false,
+        subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
+    });
+
     manifest
 });
 
@@ -2712,6 +2828,8 @@ pub fn validate_manifest() {
         // Nurturing
         "restore",
         "nurturing",
+        // Manifest authoring
+        "manifest",
         // Local utility
         "launch",
         "commands",

@@ -234,6 +234,57 @@ pub async fn route(
         }
 
         // =================================================================
+        // Manifest Authoring
+        // =================================================================
+
+        "manifest" => {
+            use commands::manifest::ManifestCommand;
+            match m.subcommand() {
+                Some(("init", sub)) => {
+                    let at = opt(sub, "at").or_else(|| opt(m, "at"));
+                    Inv::remote_at(
+                        ManifestCommand::init(
+                            req(sub, "image-ref")?,
+                            opt(sub, "output"),
+                            opt(sub, "name"),
+                            opt(sub, "category"),
+                            g.quiet,
+                        ),
+                        at,
+                    )
+                }
+                Some(("validate", sub)) => {
+                    let path = opt(sub, "path").unwrap_or_else(|| ".".into());
+                    Inv::local(ManifestCommand::validate(path, g.quiet))
+                }
+                Some(("test", sub)) => {
+                    let path = opt(sub, "path").unwrap_or_else(|| ".".into());
+                    let at = opt(sub, "at").or_else(|| opt(m, "at"));
+                    Inv::remote_at(ManifestCommand::test(path, g.quiet), at)
+                }
+                Some(("export", sub)) => {
+                    let at = opt(sub, "at").or_else(|| opt(m, "at"));
+                    Inv::remote_at(
+                        ManifestCommand::export(
+                            req(sub, "offering")?,
+                            opt(sub, "output"),
+                            g.quiet,
+                        ),
+                        at,
+                    )
+                }
+                Some(("enrich", sub)) => {
+                    let path = opt(sub, "path").unwrap_or_else(|| ".".into());
+                    let auto = sub.get_flag("auto");
+                    Inv::local(ManifestCommand::enrich(path, auto, g.quiet))
+                }
+                _ => anyhow::bail!(
+                    "Usage: garden-rake manifest <init|validate|test|export|enrich>"
+                ),
+            }
+        }
+
+        // =================================================================
         // Adoption
         // =================================================================
 

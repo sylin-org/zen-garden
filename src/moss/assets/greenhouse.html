@@ -8,11 +8,15 @@
 :root {
   --bg: #1a1a2e;
   --surface: #16213e;
+  --surface-2: #1e2a45;
   --text: #e0d8c8;
   --text-dim: #8a8070;
   --accent: #7eb09b;
   --accent-dim: rgba(126,176,155,0.15);
+  --warn: #c8aa64;
+  --err: #c86464;
   --border: rgba(255,255,255,0.06);
+  --border-2: rgba(255,255,255,0.10);
   --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -22,6 +26,8 @@ body {
   color: var(--text);
   min-height: 100vh;
 }
+
+/* Header */
 .header {
   display: flex;
   align-items: center;
@@ -36,6 +42,8 @@ body {
   font-size: 13px;
 }
 .header-back:hover { color: var(--accent); }
+.header-crumb { color: var(--text-dim); font-size: 13px; }
+.header-offering { font-family: var(--mono); font-size: 14px; font-weight: 600; }
 .content { padding: 24px; max-width: 1200px; margin: 0 auto; }
 .empty-state {
   text-align: center;
@@ -45,7 +53,25 @@ body {
 }
 .loading { color: var(--text-dim); font-size: 13px; padding: 40px; text-align: center; }
 
-/* Catalog table */
+/* Buttons */
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.accent { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.btn.sm { padding: 3px 8px; font-size: 11px; }
+.btn.danger { border-color: var(--err); color: var(--err); }
+.btn.danger:hover { background: rgba(200,100,100,0.1); }
+
+/* Catalog */
 .catalog-bar {
   display: flex;
   align-items: center;
@@ -63,17 +89,6 @@ body {
   outline: none;
 }
 .catalog-bar input:focus { border-color: var(--accent); }
-.btn {
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-.btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn.accent { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 12px; text-align: left; font-size: 13px; }
@@ -98,12 +113,8 @@ tr:hover { background: rgba(255,255,255,0.02); }
 .tag-available { background: rgba(100,140,200,0.15); color: #648cc8; }
 
 .compat-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 4px; vertical-align: middle;
 }
 .compat-compatible { background: #64b478; }
 .compat-warning { background: #c8aa64; }
@@ -111,34 +122,204 @@ tr:hover { background: rgba(255,255,255,0.02); }
 .compat-unknown { background: var(--text-dim); }
 
 .offering-name {
-  font-family: var(--mono);
-  font-weight: 600;
-  color: var(--text);
-  cursor: pointer;
+  font-family: var(--mono); font-weight: 600;
+  color: var(--text); cursor: pointer;
 }
 .offering-name:hover { color: var(--accent); }
+
+/* Detail view */
+.detail-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.detail-bar .tags { flex: 1; }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+.tab {
+  padding: 8px 16px; font-size: 12px; cursor: pointer;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: 6px 6px 0 0; color: var(--text-dim);
+  background: transparent; font-family: inherit;
+}
+.tab:hover { color: var(--text); background: var(--surface); }
+.tab.active {
+  color: var(--accent); background: var(--surface);
+  border-color: var(--border); position: relative;
+}
+.tab.active::after {
+  content: ''; position: absolute; bottom: -1px; left: 0; right: 0;
+  height: 1px; background: var(--surface);
+}
+.tab.ghost { opacity: 0.35; font-style: italic; }
+.tab.ghost:hover { opacity: 0.6; }
+.tab .origin-dot {
+  display: inline-block; width: 6px; height: 6px;
+  border-radius: 50%; margin-left: 6px; vertical-align: middle;
+}
+.origin-builtin { background: var(--accent); }
+.origin-custom { background: #c8aa64; }
+.origin-customized { background: #b482c8; }
+
+/* Editor area */
+.editor-wrap {
+  background: var(--surface); border: 1px solid var(--border);
+  border-top: none; border-radius: 0 0 6px 6px;
+  min-height: 300px; display: flex; flex-direction: column;
+}
+.editor-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--text-dim);
+}
+.editor-toolbar .spacer { flex: 1; }
+
+.editor-area {
+  flex: 1; position: relative;
+}
+.editor-area textarea {
+  width: 100%; min-height: 350px; padding: 12px 16px;
+  background: transparent; border: none; color: var(--text);
+  font-family: var(--mono); font-size: 13px; line-height: 1.5;
+  resize: vertical; outline: none;
+  tab-size: 2;
+}
+.editor-area textarea:focus { background: rgba(255,255,255,0.01); }
+
+/* Validation panel */
+.validation-panel {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px; font-size: 12px;
+  max-height: 150px; overflow-y: auto;
+}
+.finding { display: flex; gap: 8px; padding: 3px 0; }
+.finding-icon { flex-shrink: 0; }
+.finding.error .finding-icon { color: var(--err); }
+.finding.warning .finding-icon { color: var(--warn); }
+.finding.info .finding-icon { color: var(--accent); }
+.finding-msg { color: var(--text-dim); }
+.finding-code { font-family: var(--mono); font-size: 10px; color: var(--text-dim); opacity: 0.6; }
+.valid-msg { color: var(--accent); padding: 3px 0; }
+
+/* Status toast */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  padding: 8px 16px; border-radius: 6px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  font-size: 12px; color: var(--text);
+  opacity: 0; transition: opacity 0.3s;
+  pointer-events: none; z-index: 100;
+}
+.toast.visible { opacity: 1; }
+
+/* New from image modal */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5); z-index: 50;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.visible { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 8px; padding: 20px; width: 420px; max-width: 90vw;
+}
+.modal h3 { font-size: 15px; margin-bottom: 12px; }
+.modal input {
+  width: 100%; padding: 8px 10px; margin-bottom: 12px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-family: var(--mono);
+  font-size: 13px; outline: none;
+}
+.modal input:focus { border-color: var(--accent); }
+.modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
 </head>
 <body>
 
-<div class="header">
+<div class="header" id="header">
   <a class="header-back" href="/">&larr; portrait</a>
   <h1>Greenhouse</h1>
 </div>
 
 <div class="content">
-  <div class="catalog-bar">
-    <input type="text" id="search" placeholder="Search offerings..." oninput="filterCatalog()">
-    <button class="btn accent" onclick="newFromImage()">New from image</button>
+  <!-- Catalog View -->
+  <div id="catalog-view">
+    <div class="catalog-bar">
+      <input type="text" id="search" placeholder="Search offerings..." oninput="filterCatalog()">
+      <button class="btn accent" onclick="showImageModal()">New from image</button>
+    </div>
+    <div id="catalog-area"><div class="loading">Loading catalog...</div></div>
   </div>
-  <div id="catalog-area"><div class="loading">Loading catalog...</div></div>
+
+  <!-- Detail View (hidden by default) -->
+  <div id="detail-view" style="display:none">
+    <div class="detail-bar">
+      <div class="tags" id="detail-tags"></div>
+      <button class="btn sm" onclick="exportOffering()">Export</button>
+      <button class="btn sm accent" id="detail-install-btn" style="display:none" onclick="installOffering()">Install</button>
+    </div>
+    <div class="tabs" id="detail-tabs"></div>
+    <div class="editor-wrap">
+      <div class="editor-toolbar">
+        <span id="editor-origin"></span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="btn-reset" style="display:none" onclick="resetFile()">Reset to default</button>
+        <button class="btn sm accent" id="btn-save" onclick="saveFile()">Save</button>
+      </div>
+      <div class="editor-area">
+        <textarea id="editor" spellcheck="false" oninput="onEditorInput()"></textarea>
+      </div>
+      <div class="validation-panel" id="validation-panel" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- New from image modal -->
+<div class="modal-overlay" id="image-modal">
+  <div class="modal">
+    <h3>New from image</h3>
+    <input type="text" id="image-ref-input" placeholder="nginx:latest or ghcr.io/org/app:v2" />
+    <div class="actions">
+      <button class="btn" onclick="hideImageModal()">Cancel</button>
+      <button class="btn accent" id="image-inspect-btn" onclick="inspectImage()">Inspect</button>
+    </div>
+  </div>
 </div>
 
 <script>
+// ========================================================================
+// State
+// ========================================================================
 let catalog = [];
+let currentOffering = null; // catalog entry for the open offering
+let currentTab = null;      // active file_type
+let editorDirty = false;
+let validateTimer = null;
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+const FILE_TYPES = ['snippet', 'frontmatter', 'compatibility', 'guidance', 'research', 'adopted', 'adopted-guidance', 'capabilities'];
+const FILE_LABELS = {
+  snippet: 'Config', frontmatter: 'Frontmatter', compatibility: 'Compatibility',
+  guidance: 'Guidance', research: 'Research', adopted: 'Adopted',
+  'adopted-guidance': 'Adopted Guide', capabilities: 'Capabilities'
+};
 
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 2500);
+}
+
+// ========================================================================
+// Catalog View
+// ========================================================================
 async function loadCatalog() {
   try {
     const r = await fetch('/api/v1/stone/greenhouse/catalog');
@@ -152,12 +333,11 @@ async function loadCatalog() {
 function filterCatalog() {
   const q = document.getElementById('search').value.toLowerCase();
   if (!q) { renderCatalog(catalog); return; }
-  const filtered = catalog.filter(o =>
+  renderCatalog(catalog.filter(o =>
     o.name.toLowerCase().includes(q) ||
     o.category.toLowerCase().includes(q) ||
-    o.description.toLowerCase().includes(q)
-  );
-  renderCatalog(filtered);
+    (o.description || '').toLowerCase().includes(q)
+  ));
 }
 
 function renderCatalog(items) {
@@ -167,26 +347,17 @@ function renderCatalog(items) {
   }
   let html = '<table><thead><tr><th>Offering</th><th>Category</th><th>Source</th><th>Status</th><th>Compat</th><th>Files</th><th></th></tr></thead><tbody>';
   for (const o of items) {
-    // Source tags
     let tags = '<span class="tag tag-' + o.source + '">' + esc(o.source) + '</span>';
     if (o.customized) tags += '<span class="tag tag-customized">customized</span>';
-
-    // Status tags
     let status = '';
     if (o.state === 'installed') {
       status = '<span class="tag tag-installed">installed</span>';
-      if (o.running) status += '<span class="tag tag-running">running</span>';
-      else status += '<span class="tag tag-stopped">stopped</span>';
+      status += o.running ? '<span class="tag tag-running">running</span>' : '<span class="tag tag-stopped">stopped</span>';
     } else {
       status = '<span class="tag tag-available">available</span>';
     }
-
-    // Compat
     const cs = o.compatibility.status;
-    let compat = '<span class="compat-dot compat-' + cs + '" title="' + esc(o.compatibility.reason || cs) + '"></span>' + esc(cs);
-
-    // File count
-    const fc = o.files.length;
+    const compat = '<span class="compat-dot compat-' + cs + '" title="' + esc(o.compatibility.reason || cs) + '"></span>' + esc(cs);
 
     html += '<tr>';
     html += '<td><span class="offering-name" onclick="openOffering(\'' + esc(o.name) + '\')">' + esc(o.name) + '</span>';
@@ -196,7 +367,7 @@ function renderCatalog(items) {
     html += '<td>' + tags + '</td>';
     html += '<td>' + status + '</td>';
     html += '<td>' + compat + '</td>';
-    html += '<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">' + fc + '</td>';
+    html += '<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">' + o.files.length + '</td>';
     html += '<td><button class="btn" onclick="openOffering(\'' + esc(o.name) + '\')">Open</button></td>';
     html += '</tr>';
   }
@@ -204,16 +375,360 @@ function renderCatalog(items) {
   document.getElementById('catalog-area').innerHTML = html;
 }
 
+// ========================================================================
+// Detail View
+// ========================================================================
 function openOffering(name) {
-  // Phase 3: detail view
-  alert('Detail view for ' + name + ' — coming in Phase 3');
+  currentOffering = catalog.find(o => o.name === name);
+  if (!currentOffering) return;
+
+  // Update header
+  document.getElementById('header').innerHTML =
+    '<a class="header-back" href="javascript:backToCatalog()">&larr; catalog</a>' +
+    '<span class="header-crumb">/</span>' +
+    '<span class="header-offering">' + esc(name) + '</span>';
+
+  // Tags bar
+  let tags = '<span class="tag tag-' + currentOffering.source + '">' + esc(currentOffering.source) + '</span>';
+  if (currentOffering.customized) tags += '<span class="tag tag-customized">customized</span>';
+  if (currentOffering.state === 'installed') {
+    tags += '<span class="tag tag-installed">installed</span>';
+    tags += currentOffering.running ? '<span class="tag tag-running">running</span>' : '<span class="tag tag-stopped">stopped</span>';
+  }
+  document.getElementById('detail-tags').innerHTML = tags;
+  document.getElementById('detail-install-btn').style.display =
+    currentOffering.state === 'available' ? '' : 'none';
+
+  // Build tabs
+  renderTabs();
+
+  // Show first available tab
+  const firstFile = currentOffering.files[0];
+  const firstType = firstFile ? firstFile.file_type : 'snippet';
+  switchTab(firstType);
+
+  document.getElementById('catalog-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = '';
 }
 
-function newFromImage() {
-  // Phase 3: inspect flow
-  alert('New from image — coming in Phase 3');
+function backToCatalog() {
+  if (editorDirty && !confirm('Unsaved changes will be lost. Continue?')) return;
+  editorDirty = false;
+  currentOffering = null;
+  currentTab = null;
+  document.getElementById('header').innerHTML =
+    '<a class="header-back" href="/">&larr; portrait</a><h1>Greenhouse</h1>';
+  document.getElementById('catalog-view').style.display = '';
+  document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('validation-panel').style.display = 'none';
+  loadCatalog(); // refresh
 }
 
+function renderTabs() {
+  const existing = new Map();
+  for (const f of currentOffering.files) {
+    existing.set(f.file_type, f);
+  }
+
+  let html = '';
+  for (const ft of FILE_TYPES) {
+    const file = existing.get(ft);
+    const label = FILE_LABELS[ft] || ft;
+    const ghost = !file ? ' ghost' : '';
+    const active = ft === currentTab ? ' active' : '';
+
+    let dot = '';
+    if (file) {
+      const cls = 'origin-' + file.origin;
+      dot = '<span class="origin-dot ' + cls + '" title="' + file.origin + '"></span>';
+    }
+
+    html += '<button class="tab' + ghost + active + '" onclick="switchTab(\'' + ft + '\')">' + esc(label) + dot + '</button>';
+  }
+  document.getElementById('detail-tabs').innerHTML = html;
+}
+
+async function switchTab(fileType) {
+  if (editorDirty && currentTab !== fileType) {
+    if (!confirm('Unsaved changes will be lost. Switch tab?')) return;
+  }
+  currentTab = fileType;
+  editorDirty = false;
+  renderTabs();
+
+  const editor = document.getElementById('editor');
+  const file = currentOffering.files.find(f => f.file_type === fileType);
+
+  // Update toolbar
+  if (file) {
+    const originLabel = file.origin === 'built-in' ? 'built-in' :
+                        file.origin === 'customized' ? 'customized (overlay)' : 'custom';
+    document.getElementById('editor-origin').textContent = originLabel;
+    document.getElementById('btn-reset').style.display =
+      (file.origin === 'customized' || file.origin === 'custom') ? '' : 'none';
+  } else {
+    document.getElementById('editor-origin').textContent = 'new file';
+    document.getElementById('btn-reset').style.display = 'none';
+  }
+
+  // Show validation panel only for snippet
+  document.getElementById('validation-panel').style.display =
+    fileType === 'snippet' ? '' : 'none';
+
+  // Load content
+  if (file) {
+    try {
+      const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
+        encodeURIComponent(currentOffering.name) + '&type=' + encodeURIComponent(fileType));
+      if (r.ok) {
+        editor.value = await r.text();
+      } else {
+        editor.value = '# Failed to load file';
+      }
+    } catch(e) {
+      editor.value = '# Error: ' + e.message;
+    }
+  } else {
+    // Ghost tab — empty editor for lazy creation
+    editor.value = '';
+    editor.placeholder = 'Start typing to create this file...';
+  }
+
+  if (fileType === 'snippet') {
+    runValidation();
+  }
+}
+
+// ========================================================================
+// Editor Actions
+// ========================================================================
+function onEditorInput() {
+  editorDirty = true;
+  if (currentTab === 'snippet') {
+    clearTimeout(validateTimer);
+    validateTimer = setTimeout(runValidation, 800);
+  }
+}
+
+async function saveFile() {
+  const content = document.getElementById('editor').value;
+  if (!currentOffering || !currentTab) return;
+
+  try {
+    const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
+      encodeURIComponent(currentOffering.name) + '&type=' + encodeURIComponent(currentTab), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain' },
+      body: content,
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    editorDirty = false;
+    toast('Saved ' + currentTab);
+
+    // Update file list in current offering (add if new)
+    const existing = currentOffering.files.find(f => f.file_type === currentTab);
+    if (existing) {
+      if (existing.origin === 'built-in') existing.origin = 'customized';
+    } else {
+      const extMap = { yaml: 'yaml', json: 'json', md: 'md' };
+      const ext = currentTab.endsWith('guidance') || currentTab === 'research' ? 'md' :
+                  currentTab === 'frontmatter' ? 'json' : 'yaml';
+      currentOffering.files.push({ file_type: currentTab, extension: ext, origin: 'custom' });
+    }
+    if (currentOffering.source === 'curated') currentOffering.customized = true;
+
+    renderTabs();
+    // Update toolbar origin
+    const file = currentOffering.files.find(f => f.file_type === currentTab);
+    if (file) {
+      const originLabel = file.origin === 'built-in' ? 'built-in' :
+                          file.origin === 'customized' ? 'customized (overlay)' : 'custom';
+      document.getElementById('editor-origin').textContent = originLabel;
+      document.getElementById('btn-reset').style.display =
+        (file.origin === 'customized' || file.origin === 'custom') ? '' : 'none';
+    }
+  } catch(e) {
+    toast('Save failed: ' + e.message);
+  }
+}
+
+async function resetFile() {
+  if (!confirm('Reset this file to the built-in version?')) return;
+  try {
+    const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
+      encodeURIComponent(currentOffering.name) + '&type=' + encodeURIComponent(currentTab), {
+      method: 'DELETE',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    toast(data.reset_to_builtin ? 'Reset to built-in' : 'File deleted');
+
+    // Update file entry
+    const idx = currentOffering.files.findIndex(f => f.file_type === currentTab);
+    if (data.reset_to_builtin && idx >= 0) {
+      currentOffering.files[idx].origin = 'built-in';
+    } else if (!data.reset_to_builtin && idx >= 0) {
+      currentOffering.files.splice(idx, 1);
+    }
+
+    editorDirty = false;
+    renderTabs();
+    switchTab(currentTab);
+  } catch(e) {
+    toast('Reset failed: ' + e.message);
+  }
+}
+
+// ========================================================================
+// Validation (snippet tab only)
+// ========================================================================
+async function runValidation() {
+  const content = document.getElementById('editor').value;
+  if (!content.trim()) {
+    document.getElementById('validation-panel').innerHTML = '';
+    return;
+  }
+  try {
+    const r = await fetch('/api/v1/stone/greenhouse/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snippet_yaml: content }),
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    renderValidation(data);
+  } catch(e) { /* silent */ }
+}
+
+function renderValidation(data) {
+  const el = document.getElementById('validation-panel');
+  if (data.valid && data.findings.length === 0) {
+    el.innerHTML = '<div class="valid-msg">Valid &mdash; no issues found.</div>';
+    return;
+  }
+  const icons = { error: '&#9679;', warning: '&#9680;', info: '&#9675;' };
+  el.innerHTML = data.findings.map(f =>
+    '<div class="finding ' + f.severity + '">' +
+    '<span class="finding-icon">' + (icons[f.severity] || '&#9675;') + '</span>' +
+    '<span class="finding-msg">' + esc(f.message) + '</span>' +
+    '<span class="finding-code">' + esc(f.code) + '</span></div>'
+  ).join('') + (data.valid ? '<div class="valid-msg">Valid (warnings only).</div>' : '');
+}
+
+// ========================================================================
+// Export
+// ========================================================================
+function exportOffering() {
+  if (!currentOffering) return;
+  for (const f of currentOffering.files) {
+    fetchAndDownload(currentOffering.name, f.file_type,
+      currentOffering.name + '.' + f.file_type.replace('-', '.') + '.' + f.extension);
+  }
+  toast('Exporting ' + currentOffering.files.length + ' files');
+}
+
+async function fetchAndDownload(offering, fileType, filename) {
+  try {
+    const r = await fetch('/api/v1/stone/greenhouse/file?offering=' +
+      encodeURIComponent(offering) + '&type=' + encodeURIComponent(fileType));
+    if (!r.ok) return;
+    const content = await r.text();
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(e) { /* skip */ }
+}
+
+// ========================================================================
+// Install (placeholder — delegates to portrait/stone API)
+// ========================================================================
+function installOffering() {
+  if (!currentOffering) return;
+  toast('Install: use portrait to deploy ' + currentOffering.name);
+}
+
+// ========================================================================
+// New from image
+// ========================================================================
+function showImageModal() {
+  document.getElementById('image-ref-input').value = '';
+  document.getElementById('image-modal').classList.add('visible');
+  document.getElementById('image-ref-input').focus();
+}
+function hideImageModal() {
+  document.getElementById('image-modal').classList.remove('visible');
+}
+
+async function inspectImage() {
+  const ref = document.getElementById('image-ref-input').value.trim();
+  if (!ref) return;
+  const btn = document.getElementById('image-inspect-btn');
+  btn.disabled = true; btn.textContent = 'Inspecting...';
+
+  try {
+    // Inspect the image
+    const ir = await fetch('/api/v1/stone/offerings/inspect?image=' + encodeURIComponent(ref));
+    if (!ir.ok) {
+      const err = await ir.json().catch(() => ({}));
+      throw new Error(err.message || 'HTTP ' + ir.status);
+    }
+    const inspData = await ir.json();
+    const inspection = inspData.data || inspData;
+
+    // Generate manifest files
+    const gr = await fetch('/api/v1/stone/greenhouse/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inspection }),
+    });
+    if (!gr.ok) throw new Error('Generation failed');
+    const gen = await gr.json();
+
+    // Save generated files to runtime dir
+    const saves = [
+      { type: 'snippet', content: gen.snippet_yaml },
+      { type: 'frontmatter', content: gen.frontmatter_json },
+      { type: 'compatibility', content: gen.compatibility_yaml },
+      { type: 'guidance', content: gen.guidance_md },
+    ];
+    for (const s of saves) {
+      await fetch('/api/v1/stone/greenhouse/file?offering=' +
+        encodeURIComponent(gen.name) + '&type=' + s.type, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain' },
+        body: s.content,
+      });
+    }
+
+    hideImageModal();
+    toast('Created offering: ' + gen.name);
+
+    // Reload catalog and open the new offering
+    await loadCatalog();
+    openOffering(gen.name);
+  } catch(e) {
+    toast('Inspect failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Inspect';
+  }
+}
+
+// Close modal on overlay click
+document.getElementById('image-modal').addEventListener('click', function(e) {
+  if (e.target === this) hideImageModal();
+});
+// Enter key in image input
+document.getElementById('image-ref-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') inspectImage();
+});
+
+// ========================================================================
+// Init
+// ========================================================================
 loadCatalog();
 </script>
 </body>

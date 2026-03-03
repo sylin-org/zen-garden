@@ -5,10 +5,13 @@ alwaysApply: false
 # Docker & Container Operations
 
 ## Container Naming Convention (CRITICAL)
-Managed offerings MUST use `zen-offering-{name}` container naming.
+Managed offerings MUST use `zen-offering-{encoded}` container naming.
+Use `OfferingFqn::encoded_for_container()` to derive the container-safe suffix.
 
-```rust
-let container_name = format!("zen-offering-{}", offering);
+```
+ollama           → zen-offering-ollama
+ollama::dev      → zen-offering-ollama--dev
+image:nginx:latest → zen-offering-img-nginx-latest
 ```
 
 ## Rules

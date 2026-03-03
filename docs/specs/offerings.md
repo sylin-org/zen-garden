@@ -44,11 +44,11 @@ Offerings declare which protocols they support. Resolution matches protocols to 
 Zen Garden separates **offering type** from **instance identity** using a fully-qualified name (FQN):
 
 ```
-offering[:instance]
+offering[::instance]
 ```
 
 - `ollama` → default instance
-- `ollama:dev` → named instance
+- `ollama::dev` → named instance
 
 The FQN is used for service identity (registry, APIs, containers). The offering type is still used for manifest lookup and compatibility.  
 See [offering-fqn.md](offering-fqn.md) for full rules and encoding details.
@@ -182,7 +182,7 @@ HTTP REST API wrapping native service:
 ### Connection String Format
 
 ```
-zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]
+zen-garden:[<protocol>//]<offering>[::instance][/<partition>]
 ```
 
 **Examples:**
@@ -192,7 +192,7 @@ zen-garden:mongodb              → MongoDB offering (default protocol)
 zen-garden:mongodb//            → MongoDB via mongodb protocol (explicit)
 zen-garden:s3//                 → Any offering supporting s3 protocol
 zen-garden:s3//minio            → MinIO via S3 protocol
-zen-garden:mongodb:staging      → MongoDB staging instance
+zen-garden:mongodb::staging     → MongoDB staging instance
 zen-garden:mongodb/myapp        → MongoDB with myapp database
 ```
 
@@ -226,7 +226,7 @@ zen-garden:vector               → Weaviate/Qdrant sidecar
 
 **Resolution logic:**
 
-1. Parse connection string: `zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>]`
+1. Parse connection string: `zen-garden:[<protocol>//]<offering>[::instance][/<partition>]`
 2. Query mDNS: `_koan-stone._tcp.local.`
 3. Filter by protocol or offering:
    - Protocol specified (s3//) → offerings with matching protocol

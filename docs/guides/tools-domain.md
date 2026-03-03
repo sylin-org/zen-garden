@@ -40,7 +40,7 @@ tool_fqid = "{tool-type}:{fqid}"
 Examples:
 
 - `offering:ollama`
-- `offering:ollama:dev`
+- `offering:ollama::dev`
 - `seed-bank:default`
 - `seed-bank:seed-beautiful-garden`
 
@@ -176,7 +176,7 @@ Examples:
 
 - `ollama[model1]`
 - `ollama[model1,model2]`
-- `ollama:dev[model1,model2]`
+- `ollama::dev[model1,model2]`
 
 Nomenclature rule:
 

@@ -1,8 +1,8 @@
 # OFFER-0003: Offering Fully-Qualified Names (FQN)
 
-**Status**: Accepted  
-**Date**: 2026-02-06  
-**Deciders**: Engineering  
+**Status**: Superseded by [OFFER-0006](OFFER-0006-image-direct-and-fqn-v2.md)
+**Date**: 2026-02-06
+**Deciders**: Engineering
 
 ---
 

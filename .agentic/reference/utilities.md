@@ -115,6 +115,13 @@ generate_id("job")          // "job-01234567"
 - `check_dump_commands()` - Helper for companion binaries
 
 ### Offerings (`common/src/offerings.rs`)
+- `OfferingFqn` - Typed FQN (see [offering-fqn spec](../../docs/specs/offering-fqn.md))
+  - Constructors: `new()`, `with_instance()`, `adopted()`, `image_direct()`, `parse()`
+  - Fields: `source`, `offering`, `instance`, `image_ref`
+  - `fqn()` / `Display` → canonical string (`ollama::dev`)
+  - `encoded_for_container()` → Docker-safe name (`ollama--dev`)
+  - Custom serde: serializes as string, deserializes with legacy normalization
+- `OfferingSource` - Image, Repo(String), Oci
 - `TaxonomyDictionary` - Synonym mapping
 - `OfferingSearchRequest/Response/Result`
 

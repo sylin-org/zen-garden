@@ -14,6 +14,7 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/offerings/:name` | Get offering details |
 | POST | `/api/v1/stone/offerings` | Plant (install) offering |
 | DELETE | `/api/v1/stone/offerings/:name` | Remove offering |
+| GET | `/api/v1/stone/offerings/inspect?image={ref}` | Inspect Docker image (OFFER-0006) |
 | POST | `/api/v1/stone/offerings/refresh` | Refresh catalog |
 | POST | `/api/v1/stone/offerings/heal` | Adopt orphaned containers |
 

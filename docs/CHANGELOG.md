@@ -2,6 +2,23 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-02
+
+- **OFFER-0006 Phase 1 complete**: FQN v2 + image-direct deployment. See [OFFER-0006](decisions/OFFER-0006-image-direct-and-fqn-v2.md).
+- **FQN v2**: Changed offering instance separator from `:` to `::` (e.g., `ollama::dev`). Legacy formats (`ollama:dev`, `ollama@adopted`) auto-normalize on parse/deserialize.
+- `OfferingFqn` is now a proper type (`garden_common::offerings::OfferingFqn`) with source awareness, builder methods, custom serde, and container encoding — replaces raw string FQN passing throughout the codebase.
+- Added source scheme grammar (`image:`, `repo:`, `oci:`) to FQN parser.
+- `Offering.name` and `TopologyServiceEntry.name` are now `OfferingFqn` instead of `String`.
+- Deleted `normalize_legacy_fqn()` and `normalize_legacy_type()` from persistence — absorbed into `OfferingFqn` serde.
+- MongoDB orchestrator: `MongoInstance.fqn` is now `OfferingFqn`; `derive_replica_set_name()` uses typed field access instead of `strip_prefix("mongodb:")`.
+- Renamed `sanitize_name_allow_colon()` to `sanitize_fqn_input()` with expanded character set for image refs.
+- **Image-direct deployment**: deploy any Docker image without a curated manifest via `garden-rake offer image nginx:latest`. Resolution pipeline pulls, inspects OCI config, assigns ports/volumes, and deploys through the standard container pipeline.
+- New offering resolution domain (`domain/offering_resolution.rs`): `ResolvedOffering` type bridges image inspection and `ContainerSpec`, decoupling resolution from deployment.
+- New image inspection infrastructure (`infra/image_inspect.rs`): bollard-based OCI image inspection extracting ports, volumes, env, healthcheck, labels, architecture.
+- New API endpoint `GET /api/v1/stone/offerings/inspect?image={ref}` — inspect an image without deploying, with curated collision advisory.
+- New Rake subcommand `garden-rake offer image <ref> [--instance name] [--info]` — deploy or inspect Docker images directly.
+- Fixed projector FQID bug: `instance_name_from_fqid("mongodb::prod")` returned `":prod"` (V2 breakage). Rewritten to use `OfferingFqn` typed field access.
+
 ## 2026-02-26
 
 - Fixed 2-minute boot delay on all Linux stones (systemd-networkd-wait-online timeout)

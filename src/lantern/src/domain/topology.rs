@@ -153,7 +153,7 @@ impl GardenTopology {
                     .services
                     .iter()
                     .map(|svc| LanternServiceState {
-                        name: svc.name.clone(),
+                        name: svc.name.to_string(),
                         service_type: svc.offering.clone(),
                         status: svc.status.clone(),
                         connection_string: String::new(),

@@ -12,7 +12,7 @@ use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{
     event_types as tools_event_types, parse_capability_wish, CapabilitySelector, GardenTool,
     ToolDelta,
@@ -427,6 +427,12 @@ impl FindCommand {
     async fn handle_capability_wishfully(&self, ctx: &CommandContext) -> anyhow::Result<bool> {
         let query = self.query.trim();
         if !query.contains(':') && !query.contains('[') {
+            return Ok(false);
+        }
+
+        // V2 FQN with "::" separator (e.g., "mongodb::prod") is an instance
+        // reference, not a capability wish — let the offering wishful path handle it.
+        if query.contains("::") && !query.contains('[') {
             return Ok(false);
         }
 
@@ -1047,14 +1053,14 @@ fn capability_wish_offering_hint(query: &str) -> Option<String> {
     }
 
     if let Some((offering, _)) = query.split_once('[') {
-        return parse_offering_fqn(offering.trim())
+        return OfferingFqn::parse(offering.trim())
             .ok()
             .map(|fqn| fqn.fqn());
     }
 
     let idx = query.rfind(':')?;
     let offering = query[..idx].trim();
-    parse_offering_fqn(offering).ok().map(|fqn| fqn.fqn())
+    OfferingFqn::parse(offering).ok().map(|fqn| fqn.fqn())
 }
 
 fn tool_ready(tool: &GardenTool, requirements: &[CapabilitySelector]) -> bool {

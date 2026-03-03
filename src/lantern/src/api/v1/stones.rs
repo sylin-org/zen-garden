@@ -124,7 +124,7 @@ fn build_stone_view(
             .iter()
             .map(|svc| ServiceView {
                 offering_id: svc.offering_id.clone(),
-                name: svc.name.clone(),
+                name: svc.name.to_string(),
                 offering: svc.offering.clone(),
                 category: svc.category.clone(),
                 status: svc.status.clone(),

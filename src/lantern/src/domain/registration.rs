@@ -35,7 +35,13 @@ pub fn register_stone(
         .into_iter()
         .map(|svc| TopologyServiceEntry {
             offering_id: String::new(),
-            name: svc.name,
+            name: garden_common::offerings::OfferingFqn::parse(&svc.name)
+                .unwrap_or_else(|_| garden_common::offerings::OfferingFqn {
+                    source: None,
+                    offering: svc.name.clone(),
+                    instance: None,
+                    image_ref: None,
+                }),
             offering: svc.service_type,
             category: String::new(),
             status: svc.status,

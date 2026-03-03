@@ -249,6 +249,7 @@ pub fn configure(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
         .route("/pulse", get(api::v1::pulse::get_pulse_page))
+        .route("/greenhouse", get(api::v1::greenhouse::get_greenhouse_page))
         .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════

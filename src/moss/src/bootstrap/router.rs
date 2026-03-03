@@ -272,6 +272,10 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::offerings::search_offerings_v1),
         )
         .route(
+            "/api/v1/stone/offerings/inspect",
+            get(api::v1::offerings::inspect_image_v1),
+        )
+        .route(
             "/api/v1/stone/offerings/heal",
             post(api::v1::offerings::heal_garden_v1),
         )

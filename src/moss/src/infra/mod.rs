@@ -29,6 +29,7 @@ pub mod firmware;
 pub mod hardware;
 pub mod hardware_id;
 pub mod harvest;
+pub mod image_inspect;
 pub mod harvest_store;
 pub mod installer;
 pub mod listeners;

@@ -12,9 +12,9 @@ use axum::{
 };
 use garden_common::{
     api_utils::{
-        is_suspicious, sanitize_name_allow_colon, sanitize_query, sanitize_tag, ApiErrorResponse,
+        is_suspicious, sanitize_fqn_input, sanitize_query, sanitize_tag, ApiErrorResponse,
     },
-    offerings::parse_offering_fqn,
+    offerings::OfferingFqn,
     utils::ids::generate_guidv7,
     ManagedData, Offering, OfferingLocation, OfferingModeData, OfferingStatus, Ports,
     ServiceHealthStatus, ServiceInfo, ServiceStatus,
@@ -24,7 +24,7 @@ use garden_common::{
 fn offering_to_service_info(o: &Offering) -> ServiceInfo {
     ServiceInfo {
         offering_id: o.offering_id.clone(),
-        name: o.name.clone(),
+        name: o.name.to_string(),
         offering: o.offering.clone(),
         version: o.version.clone(),
         status: match o.status {
@@ -178,7 +178,7 @@ pub async fn find_services_v1(
             let sanitized = sanitize_query(q).into_value();
             ServiceSearchCriteria::parse(&sanitized)
         } else if let Some(ref name) = query.name {
-            let sanitized = sanitize_name_allow_colon(name).into_value();
+            let sanitized = sanitize_fqn_input(name).into_value();
             ServiceSearchCriteria::by_name(&sanitized)
         } else if let Some(ref category) = query.category {
             let sanitized = sanitize_tag(category).into_value();
@@ -220,7 +220,7 @@ pub async fn get_service_v1(
     let offerings = state.offerings.read().await;
     let service_info = offerings
         .iter()
-        .find(|o| o.name == service_name && o.is_managed())
+        .find(|o| o.name.to_string() == service_name && o.is_managed())
         .map(offering_to_service_info)
         .ok_or_else(|| {
             tracing::warn!(
@@ -251,7 +251,7 @@ pub async fn create_service_v1(
     headers: HeaderMap,
     Json(payload): Json<CreateServiceRequest>,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&payload.offering).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&payload.offering).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -262,6 +262,115 @@ pub async fn create_service_v1(
     let service_name = offering_fqn.fqn();
     let offering_type = offering_fqn.offering.clone();
 
+    // ── Image-direct deployment (OFFER-0006) ──────────────────────────────
+    if offering_fqn.source == Some(garden_common::offerings::OfferingSource::Image) {
+        let image_ref = offering_fqn
+            .image_ref
+            .clone()
+            .unwrap_or_else(|| offering_fqn.offering.clone());
+
+        // Check if already installed
+        {
+            let offerings = state.offerings.read().await;
+            if let Some(existing) = offerings
+                .iter()
+                .find(|o| o.name.to_string() == service_name && o.is_managed())
+            {
+                if existing.status == OfferingStatus::Maintenance {
+                    let ctx = SuggestionContext::from_headers(&headers, "create_service");
+                    let suggestions = generate_suggestions(&ctx);
+                    return Ok(Json(ApiResponse {
+                        data: ServiceActionResponse {
+                            service: service_name,
+                            action: "create".to_string(),
+                            status: "maintenance".to_string(),
+                            message: "Service under maintenance, retry later".to_string(),
+                        },
+                        suggestions,
+                    }));
+                }
+            }
+        }
+
+        // Create job
+        let job_id = uuid::Uuid::now_v7().to_string();
+        let job = crate::Job {
+            id: job_id.clone(),
+            offerings: vec![service_name.clone()],
+            status: crate::JobStatus::Pending,
+            completed: vec![],
+            failed: std::collections::HashMap::new(),
+            started_at: std::time::SystemTime::now(),
+            completed_at: None,
+        };
+        state.jobs.write().await.insert(job_id.clone(), job);
+
+        // Add minimal Installing entry to registry
+        let installing_offering = Offering {
+            offering_id: generate_guidv7(),
+            name: offering_fqn.clone(),
+            offering: offering_type.clone(),
+            version: image_ref
+                .rsplit_once(':')
+                .map(|(_, tag)| tag)
+                .unwrap_or("latest")
+                .to_string(),
+            status: OfferingStatus::Installing,
+            health: ServiceHealthStatus::Offline,
+            sub_capabilities: Vec::new(),
+            location: OfferingLocation {
+                host: "localhost".to_string(),
+                port: 0, // assigned after inspection
+                protocol: "http".to_string(),
+                agnostic_port: None,
+                port_map: std::collections::HashMap::new(),
+            },
+            mode_data: OfferingModeData::Managed(ManagedData {
+                resources: None,
+                job_id: Some(job_id.clone()),
+                guidance: None,
+                ..Default::default()
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: None,
+            orchestration: None,
+        };
+        state.upsert_offering(installing_offering, true).await;
+        let _ = state.persist_offerings().await;
+
+        // Spawn async image-direct installation
+        let state_clone = state.clone();
+        let fqn_clone = offering_fqn.clone();
+        let image_clone = image_ref.clone();
+        let job_id_clone = job_id.clone();
+        let svc_name_clone = service_name.clone();
+        tokio::spawn(async move {
+            crate::install_image_direct_task(
+                &state_clone,
+                &job_id_clone,
+                &fqn_clone,
+                &image_clone,
+                &svc_name_clone,
+            )
+            .await;
+        });
+
+        let ctx = SuggestionContext::from_headers(&headers, "create_service");
+        let suggestions = generate_suggestions(&ctx);
+        return Ok(Json(ApiResponse {
+            data: ServiceActionResponse {
+                service: service_name,
+                action: "create".to_string(),
+                status: "accepted".to_string(),
+                message: format!(
+                    "Image-direct installation started, check /api/jobs/{} for status",
+                    job_id
+                ),
+            },
+            suggestions,
+        }));
+    }
+
     // Self-heal: if the container exists but registry forgot it (e.g. after restart), adopt it.
     if state
         .docker
@@ -271,7 +380,7 @@ pub async fn create_service_v1(
     {
         let in_registry = {
             let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name == service_name)
+            offerings.iter().any(|o| o.name.to_string() == service_name)
         };
 
         if !in_registry {
@@ -341,7 +450,7 @@ pub async fn create_service_v1(
     let offerings = state.offerings.read().await;
     if let Some(existing) = offerings
         .iter()
-        .find(|o| o.name == service_name && o.is_managed())
+        .find(|o| o.name.to_string() == service_name && o.is_managed())
     {
         if existing.status == OfferingStatus::Maintenance {
             drop(offerings);
@@ -388,7 +497,7 @@ pub async fn create_service_v1(
         );
         let installing_offering = Offering {
             offering_id: generate_guidv7(),
-            name: service_name.clone(),
+            name: offering_fqn.clone(),
             offering: offering_type.clone(),
             version: compiled
                 .image
@@ -465,7 +574,7 @@ pub async fn rest_service_v1(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .map(|o| o.offering_id.clone())
             .ok_or_else(|| {
                 error_response(
@@ -535,7 +644,7 @@ pub async fn wake_service_v1(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .map(|o| o.offering_id.clone())
             .ok_or_else(|| {
                 error_response(
@@ -663,7 +772,7 @@ pub async fn nourish_service_v1(
         let offerings = state.offerings.read().await;
         let o = offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
                     StatusCode::NOT_FOUND,
@@ -814,7 +923,7 @@ pub async fn delete_service_v1(
         let offerings = state.offerings.read().await;
         let o = offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
                     StatusCode::NOT_FOUND,
@@ -912,7 +1021,7 @@ pub async fn destroy_service_v1(
         let offerings = state.offerings.read().await;
         let o = offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
                     StatusCode::NOT_FOUND,
@@ -1037,7 +1146,7 @@ pub async fn get_manifest_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&name).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_SERVICE_NAME",
@@ -1105,7 +1214,7 @@ pub async fn get_service_env_v1(
     // Check if service exists in registry
     let offering = {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.name == service_name).cloned()
+        offerings.iter().find(|o| o.name.to_string() == service_name).cloned()
     };
 
     let offering = offering.ok_or_else(|| {
@@ -1193,7 +1302,7 @@ pub async fn cordon_service_v1(
     State(_state): State<AppState>,
     Path(service): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let service_name = match parse_offering_fqn(&service) {
+    let service_name = match OfferingFqn::parse(&service) {
         Ok(fqn) => fqn.fqn(),
         Err(e) => {
             return (
@@ -1306,7 +1415,7 @@ pub async fn discover_service_capabilities_v1(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .map(offering_to_service_info)
             .ok_or_else(|| {
                 error_response(
@@ -1334,7 +1443,7 @@ pub async fn discover_service_capabilities_v1(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name)
+            .find(|o| o.name.to_string() == service_name)
             .map(|o| o.mode_data.mode())
             .unwrap_or(garden_common::OfferingMode::Managed)
     };
@@ -1390,7 +1499,7 @@ pub async fn refresh_all_capabilities_v1(
             .filter(|o| o.status == OfferingStatus::Running)
             .map(|o| {
                 (
-                    o.name.clone(),
+                    o.name.to_string(),
                     o.offering.clone(),
                     o.mode_data.mode(),
                     offering_to_service_info(o),
@@ -1441,7 +1550,7 @@ pub async fn refresh_all_capabilities_v1(
         state.update_offerings_batch(|offerings| {
             let mut count = 0;
             for (name, sub_caps) in updates {
-                if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
+                if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
                     o.sub_capabilities = sub_caps;
                     count += 1;
                 }
@@ -1460,7 +1569,7 @@ pub async fn refresh_all_capabilities_v1(
 }
 
 fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
-    parse_offering_fqn(service)
+    OfferingFqn::parse(service)
         .map(|fqn| fqn.fqn())
         .map_err(|e| {
             error_response(
@@ -1490,14 +1599,14 @@ async fn build_spec_from_manifest(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .and_then(|o| o.managed_data())
             .map(|d| d.config_patches.clone())
             .unwrap_or_default()
     };
 
     // Resolve the offering type (strip instance suffix for FQN lookups)
-    let offering_type = parse_offering_fqn(service_name)
+    let offering_type = OfferingFqn::parse(service_name)
         .map(|fqn| fqn.offering.clone())
         .unwrap_or_else(|_| service_name.to_string());
 
@@ -1591,7 +1700,7 @@ async fn compose_on_start(state: &crate::AppState, service_name: &str) -> anyhow
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
             .and_then(|o| o.managed_data())
             .map(|d| !d.config_patches.is_empty())
             .unwrap_or(false)

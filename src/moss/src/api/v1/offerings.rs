@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use garden_common::offerings::{
-    parse_offering_fqn, OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
+    OfferingFqn, OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -65,7 +65,7 @@ pub async fn list_offerings_v1(
     let offerings_guard = state.offerings.read().await;
     let installed: HashMap<String, &garden_common::Offering> = offerings_guard
         .iter()
-        .map(|o| (o.name.clone(), o))
+        .map(|o| (o.name.to_string(), o))
         .collect();
 
     // Get available offerings from index (may still be building)
@@ -78,20 +78,21 @@ pub async fn list_offerings_v1(
     // Add installed offerings with runtime details
     if query.state.as_deref() != Some("available") {
         for offering in offerings_guard.iter() {
+            let name_str = offering.name.to_string();
             let image = state
                 .docker
-                .get_service_image(&offering.name)
+                .get_service_image(&name_str)
                 .await
                 .unwrap_or_else(|_| "<unknown>".to_string());
             let uptime = state
                 .docker
-                .get_service_uptime(&offering.name)
+                .get_service_uptime(&name_str)
                 .await
                 .ok()
                 .filter(|&s| s > 0)
                 .map(garden_common::format_uptime);
             offerings.push(OfferingView {
-                name: offering.name.clone(),
+                name: name_str,
                 state: "installed".to_string(),
                 category: offering.offering.clone(),
                 description: format!("{} service", offering.offering),
@@ -154,7 +155,7 @@ pub async fn get_offering_v1(
     (StatusCode, Json<ApiResponse<serde_json::Value>>),
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
-    let offering_fqn = parse_offering_fqn(&name).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -167,7 +168,7 @@ pub async fn get_offering_v1(
 
     // Check if installed
     let offerings_guard = state.offerings.read().await;
-    if let Some(offering) = offerings_guard.iter().find(|o| o.name == service_name) {
+    if let Some(offering) = offerings_guard.iter().find(|o| o.name.fqn() == service_name) {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse {
@@ -235,7 +236,7 @@ pub async fn get_offering_manifest_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&name).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -399,6 +400,89 @@ fn simplify_health(status: &garden_common::OfferingStatus) -> String {
         }
         OfferingStatus::Installing => constants::HEALTH_INSTALLING.to_string(),
     }
+}
+
+// ============================================================================
+// Image Inspection (OFFER-0006 — image-direct)
+// ============================================================================
+
+/// Query parameters for image inspection
+#[derive(Debug, Deserialize)]
+pub struct InspectQuery {
+    /// Docker image reference (e.g., "nginx:latest", "mongo:7")
+    pub image: String,
+}
+
+/// GET /api/v1/stone/offerings/inspect?image={ref}
+/// Inspect a Docker image without deploying. Returns OCI metadata and
+/// curated collision advisory.
+pub async fn inspect_image_v1(
+    State(state): State<AppState>,
+    Query(query): Query<InspectQuery>,
+) -> Result<
+    (StatusCode, Json<serde_json::Value>),
+    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
+> {
+    let image_ref = query.image.trim();
+    if image_ref.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_IMAGE_REF",
+            "Image reference cannot be empty".to_string(),
+            None,
+        ));
+    }
+
+    let inspection = crate::infra::image_inspect::inspect_image(&state.docker, image_ref)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "IMAGE_INSPECT_FAILED",
+                format!("Failed to inspect image '{}': {}", image_ref, e),
+                None,
+            )
+        })?;
+
+    // Check for curated alternative
+    let curated = {
+        let idx_guard = state.offerings_index.read().await;
+        idx_guard.as_ref().and_then(|idx| {
+            crate::domain::offering_resolution::check_curated_collision(image_ref, &idx.offerings)
+        })
+    };
+
+    let curated_json = curated.map(|alt| {
+        serde_json::json!({
+            "offering_name": alt.offering_name,
+            "description": alt.description,
+            "has_compatibility": alt.has_compatibility,
+            "has_guidance": alt.has_guidance,
+            "has_health_check": alt.has_health_check,
+        })
+    });
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "image": inspection.image_ref,
+            "exposed_ports": inspection.exposed_ports,
+            "volumes": inspection.volumes,
+            "environment": inspection.environment.iter()
+                .filter(|e| !e.starts_with("PATH="))
+                .collect::<Vec<_>>(),
+            "command": inspection.command,
+            "labels": inspection.labels,
+            "healthcheck": inspection.healthcheck.as_ref().map(|h| serde_json::json!({
+                "test": h.test,
+                "interval_ns": h.interval_ns,
+                "timeout_ns": h.timeout_ns,
+                "retries": h.retries,
+            })),
+            "architecture": inspection.architecture,
+            "curated_alternative": curated_json,
+        })),
+    ))
 }
 
 // ============================================================================

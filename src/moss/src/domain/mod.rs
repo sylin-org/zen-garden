@@ -31,6 +31,7 @@ pub mod metrics_collection;
 pub mod modes;
 pub mod network;
 pub mod nurturing;
+pub mod offering_resolution;
 pub mod offerings;
 pub mod placement;
 pub mod pond;

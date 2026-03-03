@@ -24,7 +24,7 @@ use garden_common::console;
 use garden_common::templates::{render_template, TemplateContext};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
-    offerings::parse_offering_fqn, ManagedData, Offering, OfferingGuidance, OfferingLocation,
+    offerings::OfferingFqn, ManagedData, Offering, OfferingGuidance, OfferingLocation,
     OfferingModeData, OfferingStatus, ServiceHealthStatus,
 };
 
@@ -315,7 +315,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
                     .map(|t| t.ports)?;
                 Some((
                     o.offering_id.clone(),
-                    o.name.clone(),
+                    o.name.to_string(),
                     o.offering.clone(),
                     ports,
                 ))
@@ -345,7 +345,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             .map(|o| {
                 (
                     o.offering_id.clone(),
-                    o.name.clone(),
+                    o.name.to_string(),
                     o.offering.clone(),
                     o.location.port,
                 )
@@ -825,7 +825,7 @@ pub async fn install_service_task(
 
     let offering_id = if updated {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.name == offering)
+        offerings.iter().find(|o| o.name.to_string() == offering)
             .map(|o| o.offering_id.clone())
             .unwrap_or_default()
     } else {
@@ -833,7 +833,12 @@ pub async fn install_service_task(
         let new_id = generate_guidv7();
         let unified = Offering {
             offering_id: new_id.clone(),
-            name: offering.to_string(),
+            name: OfferingFqn::parse(offering).unwrap_or_else(|_| OfferingFqn {
+                source: None,
+                offering: offering.to_string(),
+                instance: None,
+                image_ref: None,
+            }),
             offering: offering_type.to_string(),
             version: image_version.clone(),
             status: OfferingStatus::Running,
@@ -932,6 +937,213 @@ pub async fn install_service_task(
     tracing::info!(job_id, offering, "Service installation completed");
 }
 
+/// Execute image-direct service installation in background (OFFER-0006).
+///
+/// Pulls the Docker image, inspects its OCI config, resolves ports/volumes/env,
+/// builds a ContainerSpec, and deploys — all without a curated manifest.
+pub async fn install_image_direct_task(
+    state: &AppState,
+    job_id: &str,
+    fqn: &OfferingFqn,
+    image_ref: &str,
+    service_name: &str,
+) {
+    use crate::domain::offering_resolution;
+    use crate::infra::image_inspect;
+
+    // Update job status to Running
+    {
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.status = JobStatus::Running;
+        }
+    }
+
+    state.console.emit(console::ConsoleEvent::new(
+        console::EventCategory::Jobs,
+        console::EventStatus::Started,
+        format!("Image-direct install {} (job: {})", service_name, &job_id[..8]),
+    ));
+    emit_job_started(state, job_id, service_name, "install");
+    tracing::info!(job_id, service_name, image_ref, "Starting image-direct installation");
+
+    // Step 1: Pull and inspect image
+    emit_job_progress(
+        state,
+        "info",
+        format!("Pulling image: {}", image_ref),
+        job_id,
+        service_name,
+    );
+
+    let inspection = match image_inspect::inspect_image(&state.docker, image_ref).await {
+        Ok(i) => i,
+        Err(e) => {
+            let msg = format!("Image inspection failed: {}", e);
+            tracing::error!(job_id, service_name, image_ref, error = ?e, "Image inspection failed");
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Failed,
+                format!("Inspect failed: {}", service_name),
+            ));
+            emit_job_failed(state, job_id, service_name, &msg);
+            remove_installing_entry(state, service_name).await;
+            let mut jobs = state.jobs.write().await;
+            if let Some(job) = jobs.get_mut(job_id) {
+                job.status = JobStatus::Failed;
+                job.failed.insert(service_name.to_string(), msg);
+                job.completed_at = Some(std::time::SystemTime::now());
+            }
+            return;
+        }
+    };
+
+    // Step 2: Resolve offering from inspection
+    let port_base = offering_resolution::default_port_base();
+    let resolved = offering_resolution::resolve_from_inspection(fqn, &inspection, port_base);
+
+    // Step 3: Check for curated alternative (advisory only — log it)
+    {
+        let idx_guard = state.offerings_index.read().await;
+        if let Some(idx) = idx_guard.as_ref() {
+            if let Some(alt) = offering_resolution::check_curated_collision(image_ref, &idx.offerings) {
+                tracing::info!(
+                    image_ref,
+                    curated = %alt.offering_name,
+                    "Curated manifest available for this image family"
+                );
+                emit_job_progress(
+                    state,
+                    "warning",
+                    format!(
+                        "A curated manifest '{}' exists for this image. Consider using it for health checks and guidance.",
+                        alt.offering_name
+                    ),
+                    job_id,
+                    service_name,
+                );
+            }
+        }
+    }
+
+    // Step 4: Build ContainerSpec and deploy
+    let spec = offering_resolution::to_container_spec(&resolved);
+    emit_job_progress(
+        state,
+        "info",
+        format!("Deploying container with {} port(s), {} volume(s)", resolved.ports.len(), resolved.volumes.len()),
+        job_id,
+        service_name,
+    );
+
+    let actual_ports = match state
+        .docker
+        .install_service(service_name, &spec, Some(&state.console))
+        .await
+    {
+        Ok(resolved_ports) => resolved_ports,
+        Err(e) => {
+            let msg = format!("Docker install failed: {}", e);
+            tracing::error!(job_id, service_name, error = ?e, "Docker install failed for image-direct");
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Failed,
+                format!("Install failed: {}", service_name),
+            ));
+            emit_job_failed(state, job_id, service_name, &msg);
+            remove_installing_entry(state, service_name).await;
+            let mut jobs = state.jobs.write().await;
+            if let Some(job) = jobs.get_mut(job_id) {
+                job.status = JobStatus::Failed;
+                job.failed.insert(service_name.to_string(), msg);
+                job.completed_at = Some(std::time::SystemTime::now());
+            }
+            return;
+        }
+    };
+
+    // Step 5: Determine actual port and protocol
+    let primary_port = resolved
+        .ports
+        .first()
+        .map(|(_, h, _)| *h)
+        .unwrap_or(0);
+    let actual_port = actual_ports
+        .iter()
+        .find(|(h, _)| *h == primary_port)
+        .or(actual_ports.first())
+        .map(|(h, _)| *h)
+        .unwrap_or(primary_port);
+
+    let port_map: std::collections::HashMap<String, u16> = resolved
+        .ports
+        .iter()
+        .filter_map(|(name, manifest_host, container)| {
+            actual_ports
+                .iter()
+                .find(|(_, c)| c == container)
+                .and_then(|(actual_host, _)| {
+                    if *actual_host != *manifest_host {
+                        Some((name.clone(), *actual_host))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
+
+    // Step 6: Update registry entry
+    state
+        .update_offering_by_name(service_name, false, |o| {
+            o.status = OfferingStatus::Running;
+            o.health = ServiceHealthStatus::Healthy;
+            o.location.port = actual_port;
+            o.location.protocol = "http".to_string();
+            o.location.port_map = port_map.clone();
+            if let OfferingModeData::Managed(ref mut m) = o.mode_data {
+                m.job_id = None;
+                m.guidance = Some(OfferingGuidance {
+                    content: format!(
+                        "Image-direct deployment of {}. Port: {}",
+                        image_ref, actual_port
+                    ),
+                    variables: std::collections::HashMap::new(),
+                });
+            }
+            o.updated_at = Some(chrono::Utc::now());
+            true
+        })
+        .await;
+
+    let _ = state.persist_offerings().await;
+
+    // Emit deployed event
+    state.event_bus.emit(OfferingEvent::deployed(
+        service_name,
+        &fqn.offering,
+        state.stone_name(),
+        image_ref,
+    ));
+
+    // Mark job as completed
+    {
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.status = JobStatus::Completed;
+            job.completed.push(service_name.to_string());
+            job.completed_at = Some(std::time::SystemTime::now());
+        }
+    }
+
+    state.console.emit(console::ConsoleEvent::new(
+        console::EventCategory::Jobs,
+        console::EventStatus::Completed,
+        format!("Image-direct install {} (job: {})", service_name, &job_id[..8]),
+    ));
+
+    tracing::info!(job_id, service_name, image_ref, "Image-direct installation completed");
+}
+
 /// Execute batch service installation in background
 ///
 /// This is a long-running task that should be spawned with tokio::spawn().
@@ -992,7 +1204,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
     for offering in offerings {
         tracing::info!(job_id, offering, "Installing service");
 
-        let offering_fqn = match parse_offering_fqn(&offering) {
+        let offering_fqn = match OfferingFqn::parse(&offering) {
             Ok(fqn) => fqn,
             Err(e) => {
                 let mut jobs = state.jobs.write().await;
@@ -1146,7 +1358,12 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let offering_id = generate_guidv7();
         let unified = Offering {
             offering_id: offering_id.clone(),
-            name: service_name.clone(),
+            name: OfferingFqn::parse(&service_name).unwrap_or_else(|_| OfferingFqn {
+                source: None,
+                offering: service_name.clone(),
+                instance: None,
+                image_ref: None,
+            }),
             offering: offering_type.to_string(),
             version: image_version,
             status: OfferingStatus::Running,
@@ -1299,7 +1516,7 @@ pub async fn refresh_capabilities_task(
         let offerings = state.offerings.read().await;
         match offerings
             .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(offering))
+            .find(|o| o.name.to_string().eq_ignore_ascii_case(offering))
         {
             Some(o) => {
                 let mode = o.mode();
@@ -1484,7 +1701,7 @@ async fn offering_to_service_info_for_refresh(
 
     ServiceInfo {
         offering_id: offering.offering_id.clone(),
-        name: offering.name.clone(),
+        name: offering.name.to_string(),
         offering: offering.offering.clone(),
         version: offering.version.clone(),
         status: match offering.status {
@@ -1574,7 +1791,7 @@ pub async fn add_capability_task(
         let offerings = state.offerings.read().await;
         match offerings
             .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(offering))
+            .find(|o| o.name.to_string().eq_ignore_ascii_case(offering))
         {
             Some(o) => {
                 let mode = o.mode();

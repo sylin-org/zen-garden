@@ -300,6 +300,25 @@ pub async fn post_install(
         _ => OfferingFqn::new("mongodb").unwrap(),
     };
 
+    // Reject if this FQN is already installed on the target stone.
+    let fqn_str = fqn.to_string();
+    let target_ep = req.moss_endpoint.trim_end_matches('/');
+    let instances = state.instances.read().await;
+    let duplicate = instances.values().any(|i| {
+        i.moss_endpoint.trim_end_matches('/') == target_ep && i.fqn.to_string() == fqn_str
+    });
+    drop(instances);
+
+    if duplicate {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "success": false,
+                "message": format!("{fqn_str} is already installed on this stone"),
+            })),
+        ));
+    }
+
     let url = format!(
         "{}/api/v1/stone/services",
         req.moss_endpoint.trim_end_matches('/')

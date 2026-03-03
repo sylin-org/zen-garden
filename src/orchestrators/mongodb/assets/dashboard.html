@@ -604,11 +604,14 @@ async function refreshPlacement() {
     }
     let html = '<table><thead><tr><th>Stone</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead><tbody>';
     for (const p of items) {
-      let action = '';
-      if (p.already_has_mongo) {
-        action = '<span class="installed-badge">installed</span>';
-      } else if (p.moss_endpoint) {
-        action = '<button class="btn accent" onclick="openInstallModal(\'' + esc(p.stone_name).replace(/'/g, "\\'") + '\', \'' + esc(p.moss_endpoint).replace(/'/g, "\\'") + '\')">Install</button>';
+      const fqns = p.installed_fqns || [];
+      let badges = fqns.map(f => '<span class="installed-badge">' + esc(f) + '</span>').join(' ');
+      let action = badges;
+      if (p.moss_endpoint) {
+        const safeName = esc(p.stone_name).replace(/'/g, "\\'");
+        const safeEndpoint = esc(p.moss_endpoint).replace(/'/g, "\\'");
+        const safeFqns = JSON.stringify(fqns).replace(/'/g, "\\'");
+        action += ' <button class="btn accent" onclick="openInstallModal(\'' + safeName + '\', \'' + safeEndpoint + '\', ' + safeFqns + ')">Install</button>';
       }
       html += '<tr><td>' + esc(p.stone_name) + '</td><td style="font-family:var(--mono);font-weight:600">' + p.score + '</td><td style="font-size:12px;color:var(--text-dim)">' + (p.reasons||[]).map(esc).join('<br>') + '</td><td>' + action + '</td></tr>';
     }
@@ -710,9 +713,12 @@ connectSSE();
     <div style="font-size:11px;color:var(--text-dim);margin-top:-12px;margin-bottom:16px">
       Result: <span id="install-fqn-preview" style="font-family:var(--mono)">mongodb</span>
     </div>
+    <div id="install-duplicate-warn" style="display:none;font-size:12px;color:#e06c75;margin-bottom:12px">
+      This FQN is already installed on this stone.
+    </div>
     <div class="actions">
       <button class="btn" onclick="closeInstallModal()">Cancel</button>
-      <button class="btn accent" onclick="submitInstall()">Install</button>
+      <button class="btn accent" id="install-submit-btn" onclick="submitInstall()">Install</button>
     </div>
   </div>
 </div>
@@ -720,11 +726,12 @@ connectSSE();
 <script>
 let installTarget = null;
 
-function openInstallModal(stoneName, mossEndpoint) {
-  installTarget = { stoneName, mossEndpoint };
+function openInstallModal(stoneName, mossEndpoint, installedFqns) {
+  installTarget = { stoneName, mossEndpoint, installedFqns: installedFqns || [] };
   document.getElementById('install-target-name').textContent = stoneName;
   document.getElementById('install-fqn-suffix').value = '';
   document.getElementById('install-fqn-preview').textContent = 'mongodb';
+  validateInstallFqn();
   document.getElementById('install-modal').classList.add('visible');
 }
 
@@ -733,9 +740,19 @@ function closeInstallModal() {
   installTarget = null;
 }
 
+function validateInstallFqn() {
+  if (!installTarget) return;
+  const suffix = document.getElementById('install-fqn-suffix').value.trim();
+  const fqn = suffix ? 'mongodb::' + suffix : 'mongodb';
+  const isDuplicate = installTarget.installedFqns.includes(fqn);
+  document.getElementById('install-duplicate-warn').style.display = isDuplicate ? '' : 'none';
+  document.getElementById('install-submit-btn').disabled = isDuplicate;
+}
+
 document.getElementById('install-fqn-suffix').addEventListener('input', function() {
   const suffix = this.value.trim();
   document.getElementById('install-fqn-preview').textContent = suffix ? 'mongodb:' + suffix : 'mongodb';
+  validateInstallFqn();
 });
 
 async function submitInstall() {

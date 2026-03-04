@@ -132,6 +132,21 @@ body {
 .garden-self { color:var(--stone-400); font-size:0.7rem; }
 .garden-empty { color:var(--stone-400); font-size:0.8rem; font-style:italic; padding:4px 0; }
 
+/* Stone chip (clickable name + copy) */
+.stone-chip { display:inline-flex; align-items:center; gap:0.25rem; }
+.stone-chip a { color:var(--stone-900); text-decoration:none; font-weight:600; }
+.stone-chip a:hover { color:var(--accent-sage); text-decoration:underline; }
+.stone-chip .chip-copy {
+    opacity:0; transition:opacity 0.15s;
+    background:transparent; border:1px solid var(--vellum-border);
+    border-radius:2px; padding:0 0.2rem;
+    font-size:0.6rem; cursor:pointer; color:var(--stone-400);
+    font-family:ui-monospace,monospace; line-height:1.4;
+}
+.stone-chip:hover .chip-copy { opacity:1; }
+.stone-chip .chip-copy:hover { background:var(--accent-sage); color:white; border-color:var(--accent-sage); }
+.stone-chip .chip-copy.copied { opacity:1; background:var(--accent-sage); color:white; border-color:var(--accent-sage); }
+
 /* Files toggle */
 .files-toggle {
     font-family:ui-monospace,monospace; font-size:0.75rem; color:var(--stone-600);
@@ -271,6 +286,43 @@ const FILE_LABELS={snippet:'Config',frontmatter:'Frontmatter',compatibility:'Com
 function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('visible');setTimeout(()=>e.classList.remove('visible'),2500);}
 
+// Stone chip helpers
+function stonePortraitUrl(stone, isSelf) {
+  if (isSelf) return '/';
+  if (stone.endpoint) return stone.endpoint;
+  var addr = stone.address;
+  if (addr) {
+    if (typeof addr === 'object' && addr.ip) return 'http://' + addr.ip + ':' + (addr.port || 7185);
+    if (typeof addr === 'string' && addr.includes(':')) return 'http://' + addr;
+    if (typeof addr === 'string') return 'http://' + addr + ':7185';
+  }
+  var name = stone.stone_name || stone.name;
+  return name ? 'http://' + name + ':7185' : '#';
+}
+function stoneChip(name, url) {
+  var safe = esc(name);
+  return '<span class="stone-chip">' +
+    '<a href="' + (url || '#') + '" title="Visit ' + safe + '">' + safe + '</a>' +
+    '<button class="chip-copy" onclick="copyStone(this,\'' + safe.replace(/'/g, "\\'") + '\')" title="Copy name">\u29C9</button>' +
+    '</span>';
+}
+function copyStone(btn, name) {
+  var done = function() {
+    btn.textContent = '\u2713'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(name).then(done);
+  } else {
+    var ta = document.createElement('textarea'); ta.value = name;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+    done();
+  }
+}
+
 // ═══ CATALOG ═══
 async function loadCatalog(){
   try{
@@ -392,7 +444,8 @@ function renderGarden(){
         found=true;
         const isSelf=stone.stone_name&&(location.hostname.includes(stone.stone_name)||stone.stone_id===topology[0]?.stone_id);
         const statusDot=svc.status==='running'?'dot-running':'dot-stopped';
-        html+='<div class="garden-row"><span class="dot '+statusDot+'"></span>'+esc(stone.stone_name)+' <span style="color:var(--stone-400);font-size:0.7rem">'+esc(svc.status)+'</span>';
+        const url=stonePortraitUrl(stone, isSelf);
+        html+='<div class="garden-row"><span class="dot '+statusDot+'"></span>'+stoneChip(stone.stone_name, url)+' <span style="color:var(--stone-400);font-size:0.7rem">'+esc(svc.status)+'</span>';
         if(isSelf)html+=' <span class="garden-self">(this stone)</span>';
         html+='</div>';
       }

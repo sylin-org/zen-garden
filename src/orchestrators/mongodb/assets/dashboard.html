@@ -172,6 +172,20 @@ tr:hover td { background: var(--surface-hover); }
 .role-badge.recovering { background: var(--warn-dim); color: var(--warn); }
 .role-badge.startup { background: var(--surface); color: var(--text-dim); }
 .role-badge.unknown { background: var(--surface); color: var(--text-dim); }
+/* Stone chip (clickable name + copy) */
+.stone-chip { display: inline-flex; align-items: center; gap: 0.25rem; }
+.stone-chip a { color: var(--text-bright); text-decoration: none; font-weight: 600; }
+.stone-chip a:hover { color: var(--accent); text-decoration: underline; }
+.stone-chip .chip-copy {
+  opacity: 0; transition: opacity 0.15s;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 2px; padding: 0 0.2rem;
+  font-size: 0.6rem; cursor: pointer; color: var(--text-dim);
+  font-family: var(--mono); line-height: 1.4;
+}
+.stone-chip:hover .chip-copy { opacity: 1; }
+.stone-chip .chip-copy:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stone-chip .chip-copy.copied { opacity: 1; background: var(--accent); color: #fff; border-color: var(--accent); }
 .severity-healthy { color: var(--accent); }
 .severity-warning { color: var(--warn); }
 .severity-danger { color: var(--danger); }
@@ -386,6 +400,31 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// Stone chip helpers
+function stoneChip(name, url) {
+  var safe = esc(name);
+  return '<span class="stone-chip">' +
+    '<a href="' + (url || '#') + '" title="Visit ' + safe + '">' + safe + '</a>' +
+    '<button class="chip-copy" onclick="copyStone(this,\'' + safe.replace(/'/g, "\\'") + '\')" title="Copy name">\u29C9</button>' +
+    '</span>';
+}
+function copyStone(btn, name) {
+  var done = function() {
+    btn.textContent = '\u2713'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(name).then(done);
+  } else {
+    var ta = document.createElement('textarea'); ta.value = name;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+    done();
+  }
+}
+
 function showSection(name) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
@@ -454,14 +493,14 @@ function renderOverview(d) {
   html += '<div class="card"><div class="label">Replica Sets</div><div class="value">' + rsets.length + '</div><div class="sub">' + rsets.filter(r=>r.initialized).length + ' initialized</div></div>';
   html += '<div class="card"><div class="label">Primaries</div><div class="value">' + primaryCount + '</div></div>';
   if (d.tended_stone) {
-    html += '<div class="card"><div class="label">Tended Stone</div><div class="value" style="font-size:14px">' + esc(d.tended_stone.stone_name) + '</div><div class="sub">' + esc(d.tended_stone.endpoint) + '</div></div>';
+    html += '<div class="card"><div class="label">Tended Stone</div><div class="value" style="font-size:14px">' + stoneChip(d.tended_stone.stone_name, 'http://' + d.tended_stone.stone_name + ':7185') + '</div><div class="sub">' + esc(d.tended_stone.endpoint) + '</div></div>';
   }
   document.getElementById('overview-cards').innerHTML = html;
 
   // Instance table
   let rows = '';
   for (const i of inst) {
-    rows += '<tr><td>' + esc(i.stone_name) + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td></tr>';
+    rows += '<tr><td>' + stoneChip(i.stone_name, 'http://' + i.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td></tr>';
   }
   document.getElementById('instances-body').innerHTML = rows || '<tr><td colspan="5" class="empty-state">No instances discovered</td></tr>';
 }
@@ -487,7 +526,7 @@ async function refreshMembers() {
       }
       html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Health</th><th>Role</th><th>Lag</th></tr></thead><tbody>';
       for (const m of (ls.members || [])) {
-        html += '<tr><td>' + esc(m.stone_name) + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(m.endpoint) + '</td><td>' + healthDot(m.health) + '</td><td>' + roleBadge(m.role) + '</td><td>' + formatLag(m.lag_seconds) + '</td></tr>';
+        html += '<tr><td>' + stoneChip(m.stone_name, 'http://' + m.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(m.endpoint) + '</td><td>' + healthDot(m.health) + '</td><td>' + roleBadge(m.role) + '</td><td>' + formatLag(m.lag_seconds) + '</td></tr>';
       }
       html += '</tbody></table>';
     }
@@ -517,7 +556,7 @@ async function refreshLag() {
       html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Lag</th><th>Health</th></tr></thead><tbody>';
       for (const s of rs.secondaries) {
         const lagClass = (s.lag_seconds || 0) > 10 ? 'severity-danger' : (s.lag_seconds || 0) > 5 ? 'severity-warning' : '';
-        html += '<tr><td>' + esc(s.stone_name) + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(s.endpoint) + '</td><td class="' + lagClass + '">' + formatLag(s.lag_seconds) + '</td><td>' + (s.healthy ? '<span class="dot healthy"></span>yes' : '<span class="dot unreachable"></span>no') + '</td></tr>';
+        html += '<tr><td>' + stoneChip(s.stone_name, 'http://' + s.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(s.endpoint) + '</td><td class="' + lagClass + '">' + formatLag(s.lag_seconds) + '</td><td>' + (s.healthy ? '<span class="dot healthy"></span>yes' : '<span class="dot unreachable"></span>no') + '</td></tr>';
       }
       html += '</tbody></table>';
     }
@@ -571,13 +610,13 @@ async function refreshCache() {
     for (const inst of items) {
       const c = inst.cache;
       if (c && c.error) {
-        html += '<div class="card"><div class="label">' + esc(inst.stone_name) + '</div><div class="sub" style="color:var(--danger)">' + esc(c.error) + '</div></div>';
+        html += '<div class="card"><div class="label">' + stoneChip(inst.stone_name, 'http://' + inst.stone_name + ':7185') + '</div><div class="sub" style="color:var(--danger)">' + esc(c.error) + '</div></div>';
         continue;
       }
       const status = c && c.status;
       const recs = c && c.recommendations || [];
       if (!status) continue;
-      html += '<div class="card"><div class="label">' + esc(inst.stone_name) + '</div>';
+      html += '<div class="card"><div class="label">' + stoneChip(inst.stone_name, 'http://' + inst.stone_name + ':7185') + '</div>';
       html += '<div class="sub">Cache: ' + (status.used_mb||0).toFixed(0) + '/' + (status.configured_mb||0).toFixed(0) + ' MB · Hit: ' + ((status.hit_ratio||0)*100).toFixed(1) + '%</div>';
       html += '<div class="sub">Dirty: ' + ((status.dirty_ratio||0)*100).toFixed(1) + '% · Evictions: ' + (status.app_evictions||0) + '</div>';
       for (const rec of recs) {
@@ -613,7 +652,7 @@ async function refreshPlacement() {
         const safeFqns = JSON.stringify(fqns).replace(/'/g, "\\'");
         action += ' <button class="btn accent" onclick="openInstallModal(\'' + safeName + '\', \'' + safeEndpoint + '\', ' + safeFqns + ')">Install</button>';
       }
-      html += '<tr><td>' + esc(p.stone_name) + '</td><td style="font-family:var(--mono);font-weight:600">' + p.score + '</td><td style="font-size:12px;color:var(--text-dim)">' + (p.reasons||[]).map(esc).join('<br>') + '</td><td>' + action + '</td></tr>';
+      html += '<tr><td>' + stoneChip(p.stone_name, 'http://' + p.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-weight:600">' + p.score + '</td><td style="font-size:12px;color:var(--text-dim)">' + (p.reasons||[]).map(esc).join('<br>') + '</td><td>' + action + '</td></tr>';
     }
     html += '</tbody></table>';
     document.getElementById('placement-content').innerHTML = html;

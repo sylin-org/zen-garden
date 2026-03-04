@@ -402,6 +402,38 @@ async fn probe_and_update(
             return None;
         } else if !names_match {
             // Membership change: different stones (added/removed).
+            //
+            // Before adding new members, verify they are RS-ready (have
+            // `--replSet` configured).  If any new member returns
+            // NoReplicationEnabled, bootstrap hasn't applied the config
+            // patch yet — defer reconciliation to avoid adding a member
+            // that can't participate in replication.
+            let new_endpoints: Vec<&str> = registry_hosts
+                .iter()
+                .filter(|ep| !rs_hosts.contains(*ep))
+                .copied()
+                .collect();
+
+            let mut defer = false;
+            for ep in &new_endpoints {
+                if let Some((_, new_client)) = reachable.iter().find(|(i, _)| i.mongo_endpoint.as_str() == *ep) {
+                    if let Err(e) = new_client.rs_status().await {
+                        let err_str = format!("{:#}", e);
+                        if err_str.contains("NoReplicationEnabled") || err_str.contains("error 76") {
+                            tracing::info!(
+                                endpoint = %ep,
+                                "new member not yet configured for replication — deferring RS add"
+                            );
+                            defer = true;
+                        }
+                    }
+                }
+            }
+
+            if defer {
+                return None;
+            }
+
             tracing::warn!(
                 fqn = %fqn,
                 rs_members = ?rs_hosts,

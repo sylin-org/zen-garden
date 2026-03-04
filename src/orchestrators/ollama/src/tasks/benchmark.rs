@@ -521,6 +521,18 @@ async fn run_stone(
                 .await;
                 match pull_model_and_wait(client, endpoint, model_name).await {
                     Ok(()) => {
+                        // Refresh the instance registry so the rest of the
+                        // system (routing, recommendations) sees the new model.
+                        if let Ok((avail, loaded, infos, _)) =
+                            client.full_profile(endpoint).await
+                        {
+                            state
+                                .update_instance_models(endpoint, avail, loaded)
+                                .await;
+                            for info in infos {
+                                state.upsert_model(info).await;
+                            }
+                        }
                         tracing::info!(stone = %stone_name, model = %model_name, "pulled model");
                         notify(
                             state,
@@ -740,21 +752,19 @@ async fn run_stone(
                         Verdict::Blocked, &msg,
                     ).await;
                 } else {
+                    // Any other benchmark error — the model failed to
+                    // produce output on this stone.  Record as Blocked so
+                    // the verdict appears in the GPU matrix and the router
+                    // steers traffic away.
                     tracing::warn!(
                         stone = %stone_name, model = %model_name,
-                        mode = %capability, error = %msg, "benchmark failed"
+                        mode = %capability, error = %msg,
+                        "benchmark failed — recording as Blocked"
                     );
-                    set_test_error(state, stone_name, model_name, capability, &msg).await;
-                    persist(state).await;
-                    notify(
-                        state,
-                        "benchmark.test.error",
-                        &serde_json::json!({
-                            "stone": stone_name, "model": &model_name,
-                            "capability": capability.to_string(), "error": &msg,
-                        }),
-                    )
-                    .await;
+                    record_synthetic_verdict(
+                        state, stone_name, model_name, capability,
+                        Verdict::Blocked, &msg,
+                    ).await;
                 }
             }
         }

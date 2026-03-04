@@ -37,12 +37,14 @@ pub enum InstanceHealth {
     Healthy,
     /// Instance was discovered but not yet probed.
     Unknown,
-    /// Instance is not responding.
-    Unreachable,
-    /// Instance is responding but in a degraded state.
+    /// Stone is not reachable (network/power issue).
+    Offline,
+    /// Stone is online but MongoDB service is not responding.
+    Down,
+    /// Instance is responding but in a degraded state (recovering, rollback, startup).
     Degraded,
     /// Container is intentionally stopped on the stone (tools stream: ready = false).
-    /// Distinct from Unreachable — the offering exists but the container is down.
+    /// Distinct from Down — Stopped means the container was intentionally brought down.
     Stopped,
 }
 

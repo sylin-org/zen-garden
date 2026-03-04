@@ -149,6 +149,10 @@ async fn main() -> Result<()> {
             axum::routing::delete(cluster::delete_member),
         )
         .route(
+            "/api/cluster/instances/{stone_name}",
+            axum::routing::delete(cluster::delete_instance),
+        )
+        .route(
             "/api/cluster/actions",
             axum::routing::get(cluster::get_pending_actions),
         )

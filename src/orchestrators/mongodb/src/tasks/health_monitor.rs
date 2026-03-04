@@ -219,8 +219,13 @@ async fn health_cycle(
 /// Probe replica set status, update instance health/roles, compute lag,
 /// query oplog and cache metrics.
 ///
-/// If the RS member list doesn't match the logical set (registry endpoints),
-/// triggers a one-shot `rs.reconfig` to rebuild the member list.
+/// Uses a two-phase approach to prevent oscillation when a stone is down:
+/// 1. **Reachability sweep**: connect + ping ALL active instances to determine
+///    which are actually reachable right now.
+/// 2. **RS status + reconciliation**: compare RS membership against the
+///    **reachable** set only (not all active instances).  This prevents the
+///    loop where membership reconciliation re-adds an unreachable member
+///    that quorum recovery just evicted.
 async fn probe_and_update(
     state: &AppState,
     instances: &[MongoInstance],
@@ -228,33 +233,64 @@ async fn probe_and_update(
 ) -> Option<ReplicaSetState> {
     let rs_name = derive_replica_set_name(fqn);
 
-    // Active instances = non-Stopped (candidates for RS membership)
+    // Manageable instances = candidates for RS membership.
+    // Offline/Down/Stopped are kept for dashboard display but excluded from
+    // probing and reconciliation.  They re-enter when the tools stream
+    // reports them back (OfferingDiscovered, ready=true → health = Unknown).
     let active_instances: Vec<&MongoInstance> = instances
         .iter()
-        .filter(|i| i.health != InstanceHealth::Stopped)
+        .filter(|i| matches!(
+            i.health,
+            InstanceHealth::Unknown | InstanceHealth::Healthy | InstanceHealth::Degraded
+        ))
         .collect();
+
+    // ── Phase 1: Reachability sweep ─────────────────────────────────
+    // Probe ALL active instances (connect + ping) to get accurate
+    // reachability before making any membership decisions.
+    let mut reachable: Vec<(&MongoInstance, MongoClient)> = Vec::new();
 
     for instance in &active_instances {
         let client = match MongoClient::connect(&instance.mongo_endpoint).await {
             Ok(c) => c,
             Err(_) => {
-                update_instance_health(state, &instance.mongo_endpoint, InstanceHealth::Unreachable)
-                    .await;
+                let health = classify_unreachable(&instance.moss_endpoint).await;
+                update_instance_health(state, &instance.mongo_endpoint, health).await;
                 continue;
             }
         };
 
-        // Ping first for quick check
         if !client.ping().await {
-            update_instance_health(state, &instance.mongo_endpoint, InstanceHealth::Unreachable)
-                .await;
+            let health = classify_unreachable(&instance.moss_endpoint).await;
+            update_instance_health(state, &instance.mongo_endpoint, health).await;
             continue;
         }
 
-        // Mark this instance as healthy
         update_instance_health(state, &instance.mongo_endpoint, InstanceHealth::Healthy).await;
+        reachable.push((instance, client));
+    }
 
-        // Get rs.status()
+    if reachable.is_empty() {
+        return None;
+    }
+
+    // ── Phase 2: RS status + reconciliation ─────────────────────────
+    // Build registry from REACHABLE instances only.  This prevents the
+    // oscillation where membership reconciliation re-adds an unreachable
+    // member that quorum recovery just evicted.
+    let registry_hosts: HashSet<&str> = reachable
+        .iter()
+        .map(|(i, _)| i.mongo_endpoint.as_str())
+        .collect();
+
+    let registry_name_to_endpoint: HashMap<&str, &str> = reachable
+        .iter()
+        .map(|(i, _)| (i.stone_name.as_str(), i.mongo_endpoint.as_str()))
+        .collect();
+
+    let registry_stone_names: HashSet<&str> = registry_name_to_endpoint.keys().copied().collect();
+
+    for (instance, client) in &reachable {
         let status = match client.rs_status().await {
             Ok(s) => s,
             Err(e) => {
@@ -275,10 +311,7 @@ async fn probe_and_update(
             }
         };
 
-        // ── Check if RS members match the logical set ──────────────
-        // The logical set (registry) is the source of truth.
-        // If RS has different endpoints, reconfig to match.
-        //
+        // ── Check if RS members match the reachable set ─────────
         // Two-tier comparison:
         // 1. Resolve RS member endpoints to stone names via catalog
         //    (handles IP changes: old IP in RS → catalog → stone name)
@@ -289,10 +322,6 @@ async fn probe_and_update(
         // can preserve MongoDB member _ids across the IP change.
 
         let rs_hosts: HashSet<&str> = status.members.iter().map(|m| m.name.as_str()).collect();
-        let registry_hosts: HashSet<&str> = active_instances
-            .iter()
-            .map(|i| i.mongo_endpoint.as_str())
-            .collect();
 
         // Build stone_name→RS_endpoint map from RS members
         let rs_name_to_endpoint: HashMap<String, String> = {
@@ -308,13 +337,6 @@ async fn probe_and_update(
                 .collect()
         };
 
-        // Build stone_name→registry_endpoint map from active instances
-        let registry_name_to_endpoint: HashMap<&str, &str> = active_instances
-            .iter()
-            .map(|i| (i.stone_name.as_str(), i.mongo_endpoint.as_str()))
-            .collect();
-
-        let registry_stone_names: HashSet<&str> = registry_name_to_endpoint.keys().copied().collect();
         let rs_resolved_names: HashSet<&str> = rs_name_to_endpoint.keys().map(|s| s.as_str()).collect();
 
         // Determine match status
@@ -346,7 +368,7 @@ async fn probe_and_update(
                 "IP drift detected — same stones, different endpoints. Reconfiguring RS."
             );
 
-            let desired: Vec<&str> = registry_hosts.into_iter().collect();
+            let desired: Vec<&str> = registry_hosts.iter().copied().collect();
             if let Err(e) = client
                 .rs_reconfig_members_with_mapping(&rs_name, &desired, &old_to_new)
                 .await
@@ -381,7 +403,7 @@ async fn probe_and_update(
                 "RS members don't match logical set — rebuilding RS config"
             );
 
-            let desired: Vec<&str> = registry_hosts.into_iter().collect();
+            let desired: Vec<&str> = registry_hosts.iter().copied().collect();
             if let Err(e) = client.rs_reconfig_members(&rs_name, &desired).await {
                 tracing::warn!(error = ?e, "RS reconfig failed — will retry next cycle");
             } else {
@@ -527,21 +549,28 @@ async fn probe_and_update(
                     }
                 }
 
-                // Update instance registry so roles/health are accurate
+                // Update instance registry — roles always, health only when
+                // we have better info than Phase 1's Offline/Down classification.
                 for member in &members {
                     update_instance_role(state, &member.endpoint, member.role.clone()).await;
-                    let health = if member.healthy {
-                        InstanceHealth::Healthy
+                    if member.healthy {
+                        update_instance_health(state, &member.endpoint, InstanceHealth::Healthy)
+                            .await;
                     } else {
                         match member.role {
-                            ReplicaRole::Down | ReplicaRole::Removed => InstanceHealth::Unreachable,
                             ReplicaRole::Recovering | ReplicaRole::Rollback | ReplicaRole::Startup => {
-                                InstanceHealth::Degraded
+                                update_instance_health(
+                                    state,
+                                    &member.endpoint,
+                                    InstanceHealth::Degraded,
+                                )
+                                .await;
                             }
-                            _ => InstanceHealth::Unreachable,
+                            // Down/Removed/Unknown: Phase 1 already set Offline or Down
+                            // with the Moss check — don't overwrite with less info.
+                            _ => {}
                         }
-                    };
-                    update_instance_health(state, &member.endpoint, health).await;
+                    }
                 }
 
                 // Save the current RS state so detect_member_changes has an
@@ -554,24 +583,23 @@ async fn probe_and_update(
 
         // Update instance roles and health in state.
         // rs.status() reports health for ALL members, not just the one we connected to.
-        // Without this, members we didn't directly connect to stay at InstanceHealth::Unknown.
+        // For unhealthy members, Phase 1 already classified them as Offline or Down
+        // via the Moss check — only override for Degraded (Recovering/Rollback/Startup).
         for member in &members {
             update_instance_role(state, &member.endpoint, member.role.clone()).await;
 
-            let health = if member.healthy {
-                InstanceHealth::Healthy
+            if member.healthy {
+                update_instance_health(state, &member.endpoint, InstanceHealth::Healthy).await;
             } else {
-                // RS reports unhealthy — could be DOWN, RECOVERING, etc.
-                // Map role to appropriate InstanceHealth
                 match member.role {
-                    ReplicaRole::Down | ReplicaRole::Removed => InstanceHealth::Unreachable,
                     ReplicaRole::Recovering | ReplicaRole::Rollback | ReplicaRole::Startup => {
-                        InstanceHealth::Degraded
+                        update_instance_health(state, &member.endpoint, InstanceHealth::Degraded)
+                            .await;
                     }
-                    _ => InstanceHealth::Unreachable,
+                    // Phase 1 set Offline or Down — don't overwrite.
+                    _ => {}
                 }
-            };
-            update_instance_health(state, &member.endpoint, health).await;
+            }
         }
 
         let conn_string = build_connection_string(&members, &status.set_name);
@@ -669,5 +697,22 @@ async fn update_instance_role(state: &AppState, mongo_endpoint: &str, role: Repl
             );
             inst.role = Some(role);
         }
+    }
+}
+
+/// Classify an unreachable MongoDB instance as `Offline` or `Down`.
+///
+/// Probes the stone's Moss API (`/health`). If Moss responds, the stone
+/// is online but MongoDB specifically is not responding → `Down`.
+/// If Moss is also unreachable, the stone is offline → `Offline`.
+async fn classify_unreachable(moss_endpoint: &str) -> InstanceHealth {
+    let url = format!("{}/health", moss_endpoint.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+    match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => InstanceHealth::Down,
+        _ => InstanceHealth::Offline,
     }
 }

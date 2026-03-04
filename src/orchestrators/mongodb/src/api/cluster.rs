@@ -465,6 +465,81 @@ pub async fn delete_member(
     })))
 }
 
+/// `DELETE /api/cluster/instances/:stone_name` — remove a stone from the registry.
+///
+/// For offline/dead stones the user wants to stop tracking:
+/// - If the instance is still in the RS, queues `rs.remove()` first.
+/// - Removes the instance from the registry immediately (no waiting for RS eviction).
+pub async fn delete_instance(
+    State(state): State<AppState>,
+    Path(stone_name): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let stone_name = urlencoding::decode(&stone_name)
+        .map(|s| s.into_owned())
+        .unwrap_or(stone_name);
+
+    // Look up the instance
+    let instance_data = {
+        let reg = state.instances.read().await;
+        reg.get(&stone_name)
+            .map(|i| (i.mongo_endpoint.clone(), i.fqn.clone()))
+    };
+
+    let (mongo_endpoint, fqn) = instance_data.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "success": false,
+                "message": format!("instance '{}' not found in registry", stone_name),
+            })),
+        )
+    })?;
+
+    // If the instance is in the RS, queue rs.remove() so the RS config stays clean
+    let in_rs = {
+        let rss = state.replica_sets.read().await;
+        rss.get(&fqn)
+            .map(|rs| rs.members.iter().any(|m| m.endpoint == mongo_endpoint))
+            .unwrap_or(false)
+    };
+
+    if in_rs && !state.has_pending_removal(&mongo_endpoint).await {
+        state
+            .queue_action(PendingAction::RemoveMember {
+                mongo_endpoint: mongo_endpoint.clone(),
+                fqn: fqn.clone(),
+                requested_at: chrono::Utc::now(),
+            })
+            .await;
+        tracing::info!(
+            stone = %stone_name,
+            endpoint = %mongo_endpoint,
+            "queued rs.remove() for dismissed instance"
+        );
+    }
+
+    // Remove from registry immediately — no more probing
+    state.remove_instance(&stone_name).await;
+
+    tracing::info!(stone = %stone_name, "instance dismissed from registry");
+
+    state
+        .emit_event(
+            "instance.dismissed",
+            &json!({ "stone_name": stone_name, "endpoint": mongo_endpoint, "fqn": fqn })
+                .to_string(),
+        )
+        .await;
+
+    Ok(Json(json!({
+        "success": true,
+        "message": format!("{} removed from registry", stone_name),
+        "stone_name": stone_name,
+        "endpoint": mongo_endpoint,
+        "in_rs": in_rs,
+    })))
+}
+
 /// `GET /api/cluster/actions` — list pending membership actions.
 pub async fn get_pending_actions(State(state): State<AppState>) -> Json<Value> {
     let actions = state.pending_actions_snapshot().await;

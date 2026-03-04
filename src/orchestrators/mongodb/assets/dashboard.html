@@ -155,7 +155,8 @@ tr:hover td { background: var(--surface-hover); }
 }
 .dot.healthy { background: var(--accent); }
 .dot.unknown { background: var(--text-dim); }
-.dot.unreachable { background: var(--danger); }
+.dot.offline { background: var(--danger); }
+.dot.down { background: var(--warn); }
 .dot.degraded { background: var(--warn); }
 .role-badge {
   display: inline-block;
@@ -337,7 +338,7 @@ tr:hover td { background: var(--surface-hover); }
       <h2>Instances</h2>
       <table>
         <thead><tr>
-          <th>Stone</th><th>Endpoint</th><th>FQN</th><th>Health</th><th>Role</th>
+          <th>Stone</th><th>Endpoint</th><th>FQN</th><th>Health</th><th>Role</th><th></th>
         </tr></thead>
         <tbody id="instances-body"></tbody>
       </table>
@@ -500,9 +501,14 @@ function renderOverview(d) {
   // Instance table
   let rows = '';
   for (const i of inst) {
-    rows += '<tr><td>' + stoneChip(i.stone_name, 'http://' + i.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td></tr>';
+    const h = (i.health || '').toLowerCase();
+    const dismissable = h === 'offline' || h === 'down' || h === 'stopped';
+    const actionCell = dismissable
+      ? '<button class="btn danger" style="padding:3px 8px;font-size:11px" onclick="dismissInstance(\'' + esc(i.stone_name).replace(/'/g, "\\'") + '\')">Dismiss</button>'
+      : '';
+    rows += '<tr><td>' + stoneChip(i.stone_name, 'http://' + i.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td><td>' + actionCell + '</td></tr>';
   }
-  document.getElementById('instances-body').innerHTML = rows || '<tr><td colspan="5" class="empty-state">No instances discovered</td></tr>';
+  document.getElementById('instances-body').innerHTML = rows || '<tr><td colspan="6" class="empty-state">No instances discovered</td></tr>';
 }
 
 // ── Logical Sets ──
@@ -556,7 +562,7 @@ async function refreshLag() {
       html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Lag</th><th>Health</th></tr></thead><tbody>';
       for (const s of rs.secondaries) {
         const lagClass = (s.lag_seconds || 0) > 10 ? 'severity-danger' : (s.lag_seconds || 0) > 5 ? 'severity-warning' : '';
-        html += '<tr><td>' + stoneChip(s.stone_name, 'http://' + s.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(s.endpoint) + '</td><td class="' + lagClass + '">' + formatLag(s.lag_seconds) + '</td><td>' + (s.healthy ? '<span class="dot healthy"></span>yes' : '<span class="dot unreachable"></span>no') + '</td></tr>';
+        html += '<tr><td>' + stoneChip(s.stone_name, 'http://' + s.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(s.endpoint) + '</td><td class="' + lagClass + '">' + formatLag(s.lag_seconds) + '</td><td>' + (s.healthy ? '<span class="dot healthy"></span>yes' : '<span class="dot offline"></span>no') + '</td></tr>';
       }
       html += '</tbody></table>';
     }
@@ -712,6 +718,23 @@ function connectSSE() {
     es.close();
     setTimeout(connectSSE, 5000);
   };
+}
+
+// ── Dismiss instance ──
+async function dismissInstance(stoneName) {
+  if (!confirm('Remove ' + stoneName + ' from the registry?\n\nIt will reappear automatically if the stone comes back online.')) return;
+  try {
+    const r = await fetch('/api/cluster/instances/' + encodeURIComponent(stoneName), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.success) {
+      addActivity('instance.dismissed', stoneName);
+      refresh();
+    } else {
+      alert('Failed: ' + (d.message || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  }
 }
 
 // ── Init ──

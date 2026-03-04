@@ -1,4 +1,3 @@
-pub mod bootstrap;
 pub mod cache_advisor;
 pub mod group_state;
 pub mod membership;

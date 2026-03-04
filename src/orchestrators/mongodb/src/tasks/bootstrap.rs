@@ -8,7 +8,6 @@
 //! 5. Persist the updated group state to disk
 
 use crate::app_state::AppState;
-use crate::domain::bootstrap as bs;
 use crate::domain::group_state::{
     classify_group, compute_drift_mapping, GroupAction, GroupPhase, GroupState, InstanceProbe,
     KnownMember,
@@ -57,24 +56,22 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Collect pending removal endpoints once per cycle
-    let pending_removal_endpoints: Vec<String> = state
-        .pending_actions_snapshot()
-        .await
-        .iter()
-        .map(|a| a.target_endpoint().to_string())
-        .collect();
-
     for fqn in &fqns {
         let instances = state.instances_for_fqn(fqn).await;
         if instances.is_empty() {
             continue;
         }
 
-        // Filter to non-stopped instances for config and probing
+        // Filter to manageable instances for config and probing.
+        // Offline/Down stones are kept in the registry for dashboard display
+        // but excluded from all RS management.  They re-enter when the tools
+        // stream reports them back (OfferingDiscovered, ready=true).
         let active_instances: Vec<_> = instances
             .iter()
-            .filter(|i| i.health != InstanceHealth::Stopped)
+            .filter(|i| matches!(
+                i.health,
+                InstanceHealth::Unknown | InstanceHealth::Healthy | InstanceHealth::Degraded
+            ))
             .cloned()
             .collect();
 
@@ -88,7 +85,7 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
         // Step 2: Probe each instance individually
         let probes = probe_instances(&active_instances).await;
 
-        tracing::info!(
+        tracing::debug!(
             fqn = %fqn,
             probes = ?probes.iter().map(|(ep, p)| format!("{}={:?}", ep, p)).collect::<Vec<_>>(),
             "bootstrap probe results"
@@ -107,13 +104,12 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
         }
 
         // Step 5: Execute the classified action
-        let is_healthy = matches!(action, GroupAction::Healthy);
         match action {
             GroupAction::Healthy => {
-                tracing::info!(fqn = %fqn, rs_name = %rs_name, "RS operational — delegating to health monitor");
                 // RS is operational — health monitor handles steady state.
-                // Update phase if it was previously something else.
+                // Only log on phase transition; steady state is silent.
                 if group_state.as_ref().map(|g| &g.phase) != Some(&GroupPhase::Healthy) {
+                    tracing::info!(fqn = %fqn, rs_name = %rs_name, "RS operational — delegating to health monitor");
                     if let Some(mut gs) = group_state {
                         gs.phase = GroupPhase::Healthy;
                         gs.last_updated = chrono::Utc::now();
@@ -292,94 +288,14 @@ async fn bootstrap_cycle(state: &AppState) -> anyhow::Result<()> {
                 }
             }
 
-            GroupAction::AddMembers {
-                primary,
-                new_members,
-                rs_name,
-            } => {
-                for member in &new_members {
-                    tracing::info!(
-                        rs_name = %rs_name,
-                        new_member = %member,
-                        primary = %primary,
-                        "adding member to replica set"
-                    );
-
-                    match add_member(&primary, member).await {
-                        Ok(()) => {
-                            tracing::info!(member = %member, "member added successfully");
-                            state
-                                .emit_event(
-                                    "rs.member.added",
-                                    &serde_json::json!({
-                                        "fqn": fqn,
-                                        "member": member,
-                                    })
-                                    .to_string(),
-                                )
-                                .await;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = ?e,
-                                member = %member,
-                                "failed to add member"
-                            );
-                        }
-                    }
-                }
-            }
-
             GroupAction::Wait => {
                 tracing::info!(fqn = %fqn, rs_name = %rs_name, "all instances unreachable — waiting");
             }
         }
 
-        // If we have a valid RS state but the classifier said Healthy,
-        // also check if there are members to add (classifier only detects
-        // the broad group state, member addition needs RS-level detail).
-        if is_healthy {
-            if let Some(ref rs) = rs_state {
-                let add_actions =
-                    bs::should_add_members(&instances, rs, &pending_removal_endpoints);
-                for add_action in add_actions {
-                    tracing::info!(
-                        rs_name = %add_action.rs_name,
-                        new_member = %add_action.new_member_endpoint,
-                        primary = %add_action.primary_endpoint,
-                        "adding member to replica set"
-                    );
-
-                    match add_member(&add_action.primary_endpoint, &add_action.new_member_endpoint)
-                        .await
-                    {
-                        Ok(()) => {
-                            tracing::info!(
-                                member = %add_action.new_member_endpoint,
-                                "member added successfully"
-                            );
-                            state
-                                .emit_event(
-                                    "rs.member.added",
-                                    &serde_json::json!({
-                                        "fqn": fqn,
-                                        "member": add_action.new_member_endpoint,
-                                    })
-                                    .to_string(),
-                                )
-                                .await;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = ?e,
-                                member = %add_action.new_member_endpoint,
-                                "failed to add member"
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        // Membership management (add/remove) is handled solely by the
+        // health monitor's reachability-based reconciliation.  Bootstrap
+        // only owns lifecycle transitions (initiate, IP drift, config).
     }
 
     Ok(())
@@ -653,7 +569,7 @@ async fn probe_instances(
                     results
                         .push((instance.mongo_endpoint.clone(), InstanceProbe::StaleConfig));
                 } else {
-                    tracing::warn!(
+                    tracing::debug!(
                         endpoint = %instance.mongo_endpoint,
                         error = %e,
                         "rs.status() returned unrecognized error"
@@ -772,12 +688,6 @@ async fn initiate_replica_set(
         cache: None,
         oplog: None,
     })
-}
-
-/// Add a member to the replica set via the primary.
-async fn add_member(primary_endpoint: &str, new_member_endpoint: &str) -> anyhow::Result<()> {
-    let client = MongoClient::connect(primary_endpoint).await?;
-    client.rs_add(new_member_endpoint).await
 }
 
 /// Remove a member from the replica set via the primary.

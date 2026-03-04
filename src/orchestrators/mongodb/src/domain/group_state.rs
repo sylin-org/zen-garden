@@ -97,12 +97,6 @@ pub enum GroupAction {
         /// Current endpoints (new IPs) for the desired member list.
         desired: Vec<String>,
     },
-    /// RS initialized, some instances not yet members — add via primary.
-    AddMembers {
-        primary: String,
-        new_members: Vec<String>,
-        rs_name: String,
-    },
     /// Some instances still need `--replSet` config patch + restart.
     WaitForConfig,
     /// RS is healthy — health monitor handles steady state.

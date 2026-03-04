@@ -124,6 +124,44 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 
 ---
 
+## Ollama Orchestrator Endpoints
+
+**Proxy port** (`:21434`) — Ollama-compatible + extension endpoints.
+
+### Extension API (`/v1/`)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/v1/models` | Model inventory with placement, VRAM, fitness |
+| GET | `/v1/stones` | Stone inventory with GPU, VRAM, loaded models |
+| GET | `/v1/recommendations` | All capability recommendations (grouped) |
+| GET | `/v1/recommendations?capability={cap}` | Single capability recommendations |
+
+**Capabilities**: `quick`, `chat`, `completion` (alias for chat), `synthesis`, `vision`, `ocr`, `tools`, `thinking`, `embedding`
+
+All other paths are proxied to Ollama with smart routing.
+
+### Dashboard API (`:7190`)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/` | Dashboard HTML |
+| GET | `/api/status` | Full snapshot (stones, models, benchmark, metrics) |
+| GET | `/api/events` | SSE event stream |
+| GET | `/api/settings` | Current orchestrator settings |
+| POST | `/api/settings` | Update settings |
+| GET | `/api/jobs` | Active/recent orchestrator jobs |
+| POST | `/api/metrics/reset` | Reset all metrics |
+| POST | `/api/metrics/model-counters/reset` | Reset per-model request counters |
+| POST | `/api/management/pull` | Pull model to stones |
+| POST | `/api/management/delete` | Delete model from stones |
+| GET | `/api/management/feasibility` | Check if model fits stone VRAM |
+| POST | `/api/benchmark/start` | Start fitness benchmark |
+| POST | `/api/benchmark/cancel` | Cancel running benchmark |
+| GET | `/api/benchmark/results` | Benchmark run results |
+| GET | `/api/benchmark/export` | Export GPU fitness matrix |
+| GET | `/health` | Health check |
+
+---
+
 ## Query Parameters
 
 **Search** (`/offerings/search`, `/garden/services`):

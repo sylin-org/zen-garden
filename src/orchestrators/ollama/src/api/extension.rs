@@ -228,12 +228,22 @@ pub async fn get_stones(State(state): State<ProxyState>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 pub struct RecommendationQuery {
-    /// One of: completion, embedding, vision, tools, thinking.
-    pub capability: String,
+    /// Optional capability filter.  When omitted, returns recommendations
+    /// for all applicable capabilities grouped in a single response.
+    /// Valid values: quick, chat, completion, synthesis, vision, ocr, tools,
+    /// thinking, embedding.
+    pub capability: Option<String>,
 }
 
-/// `GET /v1/recommendations?capability=vision` — ranked model recommendations
-/// for a given capability, scored by distribution, fitness, and context window.
+/// All user-facing recommendation categories.
+const ALL_CAPABILITIES: &[&str] = &[
+    "quick", "chat", "synthesis", "vision", "ocr", "tools", "thinking", "embedding",
+];
+
+/// `GET /v1/recommendations` — ranked model recommendations.
+///
+/// With `?capability=chat` returns a single `RecommendationResponse`.
+/// Without a capability parameter returns an array of all categories.
 pub async fn get_recommendations(
     State(state): State<ProxyState>,
     Query(params): Query<RecommendationQuery>,
@@ -245,12 +255,18 @@ pub async fn get_recommendations(
         run.gpu_matrix.clone()
     };
 
-    let resp = recommendation::recommend(
-        &params.capability,
-        &models,
-        &instances,
-        &gpu_matrix,
-    );
-
-    Json(resp)
+    match params.capability {
+        Some(cap) => {
+            let resp = recommendation::recommend(&cap, &models, &instances, &gpu_matrix);
+            Json(serde_json::to_value(resp).unwrap_or_default())
+        }
+        None => {
+            let all: Vec<recommendation::RecommendationResponse> = ALL_CAPABILITIES
+                .iter()
+                .map(|cap| recommendation::recommend(cap, &models, &instances, &gpu_matrix))
+                .filter(|r| !r.recommendations.is_empty())
+                .collect();
+            Json(serde_json::to_value(all).unwrap_or_default())
+        }
+    }
 }

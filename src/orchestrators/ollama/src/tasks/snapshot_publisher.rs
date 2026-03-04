@@ -117,6 +117,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
 
             json!({
                 "name": m.name,
+                "parameter_count": m.parameter_count,
                 "parameter_size": m.parameter_size,
                 "quantization_level": m.quantization_level,
                 "family": m.family,

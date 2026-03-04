@@ -255,14 +255,20 @@ async fn probe_and_update(
             Ok(c) => c,
             Err(_) => {
                 let health = classify_unreachable(&instance.moss_endpoint).await;
-                update_instance_health(state, &instance.mongo_endpoint, health).await;
+                update_instance_health(state, &instance.mongo_endpoint, health.clone()).await;
+                if health == InstanceHealth::Offline {
+                    flush_stale_endpoints(state, &instance.mongo_endpoint).await;
+                }
                 continue;
             }
         };
 
         if !client.ping().await {
             let health = classify_unreachable(&instance.moss_endpoint).await;
-            update_instance_health(state, &instance.mongo_endpoint, health).await;
+            update_instance_health(state, &instance.mongo_endpoint, health.clone()).await;
+            if health == InstanceHealth::Offline {
+                flush_stale_endpoints(state, &instance.mongo_endpoint).await;
+            }
             continue;
         }
 
@@ -697,6 +703,21 @@ async fn update_instance_role(state: &AppState, mongo_endpoint: &str, role: Repl
             );
             inst.role = Some(role);
         }
+    }
+}
+
+/// Clear stale endpoints on an offline instance.
+///
+/// DHCP will assign a new IP when the stone returns; keeping the old IP
+/// is misleading.  The tools stream will set fresh endpoints when it
+/// re-discovers the stone (`OfferingDiscovered`, `ready=true`).
+async fn flush_stale_endpoints(state: &AppState, mongo_endpoint: &str) {
+    let stone_name = state.resolve_endpoint(mongo_endpoint).await;
+    let mut reg = state.instances.write().await;
+    let key = stone_name.as_deref().unwrap_or(mongo_endpoint);
+    if let Some(inst) = reg.get_mut(key) {
+        inst.mongo_endpoint.clear();
+        inst.moss_endpoint.clear();
     }
 }
 

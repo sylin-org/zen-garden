@@ -506,7 +506,8 @@ function renderOverview(d) {
     const actionCell = dismissable
       ? '<button class="btn danger" style="padding:3px 8px;font-size:11px" onclick="dismissInstance(\'' + esc(i.stone_name).replace(/'/g, "\\'") + '\')">Dismiss</button>'
       : '';
-    rows += '<tr><td>' + stoneChip(i.stone_name, 'http://' + i.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td><td>' + actionCell + '</td></tr>';
+    const ep = i.mongo_endpoint ? '<span style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</span>' : '<span style="color:var(--text-dim)">\u2014</span>';
+    rows += '<tr><td>' + stoneChip(i.stone_name, 'http://' + i.stone_name + ':7185') + '</td><td>' + ep + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td><td>' + actionCell + '</td></tr>';
   }
   document.getElementById('instances-body').innerHTML = rows || '<tr><td colspan="6" class="empty-state">No instances discovered</td></tr>';
 }

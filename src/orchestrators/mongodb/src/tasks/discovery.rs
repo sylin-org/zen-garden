@@ -94,13 +94,18 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     resilient_stream::run_resilient_stream(ctx, shutdown).await;
 }
 
-/// Bootstrap from topology — one-shot scan for existing MongoDB instances.
-async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
+/// Scan topology for MongoDB instances and reconcile with the registry.
+///
+/// - New instances are added (health = Unknown).
+/// - Existing instances that were Offline/Down get their endpoints refreshed
+///   and health reset to Unknown so the health monitor picks them up.
+/// - Called on stream connect, failover, and periodically.
+pub async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
     match topology::query_topology_for_offering(stone_endpoint, "mongodb").await {
         Ok(stones) => {
             tracing::info!(
                 count = stones.len(),
-                "bootstrapped MongoDB instances from topology"
+                "topology scan complete"
             );
             for s in stones {
                 // Use IP for endpoint — .local mDNS unreliable in Docker on Windows
@@ -122,6 +127,17 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                     })
                     .await;
 
+                // Check if existing instance needs re-activation
+                let was_inactive = {
+                    let reg = state.instances.read().await;
+                    reg.get(&s.stone_name)
+                        .map(|i| matches!(
+                            i.health,
+                            InstanceHealth::Offline | InstanceHealth::Down
+                        ))
+                        .unwrap_or(false)
+                };
+
                 let instance = MongoInstance {
                     stone_id: s.stone_id.clone(),
                     stone_name: s.stone_name.clone(),
@@ -132,11 +148,24 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                     role: None,
                     last_seen: Instant::now(),
                 };
-                state.upsert_instance(instance).await;
+                let is_new = state.upsert_instance(instance).await;
+
+                // upsert_instance preserves health — reset it for returning stones
+                if !is_new && was_inactive {
+                    let mut reg = state.instances.write().await;
+                    if let Some(inst) = reg.get_mut(&s.stone_name) {
+                        tracing::info!(
+                            stone = %s.stone_name,
+                            from = ?inst.health,
+                            "instance re-discovered in topology — resuming monitoring"
+                        );
+                        inst.health = InstanceHealth::Unknown;
+                    }
+                }
             }
         }
         Err(e) => {
-            tracing::warn!(error = %e, "topology bootstrap failed (will rely on tools stream)");
+            tracing::warn!(error = %e, "topology scan failed (will rely on tools stream)");
         }
     }
 }
@@ -250,15 +279,23 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                         }
                     }
                 } else {
-                    // Existing instance with ready=true — if it was Stopped, transition to Unknown
+                    // Existing instance with ready=true — if it was inactive
+                    // (Stopped/Offline/Down), transition back to Unknown so
+                    // the health monitor picks it up for probing.
                     let mut reg = state.instances.write().await;
                     if let Some(inst) = reg.get_mut(&stone_name) {
-                        if inst.health == InstanceHealth::Stopped {
-                            tracing::info!(
-                                stone = %stone_name,
-                                "MongoDB instance restarted (transitioning from stopped)"
-                            );
-                            inst.health = InstanceHealth::Unknown;
+                        match inst.health {
+                            InstanceHealth::Stopped
+                            | InstanceHealth::Offline
+                            | InstanceHealth::Down => {
+                                tracing::info!(
+                                    stone = %stone_name,
+                                    from = ?inst.health,
+                                    "instance re-discovered — resuming monitoring"
+                                );
+                                inst.health = InstanceHealth::Unknown;
+                            }
+                            _ => {}
                         }
                         inst.last_seen = Instant::now();
                     }

@@ -81,6 +81,22 @@ pub struct ServiceInfo {
     /// Connection URIs, ordered by preference.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uris: Vec<String>,
+
+    /// Source hostname (preserved from registration, not parsed from URIs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+
+    /// Source IP (preserved from registration, not parsed from URIs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+
+    /// Source port (preserved from registration, not parsed from URIs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+
+    /// URI template before substitution (e.g. `"mongodb://{host}:{port}/?replicaSet=zen-garden"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri_template: Option<String>,
 }
 
 /// Typed capability entry.
@@ -528,6 +544,10 @@ mod tests {
                 ready: true,
                 protocol: tool_type.to_string(),
                 uris: Vec::new(),
+                hostname: None,
+                ip: None,
+                port: None,
+                uri_template: None,
             },
             capabilities: Vec::new(),
             storage: None,

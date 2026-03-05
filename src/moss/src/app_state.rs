@@ -443,41 +443,25 @@ impl AppState {
         // Compile notification tags for cross-stone awareness
         let tags = self.notifications.compile();
 
-        // Collect non-expired gateway registrations from the unified registry.
-        // Gateway entries have EntryOrigin::Registered and carry a TTL managed
-        // by the registry (reap_expired). Convert RegistryEntry → GatewayRegistration
-        // for the chirp payload.
+        // Collect gateway registrations from the unified registry.
+        // Source fields (hostname, ip, port, uri_template) are preserved on
+        // ServiceInfo — no URI parsing needed.
         let gateway_entries: Vec<GatewayRegistration> = {
             let reg = self.registry.read().await;
             reg.gateway_entries()
                 .into_iter()
                 .map(|e| {
                     let tool = &e.tool;
-                    // Extract IP and port from first URI (format: "protocol://ip:port/...")
-                    let (ip, port) = tool
-                        .service
-                        .uris
-                        .first()
-                        .and_then(|uri| {
-                            let without_scheme = uri
-                                .strip_prefix("http://")
-                                .or_else(|| uri.strip_prefix("https://"))
-                                .unwrap_or(uri);
-                            let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-                            host_port.rsplit_once(':').and_then(|(host, p)| {
-                                p.parse::<u16>().ok().map(|port| (host.to_string(), port))
-                            })
-                        })
-                        .unwrap_or_else(|| (tool.stone.name.clone(), 0));
+                    let svc = &tool.service;
 
                     GatewayRegistration {
                         fqn: tool.fqid.clone(),
                         handler_for: vec![tool.tool.tool_type.clone()],
-                        hostname: tool.stone.name.clone(),
-                        ip,
-                        port,
-                        protocol: tool.service.protocol.clone(),
-                        uri_template: None,
+                        hostname: svc.hostname.clone().unwrap_or_else(|| tool.stone.name.clone()),
+                        ip: svc.ip.clone().unwrap_or_default(),
+                        port: svc.port.unwrap_or(0),
+                        protocol: svc.protocol.clone(),
+                        uri_template: svc.uri_template.clone(),
                         category: Some(tool.tool.category.clone()),
                         tags: tool.tool.tags.clone(),
                         source: String::new(),

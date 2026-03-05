@@ -131,6 +131,11 @@ pub async fn put_gateway(
                     &registration.protocol,
                 )
             },
+            // Preserve source fields — don't lose them in URI composition
+            hostname: Some(registration.hostname.clone()),
+            ip: Some(registration.ip.clone()),
+            port: Some(registration.port),
+            uri_template: registration.uri_template.clone(),
         },
         capabilities: Vec::new(),
         storage: None,

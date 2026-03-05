@@ -672,6 +672,10 @@ mod tests {
                 ready: true,
                 protocol: tool_type.to_string(),
                 uris: Vec::new(),
+                hostname: None,
+                ip: None,
+                port: None,
+                uri_template: None,
             },
             capabilities: vec![Capability {
                 cap_type: "model".to_string(),

@@ -625,6 +625,10 @@ mod tests {
                 ready: true,
                 protocol: "storage".to_string(),
                 uris: Vec::new(),
+                hostname: None,
+                ip: None,
+                port: None,
+                uri_template: None,
             },
             capabilities: Vec::new(),
             storage: Some(StorageMetadata {

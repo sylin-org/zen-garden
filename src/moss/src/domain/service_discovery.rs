@@ -455,31 +455,14 @@ pub async fn find_services(
                 continue;
             }
 
-            // Extract hostname/IP/port from the first URI for ResolvedConnection
-            let (gw_hostname, gw_ip, gw_port) = tool
-                .service
-                .uris
-                .first()
-                .and_then(|uri| {
-                    let without_scheme = uri
-                        .strip_prefix("http://")
-                        .or_else(|| uri.strip_prefix("https://"))
-                        .unwrap_or(uri);
-                    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-                    host_port.rsplit_once(':').and_then(|(host, p)| {
-                        p.parse::<u16>().ok().map(|port| {
-                            (tool.stone.name.clone(), host.to_string(), port)
-                        })
-                    })
-                })
-                .unwrap_or_else(|| (tool.stone.name.clone(), String::new(), 0));
-
+            // Use preserved source fields — no URI parsing needed.
+            let svc = &tool.service;
             let conn = ResolvedConnection {
-                hostname: gw_hostname,
-                ip: gw_ip,
-                port: gw_port,
-                protocol: tool.service.protocol.clone(),
-                uris: tool.service.uris.clone(),
+                hostname: svc.hostname.clone().unwrap_or_else(|| tool.stone.name.clone()),
+                ip: svc.ip.clone().unwrap_or_default(),
+                port: svc.port.unwrap_or(0),
+                protocol: svc.protocol.clone(),
+                uris: svc.uris.clone(),
             };
 
             all_services.push(FoundService {
@@ -500,59 +483,10 @@ pub async fn find_services(
         }
     }
 
-    // Check topology cache for remote gateways (skip self — already covered above)
-    {
-        let stones = topology::get_online_stones(&state.topology_cache).await;
-        for stone in &stones {
-            if stone.stone_id == state.stone_id {
-                continue;
-            }
-            for gw in &stone.gateways {
-                let primary_offering = gw.handler_for.first().map(|s| s.as_str()).unwrap_or("");
-                let gw_category = gw.category.as_deref().unwrap_or("orchestrator");
-                let gw_tags = if gw.tags.is_empty() {
-                    vec!["orchestrator".to_string()]
-                } else {
-                    gw.tags.clone()
-                };
-
-                if !matches_criteria(
-                    criteria,
-                    &gw.fqn,
-                    primary_offering,
-                    gw_category,
-                    &gw_tags,
-                    &[],
-                ) {
-                    continue;
-                }
-
-                let conn = connection::resolve_connection(
-                    &gw.hostname,
-                    &format!("http://{}:{}", gw.ip, gw.port),
-                    gw.port,
-                    &gw.protocol,
-                    gw.uri_template.as_deref(),
-                );
-
-                all_services.push(FoundService {
-                    offering_id: String::new(),
-                    name: gw.fqn.clone(),
-                    offering: primary_offering.to_string(),
-                    category: gw_category.to_string(),
-                    tags: gw_tags,
-                    status: garden_common::SERVICE_RUNNING.to_string(),
-                    stone: StoneRef {
-                        id: stone.stone_id.clone(),
-                        name: stone.stone_name.clone(),
-                        endpoint: stone.address.http_base(),
-                    },
-                    connection: conn,
-                    sub_capabilities: vec![],
-                });
-            }
-        }
-    }
+    // TOOLS-0003: Remote gateways are now in the registry (via tools beacon).
+    // The topology cache gateway path is removed — the registry is the single
+    // source of truth for gateway entries. The old path duplicated entries
+    // because chirped gateways appeared on every stone's topology entry.
 
     // 1. Search local stone first (zero latency)
     let local_services = find_local_services(criteria, state).await;

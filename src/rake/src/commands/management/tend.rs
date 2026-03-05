@@ -78,6 +78,7 @@ impl Command for TendCommand {
                             tending::write_tending(
                                 caps.stone_name.clone(),
                                 local_endpoint.clone(),
+                                Some(caps.clone()),
                             )?;
 
                             // Notify stone of tending (for visual feedback in Companions)
@@ -127,6 +128,7 @@ impl Command for TendCommand {
                                     tending::write_tending(
                                         caps.stone_name.clone(),
                                         alternative.endpoint.clone(),
+                                        Some(caps.clone()),
                                     )?;
 
                                     // Notify stone of tending (for visual feedback in Companions)
@@ -184,7 +186,7 @@ impl Command for TendCommand {
                                 .json()
                                 .await?;
                             let caps = response.data;
-                            tending::write_tending(caps.stone_name.clone(), endpoint.clone())?;
+                            tending::write_tending(caps.stone_name.clone(), endpoint.clone(), Some(caps.clone()))?;
 
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &endpoint).await;
@@ -223,7 +225,7 @@ impl Command for TendCommand {
                                 .json()
                                 .await?;
                             let caps = response.data;
-                            tending::write_tending(caps.stone_name.clone(), url.to_string())?;
+                            tending::write_tending(caps.stone_name.clone(), url.to_string(), Some(caps.clone()))?;
 
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, url).await;
@@ -264,7 +266,7 @@ impl Command for TendCommand {
                                 .json::<GardenApiResponse<HardwareCapabilities>>()
                                 .await?
                                 .data;
-                            tending::write_tending(caps.stone_name.clone(), endpoint.to_string())?;
+                            tending::write_tending(caps.stone_name.clone(), endpoint.to_string(), Some(caps.clone()))?;
 
                             // Notify stone of tending (for visual feedback in Companions)
                             let _ = notify_tending(ctx, &endpoint).await;

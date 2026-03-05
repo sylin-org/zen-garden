@@ -7,6 +7,10 @@ All notable changes to Zen Garden will be documented in this file.
 - TOOLS-0003: Gateways propagate via registry beacon instead of topology chirps
 - Fixed `find` sort order: exact name matches now appear before partial matches
 - Fixed stale gateway entries: registry reaper was never started; now broadcasts beacon on expiry
+- Introduced `StoneBag` for lazy-cached stone metadata; collapsed 5 pre-flight HTTP calls into 1–2
+- Capabilities cached in tending file; hot-path commands make zero pre-flight HTTP calls
+- Removed health vitality from stone banner (success = reachable, failure = discovery)
+- Moss injects `X-Stone-Name` / `X-Stone-Id` response headers on every HTTP response
 
 ## 2026-03-02
 

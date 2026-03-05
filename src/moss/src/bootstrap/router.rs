@@ -18,10 +18,37 @@
 
 use crate::{api, AppState};
 use axum::{
+    extract::State,
+    http::header::HeaderValue,
+    middleware::{self, Next},
+    response::Response,
     routing::{delete, get, head, patch, post, put},
     Router,
 };
+use garden_common::constants::headers::{HEADER_STONE_ID, HEADER_STONE_NAME};
 use tower_http::trace::TraceLayer;
+
+// ── Middleware ───────────────────────────────────────────────────────────
+
+/// Inject `X-Stone-Id` and `X-Stone-Name` headers on every response.
+///
+/// This lets any client (rake, companion, browser) discover which stone
+/// it is talking to without a dedicated `/capabilities` call — the
+/// identity piggy-backs on every response for free.
+async fn inject_stone_identity(
+    State(state): State<AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    if let Ok(v) = HeaderValue::from_str(&state.stone_id) {
+        response.headers_mut().insert(HEADER_STONE_ID, v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&state.stone_name) {
+        response.headers_mut().insert(HEADER_STONE_NAME, v);
+    }
+    response
+}
 
 /// Configure the **public lobby** router for HTTP when pond security is active.
 ///
@@ -238,6 +265,7 @@ pub fn configure_public(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
         .with_state(state)
 }
 
@@ -878,5 +906,6 @@ pub fn configure(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
         .with_state(state)
 }

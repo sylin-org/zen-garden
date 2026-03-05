@@ -299,6 +299,7 @@ mod tests {
                 reason: None,
                 original_image: None,
                 fallback_image: None,
+                fallback_name: None,
                 suggestion: None,
             },
             tasks: HashMap::new(),

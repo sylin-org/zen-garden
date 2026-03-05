@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, KillContainerOptions,
-    ListContainersOptions, LogsOptions, RemoveContainerOptions, RestartContainerOptions,
-    StartContainerOptions, StatsOptions, StopContainerOptions,
+    ListContainersOptions, LogsOptions, RemoveContainerOptions, RenameContainerOptions,
+    RestartContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::image::{CreateImageOptions, PruneImagesOptions};
 use bollard::models::{ContainerCreateResponse, HealthStatusEnum, HostConfig, PortBinding};
@@ -561,6 +561,36 @@ impl DockerManager {
             ));
         }
         tracing::info!(service = %name, "Service started successfully");
+        Ok(())
+    }
+
+    /// Rename a service container (stop → rename → start).
+    ///
+    /// The container is renamed from `zen-offering-{old_encoded}` to
+    /// `zen-offering-{new_encoded}`. Volumes are bound by container ID
+    /// so they survive the rename. The container must be stopped first.
+    pub async fn rename_service(&self, old_name: &str, new_name: &str) -> Result<()> {
+        let old_container = zen_offering_container_name(old_name)?;
+        let new_container = zen_offering_container_name(new_name)?;
+
+        tracing::info!(
+            old = %old_container,
+            new = %new_container,
+            "Renaming service container"
+        );
+
+        self.docker
+            .rename_container(
+                &old_container,
+                RenameContainerOptions {
+                    name: new_container.clone(),
+                },
+            )
+            .await
+            .with_context(|| {
+                format!("Failed to rename container {old_container} → {new_container}")
+            })?;
+
         Ok(())
     }
 

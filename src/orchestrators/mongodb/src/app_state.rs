@@ -12,7 +12,7 @@ use orchestrator_common::stone_catalog::{StoneCatalog, StoneIdentity};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 
 /// Shared state for the MongoDB Orchestrator.
@@ -43,6 +43,10 @@ pub struct AppState {
     pub pending_actions: Arc<RwLock<Vec<PendingAction>>>,
     /// Per-FQN group state (persisted across restarts).
     pub groups: Arc<RwLock<HashMap<String, GroupState>>>,
+
+    // ── Signals ──
+    /// Wake the conductor when the instance registry changes.
+    pub conductor_notify: Arc<Notify>,
 
     // ── Events ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
@@ -75,6 +79,7 @@ impl AppState {
             replica_sets: Arc::new(RwLock::new(HashMap::new())),
             pending_actions: Arc::new(RwLock::new(Vec::new())),
             groups: Arc::new(RwLock::new(HashMap::new())),
+            conductor_notify: Arc::new(Notify::new()),
             dashboard_tx,
             shutdown,
             start_time: Instant::now(),
@@ -114,13 +119,24 @@ impl AppState {
                         instance.mongo_endpoint.clone(),
                     ));
                 }
-                // Merge: update discovery fields, preserve health/role
+                // Merge: update discovery fields, preserve health/role/version
                 existing.stone_id = instance.stone_id;
                 existing.stone_name = instance.stone_name;
                 existing.moss_endpoint = instance.moss_endpoint;
                 existing.mongo_endpoint = instance.mongo_endpoint;
                 existing.fqn = instance.fqn;
                 existing.last_seen = instance.last_seen;
+                // Preserve version info populated by probe_sweep (discovery has None)
+                if instance.server_version.is_some() {
+                    existing.server_version = instance.server_version;
+                    existing.wire_version_range = instance.wire_version_range;
+                }
+                // Offline means the stone was unreachable — the only state
+                // probe_sweep skips.  Re-discovery proves the stone is back,
+                // so reset to Unknown so the next probe picks it up.
+                if matches!(existing.health, InstanceHealth::Offline) {
+                    existing.health = InstanceHealth::Unknown;
+                }
                 is_new = false;
             } else {
                 reg.insert(key, instance);
@@ -261,6 +277,22 @@ impl AppState {
         let actions = self.pending_actions.read().await;
         actions.iter().any(|a| matches!(a,
             PendingAction::RemoveMember { mongo_endpoint: ep, .. } if ep == mongo_endpoint
+        ))
+    }
+
+    /// Check if there is a pending removal for a specific endpoint AND FQN.
+    ///
+    /// Unlike `has_pending_removal`, this won't suppress discovery of the same
+    /// endpoint under a *different* FQN (e.g. after reassignment).
+    pub async fn has_pending_removal_for_fqn(
+        &self,
+        mongo_endpoint: &str,
+        fqn: &OfferingFqn,
+    ) -> bool {
+        let actions = self.pending_actions.read().await;
+        actions.iter().any(|a| matches!(a,
+            PendingAction::RemoveMember { mongo_endpoint: ep, fqn: f, .. }
+                if ep == mongo_endpoint && f == fqn
         ))
     }
 

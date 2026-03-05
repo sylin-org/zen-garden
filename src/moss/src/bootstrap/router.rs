@@ -473,6 +473,10 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::services::destroy_service_v1),
         )
         .route(
+            "/api/v1/stone/services/{service}/reassign",
+            post(api::v1::services::reassign_service_v1),
+        )
+        .route(
             "/api/v1/stone/services/{service}/cordon",
             post(api::v1::services::cordon_service_v1),
         )

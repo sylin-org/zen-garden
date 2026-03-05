@@ -133,6 +133,7 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
                     reason: None,
                     original_image: None,
                     fallback_image: None,
+                    fallback_name: None,
                     suggestion: None,
                 }
             });

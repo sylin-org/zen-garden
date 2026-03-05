@@ -38,6 +38,7 @@ pub enum CompatibilityDecision {
     Pass,
     Fallback {
         image: String,
+        name: Option<String>,
         reason: String,
     },
     Warning {
@@ -60,6 +61,8 @@ pub struct CompiledCompatibility {
     pub original_image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
 }
@@ -176,9 +179,10 @@ pub fn compile_compatibility(
                 reason: None,
                 original_image: None,
                 fallback_image: None,
+                fallback_name: None,
                 suggestion: None,
             },
-            CompatibilityDecision::Fallback { image, reason } => {
+            CompatibilityDecision::Fallback { image, name, reason } => {
                 let original_image = template.image.clone();
                 template.image = image.clone();
                 CompiledCompatibility {
@@ -186,6 +190,7 @@ pub fn compile_compatibility(
                     reason: Some(reason),
                     original_image: Some(original_image),
                     fallback_image: Some(image),
+                    fallback_name: name,
                     suggestion: None,
                 }
             }
@@ -194,6 +199,7 @@ pub fn compile_compatibility(
                 reason: Some(reason),
                 original_image: None,
                 fallback_image: None,
+                fallback_name: None,
                 suggestion,
             },
             CompatibilityDecision::Fail { reason, suggestion } => CompiledCompatibility {
@@ -201,6 +207,7 @@ pub fn compile_compatibility(
                 reason: Some(reason),
                 original_image: Some(template.image.clone()),
                 fallback_image: None,
+                fallback_name: None,
                 suggestion,
             },
         }
@@ -210,6 +217,7 @@ pub fn compile_compatibility(
             reason: None,
             original_image: None,
             fallback_image: None,
+            fallback_name: None,
             suggestion: None,
         }
     }
@@ -366,6 +374,7 @@ pub fn evaluate_compatibility(
             if let Some(fallback) = &rule.fallback {
                 return CompatibilityDecision::Fallback {
                     image: fallback.image.clone(),
+                    name: fallback.name.clone(),
                     reason: rule.reason.clone(),
                 };
             }

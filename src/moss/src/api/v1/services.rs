@@ -251,7 +251,7 @@ pub async fn create_service_v1(
     headers: HeaderMap,
     Json(payload): Json<CreateServiceRequest>,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = OfferingFqn::parse(&payload.offering).map_err(|e| {
+    let mut offering_fqn = OfferingFqn::parse(&payload.offering).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -259,7 +259,7 @@ pub async fn create_service_v1(
             None,
         )
     })?;
-    let service_name = offering_fqn.fqn();
+    let mut service_name = offering_fqn.fqn();
     let offering_type = offering_fqn.offering.clone();
 
     // ── Image-direct deployment (OFFER-0006) ──────────────────────────────
@@ -444,6 +444,24 @@ pub async fn create_service_v1(
             format!("Offering is incompatible with this stone: {}", reason),
             None,
         ));
+    }
+
+    // If a compatibility fallback suggests an instance name and the user didn't
+    // explicitly provide one, apply it so incompatible versions land in separate
+    // FQN groups (e.g. mongodb → mongodb::legacy on non-AVX hardware).
+    if offering_fqn.instance.is_none() {
+        if let Some(ref fallback_name) = compiled.compatibility.fallback_name {
+            if let Ok(adjusted) = OfferingFqn::with_instance(&offering_type, fallback_name) {
+                tracing::info!(
+                    original = %service_name,
+                    adjusted = %adjusted.fqn(),
+                    reason = ?compiled.compatibility.reason,
+                    "Compatibility fallback renamed offering instance"
+                );
+                service_name = adjusted.fqn();
+                offering_fqn = adjusted;
+            }
+        }
     }
 
     // Check if already running/maintenance
@@ -1612,7 +1630,7 @@ async fn build_spec_from_manifest(
 
     let manifest = state
         .manifest_registry
-        .get_offering(service_name)
+        .get_offering(&offering_type)
         .context("No manifest for offering")?;
     let template = manifest
         .parse_template()
@@ -1743,4 +1761,151 @@ async fn compose_on_start(state: &crate::AppState, service_name: &str) -> anyhow
     }
 
     Ok(())
+}
+
+/// POST /api/v1/stone/services/:service/reassign — Non-destructive FQN reassign.
+///
+/// Stops the container, renames it to match the new FQN, updates the offering
+/// in the registry, persists, and starts the container back up.
+/// Volumes are bound by container ID and survive the rename.
+pub async fn reassign_service_v1(
+    State(state): State<AppState>,
+    Path(service): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let old_name = normalize_service_name(&service)?;
+
+    let new_fqn_str = body
+        .get("new_fqn")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "MISSING_FIELD",
+                "Missing required field 'new_fqn'".to_string(),
+                None,
+            )
+        })?;
+
+    let new_fqn = OfferingFqn::parse(new_fqn_str).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_FQN",
+            format!("Invalid FQN '{}': {}", new_fqn_str, e),
+            None,
+        )
+    })?;
+    let new_name = new_fqn.fqn();
+
+    if old_name == new_name {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "SAME_FQN",
+            "New FQN is the same as the current one".to_string(),
+            None,
+        ));
+    }
+
+    // Check no existing service has the new name
+    {
+        let offerings = state.offerings.read().await;
+        if offerings.iter().any(|o| o.name.to_string() == new_name) {
+            return Err(error_response(
+                StatusCode::CONFLICT,
+                "FQN_EXISTS",
+                format!("A service with FQN '{}' already exists", new_name),
+                None,
+            ));
+        }
+    }
+
+    // Find the offering
+    let offering_id = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .find(|o| o.name.to_string() == old_name && o.is_managed())
+            .map(|o| o.offering_id.clone())
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "SERVICE_NOT_FOUND",
+                    format!("Managed service '{}' not found", old_name),
+                    None,
+                )
+            })?
+    };
+
+    // Step 1: Stop the container
+    if let Err(e) = state
+        .docker
+        .stop_service(&old_name, Some(&state.console))
+        .await
+    {
+        // Container may already be stopped — log but continue
+        tracing::warn!(error = ?e, service = %old_name, "Stop before rename failed (may already be stopped)");
+    }
+
+    // Step 2: Rename the Docker container
+    if let Err(e) = state.docker.rename_service(&old_name, &new_name).await {
+        // Try to restart the old container on failure
+        let _ = state
+            .docker
+            .start_service(&old_name, Some(&state.console))
+            .await;
+        return Err(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "RENAME_FAILED",
+            format!("Failed to rename container: {}", e),
+            None,
+        ));
+    }
+
+    // Step 3: Update offering in registry
+    state
+        .update_offering(&offering_id, true, |o| {
+            o.name = new_fqn.clone();
+            true
+        })
+        .await;
+
+    if let Err(e) = state.persist_offerings().await {
+        tracing::warn!(error = ?e, "Failed to persist offerings after reassign");
+    }
+
+    // Step 4: Start the container with its new name
+    if let Err(e) = state
+        .docker
+        .start_service(&new_name, Some(&state.console))
+        .await
+    {
+        tracing::error!(error = ?e, service = %new_name, "Failed to start container after rename");
+        state
+            .update_offering(&offering_id, true, |o| {
+                o.status = OfferingStatus::Stopped;
+                true
+            })
+            .await;
+    }
+
+    // Step 5: Emit renamed event (triggers chirp, timer rename, tools projection)
+    state.event_bus.emit(OfferingEvent::renamed(
+        &offering_id,
+        &old_name,
+        &new_name,
+        state.stone_name(),
+    ));
+
+    tracing::info!(
+        from = %old_name,
+        to = %new_name,
+        "Service reassigned to new FQN"
+    );
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "old_fqn": old_name,
+        "new_fqn": new_name,
+        "message": format!("Service reassigned from {} to {}", old_name, new_name),
+    })))
 }

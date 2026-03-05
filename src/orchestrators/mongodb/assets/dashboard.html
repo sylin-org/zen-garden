@@ -158,6 +158,8 @@ tr:hover td { background: var(--surface-hover); }
 .dot.offline { background: var(--danger); }
 .dot.down { background: var(--warn); }
 .dot.degraded { background: var(--warn); }
+.dot.incompatible { background: var(--warn); }
+.dot.stopped { background: var(--text-dim); }
 .role-badge {
   display: inline-block;
   padding: 2px 7px;
@@ -307,6 +309,34 @@ tr:hover td { background: var(--surface-hover); }
   background: var(--accent-dim);
   color: var(--accent);
 }
+tr.incompatible-row td { background: var(--warn-dim); }
+tr.incompatible-row:hover td { background: rgba(234,179,8,0.2); }
+.detail-pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 4px 0 8px;
+  animation: slideDown 0.15s ease-out;
+}
+@keyframes slideDown { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+.detail-pane h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warn);
+  margin-bottom: 8px;
+}
+.detail-pane p {
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.detail-pane .detail-actions { display: flex; gap: 8px; }
+.version-text {
+  font-family: var(--mono);
+  font-size: 12px;
+}
 </style>
 </head>
 <body>
@@ -393,6 +423,7 @@ tr:hover td { background: var(--surface-hover); }
 <script>
 const MAX_ACTIVITY = 50;
 let activities = [];
+const expandedDetails = new Set();
 
 function esc(s) {
   if (!s) return '';
@@ -524,20 +555,60 @@ async function refreshMembers() {
     }
     let html = '';
     for (const ls of sets) {
+      const memberCount = (ls.members || []).length;
       const badge = ls.initialized
         ? '<span style="color:var(--accent);font-size:11px;margin-left:8px">initialized</span>'
-        : '<span style="color:var(--warn);font-size:11px;margin-left:8px">pending init</span>';
+        : memberCount <= 1
+          ? '<span style="color:var(--text-dim);font-size:11px;margin-left:8px">standalone</span>'
+          : '<span style="color:var(--warn);font-size:11px;margin-left:8px">pending init</span>';
       html += '<h3 style="margin:16px 0 8px;font-size:14px;color:var(--text-bright)">' + esc(ls.rs_name) + ' <span style="color:var(--text-dim);font-size:12px">(' + esc(ls.fqn) + ')</span>' + badge + '</h3>';
       if (ls.connection_string) {
         html += '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:8px;word-break:break-all">' + esc(ls.connection_string) + '</div>';
       }
-      html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Health</th><th>Role</th><th>Lag</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Health</th><th>Role</th><th>Version</th><th>Lag</th></tr></thead><tbody>';
       for (const m of (ls.members || [])) {
-        html += '<tr><td>' + stoneChip(m.stone_name, 'http://' + m.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(m.endpoint) + '</td><td>' + healthDot(m.health) + '</td><td>' + roleBadge(m.role) + '</td><td>' + formatLag(m.lag_seconds) + '</td></tr>';
+        const isIncompat = (m.health || '').toLowerCase() === 'incompatible';
+        const rowClass = isIncompat ? ' class="incompatible-row"' : '';
+        const rowId = 'row-' + esc(m.stone_name).replace(/[^a-z0-9]/gi, '-');
+        const verText = m.server_version
+          ? '<span class="version-text">' + esc(m.server_version) + '</span>'
+          : '<span style="color:var(--text-dim)">\u2014</span>';
+        html += '<tr' + rowClass + (isIncompat ? ' style="cursor:pointer" onclick="toggleDetail(\'' + rowId + '\')"' : '') + '><td>' + stoneChip(m.stone_name, 'http://' + m.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(m.endpoint) + '</td><td>' + healthDot(m.health) + '</td><td>' + roleBadge(m.role) + '</td><td>' + verText + '</td><td>' + formatLag(m.lag_seconds) + '</td></tr>';
+        if (isIncompat) {
+          const wireRange = m.wire_version_range ? m.wire_version_range[0] + '\u2013' + m.wire_version_range[1] : '?';
+          const safeStoneName = esc(m.stone_name).replace(/'/g, "\\'");
+          html += '<tr id="' + rowId + '" style="display:none"><td colspan="6" style="padding:0;border:none">'
+            + '<div class="detail-pane">'
+            + '<h4>\u26A0 Wire Version Incompatibility</h4>'
+            + '<p>' + esc(m.stone_name) + ' is running MongoDB ' + esc(m.server_version) + ' (wire version ' + wireRange + ') '
+            + 'but the replica set requires a compatible major version. These versions cannot coexist in the same replica set.</p>'
+            + '<div class="detail-actions">'
+            + '<button class="btn danger" onclick="event.stopPropagation();removeService(\'' + safeStoneName + '\')">Remove Service</button>'
+            + '<button class="btn accent" id="reassign-btn-' + rowId + '" onclick="event.stopPropagation();showReassignForm(\'' + rowId + '\')">Assign to a different Set</button>'
+            + '</div>'
+            + '<div id="reassign-form-' + rowId + '" style="display:none;margin-top:12px" onclick="event.stopPropagation()">'
+            + '<div style="display:flex;align-items:center;gap:8px">'
+            + '<span style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">mongodb::</span>'
+            + '<input type="text" id="reassign-input-' + rowId + '" value="legacy" '
+            + 'style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:12px;width:140px" '
+            + 'oninput="updateReassignPreview(\'' + rowId + '\')" />'
+            + '<button class="btn accent" onclick="confirmReassign(\'' + rowId + '\',\'' + safeStoneName + '\')">Confirm</button>'
+            + '<button class="btn" onclick="hideReassignForm(\'' + rowId + '\')">Cancel</button>'
+            + '</div>'
+            + '<div style="font-size:11px;color:var(--text-dim);margin-top:4px">'
+            + 'New FQN: <span id="reassign-preview-' + rowId + '" style="font-family:var(--mono)">mongodb::legacy</span>'
+            + '</div></div>'
+            + '</div></td></tr>';
+        }
       }
       html += '</tbody></table>';
     }
     document.getElementById('members-content').innerHTML = html;
+    // Restore expanded detail panes
+    for (const rowId of expandedDetails) {
+      const row = document.getElementById(rowId);
+      if (row) row.style.display = '';
+    }
   } catch(e) {
     document.getElementById('members-content').innerHTML = '<div class="empty-state">Error loading logical sets</div>';
   }
@@ -732,6 +803,87 @@ async function dismissInstance(stoneName) {
       refresh();
     } else {
       alert('Failed: ' + (d.message || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  }
+}
+
+// ── Incompatible detail pane ──
+function toggleDetail(rowId) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? '' : 'none';
+  if (isHidden) {
+    expandedDetails.add(rowId);
+  } else {
+    expandedDetails.delete(rowId);
+  }
+}
+
+async function removeService(stoneName) {
+  if (!confirm('Remove the MongoDB service from ' + stoneName + '?\n\nThis will delete the service on the stone.')) return;
+  try {
+    const r = await fetch('/api/cluster/instances/' + encodeURIComponent(stoneName), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.success) {
+      expandedDetails.delete('row-' + stoneName.replace(/[^a-z0-9]/gi, '-'));
+      addActivity('instance.removed', stoneName);
+      refreshMembers();
+      refresh();
+    } else {
+      alert('Failed: ' + (d.message || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  }
+}
+
+function showReassignForm(rowId) {
+  var form = document.getElementById('reassign-form-' + rowId);
+  var btn = document.getElementById('reassign-btn-' + rowId);
+  if (form) form.style.display = '';
+  if (btn) btn.style.display = 'none';
+  var input = document.getElementById('reassign-input-' + rowId);
+  if (input) input.focus();
+}
+
+function hideReassignForm(rowId) {
+  var form = document.getElementById('reassign-form-' + rowId);
+  var btn = document.getElementById('reassign-btn-' + rowId);
+  if (form) form.style.display = 'none';
+  if (btn) btn.style.display = '';
+}
+
+function updateReassignPreview(rowId) {
+  var input = document.getElementById('reassign-input-' + rowId);
+  var preview = document.getElementById('reassign-preview-' + rowId);
+  if (!input || !preview) return;
+  var val = input.value.trim();
+  preview.textContent = val ? 'mongodb::' + val : 'mongodb';
+}
+
+async function confirmReassign(rowId, stoneName) {
+  var input = document.getElementById('reassign-input-' + rowId);
+  if (!input) return;
+  var instance = input.value.trim();
+  if (!instance) return;
+  var newFqn = 'mongodb::' + instance;
+  try {
+    var r = await fetch('/api/cluster/reassign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stone_name: stoneName, new_fqn: newFqn })
+    });
+    var d = await r.json();
+    if (d.success) {
+      expandedDetails.delete(rowId);
+      addActivity('instance.reassigned', stoneName + ' \u2192 ' + newFqn);
+      refreshMembers();
+      refresh();
+    } else {
+      alert('Reassign failed: ' + (d.message || 'unknown error'));
     }
   } catch(e) {
     alert('Request failed: ' + e.message);

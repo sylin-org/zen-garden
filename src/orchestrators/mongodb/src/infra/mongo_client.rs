@@ -4,8 +4,18 @@
 //! administration commands as typed methods.
 
 use anyhow::{Context, Result};
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
+
+/// Extract an integer from a BSON document, handling both Int32 and Int64 types.
+fn bson_to_i32(doc: &Document, key: &str) -> i32 {
+    match doc.get(key) {
+        Some(Bson::Int32(v)) => *v,
+        Some(Bson::Int64(v)) => *v as i32,
+        Some(Bson::Double(v)) => *v as i32,
+        _ => 0,
+    }
+}
 
 /// Wire protocol client for a single MongoDB endpoint.
 pub struct MongoClient {
@@ -39,6 +49,17 @@ pub struct RsMember {
     pub last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
     /// `true` if this member is the one we ran the command against.
     pub is_self: bool,
+}
+
+/// Parsed output from the `buildInfo` admin command.
+#[derive(Debug, Clone)]
+pub struct BuildInfo {
+    /// Server version string (e.g. "7.0.30", "4.4.30").
+    pub version: String,
+    /// Minimum wire protocol version this server supports.
+    pub min_wire_version: i32,
+    /// Maximum wire protocol version this server supports.
+    pub max_wire_version: i32,
 }
 
 /// Oplog window information from `getReplicationInfo`-equivalent queries.
@@ -490,6 +511,34 @@ impl MongoClient {
     pub async fn ping(&self) -> bool {
         let db = self.client.database("admin");
         db.run_command(doc! { "ping": 1 }).await.is_ok()
+    }
+
+    /// Run `buildInfo` and parse version + wire protocol info.
+    pub async fn build_info(&self) -> Result<BuildInfo> {
+        let db = self.client.database("admin");
+
+        // Version string comes from buildInfo
+        let build = db
+            .run_command(doc! { "buildInfo": 1 })
+            .await
+            .with_context(|| format!("buildInfo on {}", self.endpoint))?;
+
+        // Wire version range comes from hello (or isMaster for pre-5.0)
+        let hello = match db.run_command(doc! { "hello": 1 }).await {
+            Ok(doc) => doc,
+            Err(_) => {
+                // Fallback for MongoDB < 5.0 which doesn't support hello
+                db.run_command(doc! { "isMaster": 1 })
+                    .await
+                    .unwrap_or_default()
+            }
+        };
+
+        Ok(BuildInfo {
+            version: build.get_str("version").unwrap_or("unknown").to_string(),
+            min_wire_version: bson_to_i32(&hello, "minWireVersion"),
+            max_wire_version: bson_to_i32(&hello, "maxWireVersion"),
+        })
     }
 }
 

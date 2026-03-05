@@ -1,7 +1,7 @@
 //! Cluster management API endpoints.
 
 use crate::app_state::AppState;
-use crate::domain::types::{derive_replica_set_name, MongoInstance, PendingAction, ReplicaRole};
+use crate::domain::types::{derive_replica_set_name, InstanceHealth, MongoInstance, PendingAction, ReplicaRole};
 use crate::infra::mongo_client::MongoClient;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -114,6 +114,8 @@ pub async fn get_cluster_members(State(state): State<AppState>) -> Json<Value> {
                     "last_heartbeat": rs_member
                         .and_then(|m| m.last_heartbeat)
                         .map(|dt| dt.to_rfc3339()),
+                    "server_version": inst.server_version,
+                    "wire_version_range": inst.wire_version_range.map(|(min, max)| json!([min, max])),
                 })
             })
             .collect();
@@ -375,6 +377,9 @@ pub async fn post_install(
         )
         .await;
 
+    // Wake the conductor — new install will eventually produce an instance
+    state.conductor_notify.notify_one();
+
     Ok(Json(json!({
         "success": true,
         "message": format!("MongoDB installation requested on {}", req.moss_endpoint),
@@ -442,6 +447,9 @@ pub async fn delete_member(
     };
 
     state.queue_action(action).await;
+
+    // Wake the conductor — pending removal needs processing
+    state.conductor_notify.notify_one();
 
     tracing::info!(
         endpoint = %mongo_endpoint,
@@ -521,6 +529,9 @@ pub async fn delete_instance(
     // Remove from registry immediately — no more probing
     state.remove_instance(&stone_name).await;
 
+    // Wake the conductor — registry changed
+    state.conductor_notify.notify_one();
+
     tracing::info!(stone = %stone_name, "instance dismissed from registry");
 
     state
@@ -544,4 +555,142 @@ pub async fn delete_instance(
 pub async fn get_pending_actions(State(state): State<AppState>) -> Json<Value> {
     let actions = state.pending_actions_snapshot().await;
     Json(json!({ "pending_actions": actions }))
+}
+
+/// Request body for reassigning a stone's MongoDB offering to a different FQN.
+#[derive(Deserialize)]
+pub struct ReassignRequest {
+    /// Stone name to reassign.
+    pub stone_name: String,
+    /// New FQN to assign (e.g. "mongodb::legacy").
+    pub new_fqn: String,
+}
+
+/// `POST /api/cluster/reassign` — reassign a stone's MongoDB to a different FQN pool.
+///
+/// Calls the stone's Moss API to non-destructively reassign the service FQN.
+/// Moss stops the container, renames it, updates the manifest, and restarts.
+/// Volumes survive because they're bound by container ID.
+///
+/// The tools stream will emit a Remove(old) + Upsert(new) delta, and discovery
+/// will re-register the instance under the new FQN.
+pub async fn post_reassign(
+    State(state): State<AppState>,
+    Json(req): Json<ReassignRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let new_fqn = OfferingFqn::parse(&req.new_fqn).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "message": format!("invalid FQN '{}': {e}", req.new_fqn) })),
+        )
+    })?;
+
+    // Look up stone's current instance data
+    let (moss_endpoint, old_fqn, mongo_endpoint) = {
+        let reg = state.instances.read().await;
+        reg.get(&req.stone_name)
+            .map(|i| (i.moss_endpoint.clone(), i.fqn.clone(), i.mongo_endpoint.clone()))
+    }
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "success": false,
+                "message": format!("instance '{}' not found", req.stone_name),
+            })),
+        )
+    })?;
+
+    let base_url = moss_endpoint.trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "success": false, "message": format!("HTTP client error: {e}") })),
+            )
+        })?;
+
+    // Call Moss reassign endpoint (non-destructive: stop → rename → start)
+    let old_fqn_str = old_fqn.to_string();
+    let encoded_old = urlencoding::encode(&old_fqn_str);
+    let reassign_url =
+        format!("{base_url}/api/v1/stone/services/{encoded_old}/reassign");
+
+    let resp = client
+        .post(&reassign_url)
+        .json(&json!({ "new_fqn": new_fqn.to_string() }))
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "success": false, "message": format!("cannot reach stone: {e}") })),
+            )
+        })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap_or(json!({}));
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "success": false,
+                "message": format!("reassign failed ({}): {}", status, body),
+            })),
+        ));
+    }
+
+    // Queue RS removal for the old endpoint+FQN (member is in the old RS)
+    if !state.has_pending_removal_for_fqn(&mongo_endpoint, &old_fqn).await {
+        state
+            .queue_action(PendingAction::RemoveMember {
+                mongo_endpoint: mongo_endpoint.clone(),
+                fqn: old_fqn.clone(),
+                requested_at: chrono::Utc::now(),
+            })
+            .await;
+    }
+
+    // Update the instance's FQN in the local registry immediately
+    // (discovery will also update it when the tools stream delta arrives)
+    {
+        let mut reg = state.instances.write().await;
+        if let Some(inst) = reg.get_mut(&req.stone_name) {
+            inst.fqn = new_fqn.clone();
+            inst.health = InstanceHealth::Unknown;
+        }
+    }
+
+    tracing::info!(
+        stone = %req.stone_name,
+        from = %old_fqn,
+        to = %new_fqn,
+        "instance reassigned to new FQN pool"
+    );
+
+    state
+        .emit_event(
+            "instance.reassigned",
+            &json!({
+                "stone_name": req.stone_name,
+                "from_fqn": old_fqn,
+                "to_fqn": new_fqn,
+            })
+            .to_string(),
+        )
+        .await;
+
+    // Wake the conductor — FQN changed, need to reconcile sets
+    state.conductor_notify.notify_one();
+
+    Ok(Json(json!({
+        "success": true,
+        "message": format!("{} reassigned from {} to {}", req.stone_name, old_fqn, new_fqn),
+        "stone_name": req.stone_name,
+        "from_fqn": old_fqn,
+        "to_fqn": new_fqn,
+    })))
 }

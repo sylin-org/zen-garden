@@ -90,6 +90,9 @@ pub async fn put_gateway(
     // Auto-chirp: gateways changed → propagate via topology
     state.sync_self_services(true).await;
 
+    // Refresh tools projection so gateways appear in /api/v1/garden/tools
+    state.refresh_local_tools_projection().await;
+
     Ok(Json(PutGatewayResponse {
         lease_id,
         ttl_seconds: 60,
@@ -111,6 +114,7 @@ pub async fn delete_gateway(
     if removed {
         tracing::info!(offering = %offering, "Gateway deregistered");
         state.sync_self_services(true).await;
+        state.refresh_local_tools_projection().await;
     } else {
         tracing::debug!(offering = %offering, "Gateway not found for deregistration");
     }

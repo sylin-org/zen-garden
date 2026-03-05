@@ -19,6 +19,17 @@ impl GatewayProvider for AppState {
         AppState::tended_endpoint(self).await
     }
 
+    async fn fallback_moss_endpoints(&self) -> Vec<String> {
+        use orchestrator_common::stone_catalog::ServiceKey;
+        let catalog = self.catalog.read().await;
+        catalog
+            .stone_names()
+            .iter()
+            .filter_map(|name| catalog.service_endpoint(name, ServiceKey::Moss))
+            .map(|s| s.to_string())
+            .collect()
+    }
+
     async fn fqn_gateway_entries(&self) -> Vec<FqnGatewayEntry> {
         let fqns = self.distinct_fqns().await;
         let replica_sets = self.replica_sets.read().await;

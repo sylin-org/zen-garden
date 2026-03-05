@@ -1074,6 +1074,10 @@ pub struct RuleCondition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FallbackConfig {
     pub image: String,
+    /// Suggested offering instance name when this fallback applies.
+    /// e.g. `"legacy"` → FQN becomes `mongodb::legacy` instead of `mongodb`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

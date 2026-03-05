@@ -164,11 +164,10 @@ pub fn classify_group(
     }
 
     // Any instances report NotYetInitialized — RS needs to be created.
-    // This covers the "all NotInitialized" case as well as the mixed
-    // NotInitialized + StaleConfig case (some nodes were wiped, some
-    // still have stale RS data). Initiate on a clean node; stale nodes
-    // will be added after the RS stabilizes.
-    if !not_initialized.is_empty() {
+    // Only initiate when there are 2+ instances in the group — a single
+    // instance can serve standalone without a replica set.  Once a second
+    // member appears, initiate so they can replicate.
+    if !not_initialized.is_empty() && probes.len() >= 2 {
         return GroupAction::Initiate {
             endpoint: not_initialized[0].to_string(),
             rs_name: rs_name.to_string(),
@@ -320,9 +319,23 @@ mod tests {
     }
 
     #[test]
-    fn classify_all_not_initialized_is_initiate() {
+    fn classify_single_not_initialized_is_wait() {
+        // A single standalone instance doesn't need a replica set.
         let probes = vec![
             ("192.168.1.1:27017".into(), InstanceProbe::NotInitialized),
+        ];
+        assert!(matches!(
+            classify_group(&probes, "zen-garden"),
+            GroupAction::Wait
+        ));
+    }
+
+    #[test]
+    fn classify_two_not_initialized_is_initiate() {
+        // Once a second instance appears, initiate the replica set.
+        let probes = vec![
+            ("192.168.1.1:27017".into(), InstanceProbe::NotInitialized),
+            ("192.168.1.2:27017".into(), InstanceProbe::NotInitialized),
         ];
         match classify_group(&probes, "zen-garden") {
             GroupAction::Initiate { endpoint, rs_name } => {

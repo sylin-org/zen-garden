@@ -17,7 +17,7 @@ use orchestrator_common::stone_catalog::{ServiceKey, StoneIdentity};
 use orchestrator_common::tools_stream::ToolStreamEvent;
 use orchestrator_common::topology;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// Run the discovery task.
@@ -94,6 +94,44 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     resilient_stream::run_resilient_stream(ctx, shutdown).await;
 }
 
+/// Periodically re-scan topology for MongoDB instances.
+///
+/// The tools stream on the tended stone may not aggregate tools from remote
+/// stones (e.g., when the tended stone is a non-MongoDB host). This task
+/// compensates by re-querying topology every 60 seconds, ensuring instances
+/// that appear after the initial bootstrap are discovered.
+pub async fn run_topology_rescan(state: AppState, shutdown: CancellationToken) {
+    const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
+
+    // Wait for the initial tending to be established by the discovery task
+    loop {
+        if shutdown.is_cancelled() {
+            return;
+        }
+        if state.tended_endpoint().await.is_some() {
+            break;
+        }
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_secs(5)) => continue,
+        }
+    }
+
+    let mut interval = tokio::time::interval(RESCAN_INTERVAL);
+    interval.tick().await; // skip the immediate first tick
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = interval.tick() => {
+                if let Some(endpoint) = state.tended_endpoint().await {
+                    bootstrap_from_topology(&state, &endpoint).await;
+                }
+            }
+        }
+    }
+}
+
 /// Scan topology for MongoDB instances and reconcile with the registry.
 ///
 /// - New instances are added (health = Unknown).
@@ -133,7 +171,10 @@ pub async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                     reg.get(&s.stone_name)
                         .map(|i| matches!(
                             i.health,
-                            InstanceHealth::Offline | InstanceHealth::Down
+                            InstanceHealth::Offline
+                            | InstanceHealth::Down
+                            | InstanceHealth::Stopped
+                            | InstanceHealth::Incompatible
                         ))
                         .unwrap_or(false)
                 };
@@ -147,6 +188,8 @@ pub async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                     health: InstanceHealth::Unknown,
                     role: None,
                     last_seen: Instant::now(),
+                    server_version: None,
+                    wire_version_range: None,
                 };
                 let is_new = state.upsert_instance(instance).await;
 
@@ -166,8 +209,12 @@ pub async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
         }
         Err(e) => {
             tracing::warn!(error = %e, "topology scan failed (will rely on tools stream)");
+            return;
         }
     }
+
+    // Wake the conductor — topology scan may have added/updated instances
+    state.conductor_notify.notify_one();
 }
 
 /// Handle a single tool stream event.
@@ -201,8 +248,10 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     &state.koi_endpoint, &mongo_endpoint_raw,
                 ).await;
 
-                // Suppress registration if a pending removal exists for this endpoint
-                if state.has_pending_removal(&mongo_endpoint).await {
+                // Suppress registration if a pending removal exists for this
+                // endpoint+FQN pair. Uses FQN-aware check so that a reassigned
+                // instance (same endpoint, different FQN) is not suppressed.
+                if state.has_pending_removal_for_fqn(&mongo_endpoint, &fqn).await {
                     tracing::trace!(
                         stone = %stone_name,
                         endpoint = %mongo_endpoint,
@@ -255,9 +304,17 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     health,
                     role: None,
                     last_seen: Instant::now(),
+                    server_version: None,
+                    wire_version_range: None,
                 };
 
                 let is_new = state.upsert_instance(instance).await;
+
+                // Wake the conductor on any registry change
+                if is_new {
+                    state.conductor_notify.notify_one();
+                }
+
                 if is_new {
                     tracing::info!(
                         stone = %stone_name,
@@ -287,7 +344,8 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                         match inst.health {
                             InstanceHealth::Stopped
                             | InstanceHealth::Offline
-                            | InstanceHealth::Down => {
+                            | InstanceHealth::Down
+                            | InstanceHealth::Incompatible => {
                                 tracing::info!(
                                     stone = %stone_name,
                                     from = ?inst.health,
@@ -299,6 +357,9 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                         }
                         inst.last_seen = Instant::now();
                     }
+
+                    // Wake the conductor — instance re-activated
+                    state.conductor_notify.notify_one();
                 }
             });
         }
@@ -339,6 +400,9 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     }
                 }
                 state.remove_instance(&stone_name).await;
+
+                // Wake the conductor — instance removed
+                state.conductor_notify.notify_one();
             });
         }
         ToolStreamEvent::Heartbeat => {

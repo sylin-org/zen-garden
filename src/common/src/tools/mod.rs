@@ -11,5 +11,6 @@ pub mod types;
 pub use types::{
     build_tool_key, fqid_matches, parse_capability_wish, Capability, CapabilityDelta,
     CapabilitySelector, CapabilitySnapshot, CapabilityWish, CapabilityWishParseError, GardenTool,
-    ServiceInfo, Stone, ToolDelta, ToolDeltaKind, ToolIdentity, ToolType, ToolsBeacon,
+    ServiceInfo, Stone, StorageMetadata, ToolDelta, ToolDeltaKind, ToolIdentity, ToolType,
+    ToolsBeacon,
 };

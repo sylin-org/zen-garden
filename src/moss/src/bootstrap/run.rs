@@ -119,6 +119,9 @@ pub async fn run(
     let tools_cache = crate::domain::tools::new_tools_cache();
     let (tools_tx, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
 
+    // TOOLS-0003: Unified garden registry (replaces tools_cache, storage_cache, gateways)
+    let registry = crate::domain::garden_registry::new_registry();
+
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
         config.console_mode,
@@ -645,6 +648,7 @@ pub async fn run(
         storage_cache: storage_cache.clone(),
         tools_cache: tools_cache.clone(),
         tools_tx: tools_tx.clone(),
+        registry: registry.clone(),
         self_entry: self_entry.clone(),
         gateways: Arc::new(RwLock::new(HashMap::new())),
         mdns_handle: mdns_handle.clone(),

@@ -482,11 +482,107 @@ impl GardenRegistryInner {
             .collect()
     }
 
-    /// Find the primary replica for a named seed bank.
+    /// Find the Primary replica for a named seed bank.
+    ///
+    /// Prefers Primary role. Falls back to any replica if no Primary found.
     pub fn storage_primary(&self, name: &str) -> Option<&RegistryEntry> {
-        self.storage_by_name(name)
-            .into_iter()
-            .find(|e| e.tool.tool.tags.iter().any(|t| t == "role:primary"))
+        let replicas = self.storage_by_name(name);
+        let primary = replicas.iter().find(|e| {
+            e.tool
+                .storage
+                .as_ref()
+                .and_then(|s| s.role.as_deref())
+                .is_some_and(|r| r.eq_ignore_ascii_case("primary"))
+        });
+        primary.copied().or_else(|| replicas.into_iter().next())
+    }
+
+    /// Route to the Primary replica for a named seed bank.
+    ///
+    /// Returns `(stone_id, endpoint, seed_bank_id)` for the Primary stone,
+    /// excluding `exclude_stone` (typically this stone, for remote routing).
+    pub fn route_to_primary(
+        &self,
+        name: &str,
+        exclude_stone: &str,
+    ) -> Option<(String, String, String)> {
+        let replicas = self.storage_by_name(name);
+
+        // First try: Primary role on a different stone
+        let primary = replicas.iter().find(|e| {
+            e.tool.stone.id != exclude_stone
+                && e.tool
+                    .storage
+                    .as_ref()
+                    .and_then(|s| s.role.as_deref())
+                    .is_some_and(|r| r.eq_ignore_ascii_case("primary"))
+        });
+
+        // Fallback: any replica on a different stone
+        let target = primary.or_else(|| {
+            replicas
+                .iter()
+                .find(|e| e.tool.stone.id != exclude_stone)
+        });
+
+        target.map(|e| {
+            (
+                e.tool.stone.id.clone(),
+                e.tool.stone.endpoint.clone(),
+                e.tool.tool.id.clone(),
+            )
+        })
+    }
+
+    /// Find all storage entries with S3 protocol support.
+    pub fn find_s3_gateways(&self) -> Vec<&RegistryEntry> {
+        self.entries
+            .values()
+            .filter(|e| {
+                e.tool.tool.category == "storage"
+                    && e.tool
+                        .storage
+                        .as_ref()
+                        .is_some_and(|s| s.protocols.iter().any(|p| p == "s3"))
+            })
+            .collect()
+    }
+
+    /// Find a storage entry by seed bank ID across all stones.
+    pub fn storage_by_id(&self, id: &str) -> Option<&RegistryEntry> {
+        self.entries.values().find(|e| {
+            e.tool.tool.category == "storage" && e.tool.tool.id == id
+        })
+    }
+
+    /// Group storage entries by stone_id.
+    ///
+    /// Returns a map of `stone_id → Vec<&RegistryEntry>` for all storage entries.
+    /// Used by portrait/overview endpoints.
+    pub fn storage_grouped_by_stone(&self) -> BTreeMap<String, Vec<&RegistryEntry>> {
+        let mut grouped: BTreeMap<String, Vec<&RegistryEntry>> = BTreeMap::new();
+        for entry in self.entries.values() {
+            if entry.tool.tool.category == "storage" {
+                grouped
+                    .entry(entry.tool.stone.id.clone())
+                    .or_default()
+                    .push(entry);
+            }
+        }
+        grouped
+    }
+
+    /// Count stones that have storage entries.
+    pub fn storage_stone_count(&self) -> usize {
+        self.storage_grouped_by_stone().len()
+    }
+
+    /// Count total storage entries (seed banks) across all stones.
+    pub fn storage_count(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|e| e.tool.tool.category == "storage")
+            .count()
     }
 
     /// Get the Moss endpoint for a given stone_id.
@@ -759,16 +855,34 @@ mod tests {
 
     #[test]
     fn storage_queries() {
+        use garden_common::tools::StorageMetadata;
+
         let mut reg = GardenRegistryInner::default();
 
         let mut bank = sample_tool("seed-clear-valley", "storage", "stone-a");
         bank.tool.tool_type = "seed-bank".to_string();
-        bank.tool.tags = vec!["role:primary".to_string()];
+        bank.storage = Some(StorageMetadata {
+            role: Some("primary".to_string()),
+            capacity_bytes: 1_000_000_000,
+            used_bytes: 500_000_000,
+            visibility: "open".to_string(),
+            encrypted: false,
+            pin_id: None,
+            protocols: vec!["s3".to_string(), "storage".to_string()],
+        });
         reg.upsert(bank, EntryOrigin::Local);
 
         let mut bank2 = sample_tool("seed-clear-valley", "storage", "stone-b");
         bank2.tool.tool_type = "seed-bank".to_string();
-        bank2.tool.tags = vec!["role:dormant".to_string()];
+        bank2.storage = Some(StorageMetadata {
+            role: Some("dormant".to_string()),
+            capacity_bytes: 1_000_000_000,
+            used_bytes: 500_000_000,
+            visibility: "open".to_string(),
+            encrypted: false,
+            pin_id: None,
+            protocols: vec!["s3".to_string()],
+        });
         reg.upsert(
             bank2,
             EntryOrigin::Announced {
@@ -782,6 +896,25 @@ mod tests {
         let primary = reg.storage_primary("seed-clear-valley");
         assert!(primary.is_some());
         assert_eq!(primary.unwrap().tool.stone.id, "stone-a");
+
+        // S3 gateways
+        assert_eq!(reg.find_s3_gateways().len(), 2);
+
+        // Route to primary (excluding stone-a → should get stone-b)
+        let route = reg.route_to_primary("seed-clear-valley", "stone-a");
+        assert!(route.is_some());
+        let (sid, _, _) = route.unwrap();
+        assert_eq!(sid, "stone-b");
+
+        // Route to primary (excluding stone-b → should get stone-a as Primary)
+        let route = reg.route_to_primary("seed-clear-valley", "stone-b");
+        assert!(route.is_some());
+        let (sid, _, _) = route.unwrap();
+        assert_eq!(sid, "stone-a");
+
+        // Count
+        assert_eq!(reg.storage_count(), 2);
+        assert_eq!(reg.storage_stone_count(), 2);
     }
 
     #[test]

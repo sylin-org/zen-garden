@@ -266,7 +266,7 @@ fn tool_equivalent(lhs: &GardenTool, rhs: &GardenTool) -> bool {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use garden_common::tools::{Capability, ServiceInfo, Stone, ToolIdentity};
+    use garden_common::tools::{CapabilitySelector, Capability, ServiceInfo, Stone, ToolIdentity};
 
     fn sample_tool(fqid: &str, category: &str) -> GardenTool {
         let tool_type = if fqid.contains(':') {

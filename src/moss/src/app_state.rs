@@ -142,6 +142,11 @@ pub struct AppState {
     /// Tools stream broadcast channel (normative automation stream)
     pub tools_tx: tokio::sync::broadcast::Sender<ToolDelta>,
 
+    /// Unified garden registry — single source of truth for offerings,
+    /// gateways, and storage (TOOLS-0003). Replaces tools_cache,
+    /// storage_cache, and gateways.
+    pub registry: crate::domain::garden_registry::GardenRegistry,
+
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
 
@@ -360,33 +365,62 @@ impl AppState {
     /// Reconcile local tools projection and publish resulting deltas.
     ///
     /// This is the single entry point for publishing local tool updates.
+    /// Writes to both the registry (TOOLS-0003) and the legacy tools_cache
+    /// until all read sites are migrated.
     pub async fn refresh_local_tools_projection(&self) {
         let projections = crate::domain::tools::projector::project_local_tools(self).await;
-        let deltas = {
-            let mut cache = self.tools_cache.write().await;
-            cache.reconcile_local(&self.stone_id, projections)
+
+        // Write to unified registry (TOOLS-0003)
+        let registry_deltas = {
+            let mut reg = self.registry.write().await;
+            reg.reconcile_local(
+                &self.stone_id,
+                projections.clone(),
+                crate::domain::garden_registry::EntryOrigin::Local,
+            )
         };
 
-        self.publish_tool_deltas(deltas, true).await;
+        // Legacy: also write to tools_cache until read sites are migrated
+        {
+            let mut cache = self.tools_cache.write().await;
+            cache.reconcile_local(&self.stone_id, projections);
+        }
+
+        self.publish_tool_deltas(registry_deltas, true).await;
     }
 
     /// Ingest remote tools beacon and publish resulting stream deltas locally.
     pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
-        let deltas = {
-            let mut cache = self.tools_cache.write().await;
-            cache.apply_remote_beacon(&beacon)
+        // Write to unified registry (TOOLS-0003)
+        let registry_deltas = {
+            let mut reg = self.registry.write().await;
+            reg.apply_remote_beacon(&beacon)
         };
 
-        self.publish_tool_deltas(deltas, false).await;
+        // Legacy: also write to tools_cache
+        {
+            let mut cache = self.tools_cache.write().await;
+            cache.apply_remote_beacon(&beacon);
+        }
+
+        self.publish_tool_deltas(registry_deltas, false).await;
     }
 
     /// Remove all projected tools for a stone (goodbye/offline path).
     pub async fn remove_tools_for_stone(&self, stone_id: &str) {
-        let deltas = {
-            let mut cache = self.tools_cache.write().await;
-            cache.remove_stone_tools(stone_id)
+        // Write to unified registry (TOOLS-0003)
+        let registry_deltas = {
+            let mut reg = self.registry.write().await;
+            reg.remove_stone(stone_id)
         };
-        self.publish_tool_deltas(deltas, false).await;
+
+        // Legacy: also write to tools_cache
+        {
+            let mut cache = self.tools_cache.write().await;
+            cache.remove_stone_tools(stone_id);
+        }
+
+        self.publish_tool_deltas(registry_deltas, false).await;
     }
 
     async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {

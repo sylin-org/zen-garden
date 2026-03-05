@@ -270,13 +270,13 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     };
 
     // ORCH-0008: collect offering types covered by any active gateway in the garden.
-    // A service registering handler_for: ["mongodb"] suppresses elections for mongodb.
+    // A service registering handler_for suppresses elections for that offering.
+    // Read from the unified registry (category=orchestrator entries).
     let gateway_handled: std::collections::HashSet<String> = {
-        let cache = state.topology_cache.read().await;
-        cache
-            .values()
-            .flat_map(|entry| entry.gateways.iter())
-            .flat_map(|gw| gw.handler_for.iter().cloned())
+        let reg = state.registry.read().await;
+        reg.gateway_entries()
+            .iter()
+            .map(|e| e.tool.tool.tool_type.clone())
             .collect()
     };
 

@@ -141,15 +141,17 @@ pub async fn put_gateway(
         storage: None,
     };
 
-    {
+    let delta = {
         let mut reg = state.registry.write().await;
-        if let Some(delta) = reg.upsert(tool, EntryOrigin::Registered) {
-            let _ = state.tools_tx.send(delta);
-        }
-    }
+        reg.upsert(tool, EntryOrigin::Registered)
+    };
 
-    // Auto-chirp: gateways changed → propagate via topology
-    state.sync_self_services(true).await;
+    // Broadcast via tools beacon so remote registries get the entry
+    if let Some(delta) = delta {
+        state
+            .publish_tool_deltas(vec![delta], true)
+            .await;
+    }
 
     Ok(Json(PutGatewayResponse {
         lease_id,
@@ -165,14 +167,14 @@ pub async fn delete_gateway(
     Path(offering): Path<String>,
 ) -> StatusCode {
     let key = build_tool_key(&state.stone_id, &offering, "orchestrator");
-    let removed = {
+    let delta = {
         let mut reg = state.registry.write().await;
-        reg.remove(&key).is_some()
+        reg.remove(&key)
     };
 
-    if removed {
+    if let Some(delta) = delta {
         tracing::info!(offering = %offering, "Gateway deregistered");
-        state.sync_self_services(true).await;
+        state.publish_tool_deltas(vec![delta], true).await;
     } else {
         tracing::debug!(offering = %offering, "Gateway not found for deregistration");
     }

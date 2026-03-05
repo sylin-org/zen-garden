@@ -430,12 +430,15 @@ pub async fn find_services(
 
     // ── Gateway check (ORCH-0004) ────────────────────────────────
     // Gateways appear first (structural priority — routed endpoint before raw).
+    // Query by category (not origin) so both local and announced entries appear.
 
-    // Check local gateway registrations from the unified registry
     {
         let reg = state.registry.read().await;
-        for entry in reg.gateway_entries() {
-            let tool = &entry.tool;
+        let (_, orchestrator_tools) = reg.snapshot(&crate::domain::ToolQuery {
+            category: Some("orchestrator".to_string()),
+            ..Default::default()
+        });
+        for tool in &orchestrator_tools {
             let offering = &tool.tool.tool_type;
             let gw_category = &tool.tool.category;
             let gw_tags = if tool.tool.tags.is_empty() {

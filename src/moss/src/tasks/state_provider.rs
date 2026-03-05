@@ -102,12 +102,13 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
 
             // ORCH-0008: if an active gateway claims handler_for this offering
             // type, this stone is ineligible — the handler owns the lifecycle.
+            // Check if an orchestrator handles this offering (suppress elections)
             {
-                let cache = self.state.topology_cache.read().await;
-                let handled = cache
-                    .values()
-                    .flat_map(|entry| entry.gateways.iter())
-                    .any(|gw| gw.handler_for.iter().any(|h| h == &offering.offering));
+                let reg = self.state.registry.read().await;
+                let handled = reg
+                    .gateway_entries()
+                    .iter()
+                    .any(|e| e.tool.tool.tool_type.eq_ignore_ascii_case(&offering.offering));
                 if handled {
                     return None;
                 }

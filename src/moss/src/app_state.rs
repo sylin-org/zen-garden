@@ -26,7 +26,6 @@ use garden_common::storage::StorageDetectedInfo;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
-use garden_common::GatewayRegistration;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -390,7 +389,9 @@ impl AppState {
         self.publish_tool_deltas(deltas, false).await;
     }
 
-    async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
+    /// Publish tool deltas to SSE subscribers and optionally broadcast a UDP
+    /// tools beacon so remote stones' registries get the update.
+    pub async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
         if deltas.is_empty() {
             return;
         }
@@ -443,39 +444,14 @@ impl AppState {
         // Compile notification tags for cross-stone awareness
         let tags = self.notifications.compile();
 
-        // Collect gateway registrations from the unified registry.
-        // Source fields (hostname, ip, port, uri_template) are preserved on
-        // ServiceInfo — no URI parsing needed.
-        let gateway_entries: Vec<GatewayRegistration> = {
-            let reg = self.registry.read().await;
-            reg.gateway_entries()
-                .into_iter()
-                .map(|e| {
-                    let tool = &e.tool;
-                    let svc = &tool.service;
-
-                    GatewayRegistration {
-                        fqn: tool.fqid.clone(),
-                        handler_for: vec![tool.tool.tool_type.clone()],
-                        hostname: svc.hostname.clone().unwrap_or_else(|| tool.stone.name.clone()),
-                        ip: svc.ip.clone().unwrap_or_default(),
-                        port: svc.port.unwrap_or(0),
-                        protocol: svc.protocol.clone(),
-                        uri_template: svc.uri_template.clone(),
-                        category: Some(tool.tool.category.clone()),
-                        tags: tool.tool.tags.clone(),
-                        source: String::new(),
-                        registered_at: chrono::Utc::now(),
-                    }
-                })
-                .collect()
-        };
+        // TOOLS-0003: Gateways are no longer carried in chirps.
+        // They propagate via the tools beacon / registry path exclusively.
 
         {
             let mut entry = self.self_entry.write().await;
             entry.services = topology_services;
             entry.tags = tags;
-            entry.gateways = gateway_entries;
+            entry.gateways = vec![]; // Empty — registry beacon is the single path
             entry.last_seen = chrono::Utc::now();
         }
 

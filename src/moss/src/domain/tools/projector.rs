@@ -2,14 +2,13 @@
 //!
 //! TOOLS-0002: Offerings are projected through `find_services()` (same path as
 //! garden-rake find) to get gateway/orchestrator-aware resolution.
-//! Seed-banks are projected directly from the storage cache.
+//! Seed-banks are projected directly from the seed bank lifecycle objects.
 
-use crate::domain::connection;
 use crate::domain::service_discovery::{self, FoundService};
-use crate::domain::tools::readiness::seed_bank_readiness;
+use crate::infra::storage::StorageHealth;
 use crate::AppState;
-use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
 use garden_common::offerings::OfferingFqn;
+use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
 use std::collections::BTreeSet;
 
@@ -27,116 +26,72 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     }
 
     // ── Gateway / orchestrator entries ───────────────────────────
-    // Gateways registered via Koi mDNS that handle offerings (e.g. MongoDB orchestrator).
-    // These appear as category=orchestrator tools.
-    {
-        let gateways = state.gateways.read().await;
-        for (offering, gw) in gateways.iter() {
-            let category = gw.category.as_deref().unwrap_or("orchestrator");
-            let tags = if gw.tags.is_empty() {
-                vec!["orchestrator".to_string()]
-            } else {
-                gw.tags.clone()
-            };
+    // Gateways are written directly to the registry with EntryOrigin::Registered
+    // by the gateway API (PUT /api/v1/garden/gateway). They are NOT projected
+    // here — the reconcile_local() call skips Registered entries.
 
-            let fqn = parse_fqn_for_fqid(&gw.fqn, offering);
-            let fqid = fqn.fqn();
-
-            let conn = connection::resolve_connection(
-                &gw.hostname,
-                &format!("http://{}:{}", gw.ip, gw.port),
-                gw.port,
-                &gw.protocol,
-                gw.uri_template.as_deref(),
-            );
-
-            tools.push(GardenTool {
-                fqid: fqid.clone(),
-                tool: ToolIdentity {
-                    name: fqn.instance.clone().unwrap_or_default(),
-                    tool_type: offering.to_ascii_lowercase(),
-                    category: category.to_string(),
-                    id: String::new(),
-                    tags,
-                },
-                stone: Stone {
-                    id: state.stone_id.clone(),
-                    name: state.stone_name.clone(),
-                    endpoint: state.self_entry.read().await.address.http_base(),
-                },
-                service: ServiceInfo {
-                    status: garden_common::SERVICE_RUNNING.to_string(),
-                    ready: true,
-                    protocol: conn.protocol.clone(),
-                    uris: conn.uris,
-                },
-                capabilities: Vec::new(),
-                storage: None,
-            });
-        }
-    }
-
-    // ── Seed-banks via storage cache ─────────────────────────────
-    let local_storage = {
-        let cache = state.storage_cache.read().await;
-        cache.get_beacon(&state.stone_id).cloned()
+    // ── Seed-banks from lifecycle objects ─────────────────────────
+    let endpoint = state.self_entry.read().await.address.http_base();
+    let local_seed_banks: Vec<_> = {
+        let banks = state.seed_banks.read().await;
+        banks.values().cloned().collect()
     };
 
-    if let Some(beacon) = local_storage {
-        for seed_bank in beacon.seed_banks {
-            let canonical = canonical_seed_bank_name(&seed_bank.name);
-            let (status, ready) = seed_bank_readiness(&seed_bank);
-            let protocol = seed_bank
-                .protocols
-                .iter()
-                .find(|p| p.eq_ignore_ascii_case("s3"))
-                .cloned()
-                .or_else(|| seed_bank.protocols.first().cloned())
-                .unwrap_or_else(|| "storage".to_string())
-                .to_ascii_lowercase();
-            let _port = parse_port_from_endpoint(&beacon.endpoint).unwrap_or(0);
+    for bank in &local_seed_banks {
+        let canonical = canonical_seed_bank_name(&bank.name);
+        let (status, ready) = seed_bank_health_to_readiness(&bank.storage.health);
+        let visibility_str = bank.visibility.to_string();
 
-            let mut uris = Vec::new();
-            uris.push(format!(
-                "{}/api/v1/storage",
-                beacon.endpoint.trim_end_matches('/')
-            ));
-            if protocol == "s3" {
-                uris.push(format!(
-                    "{}/api/v1/storage/s3",
-                    beacon.endpoint.trim_end_matches('/')
-                ));
-            }
-            uris = uris
-                .into_iter()
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
+        // Local seed banks always support s3 + storage protocols
+        let protocols = vec!["s3".to_string(), "storage".to_string()];
+        let protocol = "s3".to_string();
 
-            tools.push(GardenTool {
-                fqid: canonical.clone(),
-                tool: ToolIdentity {
-                    name: String::new(),
-                    tool_type: "seed-bank".to_string(),
-                    category: "storage".to_string(),
-                    id: seed_bank.id.clone(),
-                    tags: Vec::new(),
-                },
-                stone: Stone {
-                    id: state.stone_id.clone(),
-                    name: state.stone_name.clone(),
-                    endpoint: beacon.endpoint.clone(),
-                },
-                service: ServiceInfo {
-                    status: status.to_string(),
-                    ready,
-                    protocol,
-                    uris,
-                },
-                capabilities: Vec::new(),
-                storage: None,
-            });
-        }
+        let mut uris = Vec::new();
+        uris.push(format!(
+            "{}/api/v1/storage",
+            endpoint.trim_end_matches('/')
+        ));
+        uris.push(format!(
+            "{}/api/v1/storage/s3",
+            endpoint.trim_end_matches('/')
+        ));
+        uris = uris
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        tools.push(GardenTool {
+            fqid: canonical.clone(),
+            tool: ToolIdentity {
+                name: String::new(),
+                tool_type: "seed-bank".to_string(),
+                category: "storage".to_string(),
+                id: bank.id.clone(),
+                tags: Vec::new(),
+            },
+            stone: Stone {
+                id: state.stone_id.clone(),
+                name: state.stone_name.clone(),
+                endpoint: endpoint.clone(),
+            },
+            service: ServiceInfo {
+                status: status.to_string(),
+                ready,
+                protocol,
+                uris,
+            },
+            capabilities: Vec::new(),
+            storage: Some(garden_common::tools::StorageMetadata {
+                role: Some(bank.role.to_string().to_ascii_lowercase()),
+                capacity_bytes: bank.storage.capacity_bytes,
+                used_bytes: bank.storage.used_bytes,
+                visibility: visibility_str,
+                encrypted: bank.encrypted,
+                pin_id: bank.pin_id().map(|s| s.to_string()),
+                protocols,
+            }),
+        });
     }
 
     tools
@@ -224,6 +179,18 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     })
 }
 
+/// Map `StorageHealth` to `(status, ready)` for tool projection.
+///
+/// Equivalent to `seed_bank_readiness` but works with the lifecycle
+/// `StorageHealth` enum instead of the announcement health string.
+fn seed_bank_health_to_readiness(health: &StorageHealth) -> (&'static str, bool) {
+    match health {
+        StorageHealth::Healthy => ("running", true),
+        StorageHealth::Degraded(_) => ("degraded", false),
+        StorageHealth::Unmounted | StorageHealth::Lost => ("stopped", false),
+    }
+}
+
 fn canonical_seed_bank_name(name: &str) -> String {
     if name.eq_ignore_ascii_case(DEFAULT_PUBLIC_SEED_BANK_NAME) {
         "default".to_string()
@@ -232,6 +199,7 @@ fn canonical_seed_bank_name(name: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn parse_port_from_endpoint(endpoint: &str) -> Option<u16> {
     let trimmed = endpoint.trim().trim_end_matches('/');
     let without_scheme = trimmed

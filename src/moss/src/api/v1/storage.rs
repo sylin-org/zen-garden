@@ -83,7 +83,7 @@ pub struct StorageOverview {
     pub total_used_bytes: u64,
     /// Storage types available
     pub types: Vec<StorageTypeInfo>,
-    /// All seed banks across the garden (from storage_cache)
+    /// All seed banks across the garden (from registry)
     pub garden_banks: Vec<GardenBankInfo>,
 }
 
@@ -240,7 +240,7 @@ fn err(status: StatusCode, code: &str, msg: &str) -> (StatusCode, Json<ApiErrorR
 
 /// Get storage overview (types, counts)
 ///
-/// Returns local bank stats plus garden-wide view from storage_cache.
+/// Returns local bank stats plus garden-wide view from registry.
 pub async fn storage_overview_v1(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -261,43 +261,50 @@ pub async fn storage_overview_v1(
     let total_capacity: u64 = local_banks.iter().map(|b| b.capacity_bytes).sum();
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
 
-    // Get garden-wide view from storage_cache
-    let storage_cache = state.storage_cache.read().await;
+    // Get garden-wide view from unified registry
+    let reg = state.registry.read().await;
     let local_roles = state.seed_bank_roles_snapshot().await;
     let local_pins = state.seed_bank_pins_snapshot().await;
     let mut garden_banks = Vec::new();
 
-    for beacon in storage_cache.all_beacons() {
-        let is_local = beacon.stone_id == state.stone_id;
-        for sb in &beacon.seed_banks {
-            // For local banks, overlay the authoritative runtime roles/pins
-            // which may have been updated by orchestration since the last beacon.
-            let role = if is_local {
-                local_roles.get(&sb.name).copied().unwrap_or(sb.role)
-            } else {
-                sb.role
-            };
-            let pinned = if is_local {
-                local_pins.contains_key(&sb.name)
-            } else {
-                sb.pin_id.is_some()
-            };
-            garden_banks.push(GardenBankInfo {
-                id: sb.id.clone(),
-                name: sb.name.clone(),
-                stone_id: beacon.stone_id.clone(),
-                stone_name: beacon.stone_name.clone(),
-                endpoint: beacon.endpoint.clone(),
-                is_local,
-                visibility: sb.visibility.clone(),
-                health: sb.health.clone(),
-                capacity_bytes: sb.capacity_bytes,
-                used_bytes: sb.used_bytes,
-                role,
-                pinned,
-                encrypted: sb.encrypted,
-            });
-        }
+    for entry in reg.storage_entries() {
+        let is_local = entry.tool.stone.id == state.stone_id;
+        let sm = entry.tool.storage.as_ref();
+
+        let role = if is_local {
+            // Overlay authoritative runtime role for local banks
+            let name = &entry.tool.fqid;
+            local_roles
+                .get(name.as_str())
+                .copied()
+                .unwrap_or(garden_common::storage::SeedBankRole::Primary)
+        } else {
+            match sm.and_then(|s| s.role.as_deref()) {
+                Some("dormant") => garden_common::storage::SeedBankRole::Dormant,
+                _ => garden_common::storage::SeedBankRole::Primary,
+            }
+        };
+        let pinned = if is_local {
+            local_pins.contains_key(entry.tool.fqid.as_str())
+        } else {
+            sm.and_then(|s| s.pin_id.as_ref()).is_some()
+        };
+
+        garden_banks.push(GardenBankInfo {
+            id: entry.tool.tool.id.clone(),
+            name: entry.tool.fqid.clone(),
+            stone_id: entry.tool.stone.id.clone(),
+            stone_name: entry.tool.stone.name.clone(),
+            endpoint: entry.tool.stone.endpoint.clone(),
+            is_local,
+            visibility: sm.map(|s| s.visibility.clone()).unwrap_or_else(|| "open".to_string()),
+            health: entry.tool.service.status.clone(),
+            capacity_bytes: sm.map(|s| s.capacity_bytes).unwrap_or(0),
+            used_bytes: sm.map(|s| s.used_bytes).unwrap_or(0),
+            role,
+            pinned,
+            encrypted: sm.map(|s| s.encrypted).unwrap_or(false),
+        });
     }
 
     let overview = StorageOverview {
@@ -585,27 +592,20 @@ pub async fn release_bank_v1(
     }
 
     // STORAGE-0003: Update local storage cache AND broadcast beacon
-    let storage_cache = state.storage_cache.clone();
-    let stone_id = state.stone_id.clone();
-    let stone_name = state.stone_name.clone();
+    // TOOLS-0003: Refresh registry + broadcast storage beacon
     let tools_state = state.clone();
-    let roles = state.seed_bank_roles_snapshot().await;
-    let pins = state.seed_bank_pins_snapshot().await;
-    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::update_and_broadcast(
-            &storage_cache,
-            &stone_id,
-            &stone_name,
-            &endpoint,
-            Some(&roles),
-            Some(&pins),
+        tools_state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &tools_state.stone_id,
+            &tools_state.stone_name,
+            &tools_state.self_entry.read().await.address.http_base(),
+            Some(&tools_state.seed_bank_roles_snapshot().await),
+            Some(&tools_state.seed_bank_pins_snapshot().await),
         )
         .await
         {
-            warn!(error = %e, "Failed to update storage cache and broadcast beacon after release");
-        } else {
-            tools_state.refresh_local_tools_projection().await;
+            warn!(error = %e, "Failed to broadcast storage beacon");
         }
     });
 
@@ -692,28 +692,20 @@ pub async fn rename_bank_v1(
         }
     }
 
-    let storage_cache = state.storage_cache.clone();
-    let stone_id = state.stone_id.clone();
-    let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
     let nudge = state.orchestration_nudge.clone();
-    let roles = state.seed_bank_roles_snapshot().await;
-    let pins = state.seed_bank_pins_snapshot().await;
-    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::update_and_broadcast(
-            &storage_cache,
-            &stone_id,
-            &stone_name,
-            &endpoint,
-            Some(&roles),
-            Some(&pins),
+        tools_state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &tools_state.stone_id,
+            &tools_state.stone_name,
+            &tools_state.self_entry.read().await.address.http_base(),
+            Some(&tools_state.seed_bank_roles_snapshot().await),
+            Some(&tools_state.seed_bank_pins_snapshot().await),
         )
         .await
         {
-            warn!(error = %e, "Failed to update storage cache and broadcast beacon after rename");
-        } else {
-            tools_state.refresh_local_tools_projection().await;
+            warn!(error = %e, "Failed to broadcast storage beacon after rename");
         }
         // Nudge orchestration so role resolution happens immediately
         nudge.notify_one();
@@ -1332,7 +1324,6 @@ pub async fn prepare_seed_bank_v1(
     let filesystem = request.filesystem.clone();
     let encrypted = request.encrypted;
     let stone_name = state.stone_name.clone();
-    let stone_id = state.stone_id.clone();
     let api_port = state.api_port;
     let pulse_tx = state.pulse_tx.clone();
     let tools_state = state.clone();
@@ -1356,23 +1347,18 @@ pub async fn prepare_seed_bank_v1(
         .await
         {
             Ok(()) => {
-                // STORAGE-0003: Update local cache + broadcast on successful preparation
-                let endpoint = format!("http://{}:{}", stone_name, api_port);
-                let roles = tools_state.seed_bank_roles_snapshot().await;
-                let pins = tools_state.seed_bank_pins_snapshot().await;
-                if let Err(e) = crate::infra::storage::update_and_broadcast(
-                    &tools_state.storage_cache,
-                    &stone_id,
-                    &stone_name,
-                    &endpoint,
-                    Some(&roles),
-                    Some(&pins),
+                // STORAGE-0003: Refresh tools + broadcast on successful preparation
+                tools_state.refresh_local_tools_projection().await;
+                if let Err(e) = crate::infra::storage::broadcast_beacon(
+                    &tools_state.stone_id,
+                    &tools_state.stone_name,
+                    &format!("http://{}:{}", stone_name, api_port),
+                    Some(&tools_state.seed_bank_roles_snapshot().await),
+                    Some(&tools_state.seed_bank_pins_snapshot().await),
                 )
                 .await
                 {
-                    warn!(error = %e, "Failed to update storage cache and broadcast beacon after preparation");
-                } else {
-                    tools_state.refresh_local_tools_projection().await;
+                    warn!(error = %e, "Failed to broadcast storage beacon after preparation");
                 }
             }
             Err(e) => {
@@ -1726,28 +1712,20 @@ pub async fn set_visibility_v1(
         }
     }
 
-    // STORAGE-0003: Update local storage cache AND broadcast beacon
-    let storage_cache = state.storage_cache.clone();
-    let stone_id = state.stone_id.clone();
-    let stone_name = state.stone_name.clone();
+    // STORAGE-0003: Refresh tools AND broadcast beacon
     let tools_state = state.clone();
-    let roles = state.seed_bank_roles_snapshot().await;
-    let pins = state.seed_bank_pins_snapshot().await;
-    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::update_and_broadcast(
-            &storage_cache,
-            &stone_id,
-            &stone_name,
-            &endpoint,
-            Some(&roles),
-            Some(&pins),
+        tools_state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &tools_state.stone_id,
+            &tools_state.stone_name,
+            &tools_state.self_entry.read().await.address.http_base(),
+            Some(&tools_state.seed_bank_roles_snapshot().await),
+            Some(&tools_state.seed_bank_pins_snapshot().await),
         )
         .await
         {
-            warn!(error = %e, "Failed to update storage cache and broadcast beacon after visibility change");
-        } else {
-            tools_state.refresh_local_tools_projection().await;
+            warn!(error = %e, "Failed to broadcast storage beacon after visibility change");
         }
     });
 
@@ -1896,27 +1874,19 @@ pub async fn release_all_seed_banks_v1(
         banks.clear();
     }
 
-    let storage_cache = state.storage_cache.clone();
-    let stone_id = state.stone_id.clone();
-    let stone_name = state.stone_name.clone();
     let tools_state = state.clone();
-    let roles = state.seed_bank_roles_snapshot().await;
-    let pins = state.seed_bank_pins_snapshot().await;
-    let endpoint = state.self_entry.read().await.address.http_base();
     tokio::spawn(async move {
-        if let Err(e) = crate::infra::storage::update_and_broadcast(
-            &storage_cache,
-            &stone_id,
-            &stone_name,
-            &endpoint,
-            Some(&roles),
-            Some(&pins),
+        tools_state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &tools_state.stone_id,
+            &tools_state.stone_name,
+            &tools_state.self_entry.read().await.address.http_base(),
+            Some(&tools_state.seed_bank_roles_snapshot().await),
+            Some(&tools_state.seed_bank_pins_snapshot().await),
         )
         .await
         {
-            warn!(error = %e, "Failed to update storage cache after release-all");
-        } else {
-            tools_state.refresh_local_tools_projection().await;
+            warn!(error = %e, "Failed to broadcast storage beacon after release-all");
         }
     });
 
@@ -1998,23 +1968,21 @@ pub async fn pin_bank_v1(
     };
 
     // Re-broadcast beacon so other stones see the pin
-    let storage_cache = state.storage_cache.clone();
-    let stone_id = state.stone_id.clone();
-    let stone_name = state.stone_name.clone();
-    let endpoint = state.self_entry.read().await.address.http_base();
-    let roles = state.seed_bank_roles_snapshot().await;
-    let pins = state.seed_bank_pins_snapshot().await;
+    let tools_state = state.clone();
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
-        let _ = crate::infra::storage::update_and_broadcast(
-            &storage_cache,
-            &stone_id,
-            &stone_name,
-            &endpoint,
-            Some(&roles),
-            Some(&pins),
+        tools_state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &tools_state.stone_id,
+            &tools_state.stone_name,
+            &tools_state.self_entry.read().await.address.http_base(),
+            Some(&tools_state.seed_bank_roles_snapshot().await),
+            Some(&tools_state.seed_bank_pins_snapshot().await),
         )
-        .await;
+        .await
+        {
+            warn!(error = %e, "Failed to broadcast storage beacon after pin");
+        }
         nudge.notify_one();
     });
 
@@ -2063,23 +2031,21 @@ pub async fn unpin_bank_v1(
     };
 
     // Re-broadcast beacon
-    let storage_cache = state.storage_cache.clone();
-    let stone_id = state.stone_id.clone();
-    let stone_name = state.stone_name.clone();
-    let endpoint = state.self_entry.read().await.address.http_base();
-    let roles = state.seed_bank_roles_snapshot().await;
-    let pins = state.seed_bank_pins_snapshot().await;
+    let tools_state = state.clone();
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
-        let _ = crate::infra::storage::update_and_broadcast(
-            &storage_cache,
-            &stone_id,
-            &stone_name,
-            &endpoint,
-            Some(&roles),
-            Some(&pins),
+        tools_state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &tools_state.stone_id,
+            &tools_state.stone_name,
+            &tools_state.self_entry.read().await.address.http_base(),
+            Some(&tools_state.seed_bank_roles_snapshot().await),
+            Some(&tools_state.seed_bank_pins_snapshot().await),
         )
-        .await;
+        .await
+        {
+            warn!(error = %e, "Failed to broadcast storage beacon after unpin");
+        }
         nudge.notify_one();
     });
 

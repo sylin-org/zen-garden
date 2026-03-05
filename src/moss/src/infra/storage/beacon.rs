@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 use super::SeedBankRegistry;
-use crate::domain::storage_cache::StorageCache;
 
 /// Build a storage beacon for this stone.
 ///
@@ -125,49 +124,9 @@ pub async fn broadcast_if_has_storage(
 ///
 /// Called at startup and after mount/unmount events to ensure storage_cache
 /// reflects the local stone's storage capabilities. This makes storage_cache
-/// the unified view for both local and remote storage.
-///
-/// Does NOT broadcast a beacon - use broadcast_beacon for that.
-pub async fn update_local_storage_cache(
-    storage_cache: &StorageCache,
-    stone_id: &str,
-    stone_name: &str,
-    endpoint: &str,
-    roles: Option<&HashMap<String, SeedBankRole>>,
-    pins: Option<&HashMap<String, String>>,
-) -> Result<()> {
-    let beacon = build_beacon(stone_id, stone_name, endpoint, roles, pins).await?;
-
-    debug!(
-        stone = %stone_name,
-        seed_banks = beacon.seed_banks.len(),
-        "Updating local storage cache"
-    );
-
-    crate::domain::storage_cache::update_from_beacon(storage_cache, beacon).await;
-    Ok(())
-}
-
-/// Update local storage cache AND broadcast beacon to network
-///
-/// Convenience function for mount/unmount events where both local cache
-/// and network need to be updated.
-pub async fn update_and_broadcast(
-    storage_cache: &StorageCache,
-    stone_id: &str,
-    stone_name: &str,
-    endpoint: &str,
-    roles: Option<&HashMap<String, SeedBankRole>>,
-    pins: Option<&HashMap<String, String>>,
-) -> Result<()> {
-    // Update local cache
-    update_local_storage_cache(storage_cache, stone_id, stone_name, endpoint, roles, pins).await?;
-
-    // Broadcast to network
-    broadcast_beacon(stone_id, stone_name, endpoint, roles, pins).await?;
-
-    Ok(())
-}
+// TOOLS-0003: update_local_storage_cache and update_and_broadcast removed.
+// Local storage is now projected into the registry via refresh_local_tools_projection().
+// Network broadcast is done via broadcast_beacon() directly.
 
 /// Stamp role and pin_id onto a seed bank announcement.
 ///

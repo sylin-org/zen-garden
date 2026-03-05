@@ -172,45 +172,22 @@ async fn sync_dormant_bank(
     local_bank_id: &str,
     mount_path: &std::path::Path,
 ) -> Result<()> {
-    // 1. Resolve the Primary stone + bank ID from storage cache
-    let (primary_stone_id, primary_announcement) = {
-        let cache = state.storage_cache.read().await;
-        match cache.find_primary_by_name(name) {
-            Some((sid, sb)) => (sid.to_string(), sb.clone()),
+    // 1. Resolve the Primary stone + endpoint from registry
+    let (_primary_stone_id, primary_endpoint, primary_bank_id) = {
+        let reg = state.registry.read().await;
+        match reg.route_to_primary(name, &state.stone_id) {
+            Some(route) => route,
             None => {
-                debug!(name = %name, "No Primary found for seed bank — skipping sync");
+                debug!(name = %name, "No remote Primary found for seed bank — skipping sync");
                 return Ok(());
             }
         }
     };
 
-    // Skip if the Primary is on this stone (local Primary means we don't need to replicate)
-    if primary_stone_id == state.stone_id {
-        debug!(
-            name = %name,
-            "Primary is local — skipping replication (local writes are direct)"
-        );
-        return Ok(());
-    }
-
-    // 2. Get Primary stone endpoint
-    let primary_endpoint = {
-        let cache = state.storage_cache.read().await;
-        match cache.get_endpoint(&primary_stone_id) {
-            Some(ep) => ep.to_string(),
-            None => {
-                debug!(
-                    name = %name,
-                    stone_id = %primary_stone_id,
-                    "Primary stone endpoint not in cache — skipping sync"
-                );
-                return Ok(());
-            }
-        }
-    };
+    // route_to_primary already excludes our own stone
 
     let peer = PeerAddress::from_http_url(&primary_endpoint);
-    let primary_bank_id = &primary_announcement.id;
+    let primary_bank_id = &primary_bank_id;
 
     // 3. Read local last_cursor
     // STORAGE-0007: prefer store from lifecycle object if available

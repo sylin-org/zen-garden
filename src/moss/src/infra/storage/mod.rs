@@ -31,10 +31,7 @@ mod subprocess;
 #[cfg(target_os = "linux")]
 mod monitor;
 
-pub use beacon::{
-    broadcast_beacon, broadcast_if_has_storage, build_beacon, update_and_broadcast,
-    update_local_storage_cache,
-};
+pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
 pub use device::{
     analyze_device, list_unmounted_removable_devices, list_usb_partitions, DeviceAnalyzer,
     UnmountedDevice,

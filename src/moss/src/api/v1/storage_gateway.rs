@@ -234,18 +234,11 @@ async fn resolve_seed_bank_route(
         });
     }
 
-    let cache = state.storage_cache.read().await;
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
-            continue;
-        }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                return Ok(SeedBankRoute::Remote {
-                    endpoint: beacon.endpoint.clone(),
-                });
-            }
-        }
+    let reg = state.registry.read().await;
+    if let Some((_stone_id, endpoint, _bank_id)) =
+        reg.route_to_primary(name, &state.stone_id)
+    {
+        return Ok(SeedBankRoute::Remote { endpoint });
     }
 
     Err((
@@ -293,29 +286,12 @@ async fn resolve_seed_bank_write_route(
         );
     }
 
-    // Search beacons for Primary (or any) remote
-    let cache = state.storage_cache.read().await;
-    if let Some((stone_id, _sb)) = cache.find_primary_by_name(name) {
-        if let Some(endpoint) = cache.get_endpoint(stone_id) {
-            return Ok(SeedBankRoute::Remote {
-                endpoint: endpoint.to_string(),
-            });
-        }
-    }
-
-    // Fall back to any beacon with the name (might be a stone we haven't heard
-    // the beacon from yet but that still appears in topology)
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
-            continue;
-        }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                return Ok(SeedBankRoute::Remote {
-                    endpoint: beacon.endpoint.clone(),
-                });
-            }
-        }
+    // Search registry for Primary replica on a remote stone
+    let reg = state.registry.read().await;
+    if let Some((_stone_id, endpoint, _bank_id)) =
+        reg.route_to_primary(name, &state.stone_id)
+    {
+        return Ok(SeedBankRoute::Remote { endpoint });
     }
 
     Err((

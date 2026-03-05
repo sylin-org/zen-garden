@@ -603,7 +603,8 @@ pub async fn get_portrait_data(
     // === Horizon (visible stones) ===
     let horizon = {
         let visible_stones = topology::get_all_stones(&state.topology_cache).await;
-        let storage_cache = state.storage_cache.read().await;
+        let reg = state.registry.read().await;
+        let storage_by_stone = reg.storage_grouped_by_stone();
         let stones: Vec<HorizonStone> = visible_stones
             .iter()
             .filter(|entry| entry.stone_id != state.stone_id) // Exclude self
@@ -619,10 +620,9 @@ pub async fn get_portrait_data(
                 let manufacturer = caps.and_then(|c| c.hardware.system_manufacturer.clone());
                 let model = caps.and_then(|c| c.hardware.system_product.clone());
                 let service_count = entry.services.len();
-                let has_seed_banks = storage_cache
-                    .get_beacon(&entry.stone_id)
-                    .map(|b| !b.seed_banks.is_empty())
-                    .unwrap_or(false);
+                let has_seed_banks = storage_by_stone
+                    .get(&entry.stone_id)
+                    .is_some_and(|banks| !banks.is_empty());
 
                 HorizonStone {
                     name: entry.stone_name.clone(),
@@ -643,13 +643,13 @@ pub async fn get_portrait_data(
             })
             .collect();
 
-        let seed_bank_count = visible_stones
+        let seed_bank_count: usize = visible_stones
             .iter()
             .filter(|entry| entry.stone_id != state.stone_id)
             .map(|entry| {
-                storage_cache
-                    .get_beacon(&entry.stone_id)
-                    .map(|b| b.seed_banks.len())
+                storage_by_stone
+                    .get(&entry.stone_id)
+                    .map(|banks| banks.len())
                     .unwrap_or(0)
             })
             .sum();

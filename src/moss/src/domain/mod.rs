@@ -43,7 +43,6 @@ pub mod seed_bank;
 pub mod service_discovery;
 pub mod service_manager;
 pub mod services;
-pub mod storage_cache;
 pub mod tools;
 pub mod topology;
 
@@ -99,12 +98,7 @@ pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
 pub use garden_registry::{
     new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
 };
-pub use storage_cache::{
-    find_by_name, find_s3_gateways, new_storage_cache, remove_stone as remove_stone_storage,
-    update_from_beacon, StorageCache, StorageCacheInner,
-};
 pub use tools::{
-    new_tools_cache, stream_event_type_for_delta, ToolsCache, ToolsCacheInner,
-    ToolsSnapshotPayload,
+    stream_event_type_for_delta, ToolsSnapshotPayload,
 };
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

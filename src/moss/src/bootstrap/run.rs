@@ -112,11 +112,6 @@ pub async fn run(
         tracing::debug!("Initial topology file written");
     }
 
-    // STORAGE-0003: Create storage cache for seed bank routing
-    let storage_cache = crate::domain::storage_cache::new_storage_cache();
-
-    // TOOLS-0001: Unified tools projection cache + stream channel
-    let tools_cache = crate::domain::tools::new_tools_cache();
     let (tools_tx, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
 
     // TOOLS-0003: Unified garden registry (replaces tools_cache, storage_cache, gateways)
@@ -222,8 +217,6 @@ pub async fn run(
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         topology_dirty.clone(),
-        storage_cache.clone(),
-        tools_cache.clone(),
         tools_tx.clone(),
         registry.clone(),
         self_entry.clone(),
@@ -646,12 +639,9 @@ pub async fn run(
         api_port: port,
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
-        storage_cache: storage_cache.clone(),
-        tools_cache: tools_cache.clone(),
         tools_tx: tools_tx.clone(),
         registry: registry.clone(),
         self_entry: self_entry.clone(),
-        gateways: Arc::new(RwLock::new(HashMap::new())),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
         pond: pond_state,
@@ -1236,37 +1226,6 @@ pub async fn run(
             shutdown_token.child_token(),
         );
     }
-    crate::tasks::start_storage_maintenance(
-        state.storage_cache.clone(),
-        state.topology_cache.clone(),
-        shutdown_token.child_token(),
-    );
-
-    // Populate storage_cache with local seed banks (cross-platform)
-    // This makes storage_cache the unified view for both local and remote storage
-    let endpoint = state.self_entry.read().await.address.http_base();
-    if let Err(e) = crate::infra::storage::update_local_storage_cache(
-        &state.storage_cache,
-        &state.stone_id,
-        &state.stone_name,
-        &endpoint,
-        None,
-        None,
-    )
-    .await
-    {
-        tracing::warn!("Failed to populate local storage cache: {}", e);
-    } else {
-        let cache = state.storage_cache.read().await;
-        tracing::info!(
-            "Storage cache initialized with {} local seed banks",
-            cache
-                .get_beacon(&state.stone_id)
-                .map(|b| b.seed_banks.len())
-                .unwrap_or(0)
-        );
-    }
-
     // Phase 17.7: Offering orchestration (ORCH-0001)
     // Manages Primary/Dormant/Joining/Degraded lifecycle for replicated offerings.
     // Must run after registry loader, health monitor, and catalog builder are ready.

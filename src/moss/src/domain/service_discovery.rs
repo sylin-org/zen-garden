@@ -431,20 +431,22 @@ pub async fn find_services(
     // ── Gateway check (ORCH-0004) ────────────────────────────────
     // Gateways appear first (structural priority — routed endpoint before raw).
 
-    // Check local gateway registrations
+    // Check local gateway registrations from the unified registry
     {
-        let gateways = state.gateways.read().await;
-        for (offering, gw) in gateways.iter() {
-            let gw_category = gw.category.as_deref().unwrap_or("orchestrator");
-            let gw_tags = if gw.tags.is_empty() {
+        let reg = state.registry.read().await;
+        for entry in reg.gateway_entries() {
+            let tool = &entry.tool;
+            let offering = &tool.tool.tool_type;
+            let gw_category = &tool.tool.category;
+            let gw_tags = if tool.tool.tags.is_empty() {
                 vec!["orchestrator".to_string()]
             } else {
-                gw.tags.clone()
+                tool.tool.tags.clone()
             };
 
             if !matches_criteria(
                 criteria,
-                &gw.fqn,
+                &tool.fqid,
                 offering,
                 gw_category,
                 &gw_tags,
@@ -453,25 +455,44 @@ pub async fn find_services(
                 continue;
             }
 
-            let conn = connection::resolve_connection(
-                &gw.hostname,
-                &format!("http://{}:{}", gw.ip, gw.port),
-                gw.port,
-                &gw.protocol,
-                gw.uri_template.as_deref(),
-            );
+            // Extract hostname/IP/port from the first URI for ResolvedConnection
+            let (gw_hostname, gw_ip, gw_port) = tool
+                .service
+                .uris
+                .first()
+                .and_then(|uri| {
+                    let without_scheme = uri
+                        .strip_prefix("http://")
+                        .or_else(|| uri.strip_prefix("https://"))
+                        .unwrap_or(uri);
+                    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+                    host_port.rsplit_once(':').and_then(|(host, p)| {
+                        p.parse::<u16>().ok().map(|port| {
+                            (tool.stone.name.clone(), host.to_string(), port)
+                        })
+                    })
+                })
+                .unwrap_or_else(|| (tool.stone.name.clone(), String::new(), 0));
+
+            let conn = ResolvedConnection {
+                hostname: gw_hostname,
+                ip: gw_ip,
+                port: gw_port,
+                protocol: tool.service.protocol.clone(),
+                uris: tool.service.uris.clone(),
+            };
 
             all_services.push(FoundService {
                 offering_id: String::new(),
-                name: gw.fqn.clone(),
+                name: tool.fqid.clone(),
                 offering: offering.clone(),
                 category: gw_category.to_string(),
                 tags: gw_tags,
                 status: garden_common::SERVICE_RUNNING.to_string(),
                 stone: StoneRef {
-                    id: state.stone_id.clone(),
-                    name: state.stone_name.clone(),
-                    endpoint: state.self_entry.read().await.address.http_base(),
+                    id: tool.stone.id.clone(),
+                    name: tool.stone.name.clone(),
+                    endpoint: tool.stone.endpoint.clone(),
                 },
                 connection: conn,
                 sub_capabilities: vec![],

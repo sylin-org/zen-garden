@@ -41,7 +41,7 @@ pub use coordinator::{
     start_all_background_tasks, start_auto_adoption, start_auto_adoption_with_config,
     start_catalog_builder, start_discovery_listener, start_hardware_detection,
     start_health_monitor, start_lantern_registration, start_registry_loader,
-    start_storage_maintenance, start_topology_maintenance,
+    start_registry_maintenance, start_topology_maintenance,
 };
 pub use discovery::lantern_registration_loop;
 pub use docker_monitor::{DockerEvent, DockerMonitor, DockerMonitorConfig};

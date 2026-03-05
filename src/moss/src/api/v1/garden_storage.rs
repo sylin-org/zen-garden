@@ -234,28 +234,12 @@ async fn resolve_primary_route(
         );
     }
 
-    // Search beacons for Primary
-    let cache = state.storage_cache.read().await;
-    if let Some((stone_id, _sb)) = cache.find_primary_by_name(name) {
-        if let Some(endpoint) = cache.get_endpoint(stone_id) {
-            return Ok(SeedBankRoute::Remote {
-                endpoint: endpoint.to_string(),
-            });
-        }
-    }
-
-    // Fall back to any beacon with the name
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
-            continue;
-        }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                return Ok(SeedBankRoute::Remote {
-                    endpoint: beacon.endpoint.clone(),
-                });
-            }
-        }
+    // Search registry for Primary replica on a remote stone
+    let reg = state.registry.read().await;
+    if let Some((_stone_id, endpoint, _bank_id)) =
+        reg.route_to_primary(name, &state.stone_id)
+    {
+        return Ok(SeedBankRoute::Remote { endpoint });
     }
 
     Err((
@@ -378,26 +362,27 @@ pub async fn discover_v1(
     }
 
     // Add remote instances from storage cache beacons
-    let cache = state.storage_cache.read().await;
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
+    // Remote replicas from unified registry
+    let reg = state.registry.read().await;
+    for entry in reg.storage_by_name(&name) {
+        if entry.tool.stone.id == state.stone_id {
             continue; // Already handled local above
         }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                instances.push(SeedBankInstance {
-                    stone_id: beacon.stone_id.clone(),
-                    stone_name: beacon.stone_name.clone(),
-                    bank_id: sb.id.clone(),
-                    role: sb.role,
-                    pinned: sb.pin_id.is_some(),
-                    pin_id: sb.pin_id.clone(),
-                    endpoint: beacon.endpoint.clone(),
-                    visibility: sb.visibility.clone(),
-                    health: sb.health.clone(),
-                });
-            }
-        }
+        let sm = entry.tool.storage.as_ref();
+        instances.push(SeedBankInstance {
+            stone_id: entry.tool.stone.id.clone(),
+            stone_name: entry.tool.stone.name.clone(),
+            bank_id: entry.tool.tool.id.clone(),
+            role: match sm.and_then(|s| s.role.as_deref()) {
+                Some("primary") => garden_common::storage::SeedBankRole::Primary,
+                _ => garden_common::storage::SeedBankRole::Dormant,
+            },
+            pinned: sm.and_then(|s| s.pin_id.as_ref()).is_some(),
+            pin_id: sm.and_then(|s| s.pin_id.clone()),
+            endpoint: entry.tool.stone.endpoint.clone(),
+            visibility: sm.map(|s| s.visibility.clone()).unwrap_or_else(|| "open".to_string()),
+            health: entry.tool.service.status.clone(),
+        });
     }
 
     if instances.is_empty() {

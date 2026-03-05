@@ -133,27 +133,15 @@ pub struct AppState {
     /// Set by mutation functions, cleared after flush to disk.
     pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
 
-    /// Storage routing cache for seed banks across stones (STORAGE-0003)
-    pub storage_cache: crate::domain::storage_cache::StorageCache,
-
-    /// Unified tools projection cache (offerings + seed-banks)
-    pub tools_cache: crate::domain::tools::ToolsCache,
-
     /// Tools stream broadcast channel (normative automation stream)
     pub tools_tx: tokio::sync::broadcast::Sender<ToolDelta>,
 
     /// Unified garden registry — single source of truth for offerings,
-    /// gateways, and storage (TOOLS-0003). Replaces tools_cache,
-    /// storage_cache, and gateways.
+    /// gateways, and storage (TOOLS-0003).
     pub registry: crate::domain::garden_registry::GardenRegistry,
 
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
-
-    /// Gateway registrations from orchestrators (ORCH-0004).
-    /// Key: offering name ("ollama"), Value: gateway registration.
-    /// One gateway per offering per stone. TTL-evicted during chirp building.
-    pub gateways: Arc<RwLock<HashMap<String, GatewayRegistration>>>,
 
     /// mDNS handle for re-registration on resolution changes
     /// Used when IP/MAC changes to update mDNS service advertisement
@@ -370,57 +358,36 @@ impl AppState {
     pub async fn refresh_local_tools_projection(&self) {
         let projections = crate::domain::tools::projector::project_local_tools(self).await;
 
-        // Write to unified registry (TOOLS-0003)
-        let registry_deltas = {
+        let deltas = {
             let mut reg = self.registry.write().await;
             reg.reconcile_local(
                 &self.stone_id,
-                projections.clone(),
+                projections,
                 crate::domain::garden_registry::EntryOrigin::Local,
             )
         };
 
-        // Legacy: also write to tools_cache until read sites are migrated
-        {
-            let mut cache = self.tools_cache.write().await;
-            cache.reconcile_local(&self.stone_id, projections);
-        }
-
-        self.publish_tool_deltas(registry_deltas, true).await;
+        self.publish_tool_deltas(deltas, true).await;
     }
 
     /// Ingest remote tools beacon and publish resulting stream deltas locally.
     pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
-        // Write to unified registry (TOOLS-0003)
-        let registry_deltas = {
+        let deltas = {
             let mut reg = self.registry.write().await;
             reg.apply_remote_beacon(&beacon)
         };
 
-        // Legacy: also write to tools_cache
-        {
-            let mut cache = self.tools_cache.write().await;
-            cache.apply_remote_beacon(&beacon);
-        }
-
-        self.publish_tool_deltas(registry_deltas, false).await;
+        self.publish_tool_deltas(deltas, false).await;
     }
 
     /// Remove all projected tools for a stone (goodbye/offline path).
     pub async fn remove_tools_for_stone(&self, stone_id: &str) {
-        // Write to unified registry (TOOLS-0003)
-        let registry_deltas = {
+        let deltas = {
             let mut reg = self.registry.write().await;
             reg.remove_stone(stone_id)
         };
 
-        // Legacy: also write to tools_cache
-        {
-            let mut cache = self.tools_cache.write().await;
-            cache.remove_stone_tools(stone_id);
-        }
-
-        self.publish_tool_deltas(registry_deltas, false).await;
+        self.publish_tool_deltas(deltas, false).await;
     }
 
     async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
@@ -476,15 +443,47 @@ impl AppState {
         // Compile notification tags for cross-stone awareness
         let tags = self.notifications.compile();
 
-        // Collect non-expired gateway registrations (TTL = 60s)
+        // Collect non-expired gateway registrations from the unified registry.
+        // Gateway entries have EntryOrigin::Registered and carry a TTL managed
+        // by the registry (reap_expired). Convert RegistryEntry → GatewayRegistration
+        // for the chirp payload.
         let gateway_entries: Vec<GatewayRegistration> = {
-            let now = chrono::Utc::now();
-            let ttl = chrono::Duration::seconds(60);
-            let gateways = self.gateways.read().await;
-            gateways
-                .values()
-                .filter(|gw| now.signed_duration_since(gw.registered_at) < ttl)
-                .cloned()
+            let reg = self.registry.read().await;
+            reg.gateway_entries()
+                .into_iter()
+                .map(|e| {
+                    let tool = &e.tool;
+                    // Extract IP and port from first URI (format: "protocol://ip:port/...")
+                    let (ip, port) = tool
+                        .service
+                        .uris
+                        .first()
+                        .and_then(|uri| {
+                            let without_scheme = uri
+                                .strip_prefix("http://")
+                                .or_else(|| uri.strip_prefix("https://"))
+                                .unwrap_or(uri);
+                            let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+                            host_port.rsplit_once(':').and_then(|(host, p)| {
+                                p.parse::<u16>().ok().map(|port| (host.to_string(), port))
+                            })
+                        })
+                        .unwrap_or_else(|| (tool.stone.name.clone(), 0));
+
+                    GatewayRegistration {
+                        fqn: tool.fqid.clone(),
+                        handler_for: vec![tool.tool.tool_type.clone()],
+                        hostname: tool.stone.name.clone(),
+                        ip,
+                        port,
+                        protocol: tool.service.protocol.clone(),
+                        uri_template: None,
+                        category: Some(tool.tool.category.clone()),
+                        tags: tool.tool.tags.clone(),
+                        source: String::new(),
+                        registered_at: chrono::Utc::now(),
+                    }
+                })
                 .collect()
         };
 

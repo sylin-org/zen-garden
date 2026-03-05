@@ -197,18 +197,11 @@ async fn resolve_seed_bank_route(
         });
     }
 
-    let cache = state.storage_cache.read().await;
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
-            continue;
-        }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                return Ok(SeedBankRoute::Remote {
-                    endpoint: beacon.endpoint.clone(),
-                });
-            }
-        }
+    let reg = state.registry.read().await;
+    if let Some((_stone_id, endpoint, _bank_id)) =
+        reg.route_to_primary(name, &state.stone_id)
+    {
+        return Ok(SeedBankRoute::Remote { endpoint });
     }
 
     Err((

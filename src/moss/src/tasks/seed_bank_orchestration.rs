@@ -142,7 +142,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     local_names.dedup();
 
     let my_stone_id = &state.stone_id;
-    let cache = state.storage_cache.read().await;
+    let reg = state.registry.read().await;
 
     // Read current roles and pins from lifecycle objects
     let (current_roles, current_pins) = {
@@ -164,7 +164,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         let local_pin_id = current_pins.get(name).cloned();
 
         // Find remote beacons that have this name as Primary
-        let remote_primary = find_remote_primary_with_pin(&cache, name, my_stone_id);
+        let remote_primary = find_remote_primary_with_pin(&reg, name, my_stone_id);
 
         let current_role = current_roles
             .get(name)
@@ -220,7 +220,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         new_roles.insert(name.clone(), new_role);
     }
 
-    drop(cache);
+    drop(reg);
 
     // Apply auto-unpin and role updates via lifecycle objects
     {
@@ -250,8 +250,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         let endpoint = state.self_entry.read().await.address.http_base();
         let roles = state.seed_bank_roles_snapshot().await;
         let pins = state.seed_bank_pins_snapshot().await;
-        if let Err(e) = crate::infra::storage::update_and_broadcast(
-            &state.storage_cache,
+        state.refresh_local_tools_projection().await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
             &state.stone_id,
             &state.stone_name,
             &endpoint,
@@ -394,18 +394,21 @@ fn build_cutoff_cursor(cutoff_ms: u64) -> String {
 ///
 /// Returns `(stone_id, seed_bank_id, pin_id)` of the remote primary, if any.
 fn find_remote_primary_with_pin(
-    cache: &crate::domain::storage_cache::StorageCacheInner,
+    reg: &crate::domain::garden_registry::GardenRegistryInner,
     name: &str,
     my_stone_id: &str,
 ) -> Option<(String, String, Option<String>)> {
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == my_stone_id {
+    for entry in reg.storage_by_name(name) {
+        if entry.tool.stone.id == my_stone_id {
             continue;
         }
-        for sb in &beacon.seed_banks {
-            if sb.name == name && sb.role == SeedBankRole::Primary {
-                return Some((beacon.stone_id.clone(), sb.id.clone(), sb.pin_id.clone()));
-            }
+        let sm = entry.tool.storage.as_ref();
+        let is_primary = sm
+            .and_then(|s| s.role.as_deref())
+            .is_some_and(|r| r.eq_ignore_ascii_case("primary"));
+        if is_primary {
+            let pin_id = sm.and_then(|s| s.pin_id.clone());
+            return Some((entry.tool.stone.id.clone(), entry.tool.tool.id.clone(), pin_id));
         }
     }
     None
@@ -418,9 +421,8 @@ fn find_remote_primary_with_pin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::storage_cache::StorageCacheInner;
-    use chrono::Utc;
-    use garden_common::storage::{SeedBankAnnouncement, StorageAccess, StorageBeacon};
+    use crate::domain::garden_registry::{EntryOrigin, GardenRegistryInner};
+    use garden_common::tools::{GardenTool, ServiceInfo, Stone, StorageMetadata, ToolIdentity};
 
     // -- resolve_role ---------------------------------------------------------
 
@@ -597,64 +599,69 @@ mod tests {
 
     // -- find_remote_primary_with_pin -----------------------------------------
 
-    fn make_beacon(
+    fn make_storage_tool(
         stone_id: &str,
-        banks: Vec<(&str, &str, SeedBankRole, Option<&str>)>,
-    ) -> StorageBeacon {
-        StorageBeacon {
-            stone_id: stone_id.to_string(),
-            stone_name: format!("{}-name", stone_id),
-            endpoint: format!("http://{}.local:7185", stone_id),
-            seed_banks: banks
-                .into_iter()
-                .map(|(id, name, role, pin_id)| SeedBankAnnouncement {
-                    id: id.to_string(),
-                    name: name.to_string(),
-                    role,
-                    protocols: vec!["storage".to_string()],
-                    access: StorageAccess::Direct,
-                    visibility: "open".to_string(),
-                    health: "healthy".to_string(),
-                    capacity_bytes: 1_000_000_000,
-                    used_bytes: 0,
-                    encrypted: false,
-                    pin_id: pin_id.map(|s| s.to_string()),
-                })
-                .collect(),
-            timestamp: Utc::now(),
+        bank_id: &str,
+        name: &str,
+        role: SeedBankRole,
+        pin_id: Option<&str>,
+    ) -> GardenTool {
+        GardenTool {
+            fqid: name.to_string(),
+            tool: ToolIdentity {
+                name: String::new(),
+                tool_type: "seed-bank".to_string(),
+                category: "storage".to_string(),
+                id: bank_id.to_string(),
+                tags: Vec::new(),
+            },
+            stone: Stone {
+                id: stone_id.to_string(),
+                name: format!("{}-name", stone_id),
+                endpoint: format!("http://{}.local:7185", stone_id),
+            },
+            service: ServiceInfo {
+                status: "running".to_string(),
+                ready: true,
+                protocol: "storage".to_string(),
+                uris: Vec::new(),
+            },
+            capabilities: Vec::new(),
+            storage: Some(StorageMetadata {
+                role: Some(role.to_string().to_ascii_lowercase()),
+                capacity_bytes: 1_000_000_000,
+                used_bytes: 0,
+                visibility: "open".to_string(),
+                encrypted: false,
+                pin_id: pin_id.map(|s| s.to_string()),
+                protocols: vec!["storage".to_string()],
+            }),
         }
     }
 
     #[test]
     fn test_find_remote_primary_returns_none_when_empty() {
-        let cache = StorageCacheInner::default();
-        assert!(find_remote_primary_with_pin(&cache, "mybank", "stone-1").is_none());
+        let reg = GardenRegistryInner::default();
+        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
     }
 
     #[test]
     fn test_find_remote_primary_skips_own_stone() {
-        let mut cache = StorageCacheInner::default();
-        cache.update(make_beacon(
-            "stone-1",
-            vec![("sb-1", "mybank", SeedBankRole::Primary, None)],
-        ));
-        // Searching with own stone_id → None
-        assert!(find_remote_primary_with_pin(&cache, "mybank", "stone-1").is_none());
+        let mut reg = GardenRegistryInner::default();
+        let tool = make_storage_tool("stone-1", "sb-1", "mybank", SeedBankRole::Primary, None);
+        reg.upsert(tool, EntryOrigin::Local);
+        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
     }
 
     #[test]
     fn test_find_remote_primary_finds_remote() {
-        let mut cache = StorageCacheInner::default();
-        cache.update(make_beacon(
-            "stone-1",
-            vec![("sb-1", "mybank", SeedBankRole::Primary, None)],
-        ));
-        cache.update(make_beacon(
-            "stone-2",
-            vec![("sb-2", "mybank", SeedBankRole::Primary, None)],
-        ));
+        let mut reg = GardenRegistryInner::default();
+        let t1 = make_storage_tool("stone-1", "sb-1", "mybank", SeedBankRole::Primary, None);
+        let t2 = make_storage_tool("stone-2", "sb-2", "mybank", SeedBankRole::Primary, None);
+        reg.upsert(t1, EntryOrigin::Local);
+        reg.upsert(t2, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
 
-        let result = find_remote_primary_with_pin(&cache, "mybank", "stone-1");
+        let result = find_remote_primary_with_pin(&reg, "mybank", "stone-1");
         assert!(result.is_some());
         let (stone_id, sb_id, pin_id) = result.unwrap();
         assert_eq!(stone_id, "stone-2");
@@ -664,37 +671,31 @@ mod tests {
 
     #[test]
     fn test_find_remote_primary_returns_pin_id() {
-        let mut cache = StorageCacheInner::default();
+        let mut reg = GardenRegistryInner::default();
         let pid = "019c6d5a-0000-7000-8000-000000000001";
-        cache.update(make_beacon(
-            "stone-2",
-            vec![("sb-2", "mybank", SeedBankRole::Primary, Some(pid))],
-        ));
+        let tool = make_storage_tool("stone-2", "sb-2", "mybank", SeedBankRole::Primary, Some(pid));
+        reg.upsert(tool, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
 
-        let result = find_remote_primary_with_pin(&cache, "mybank", "stone-1");
+        let result = find_remote_primary_with_pin(&reg, "mybank", "stone-1");
         assert!(result.is_some());
         assert_eq!(result.unwrap().2.as_deref(), Some(pid));
     }
 
     #[test]
     fn test_find_remote_primary_ignores_dormant() {
-        let mut cache = StorageCacheInner::default();
-        cache.update(make_beacon(
-            "stone-2",
-            vec![("sb-2", "mybank", SeedBankRole::Dormant, None)],
-        ));
+        let mut reg = GardenRegistryInner::default();
+        let tool = make_storage_tool("stone-2", "sb-2", "mybank", SeedBankRole::Dormant, None);
+        reg.upsert(tool, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
 
-        assert!(find_remote_primary_with_pin(&cache, "mybank", "stone-1").is_none());
+        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
     }
 
     #[test]
     fn test_find_remote_primary_wrong_name() {
-        let mut cache = StorageCacheInner::default();
-        cache.update(make_beacon(
-            "stone-2",
-            vec![("sb-2", "other-bank", SeedBankRole::Primary, None)],
-        ));
+        let mut reg = GardenRegistryInner::default();
+        let tool = make_storage_tool("stone-2", "sb-2", "other-bank", SeedBankRole::Primary, None);
+        reg.upsert(tool, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
 
-        assert!(find_remote_primary_with_pin(&cache, "mybank", "stone-1").is_none());
+        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
     }
 }

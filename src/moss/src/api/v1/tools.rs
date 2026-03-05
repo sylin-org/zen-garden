@@ -50,10 +50,10 @@ pub async fn list_garden_tools_v1(
     let since = query.since.unwrap_or(0);
 
     let (cursor, tools, replay) = {
-        let cache = state.tools_cache.read().await;
-        let (cursor, tools) = cache.snapshot(&filter);
+        let reg = state.registry.read().await;
+        let (cursor, tools) = reg.snapshot(&filter);
         let replay = if since > 0 {
-            cache.deltas_since(since, &filter)
+            reg.deltas_since(since, &filter)
         } else {
             Vec::new()
         };
@@ -81,16 +81,16 @@ pub async fn stream_garden_tools_v1(
     let rx = state.tools_tx.subscribe();
 
     let (snapshot_cursor, snapshot_tools, replay) = {
-        let cache = state.tools_cache.read().await;
+        let reg = state.registry.read().await;
         if resume_cursor == 0 {
             if let Some(last_event_id) = extract_last_event_id(&headers) {
-                resume_cursor = parse_resume_cursor(last_event_id, &cache);
+                resume_cursor = parse_resume_cursor(last_event_id, &reg);
             }
         }
 
-        let (cursor, tools) = cache.snapshot(&filter);
+        let (cursor, tools) = reg.snapshot(&filter);
         let replay = if resume_cursor > 0 {
-            cache.deltas_since(resume_cursor, &filter)
+            reg.deltas_since(resume_cursor, &filter)
         } else {
             Vec::new()
         };
@@ -247,11 +247,11 @@ fn extract_last_event_id(headers: &HeaderMap) -> Option<&str> {
     headers.get("last-event-id").and_then(|h| h.to_str().ok())
 }
 
-fn parse_resume_cursor(last_event_id: &str, cache: &crate::domain::tools::ToolsCacheInner) -> u64 {
+fn parse_resume_cursor(last_event_id: &str, reg: &crate::domain::garden_registry::GardenRegistryInner) -> u64 {
     if let Ok(parsed) = last_event_id.trim().parse::<u64>() {
         return parsed;
     }
-    cache.cursor_for_event_id(last_event_id).unwrap_or(0)
+    reg.cursor_for_event_id(last_event_id).unwrap_or(0)
 }
 
 fn delta_to_event(delta: &ToolDelta, filter: &ToolQuery) -> Option<Event> {

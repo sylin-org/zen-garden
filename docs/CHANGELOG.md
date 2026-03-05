@@ -6,6 +6,7 @@ All notable changes to Zen Garden will be documented in this file.
 
 - TOOLS-0003: Gateways propagate via registry beacon instead of topology chirps
 - Fixed `find` sort order: exact name matches now appear before partial matches
+- Fixed stale gateway entries: registry reaper was never started; now broadcasts beacon on expiry
 
 ## 2026-03-02
 

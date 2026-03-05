@@ -225,6 +225,7 @@ pub async fn run(
         storage_cache.clone(),
         tools_cache.clone(),
         tools_tx.clone(),
+        registry.clone(),
         self_entry.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),

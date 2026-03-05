@@ -120,6 +120,7 @@ pub async fn start_discovery_listener(
     storage_cache: crate::domain::storage_cache::StorageCache,
     tools_cache: crate::domain::tools::ToolsCache,
     tools_tx: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
+    registry: crate::domain::GardenRegistry,
     self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
@@ -207,6 +208,7 @@ pub async fn start_discovery_listener(
                         let local_endpoint = api_endpoint.clone();
                         let local_entry = self_entry.clone();
                         let local_tools_cache = tools_cache.clone();
+                        let local_registry = registry.clone();
                         let local_seed_banks = seed_banks.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
@@ -251,10 +253,10 @@ pub async fn start_discovery_listener(
                                 }
                             }
 
-                            // TOOLS-0001: Broadcast current local tools snapshot for new stone.
+                            // TOOLS-0003: Broadcast current local tools snapshot for new stone.
                             let snapshot_deltas = {
-                                let cache = local_tools_cache.read().await;
-                                cache.local_snapshot_for_beacon(&local_stone_id)
+                                let reg = local_registry.read().await;
+                                reg.local_snapshot_for_beacon(&local_stone_id)
                             };
                             if !snapshot_deltas.is_empty() {
                                 if let Err(e) = crate::infra::broadcast_tools_beacon(
@@ -294,17 +296,21 @@ pub async fn start_discovery_listener(
                     mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty)
                         .await;
 
-                    // STORAGE-0003: Remove from storage cache
+                    // TOOLS-0003: Remove all entries for offline stone from registry
+                    let removed = {
+                        let mut reg = registry.write().await;
+                        reg.remove_stone(&goodbye.stone_id)
+                    };
+                    for delta in &removed {
+                        let _ = tools_tx.send(delta.clone());
+                    }
+
+                    // Legacy: also remove from old caches during migration
                     crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id)
                         .await;
-
-                    // TOOLS-0001: Remove tool projections for offline stone.
-                    let removed = {
+                    {
                         let mut cache = tools_cache.write().await;
-                        cache.remove_stone_tools(&goodbye.stone_id)
-                    };
-                    for delta in removed {
-                        let _ = tools_tx.send(delta);
+                        cache.remove_stone_tools(&goodbye.stone_id);
                     }
                 }
                 garden_common::infra::communications::announcement_types::STORAGE_BEACON => {
@@ -352,12 +358,19 @@ pub async fn start_discovery_listener(
                         "Tools beacon received, updating tools cache"
                     );
 
+                    // TOOLS-0003: Apply to unified registry
                     let applied = {
-                        let mut cache = tools_cache.write().await;
-                        cache.apply_remote_beacon(&beacon)
+                        let mut reg = registry.write().await;
+                        reg.apply_remote_beacon(&beacon)
                     };
-                    for delta in applied {
-                        let _ = tools_tx.send(delta);
+                    for delta in &applied {
+                        let _ = tools_tx.send(delta.clone());
+                    }
+
+                    // Legacy: also apply to old tools cache during migration
+                    {
+                        let mut cache = tools_cache.write().await;
+                        cache.apply_remote_beacon(&beacon);
                     }
                 }
                 _ => {
@@ -1038,6 +1051,7 @@ pub async fn start_all_background_tasks(
         state.storage_cache.clone(),
         state.tools_cache.clone(),
         state.tools_tx.clone(),
+        state.registry.clone(),
         state.self_entry.clone(),
         console.clone(),
         state.infrastructure_handlers.clone(),

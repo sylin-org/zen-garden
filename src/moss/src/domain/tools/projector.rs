@@ -200,19 +200,6 @@ fn canonical_seed_bank_name(name: &str) -> String {
 }
 
 #[cfg(test)]
-fn parse_port_from_endpoint(endpoint: &str) -> Option<u16> {
-    let trimmed = endpoint.trim().trim_end_matches('/');
-    let without_scheme = trimmed
-        .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"))
-        .unwrap_or(trimmed);
-    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-    host_port
-        .rsplit_once(':')
-        .and_then(|(_, port)| port.parse().ok())
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -242,19 +229,6 @@ mod tests {
         let fqn = parse_fqn_for_fqid("mongodb:prod", "mongodb");
         assert_eq!(fqn.fqn(), "mongodb::prod");
         assert_eq!(fqn.instance, Some("prod".to_string()));
-    }
-
-    #[test]
-    fn parse_port_examples() {
-        assert_eq!(
-            parse_port_from_endpoint("http://192.168.1.20:7185"),
-            Some(7185)
-        );
-        assert_eq!(
-            parse_port_from_endpoint("http://192.168.1.20:7185/"),
-            Some(7185)
-        );
-        assert_eq!(parse_port_from_endpoint("http://localhost"), None);
     }
 
     #[test]

@@ -71,13 +71,13 @@ pub fn start_topology_maintenance(
     });
 }
 
-/// Start storage cache maintenance task (STORAGE-0003)
-///
 /// Periodically reaps expired gateway entries from the registry.
+///
 /// Runs every 15 seconds (gateway TTL is 60s, orchestrators refresh every 30s).
+/// Reaped entries are broadcast via SSE **and** UDP tools beacon so remote
+/// stones learn about the removal promptly.
 pub fn start_registry_maintenance(
-    registry: crate::domain::GardenRegistry,
-    tools_tx: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
+    state: AppState,
     token: CancellationToken,
 ) {
     tokio::spawn(async move {
@@ -93,17 +93,17 @@ pub fn start_registry_maintenance(
                 }
             }
             let reaped = {
-                let mut reg = registry.write().await;
+                let mut reg = state.registry.write().await;
                 reg.reap_expired()
             };
-            for delta in &reaped {
-                let _ = tools_tx.send(delta.clone());
-            }
             if !reaped.is_empty() {
                 tracing::debug!(
                     count = reaped.len(),
                     "Registry maintenance: reaped expired gateway entries"
                 );
+                // Notify SSE subscribers AND broadcast beacon so remote
+                // registries drop the reaped entries.
+                state.publish_tool_deltas(reaped, true).await;
             }
         }
     });

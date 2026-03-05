@@ -1217,6 +1217,12 @@ pub async fn run(
         shutdown_token.child_token(),
     );
 
+    // Registry maintenance: reap expired gateway entries and broadcast removals
+    crate::tasks::start_registry_maintenance(
+        state.clone(),
+        shutdown_token.child_token(),
+    );
+
     // Seed bank resilience + storage cache hygiene
     // Ensures hot-plugged prepared devices are auto-mounted and cache stays fresh.
     #[cfg(target_os = "linux")]

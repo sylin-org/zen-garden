@@ -2,6 +2,11 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-05
+
+- TOOLS-0003: Gateways propagate via registry beacon instead of topology chirps
+- Fixed `find` sort order: exact name matches now appear before partial matches
+
 ## 2026-03-02
 
 - **OFFER-0006 Phase 1 complete**: FQN v2 + image-direct deployment. See [OFFER-0006](decisions/OFFER-0006-image-direct-and-fqn-v2.md).

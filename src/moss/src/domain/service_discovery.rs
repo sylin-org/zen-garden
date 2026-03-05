@@ -508,6 +508,13 @@ pub async fn find_services(
         tracing::debug!("Fresh mode: topology cache already checked");
     }
 
+    // ── Sort results ─────────────────────────────────────────────
+    // Ordering contract (all callers — CLI, API, etc.):
+    //   1. Exact name matches first, partial (offering-level) matches after.
+    //   2. Within each match-quality tier, orchestrators before data services.
+    //   3. Stable tie-break by service name then stone name.
+    sort_found_services(&mut all_services, criteria);
+
     let elapsed = start.elapsed();
     tracing::debug!(
         criteria = ?criteria,
@@ -761,6 +768,50 @@ async fn fetch_remote_services(
     }
 
     Ok(results)
+}
+
+/// Sort found services according to the discovery ordering contract.
+///
+/// For name-based searches:
+///   1. Exact name matches first (service `name` == query).
+///   2. Partial matches second (only `offering` matches the query).
+///   3. Within each tier, orchestrators (category == "orchestrator") first.
+///   4. Stable tie-break: service name, then stone name.
+///
+/// For non-name searches (category, tag) the collection order from the
+/// gateway → local → cache pipeline already has orchestrators first, so we
+/// only apply the stable tie-break.
+fn sort_found_services(services: &mut [FoundService], criteria: &ServiceSearchCriteria) {
+    if let Some(ref search_name) = criteria.name {
+        let lower_search = search_name.to_lowercase();
+
+        services.sort_by(|a, b| {
+            let a_exact = a.name.to_lowercase() == lower_search;
+            let b_exact = b.name.to_lowercase() == lower_search;
+
+            // Primary: exact name match first
+            match (a_exact, b_exact) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+
+            let a_orch = a.category == "orchestrator";
+            let b_orch = b.category == "orchestrator";
+
+            // Secondary: orchestrators before data services
+            match (a_orch, b_orch) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+
+            // Tertiary: alphabetical by name, then stone
+            a.name.cmp(&b.name).then(a.stone.name.cmp(&b.stone.name))
+        });
+    }
+    // Non-name searches: orchestrators are already first via collection order;
+    // no additional reordering needed.
 }
 
 /// Check if a service matches the search criteria
@@ -1119,5 +1170,81 @@ mod tests {
         )
         .has_sub_capability_filter());
         assert!(!ServiceSearchCriteria::by_name("mongodb").has_sub_capability_filter());
+    }
+
+    /// Helper to build a minimal FoundService for sort tests.
+    fn stub_service(name: &str, offering: &str, category: &str, stone: &str) -> FoundService {
+        FoundService {
+            offering_id: String::new(),
+            name: name.to_string(),
+            offering: offering.to_string(),
+            category: category.to_string(),
+            tags: vec![],
+            status: "running".to_string(),
+            stone: StoneRef {
+                id: stone.to_string(),
+                name: stone.to_string(),
+                endpoint: format!("http://{}", stone),
+            },
+            connection: ResolvedConnection {
+                hostname: stone.to_string(),
+                ip: "127.0.0.1".to_string(),
+                port: 27017,
+                protocol: "mongodb".to_string(),
+                uris: vec![],
+            },
+            sub_capabilities: vec![],
+        }
+    }
+
+    #[test]
+    fn test_sort_exact_name_matches_first() {
+        let criteria = ServiceSearchCriteria::by_name("mongodb");
+
+        // Simulate the real scenario: orchestrators collected first, then data.
+        let mut services = vec![
+            stub_service("mongodb::legacy", "mongodb", "orchestrator", "stone-a"),
+            stub_service("mongodb", "mongodb", "orchestrator", "stone-b"),
+            stub_service("mongodb", "mongodb", "data", "stone-c"),
+            stub_service("mongodb", "mongodb", "data", "stone-d"),
+            stub_service("mongodb::legacy", "mongodb", "data", "stone-a"),
+        ];
+
+        sort_found_services(&mut services, &criteria);
+
+        let names: Vec<(&str, &str)> = services
+            .iter()
+            .map(|s| (s.name.as_str(), s.category.as_str()))
+            .collect();
+
+        // Exact matches first (mongodb), then partials (mongodb::legacy).
+        // Within each tier, orchestrators before data.
+        assert_eq!(
+            names,
+            vec![
+                ("mongodb", "orchestrator"),
+                ("mongodb", "data"),
+                ("mongodb", "data"),
+                ("mongodb::legacy", "orchestrator"),
+                ("mongodb::legacy", "data"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sort_no_reorder_for_category_search() {
+        let criteria = ServiceSearchCriteria::by_category("database");
+
+        let mut services = vec![
+            stub_service("mongodb::legacy", "mongodb", "orchestrator", "stone-a"),
+            stub_service("mongodb", "mongodb", "data", "stone-b"),
+        ];
+
+        let original_order: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
+
+        sort_found_services(&mut services, &criteria);
+
+        let after: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
+        assert_eq!(original_order, after, "category search should not reorder");
     }
 }

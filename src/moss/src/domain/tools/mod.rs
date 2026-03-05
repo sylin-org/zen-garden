@@ -9,5 +9,6 @@ pub mod events;
 pub mod projector;
 pub mod readiness;
 
-pub use cache::{new_tools_cache, ToolQuery, ToolsCache, ToolsCacheInner};
+pub use cache::{new_tools_cache, ToolsCache, ToolsCacheInner};
+pub use crate::domain::garden_registry::ToolQuery;
 pub use events::{stream_event_type_for_delta, ToolsSnapshotPayload};

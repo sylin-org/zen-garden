@@ -30,6 +30,10 @@ pub struct GardenTool {
     /// Capabilities (models, collections, etc.).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<Capability>,
+
+    /// Storage-specific metadata. Present only when `tool.category == "storage"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<StorageMetadata>,
 }
 
 /// Tool identity — what this resource is.
@@ -88,6 +92,31 @@ pub struct Capability {
 
     /// Items within this capability type.
     pub items: Vec<String>,
+}
+
+/// Storage-specific metadata carried by seed-bank entries.
+///
+/// Present only when `tool.category == "storage"`. Part of the boundary
+/// model — no transforms needed, read sites access fields directly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StorageMetadata {
+    /// Replication role: `"primary"`, `"dormant"`, or `None` if unassigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Total capacity in bytes.
+    pub capacity_bytes: u64,
+    /// Used space in bytes.
+    pub used_bytes: u64,
+    /// Visibility: `"open"`, `"closed"`, `"read-only"`.
+    pub visibility: String,
+    /// Whether the seed bank is encrypted.
+    pub encrypted: bool,
+    /// Pinned Primary identifier (STORAGE-0006).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_id: Option<String>,
+    /// Supported protocols: `["s3", "storage"]`.
+    #[serde(default)]
+    pub protocols: Vec<String>,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -501,6 +530,7 @@ mod tests {
                 uris: Vec::new(),
             },
             capabilities: Vec::new(),
+            storage: None,
         }
     }
 

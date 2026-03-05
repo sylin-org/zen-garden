@@ -1,11 +1,14 @@
 use chrono::Utc;
 use garden_common::tools::{
-    build_tool_key, fqid_matches, CapabilitySelector, GardenTool, ToolDelta, ToolDeltaKind,
+    build_tool_key, GardenTool, ToolDelta, ToolDeltaKind,
     ToolsBeacon,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+// ToolQuery is now defined in garden_registry.rs (TOOLS-0003).
+pub use crate::domain::garden_registry::ToolQuery;
 
 const DEFAULT_HISTORY_LIMIT: usize = 4096;
 
@@ -13,79 +16,6 @@ pub type ToolsCache = Arc<RwLock<ToolsCacheInner>>;
 
 pub fn new_tools_cache() -> ToolsCache {
     Arc::new(RwLock::new(ToolsCacheInner::default()))
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ToolQuery {
-    /// Filter by fqid (bare name = type match, instance = exact match).
-    pub fqid: Option<String>,
-    /// Filter by category: "orchestrator", "offering", "storage".
-    pub category: Option<String>,
-    /// Filter by status: "running", "degraded", "stopped".
-    pub status: Option<String>,
-    /// Capability selectors (AND semantics).
-    pub capabilities: Vec<CapabilitySelector>,
-}
-
-impl ToolQuery {
-    pub fn matches_tool(&self, tool: &GardenTool) -> bool {
-        if let Some(ref fqid) = self.fqid {
-            if !fqid_matches(fqid, tool) {
-                return false;
-            }
-        }
-
-        if let Some(ref category) = self.category {
-            if !tool.tool.category.eq_ignore_ascii_case(category) {
-                return false;
-            }
-        }
-
-        if let Some(ref status) = self.status {
-            if !tool.service.status.eq_ignore_ascii_case(status) {
-                return false;
-            }
-        }
-
-        for selector in &self.capabilities {
-            if !tool.has_capability(&selector.cap_type, &selector.item) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    pub fn matches_delta(&self, delta: &ToolDelta) -> bool {
-        if let Some(ref fqid) = self.fqid {
-            if !delta.fqid.eq_ignore_ascii_case(fqid) {
-                // For deltas we also check if the embedded tool matches
-                if let Some(ref tool) = delta.tool {
-                    if !fqid_matches(fqid, tool) {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-        }
-
-        match delta.kind {
-            ToolDeltaKind::Upsert => delta
-                .tool
-                .as_ref()
-                .map(|tool| self.matches_tool(tool))
-                .unwrap_or(false),
-            ToolDeltaKind::Remove => {
-                // Remove events only carry fqid + tool_key.
-                // Only fqid filtering is meaningful without the tool payload.
-                (self.category.is_none()
-                    && self.status.is_none()
-                    && self.capabilities.is_empty())
-                    || self.fqid.is_some()
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -373,6 +303,7 @@ mod tests {
                 cap_type: "model".to_string(),
                 items: vec!["llama3".to_string()],
             }],
+            storage: None,
         }
     }
 

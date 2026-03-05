@@ -71,6 +71,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                     uris: conn.uris,
                 },
                 capabilities: Vec::new(),
+                storage: None,
             });
         }
     }
@@ -133,6 +134,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                     uris,
                 },
                 capabilities: Vec::new(),
+                storage: None,
             });
         }
     }
@@ -184,6 +186,7 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
             uris: svc.connection.uris,
         },
         capabilities,
+        storage: None,
     }
 }
 

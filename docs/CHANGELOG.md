@@ -11,6 +11,7 @@ All notable changes to Zen Garden will be documented in this file.
 - Capabilities cached in tending file; hot-path commands make zero pre-flight HTTP calls
 - Removed health vitality from stone banner (success = reachable, failure = discovery)
 - Moss injects `X-Stone-Name` / `X-Stone-Id` response headers on every HTTP response
+- Tools API snapshot returns 3-tier sorted results: exact fqid → category → alphabetical
 
 ## 2026-03-02
 

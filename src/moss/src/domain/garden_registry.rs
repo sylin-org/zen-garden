@@ -181,8 +181,26 @@ impl GardenRegistryInner {
             .map(|e| e.tool.clone())
             .collect();
 
-        // Sort: orchestrators first, then offerings, then storage.
-        tools.sort_by_key(|t| t.category_priority());
+        // 3-tier sort matching sort_found_services policy:
+        let search_fqid = query.fqid.as_deref();
+        tools.sort_by(|a, b| {
+            // Primary: exact fqid match first (when fqid filter is present).
+            if let Some(fqid) = search_fqid {
+                let a_exact = a.fqid.eq_ignore_ascii_case(fqid);
+                let b_exact = b.fqid.eq_ignore_ascii_case(fqid);
+                match (a_exact, b_exact) {
+                    (true, false) => return std::cmp::Ordering::Less,
+                    (false, true) => return std::cmp::Ordering::Greater,
+                    _ => {}
+                }
+            }
+            // Secondary: category priority (orchestrators → offerings → storage).
+            a.category_priority()
+                .cmp(&b.category_priority())
+                // Tertiary: alphabetical by fqid, then stone name.
+                .then_with(|| a.fqid.cmp(&b.fqid))
+                .then_with(|| a.stone.name.cmp(&b.stone.name))
+        });
 
         (self.cursor, tools)
     }
@@ -818,6 +836,56 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].tool.category, "orchestrator");
         assert_eq!(tools[1].tool.category, "offering");
+    }
+
+    #[test]
+    fn snapshot_exact_fqid_first_then_alphabetical() {
+        let mut reg = GardenRegistryInner::default();
+
+        // Insert in deliberately wrong order.
+        reg.upsert(
+            sample_tool("mongodb:staging", "offering", "stone-c"),
+            EntryOrigin::Local,
+        );
+        reg.upsert(
+            sample_tool("mongodb", "offering", "stone-b"),
+            EntryOrigin::Local,
+        );
+        reg.upsert(
+            sample_tool("mongodb:prod", "offering", "stone-a"),
+            EntryOrigin::Local,
+        );
+
+        let query = ToolQuery {
+            fqid: Some("mongodb".to_string()),
+            ..Default::default()
+        };
+        let (_, tools) = reg.snapshot(&query);
+        assert_eq!(tools.len(), 3);
+        // Exact fqid match pinned first.
+        assert_eq!(tools[0].fqid, "mongodb");
+        // Remaining sorted alphabetically by fqid.
+        assert_eq!(tools[1].fqid, "mongodb:prod");
+        assert_eq!(tools[2].fqid, "mongodb:staging");
+    }
+
+    #[test]
+    fn snapshot_alphabetical_tiebreak_by_stone() {
+        let mut reg = GardenRegistryInner::default();
+
+        reg.upsert(
+            sample_tool("redis", "offering", "stone-z"),
+            EntryOrigin::Local,
+        );
+        reg.upsert(
+            sample_tool("redis", "offering", "stone-a"),
+            EntryOrigin::Local,
+        );
+
+        let (_, tools) = reg.snapshot(&ToolQuery::default());
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].stone.name, "stone-a");
+        assert_eq!(tools[1].stone.name, "stone-z");
     }
 
     #[test]

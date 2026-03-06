@@ -141,7 +141,14 @@ async fn proxy_inference(
         } else {
             Some(&gpu_matrix)
         };
-        routing::select_instance(&model, &instances, &models, &tiers, 64, fitness_ref)
+
+        // Demand shares for routing reservation decisions (5-min window).
+        let recent_demand = {
+            let metrics = state.app.metrics.read().await;
+            metrics.demand_shares(300)
+        };
+
+        routing::select_instance(&model, &instances, &models, &tiers, 64, fitness_ref, &recent_demand)
     };
 
     let decision = match decision {
@@ -315,45 +322,57 @@ async fn proxy_inference(
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(64);
 
-        // Spawn a task to tee the stream: forward chunks AND inspect for final object
+        // Spawn a task to tee the stream: forward chunks AND inspect for final object.
+        // Uses select! to detect client disconnect even while waiting for upstream,
+        // so we don't hold the Ollama connection (and queue depth slot) open after
+        // the client is gone.
         tokio::spawn(async move {
             let mut line_buf = Vec::new();
             futures_util::pin_mut!(upstream);
 
-            while let Some(chunk_result) = upstream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        // Forward chunk to client
-                        if tx.send(Ok(chunk.clone())).await.is_err() {
-                            break; // client disconnected
-                        }
+            loop {
+                tokio::select! {
+                    chunk_opt = upstream.next() => {
+                        match chunk_opt {
+                            Some(Ok(chunk)) => {
+                                // Forward chunk to client
+                                if tx.send(Ok(chunk.clone())).await.is_err() {
+                                    break; // client disconnected
+                                }
 
-                        // Buffer for NDJSON line parsing
-                        line_buf.extend_from_slice(&chunk);
-                        while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
-                            let line = &line_buf[..pos];
-                            if !line.is_empty() {
-                                if let Ok(obj) =
-                                    serde_json::from_slice::<OllamaInferenceFinal>(line)
-                                {
-                                    if obj.done {
-                                        let _ = app.metrics_tx.send(MetricEvent::Request {
-                                            stone: stone_for_metrics.clone(),
-                                            model: model_for_metrics.clone(),
-                                            tokens_in: obj.prompt_eval_count,
-                                            tokens_out: obj.eval_count,
-                                            duration_ns: obj.total_duration,
-                                            eval_duration_ns: obj.eval_duration,
-                                        });
+                                // Buffer for NDJSON line parsing
+                                line_buf.extend_from_slice(&chunk);
+                                while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
+                                    let line = &line_buf[..pos];
+                                    if !line.is_empty() {
+                                        if let Ok(obj) =
+                                            serde_json::from_slice::<OllamaInferenceFinal>(line)
+                                        {
+                                            if obj.done {
+                                                let _ = app.metrics_tx.send(MetricEvent::Request {
+                                                    stone: stone_for_metrics.clone(),
+                                                    model: model_for_metrics.clone(),
+                                                    tokens_in: obj.prompt_eval_count,
+                                                    tokens_out: obj.eval_count,
+                                                    duration_ns: obj.total_duration,
+                                                    eval_duration_ns: obj.eval_duration,
+                                                });
+                                            }
+                                        }
                                     }
+                                    line_buf.drain(..=pos);
                                 }
                             }
-                            line_buf.drain(..=pos);
+                            Some(Err(e)) => {
+                                tracing::warn!(error = %e, "upstream stream error");
+                                let _ = tx.send(Err(std::io::Error::other(e))).await;
+                                break;
+                            }
+                            None => break, // upstream finished
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "upstream stream error");
-                        let _ = tx.send(Err(std::io::Error::other(e))).await;
+                    _ = tx.closed() => {
+                        tracing::debug!("client disconnected, dropping upstream");
                         break;
                     }
                 }

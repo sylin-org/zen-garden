@@ -2,6 +2,15 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-06
+
+- **MOSS-0005**: Manageable environment variables for adopted bare-metal services. Manifests declare an allowlist of env vars; Moss reads/writes them cross-platform (Linux `/etc/default` + systemd overrides, Windows registry via `winreg`, macOS `launchctl`). See [MOSS-0005](decisions/MOSS-0005-manageable-env-vars.md).
+- New `PATCH /api/v1/stone/services/{service}/env` endpoint — set/delete env vars with allowlist validation
+- Enhanced `GET /api/v1/stone/services/{service}/env` — returns `manageable` var list and reads current values for adopted services
+- `ManageableEnv` type in `garden_common::manifests` — cross-mode manifest field for env var governance
+- Replaced all bespoke `reg.exe` shell-outs with typed `winreg` wrapper (`infra/platform/registry.rs`)
+- Added `ollama.frontmatter.json` and `ollama-cpu.frontmatter.json` manageable env declarations
+
 ## 2026-03-05
 
 - Routing rewrite: performance-first with demand-based reservation

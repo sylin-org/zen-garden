@@ -30,6 +30,8 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | POST | `/api/v1/stone/services/:service/wake` | Start |
 | POST | `/api/v1/stone/services/:service/nourish` | Update |
 | GET | `/api/v1/stone/services/:service/logs` | Stream logs (SSE) |
+| GET | `/api/v1/stone/services/:service/env` | Read env vars + manageable list |
+| PATCH | `/api/v1/stone/services/:service/env` | Set/delete env vars (allowlist) |
 
 ### Companions
 | Method | Endpoint | Purpose |

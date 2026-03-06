@@ -566,6 +566,7 @@ body {
   font-size: 0.75rem; line-height: 1;
   background: rgba(132,165,157,0.1); color: var(--accent-sage);
 }
+/* Selection detail area */
 .rec-pick {
   border-left: 2px solid var(--accent-sage); padding-left: 0.75rem;
   margin-bottom: 0.75rem;
@@ -601,16 +602,32 @@ body {
   font-family: var(--font-mono); font-size: 0.55rem; color: var(--stone-400);
   margin-top: 0.35rem; line-height: 1.5;
 }
-.rec-runners {
+/* Model list area */
+.rec-list {
   border-top: 1px solid var(--vellum-border); padding-top: 0.5rem;
   margin-top: auto;
 }
-.rec-runner {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 0.2rem 0; font-family: var(--font-mono); font-size: 0.6rem;
+.rec-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.25rem 0.35rem; font-family: var(--font-mono); font-size: 0.6rem;
+  border-radius: 2px; transition: var(--transition-soft);
 }
-.rec-runner-name { color: var(--stone-600); word-break: break-all; }
-.rec-runner-score { color: var(--stone-400); white-space: nowrap; margin-left: 0.5rem; }
+.rec-row.active {
+  background: rgba(132,165,157,0.08); border-left: 2px solid var(--accent-sage);
+  padding-left: calc(0.35rem - 2px);
+}
+.rec-row-left { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.rec-row-name { color: var(--stone-600); word-break: break-all; }
+.rec-row.active .rec-row-name { color: var(--stone-900); font-weight: 600; }
+.rec-row-right { display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; color: var(--stone-400); margin-left: 0.5rem; }
+.rec-row { cursor: pointer; }
+.rec-row:hover { background: rgba(132,165,157,0.05); }
+.rec-pin-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.1rem; height: 1.1rem; font-size: 0.55rem; line-height: 1;
+  flex-shrink: 0; opacity: 0; color: var(--accent-sage); transition: var(--transition-soft);
+}
+.rec-pin-icon.pinned { opacity: 1; }
 .rec-empty {
   font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
   text-align: center; padding: 1rem; font-style: italic;
@@ -1780,7 +1797,34 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
   return { capability: cap, recommendations: scored };
 }
 
+/// Toggle a recommendation pin via the orchestrator API.
+async function togglePin(capability, model) {
+  const pins = (settings && settings.pins) || {};
+  const isPinned = pins[capability] === model;
+  try {
+    if (isPinned) {
+      await fetch(`/api/recommendations/${encodeURIComponent(capability)}/pin`, { method: 'DELETE' });
+    } else {
+      await fetch(`/api/recommendations/${encodeURIComponent(capability)}/pin`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+    }
+    // Optimistic update so re-render is immediate
+    if (!settings.pins) settings.pins = {};
+    if (isPinned) delete settings.pins[capability];
+    else settings.pins[capability] = model;
+    renderRecommendations();
+  } catch (e) {
+    addActivity('error', `Failed to ${isPinned ? 'unpin' : 'pin'}: ${e.message}`);
+  }
+}
+
 /// Render role-based recommendation panels.
+/// Two areas per category: selection detail (top) and model list (bottom).
+/// The "active" model is the pinned one (if set), otherwise rank 1.
+/// The model list always shows models in score order — pinning highlights
+/// a row without reordering.
 function renderRecommendations() {
   const section = document.getElementById('recsSection');
   const container = document.getElementById('recsContainer');
@@ -1793,22 +1837,19 @@ function renderRecommendations() {
   const stones = state.stones || [];
   const gpuEntries = (state.benchmark && state.benchmark.gpu_matrix)
     ? (state.benchmark.gpu_matrix.entries || []) : [];
+  const pins = (settings && settings.pins) || {};
 
-  // Role definitions: each role maps to a capability and has presentation metadata.
-  // Multiple roles may share the same Ollama capability tag but score differently
-  // (e.g. quick/chat/synthesis all filter on "completion"; vision/ocr on "vision").
   const roles = [
-    { key: 'quick',     label: 'Quick',       icon: '\u26A1',      desc: 'Fastest usable response' },
-    { key: 'chat',      label: 'Chat',        icon: '\u{1F4AC}',   desc: 'Best conversational quality' },
-    { key: 'synthesis', label: 'Synthesis',    icon: '\u{1F4D6}',   desc: 'Long-context distillation and extraction' },
-    { key: 'vision',    label: 'Vision',       icon: '\u{1F441}',   desc: 'Image understanding' },
-    { key: 'ocr',       label: 'OCR',          icon: '\u{1F4C4}',   desc: 'Document reading from images' },
-    { key: 'tools',     label: 'Tool Use',     icon: '\u{1F527}',   desc: 'Function calling and agents' },
-    { key: 'thinking',  label: 'Reasoning',    icon: '\u{1F9E0}',   desc: 'Extended thinking and analysis' },
-    { key: 'embedding', label: 'Embedding',    icon: '\u{1F50D}',   desc: 'Semantic search and RAG' },
+    { key: 'quick',     label: 'Quick',       icon: '\u26A1' },
+    { key: 'chat',      label: 'Chat',        icon: '\u{1F4AC}' },
+    { key: 'synthesis', label: 'Synthesis',    icon: '\u{1F4D6}' },
+    { key: 'vision',    label: 'Vision',       icon: '\u{1F441}' },
+    { key: 'ocr',       label: 'OCR',          icon: '\u{1F4C4}' },
+    { key: 'tools',     label: 'Tool Use',     icon: '\u{1F527}' },
+    { key: 'thinking',  label: 'Reasoning',    icon: '\u{1F9E0}' },
+    { key: 'embedding', label: 'Embedding',    icon: '\u{1F50D}' },
   ];
 
-  // Discover which capabilities exist
   const allCaps = new Set();
   models.forEach(m => (m.capabilities || []).forEach(c => allCaps.add(c)));
 
@@ -1823,58 +1864,68 @@ function renderRecommendations() {
     if (!result || !result.recommendations.length) return;
     panelCount++;
 
-    const recs = result.recommendations;
-    const top = recs[0];
-    const runners = recs.slice(1, 4); // up to 3 runners-up
+    // Score-ordered list, capped at 5
+    const recs = result.recommendations.slice(0, 5);
 
-    // Top pick details
-    const spec = [top.parameter_size, top.quantization_level].filter(Boolean).join(' / ');
-    const ctx = top.context_length
-      ? (top.context_length >= 1024 ? Math.round(top.context_length / 1024) + 'K' : top.context_length)
+    // Determine the active model: pinned if valid, otherwise rank 1
+    const pinnedModel = pins[role.key];
+    const pinnedInList = pinnedModel && recs.some(r => r.model === pinnedModel);
+    const activeModel = pinnedInList ? pinnedModel : recs[0].model;
+
+    // Find the active rec for the detail area
+    const active = recs.find(r => r.model === activeModel) || recs[0];
+
+    // ── Selection detail area ──
+    const spec = [active.parameter_size, active.quantization_level].filter(Boolean).join(' / ');
+    const ctx = active.context_length
+      ? (active.context_length >= 1024 ? Math.round(active.context_length / 1024) + 'K' : active.context_length)
       : null;
-    const specLine = [spec, ctx ? ctx + ' ctx' : ''].filter(Boolean).join(' · ');
+    const specLine = [spec, ctx ? ctx + ' ctx' : ''].filter(Boolean).join(' \u00B7 ');
 
-    const v = (top.verdict || '').toLowerCase();
+    const v = (active.verdict || '').toLowerCase();
     const verdictHtml = v
-      ? `<div class="rec-pick-verdict ${esc(v)}">${esc(v)}${top.stones.length ? ` on ${top.stones.filter(s => (s.verdict||'').toLowerCase() === v).length}/${top.stones.length} stones` : ''}</div>`
+      ? `<div class="rec-pick-verdict ${esc(v)}">${esc(v)}${active.stones.length ? ` on ${active.stones.filter(s => (s.verdict||'').toLowerCase() === v).length}/${active.stones.length} stones` : ''}</div>`
       : '';
 
-    // Stone chips for top pick
-    const chips = top.stones.map(s => {
+    const chips = active.stones.map(s => {
       const sv = (s.verdict || '').toLowerCase();
       const cls = sv === 'blocked' ? 'blocked' : s.loaded ? 'loaded' : '';
       return `<span class="rec-chip ${cls}" title="${esc(s.endpoint)}">${esc(s.stone)}</span>`;
     }).join('');
 
-    // Reasoning (top 2 reasons)
-    const reasons = top.reasoning.slice(0, 2).map(t => esc(t)).join(' · ');
+    const reasons = active.reasoning.slice(0, 2).map(t => esc(t)).join(' \u00B7 ');
 
-    // Runners-up
-    let runnersHtml = '';
-    if (runners.length) {
-      runnersHtml = '<div class="rec-runners">';
-      runners.forEach(r => {
-        const rv = (r.verdict || '').toLowerCase();
-        const rvColor = rv === 'fast' ? 'var(--accent-sage)' : rv === 'degraded' ? 'var(--accent-hopeful)' : rv === 'blocked' ? 'var(--accent-red)' : 'var(--stone-400)';
-        const rSpec = [r.parameter_size, r.quantization_level].filter(Boolean).join('/');
-        runnersHtml += `<div class="rec-runner">
-          <span class="rec-runner-name">${esc(r.model)}</span>
-          <span class="rec-runner-score">${rSpec}${rv ? ` <span style="color:${rvColor}">${esc(rv)}</span>` : ''}</span>
-        </div>`;
-      });
-      runnersHtml += '</div>';
-    }
+    // ── Model list area ──
+    let listHtml = '<div class="rec-list">';
+    recs.forEach(r => {
+      const isActive = r.model === activeModel;
+      const isPinned = pinnedModel === r.model;
+      const rv = (r.verdict || '').toLowerCase();
+      const rvColor = rv === 'fast' ? 'var(--accent-sage)' : rv === 'degraded' ? 'var(--accent-hopeful)' : rv === 'blocked' ? 'var(--accent-red)' : 'var(--stone-400)';
+      const rSpec = [r.parameter_size, r.quantization_level].filter(Boolean).join('/');
+      const pinCls = isPinned ? 'pinned' : '';
+
+      listHtml += `<div class="rec-row${isActive ? ' active' : ''}" onclick="togglePin('${esc(role.key)}','${esc(r.model)}')">
+        <span class="rec-row-left">
+          <span class="rec-row-name">${esc(r.model)}</span>
+        </span>
+        <span class="rec-row-right">${rSpec}${rv ? ` <span style="color:${rvColor}">${esc(rv)}</span>` : ''}
+          <span class="rec-pin-icon ${pinCls}">\u{1F4CC}</span>
+        </span>
+      </div>`;
+    });
+    listHtml += '</div>';
 
     panels += `<div class="rec-panel">
       <div class="rec-role"><span class="rec-role-icon">${role.icon}</span> ${esc(role.label)}</div>
       <div class="rec-pick">
-        <div class="rec-pick-name">${esc(top.model)}</div>
+        <div class="rec-pick-name">${esc(active.model)}</div>
         ${specLine ? `<div class="rec-pick-spec">${esc(specLine)}</div>` : ''}
         ${verdictHtml}
         ${chips ? `<div class="rec-pick-stones">${chips}</div>` : ''}
         ${reasons ? `<div class="rec-pick-reason">${reasons}</div>` : ''}
       </div>
-      ${runnersHtml}
+      ${listHtml}
     </div>`;
   });
 

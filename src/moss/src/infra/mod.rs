@@ -105,3 +105,4 @@ pub use service::{
 };
 pub use task_store::{TaskRegistry, TaskStore};
 pub use tools::broadcast_tools_beacon;
+pub use tools::broadcast_tools_snapshot_beacon;

@@ -231,6 +231,11 @@ pub struct ToolsBeacon {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deltas: Vec<ToolDelta>,
     pub timestamp: DateTime<Utc>,
+    /// When true, `deltas` represents the complete set of local tools for
+    /// this stone. Receivers should remove any previously-announced entries
+    /// from this stone that are absent from the snapshot (reconciliation).
+    #[serde(default)]
+    pub snapshot: bool,
 }
 
 impl ToolsBeacon {
@@ -241,6 +246,7 @@ impl ToolsBeacon {
             endpoint: endpoint.to_string(),
             deltas: Vec::new(),
             timestamp: Utc::now(),
+            snapshot: false,
         }
     }
 }

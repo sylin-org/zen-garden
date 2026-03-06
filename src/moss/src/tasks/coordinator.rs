@@ -260,21 +260,19 @@ pub async fn start_discovery_listener(
                                 let reg = local_registry.read().await;
                                 reg.local_snapshot_for_beacon(&local_stone_id)
                             };
-                            if !snapshot_deltas.is_empty() {
-                                if let Err(e) = crate::infra::broadcast_tools_beacon(
-                                    &local_stone_id,
-                                    &local_stone_name,
-                                    &resolved_endpoint,
-                                    snapshot_deltas,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        error = %e,
-                                        new_stone = %chirp.stone_name,
-                                        "Failed to broadcast tools beacon for new stone"
-                                    );
-                                }
+                            if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
+                                &local_stone_id,
+                                &local_stone_name,
+                                &resolved_endpoint,
+                                snapshot_deltas,
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    new_stone = %chirp.stone_name,
+                                    "Failed to broadcast tools snapshot beacon for new stone"
+                                );
                             }
                         });
                     }

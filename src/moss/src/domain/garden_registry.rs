@@ -400,11 +400,18 @@ impl GardenRegistryInner {
     ///
     /// Applies upserts and removals from the beacon. Entries are tagged
     /// with [`EntryOrigin::Announced`] and have no TTL.
+    ///
+    /// When `beacon.snapshot` is true, the beacon represents the complete
+    /// set of tools for that stone. Any previously-announced entries from
+    /// that stone that are absent from the snapshot are removed
+    /// (reconciliation). This prevents stale entries from persisting when
+    /// a Remove beacon is lost over UDP.
     pub fn apply_remote_beacon(&mut self, beacon: &ToolsBeacon) -> Vec<ToolDelta> {
         let origin = EntryOrigin::Announced {
             stone_id: beacon.stone_id.clone(),
         };
         let mut applied = Vec::new();
+        let mut seen_keys = BTreeSet::new();
 
         for incoming in &beacon.deltas {
             match incoming.kind {
@@ -415,6 +422,10 @@ impl GardenRegistryInner {
 
                     let key =
                         build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
+
+                    if beacon.snapshot {
+                        seen_keys.insert(key.clone());
+                    }
 
                     // Skip if existing entry has same content and revision is 0
                     // (initial snapshot that hasn't changed).
@@ -471,6 +482,41 @@ impl GardenRegistryInner {
                         });
                         applied.push(delta);
                     }
+                }
+            }
+        }
+
+        // Snapshot reconciliation: remove announced entries from this stone
+        // that were not present in the snapshot.
+        if beacon.snapshot {
+            let stale: Vec<String> = self
+                .entries
+                .iter()
+                .filter(|(key, e)| {
+                    matches!(&e.origin, EntryOrigin::Announced { stone_id } if stone_id == &beacon.stone_id)
+                        && !seen_keys.contains(*key)
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+
+            for key in stale {
+                tracing::debug!(
+                    key = %key,
+                    stone = %beacon.stone_name,
+                    "registry: removing stale announced entry (snapshot reconciliation)"
+                );
+                if let Some(entry) = self.entries.remove(&key) {
+                    let delta = self.append_history(ToolDelta {
+                        event_id: garden_common::utils::ids::generate_guidv7(),
+                        cursor: 0,
+                        timestamp: chrono::Utc::now(),
+                        kind: ToolDeltaKind::Remove,
+                        fqid: entry.tool.fqid,
+                        tool_key: key,
+                        revision: entry.version,
+                        tool: None,
+                    });
+                    applied.push(delta);
                 }
             }
         }

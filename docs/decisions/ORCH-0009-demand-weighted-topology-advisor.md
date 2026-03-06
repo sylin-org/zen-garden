@@ -120,6 +120,12 @@ Fitness is per (model-family, stone), not per stone alone. A GPU that excels at
 7B inference may be mediocre at 70B. Projected fitness bootstraps from GPU name
 (generation, architecture, memory bandwidth) — imprecise but never absent.
 
+Within the same VRAM tier, GPU performance varies significantly: an RTX 4070 and
+RTX 3060 may both have 12 GB, but measured throughput can differ 2x. The
+projected fitness lookup table maps GPU name to a relative performance estimate
+(memory bandwidth, CUDA cores, architecture generation) so that T=0
+recommendations are directional even without benchmarks.
+
 Observed fitness decays with a 15-minute half-life (faster than demand) to adapt
 to thermal throttling, competing workloads, or driver changes.
 
@@ -177,6 +183,114 @@ restart. Placement changes (model pull/delete) are always user-confirmed.
 Recommendation pins represent explicit user intent and always take precedence
 over observed demand patterns. A pinned capability gets elevated weight
 regardless of request volume.
+
+## Existing Infrastructure (Code Audit)
+
+Audit performed 2026-03-06 against the current orchestrator codebase.
+
+### What Exists and Can Be Reused
+
+**Metrics pipeline** (`api/proxy.rs`, `domain/metrics.rs`,
+`tasks/metrics_processor.rs`): The proxy extracts `tokens_in`, `tokens_out`,
+`duration_ns`, `eval_duration_ns` from every Ollama response and sends a
+`MetricEvent` to an async channel. A background processor aggregates into
+`MetricsEngine` which maintains per-model request counts, per-stone throughput
+ring buffers (5-min windowed tok/s), and a `model_demand` ring buffer for
+demand-share computation. Cumulative counters persist to disk every 30 seconds.
+
+**Fitness benchmark** (`domain/fitness.rs`, `tasks/benchmark.rs`): Full
+per-(model, capability, stone) benchmark framework with `Verdict` enum
+(Fast/Degraded/Vetoed/Blocked), `GpuMatrix` synthesis, and disk persistence.
+The benchmark runner tests Generate, Embed, and Vision workloads separately,
+yields to live traffic, and handles timeouts/OOM gracefully.
+
+**Routing** (`domain/routing.rs`): Performance-first routing with fitness
+advisory (Blocked filtered, others as soft sort), demand-based reservation
+(preserve high-tier for large models), and queue-depth tie-breaking.
+
+**Recommendation scoring** (`domain/recommendation.rs`): Multi-layer scoring
+(availability, fitness, context window, quality) with pin support.
+
+**Discovery** (`tasks/discovery.rs`, `infra/stone_discovery.rs`): Fetches model
+inventory, loaded state, VRAM, GPU name, `OLLAMA_NUM_PARALLEL` per stone at
+profile time.
+
+**Advisor task** (`tasks/advisor.rs`): Reactive (topology events) + periodic
+(5 min) loop with debouncing. Snapshots instances + models, calls advisor
+algorithm, publishes to `AppState.advisor`.
+
+**Snapshot publisher** (`tasks/snapshot_publisher.rs`): Every 2 seconds,
+serializes advisor, benchmark, metrics, config to JSON via watch channel.
+Dashboard reads lock-free.
+
+### What Must Change
+
+**MetricEvent** (`domain/types.rs:476-497`): Add `capability: Option<String>`
+field. The proxy already knows the request path (`/api/embed`, `/api/chat`,
+`/api/generate`) but discards this information. Tag at proxy dispatch time.
+
+**MetricsEngine** (`domain/metrics.rs`): The existing ring buffers
+(`response_times`, `stone_throughput`, `model_demand`) are fixed-capacity
+VecDeques with manual windowing. Replace with `DecayCounter`-based
+`DemandLedger` that provides multi-window decay (15m/6h/3d), per-capability
+counters, per-(model, stone) observed fitness, and total request tracking for
+the confidence ramp. The existing cumulative counters and persistence can remain
+alongside.
+
+**Advisor algorithm** (`domain/advisor.rs`): The current Worst-Fit Decreasing +
+water-fill algorithm is VRAM-only. Replace entirely with demand-pressure-driven
+placement scoring that considers fitness, demand weight, workload affinity, and
+utilization. The `GpuSlot`/`ModelSlot` input types need fitness and demand
+fields. The output type needs typed `Recommendation` structs with kind,
+priority, and actuation metadata.
+
+**Advisor task** (`tasks/advisor.rs`): Add manual trigger support (receive from
+channel or direct function call). Add post-benchmark trigger (listen for
+`benchmark.completed` event).
+
+**AppState** (`app_state.rs`): Add `DemandLedger` field (or integrate into
+existing metrics). Add actuation mode setting.
+
+### What Is New
+
+**`DecayCounter`** — Exponentially weighted counter (~16 bytes). Pure type with
+`record(now)` and `rate(now, half_life)` methods.
+
+**`DemandLedger`** — Aggregates DecayCounters: per-capability, per-model,
+per-(model, stone) fitness, cold-load tracking. Consumed by advisor.
+
+**GPU projected fitness table** — Maps GPU name/generation to relative
+performance estimate. Bootstraps fitness at T=0 without benchmarks.
+
+**Fitness resolver** — Three-source priority: observed > benchmarked > projected.
+Returns fitness value + source tag for recommendation transparency.
+
+**Pressure engine** — Computes `demand / capacity` per capability from
+DemandLedger + topology + fitness. Core input to the new advisor.
+
+**Actuation module** — Calls `PATCH .../services/{service}/env` on Moss for
+parallelism changes. Coordinates drain → patch → restart → health-wait → resume.
+
+**`POST /api/advisor/evaluate`** — Synchronous manual evaluation endpoint.
+
+### Implementation Phases
+
+**Phase A — Demand Ledger + Capability Tracking:**
+`DecayCounter` type, capability field on `MetricEvent`, `DemandLedger` wired
+from proxy through metrics processor, exposed in snapshot.
+
+**Phase B — Fitness Integration:**
+GPU projected fitness table, observed fitness accumulator from proxy tok/s,
+three-source fitness resolver, pass into advisor inputs.
+
+**Phase C — Pressure Engine + New Advisor:**
+Capability pressure computation, confidence ramp, new `advise_topology()`
+producing typed `Recommendation` list, workload separation and
+demotion/promotion logic.
+
+**Phase D — Actuation:**
+Manual trigger endpoint, actuation mode setting, Moss env write-back with
+restart coordination, dashboard "Apply" button.
 
 ## Consequences
 

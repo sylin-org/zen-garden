@@ -39,6 +39,7 @@ pub mod manifests;
 pub mod network;
 pub mod nurturing_store;
 pub mod persistence;
+pub mod platform;
 pub mod process;
 pub mod secrets;
 pub mod service;

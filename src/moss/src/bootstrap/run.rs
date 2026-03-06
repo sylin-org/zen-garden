@@ -1696,7 +1696,7 @@ fn start_windows_first_boot_task(stone_name: &str, _port: u16) {
     tokio::spawn(async move {
         // Set DNS hostname (not NetBIOS) via registry
         // Note: Requires elevation - will warn gracefully if running without admin rights
-        if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+        if let Err(e) = set_windows_dns_hostname(&configured_name) {
             tracing::warn!(
                 error = ?e,
                 name = %configured_name,
@@ -1733,7 +1733,7 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Get current DNS hostname
-        let current_hostname = get_windows_dns_hostname().await;
+        let current_hostname = get_windows_dns_hostname();
 
         match &current_hostname {
             Some(hostname) if hostname.eq_ignore_ascii_case(&configured_name) => {
@@ -1752,7 +1752,7 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
                     "DNS hostname mismatch detected, attempting to fix"
                 );
 
-                if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+                if let Err(e) = set_windows_dns_hostname(&configured_name) {
                     tracing::warn!(
                         error = ?e,
                         configured = %configured_name,
@@ -1770,7 +1770,7 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
                 // Couldn't read current hostname - try to set anyway
                 tracing::debug!("Could not read current DNS hostname, attempting to set");
 
-                if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+                if let Err(e) = set_windows_dns_hostname(&configured_name) {
                     tracing::debug!(
                         error = ?e,
                         "Failed to set DNS hostname (may require elevation)"
@@ -1781,86 +1781,17 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
     });
 }
 
-/// Get current Windows DNS hostname from registry
+/// Get current Windows DNS hostname from registry.
 #[cfg(target_os = "windows")]
-async fn get_windows_dns_hostname() -> Option<String> {
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
-            "/v",
-            "Hostname",
-        ])
-        .output()
-        .await
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains("Hostname") && line.contains("REG_SZ") {
-            // Line format: "    Hostname    REG_SZ    value"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(hostname) = parts.last() {
-                return Some(hostname.to_string());
-            }
-        }
-    }
-    None
+fn get_windows_dns_hostname() -> Option<String> {
+    crate::infra::platform::registry::get_dns_hostname()
 }
 
-/// Set Windows DNS hostname without changing NetBIOS name
-///
-/// Writes to registry keys that control DNS hostname.
+/// Set Windows DNS hostname without changing NetBIOS name.
 /// Requires elevation. Requires reboot to take full effect.
 #[cfg(target_os = "windows")]
-async fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    // Use reg.exe to set DNS hostname (more reliable than winreg crate)
-    let tcpip_path = r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
-
-    // Set Hostname
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "add", tcpip_path, "/v", "Hostname", "/t", "REG_SZ", "/d", name, "/f",
-        ])
-        .output()
-        .await
-        .context("Failed to execute reg.exe for Hostname")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!(error = %stderr, "Failed to set Hostname registry key");
-    }
-
-    // Set NV Hostname (non-volatile, persists across boots)
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "add",
-            tcpip_path,
-            "/v",
-            "NV Hostname",
-            "/t",
-            "REG_SZ",
-            "/d",
-            name,
-            "/f",
-        ])
-        .output()
-        .await
-        .context("Failed to execute reg.exe for NV Hostname")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!(error = %stderr, "Failed to set NV Hostname registry key");
-    }
-
-    tracing::info!(name = %name, "Set Windows DNS hostname (reboot required)");
-    Ok(())
+fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
+    crate::infra::platform::registry::set_dns_hostname(name)
 }
 
 /// Activate pond security features (HTTPS + chirp signing/verification).

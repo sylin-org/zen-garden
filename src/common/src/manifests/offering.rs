@@ -175,6 +175,33 @@ pub struct OfferingMetadata {
     pub port: Option<u16>,
 }
 
+/// Manifest-declared environment variables that Moss may read and write.
+///
+/// Lives in `.frontmatter.json` as a cross-mode field: the same env vars
+/// are meaningful regardless of whether the service is managed (container),
+/// adopted (bare metal), or borrowed.
+///
+/// See ADR MOSS-0005 for the full design.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ManageableEnv {
+    /// Platform service name for env-file / systemd / Windows Service lookup.
+    /// If absent, derived from the offering name.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub service_name: Option<String>,
+
+    /// Whether changes require a service restart to take effect.
+    #[serde(default = "default_true")]
+    pub restart_required: bool,
+
+    /// Allowlist of environment variable names Moss may read and write.
+    #[serde(default)]
+    pub vars: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 // ============================================================================
 // Runtime Manifests Directory
 // ============================================================================
@@ -440,6 +467,9 @@ pub struct Offering {
 
     /// Connection profile for dependent services
     pub connection: Option<ConnectionProfile>,
+
+    /// Manifest-declared manageable environment variables (MOSS-0005).
+    pub manageable_env: Option<ManageableEnv>,
 
     // ═══════════════════════════════════════════════════════════════════════
     // ORCHESTRATION (ORCH-0006)
@@ -784,8 +814,8 @@ impl OfferingRegistry {
 
         // Load optional files
         let compatibility = Self::load_compatibility(dir, name);
-        let (metadata, connection, fm_coordination) =
-            Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default()));
+        let (metadata, connection, fm_coordination, manageable_env) =
+            Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default(), None));
         let guidance = Self::load_guidance(dir, name);
 
         Ok(Offering {
@@ -805,6 +835,7 @@ impl OfferingRegistry {
             compatibility,
             guidance,
             connection,
+            manageable_env,
             coordination: fm_coordination,
         })
     }
@@ -830,6 +861,7 @@ impl OfferingRegistry {
             compatibility: manifest.compatibility,
             guidance: manifest.guidance,
             connection: manifest.connection,
+            manageable_env: manifest.manageable_env,
             coordination: manifest.coordination,
         })
     }
@@ -844,6 +876,27 @@ impl OfferingRegistry {
         let adopted_file: AdoptedFile = serde_yaml::from_str(content)
             .with_context(|| format!("Failed to parse: {}", adopted_path.display()))?;
         let guidance = Self::load_adopted_guidance(dir, name);
+
+        // Adopted offerings share frontmatter with their managed counterpart
+        // (e.g., ollama.frontmatter.json applies to both ollama.snippet.yaml
+        // and ollama.adopted.yaml).
+        let (fm_metadata, fm_connection, _fm_coord, manageable_env) =
+            Self::load_metadata(dir, name)
+                .unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default(), None));
+
+        // Adopted YAML fields override frontmatter where both exist
+        let metadata = OfferingMetadata {
+            description: adopted_file.description.or(fm_metadata.description),
+            tags: if adopted_file.tags.as_ref().map_or(true, |t| t.is_empty()) {
+                fm_metadata.tags
+            } else {
+                adopted_file.tags.unwrap_or_default()
+            },
+            icon: fm_metadata.icon,
+            homepage: fm_metadata.homepage,
+            documentation: fm_metadata.documentation,
+            port: fm_metadata.port,
+        };
 
         Ok(Offering {
             name: adopted_file.name.unwrap_or_else(|| name.to_string()),
@@ -860,17 +913,11 @@ impl OfferingRegistry {
                 connectivity: adopted_file.connectivity,
             }),
             borrowed: None,
-            metadata: OfferingMetadata {
-                description: adopted_file.description,
-                tags: adopted_file.tags.unwrap_or_default(),
-                icon: None,
-                homepage: None,
-                documentation: None,
-                port: None,
-            },
+            metadata,
             compatibility: None,
             guidance: None,
-            connection: adopted_file.connection,
+            connection: adopted_file.connection.or(fm_connection),
+            manageable_env,
             coordination: adopted_file.coordination,
         })
     }
@@ -889,7 +936,7 @@ impl OfferingRegistry {
     fn load_metadata(
         dir: &Path,
         name: &str,
-    ) -> Option<(OfferingMetadata, Option<ConnectionProfile>, CoordinationMode)> {
+    ) -> Option<(OfferingMetadata, Option<ConnectionProfile>, CoordinationMode, Option<ManageableEnv>)> {
         let path = dir.join(format!("{}.frontmatter.json", name));
         if !path.exists() {
             return None;
@@ -909,7 +956,7 @@ impl OfferingRegistry {
                     documentation: fm.documentation,
                     port: fm.port,
                 };
-                (metadata, fm.connection, fm.coordination)
+                (metadata, fm.connection, fm.coordination, fm.manageable_env)
             })
     }
 
@@ -959,7 +1006,7 @@ impl OfferingRegistry {
             .map(crate::utils::strings::strip_bom)
             .and_then(|yaml| serde_yaml::from_str(yaml).ok());
 
-        let (metadata, connection, fm_coordination) = frontmatter_content
+        let (metadata, connection, fm_coordination, manageable_env) = frontmatter_content
             .map(crate::utils::strings::strip_bom)
             .and_then(|json| serde_json::from_str::<FrontmatterFile>(json).ok())
             .map(|fm| {
@@ -971,9 +1018,9 @@ impl OfferingRegistry {
                     documentation: fm.documentation,
                     port: fm.port,
                 };
-                (metadata, fm.connection, fm.coordination)
+                (metadata, fm.connection, fm.coordination, fm.manageable_env)
             })
-            .unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default()));
+            .unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default(), None));
 
         let guidance = guidance_content
             .map(crate::utils::strings::strip_bom)
@@ -993,6 +1040,7 @@ impl OfferingRegistry {
             compatibility,
             guidance,
             connection,
+            manageable_env,
             coordination: fm_coordination,
         })
     }
@@ -1014,6 +1062,7 @@ struct ManifestFile {
     compatibility: Option<CompatibilityRules>,
     guidance: Option<String>,
     connection: Option<ConnectionProfile>,
+    manageable_env: Option<ManageableEnv>,
     #[serde(default)]
     coordination: CoordinationMode,
 }
@@ -1049,6 +1098,7 @@ struct FrontmatterFile {
     connection: Option<ConnectionProfile>,
     #[serde(default)]
     coordination: CoordinationMode,
+    manageable_env: Option<ManageableEnv>,
 }
 
 /// Strip YAML frontmatter from markdown content
@@ -1132,6 +1182,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
+            manageable_env: None,
             coordination: CoordinationMode::default(),
         };
 
@@ -1159,6 +1210,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
+            manageable_env: None,
             coordination: CoordinationMode::Elected,
         });
 
@@ -1183,6 +1235,7 @@ mod tests {
             compatibility: None,
             guidance: None,
             connection: None,
+            manageable_env: None,
             coordination: CoordinationMode::default(),
         });
 

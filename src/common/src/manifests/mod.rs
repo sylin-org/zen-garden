@@ -42,9 +42,9 @@ pub use registry::{discover_subdirectories, ManifestRegistry, RUNTIME_MANIFESTS_
 
 // Unified Offering Model
 pub use offering::{
-    runtime_manifests_dir, AdoptedConfig, BorrowedConfig, ManagedConfig, NetworkRequirements,
-    Offering, OfferingMetadata, OfferingRegistry, ServiceTemplate, StaticIpPreference,
-    TemplateInfo,
+    runtime_manifests_dir, AdoptedConfig, BorrowedConfig, ManageableEnv, ManagedConfig,
+    NetworkRequirements, Offering, OfferingMetadata, OfferingRegistry, ServiceTemplate,
+    StaticIpPreference, TemplateInfo,
 };
 
 pub use connection::ConnectionProfile;

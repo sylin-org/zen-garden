@@ -478,7 +478,8 @@ pub fn configure(state: AppState) -> Router {
         )
         .route(
             "/api/v1/stone/services/{service}/env",
-            get(api::v1::services::get_service_env_v1),
+            get(api::v1::services::get_service_env_v1)
+                .patch(api::v1::services::patch_service_env_v1),
         )
         .route(
             "/api/v1/stone/services/{service}/restart",

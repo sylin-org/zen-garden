@@ -1244,6 +1244,13 @@ pub async fn get_service_env_v1(
         )
     })?;
 
+    // Look up manageable_env from the manifest
+    let manifest_offering = state.manifest_registry.sw.get(&service_name);
+    let manageable = manifest_offering.and_then(|o| o.manageable_env.as_ref());
+    let manageable_vars: Vec<String> = manageable
+        .map(|m| m.vars.clone())
+        .unwrap_or_default();
+
     // For Docker-managed containers, inspect to get env vars
     if offering.is_managed() {
         match state.docker.inspect_container_spec(&service_name).await {
@@ -1256,7 +1263,10 @@ pub async fn get_service_env_v1(
                         Some((k.to_string(), v.to_string()))
                     })
                     .collect();
-                Ok(Json(serde_json::json!({ "data": env_map })))
+                Ok(Json(serde_json::json!({
+                    "data": env_map,
+                    "manageable": manageable_vars,
+                })))
             }
             Err(e) => Err(error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1265,10 +1275,102 @@ pub async fn get_service_env_v1(
                 None,
             )),
         }
+    } else if !manageable_vars.is_empty() {
+        // Adopted with manageable env: read via platform mechanism
+        let svc_name = manageable
+            .and_then(|m| m.service_name.clone())
+            .unwrap_or_else(|| service_name.clone());
+        let env_map = crate::infra::platform::service_env::read_env(&svc_name, &manageable_vars).await;
+        Ok(Json(serde_json::json!({
+            "data": env_map,
+            "manageable": manageable_vars,
+        })))
     } else {
-        // Adopted/borrowed: no env access — return empty
-        Ok(Json(serde_json::json!({ "data": {} })))
+        // No manageable env declared
+        Ok(Json(serde_json::json!({ "data": {}, "manageable": [] })))
     }
+}
+
+/// PATCH /api/v1/services/:service/env - Update manageable environment variables
+pub async fn patch_service_env_v1(
+    State(state): State<AppState>,
+    Path(service): Path<String>,
+    Json(body): Json<std::collections::HashMap<String, Option<String>>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let service_name = normalize_service_name(&service)?;
+
+    // Check if service exists
+    {
+        let offerings = state.offerings.read().await;
+        if !offerings.iter().any(|o| o.name.to_string() == service_name) {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                "SERVICE_NOT_FOUND",
+                format!("Service '{}' not found", service_name),
+                None,
+            ));
+        }
+    }
+
+    // Look up manageable_env from the manifest
+    let manifest_offering = state.manifest_registry.sw.get(&service_name);
+    let manageable = manifest_offering.and_then(|o| o.manageable_env.as_ref());
+
+    let manageable = manageable.ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "NO_MANAGEABLE_ENV",
+            format!("Service '{}' has no manageable environment variables declared", service_name),
+            None,
+        )
+    })?;
+
+    // Validate all keys against the allowlist
+    let allowed: std::collections::HashSet<&str> = manageable.vars.iter().map(|s| s.as_str()).collect();
+    let rejected: Vec<&str> = body
+        .keys()
+        .filter(|k| !allowed.contains(k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+
+    if !rejected.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "VARS_NOT_ALLOWED",
+            format!(
+                "Variables not in manageable allowlist: {}. Allowed: {}",
+                rejected.join(", "),
+                manageable.vars.join(", ")
+            ),
+            None,
+        ));
+    }
+
+    // Apply via platform mechanism
+    let svc_name = manageable
+        .service_name
+        .clone()
+        .unwrap_or_else(|| service_name.clone());
+
+    if let Err(e) = crate::infra::platform::service_env::write_env(&svc_name, &body).await {
+        return Err(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ENV_WRITE_FAILED",
+            format!("Failed to write env for '{}': {}", service_name, e),
+            None,
+        ));
+    }
+
+    // Build the applied map (only the non-null values)
+    let applied: std::collections::HashMap<&str, &str> = body
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|val| (k.as_str(), val.as_str())))
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "applied": applied,
+        "restart_required": manageable.restart_required,
+    })))
 }
 
 /// POST /api/v1/services/:service:restart - Restart service

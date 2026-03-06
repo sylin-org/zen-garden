@@ -120,14 +120,6 @@ pub async fn broadcast_if_has_storage(
     Ok(true)
 }
 
-/// Update local storage cache with this stone's storage
-///
-/// Called at startup and after mount/unmount events to ensure storage_cache
-/// reflects the local stone's storage capabilities. This makes storage_cache
-// TOOLS-0003: update_local_storage_cache and update_and_broadcast removed.
-// Local storage is now projected into the registry via refresh_local_tools_projection().
-// Network broadcast is done via broadcast_beacon() directly.
-
 /// Stamp role and pin_id onto a seed bank announcement.
 ///
 /// Pure helper extracted from `build_beacon()` for testability (STORAGE-0006).

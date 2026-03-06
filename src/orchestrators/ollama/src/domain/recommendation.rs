@@ -33,6 +33,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize)]
 pub struct RecommendationResponse {
     pub capability: String,
+    /// The model currently selected for this capability (pinned or highest-ranked).
+    pub selected: Option<String>,
     pub recommendations: Vec<Recommendation>,
 }
 
@@ -41,12 +43,16 @@ pub struct Recommendation {
     pub model: String,
     pub rank: u32,
     pub score: i64,
+    pub pinned: bool,
     pub verdict: Option<String>,
     pub parameter_size: Option<String>,
     pub quantization_level: Option<String>,
     pub context_length: Option<u64>,
     pub reasoning: Vec<String>,
 }
+
+/// Maximum recommendations returned per capability.
+const MAX_RECOMMENDATIONS: usize = 5;
 
 // ── Capability mapping ──────────────────────────────────────────
 
@@ -149,11 +155,16 @@ fn name_affinity_bonus(cap: &str) -> i64 {
 // ── Core recommendation function ────────────────────────────────
 
 /// Produce ranked recommendations for the given capability.
+///
+/// When `pin` names a model that exists in the eligible set, it is forced to
+/// rank 1 regardless of score.  If the pinned model is not eligible (removed,
+/// offline, wrong capability), the pin is silently ignored.
 pub fn recommend(
     capability: &str,
     models: &HashMap<String, ModelInfo>,
     instances: &HashMap<String, OllamaInstance>,
     gpu_matrix: &GpuMatrix,
+    pin: Option<&str>,
 ) -> RecommendationResponse {
     let ollama_cap = ollama_capability(capability);
     let fitness_cap = fitness_capability(capability);
@@ -195,13 +206,44 @@ pub fn recommend(
     // Sort by score descending, then name ascending for stability.
     scored.sort_by(|a, b| b.score.cmp(&a.score).then(a.model.cmp(&b.model)));
 
+    // Apply pin: if the pinned model is in the list, move it to position 0.
+    let pin_applied = if let Some(pinned_name) = pin {
+        if let Some(pos) = scored.iter().position(|r| r.model == pinned_name) {
+            let mut pinned = scored.remove(pos);
+            pinned.pinned = true;
+            scored.insert(0, pinned);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // Cap at MAX_RECOMMENDATIONS.
+    scored.truncate(MAX_RECOMMENDATIONS);
+
     // Assign ranks.
     for (i, rec) in scored.iter_mut().enumerate() {
         rec.rank = (i + 1) as u32;
     }
 
+    let selected = scored.first().map(|r| r.model.clone());
+
+    // If pin was requested but not applied (model gone), include a note.
+    if let Some(pinned_name) = pin {
+        if !pin_applied && !scored.is_empty() {
+            tracing::debug!(
+                capability,
+                pinned_name,
+                "pinned model not eligible — ignoring pin"
+            );
+        }
+    }
+
     RecommendationResponse {
         capability: capability.to_string(),
+        selected,
         recommendations: scored,
     }
 }
@@ -376,6 +418,7 @@ fn score_model(
         model: model.name.clone(),
         rank: 0, // assigned after sorting
         score,
+        pinned: false, // set by recommend() if pin matches
         verdict: best_verdict.map(|v| v.to_string()),
         parameter_size: model.parameter_size.clone(),
         quantization_level: model.quantization_level.clone(),
@@ -517,7 +560,7 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let resp = recommend("embedding", &models, &instances, &matrix);
+        let resp = recommend("embedding", &models, &instances, &matrix, None);
         assert_eq!(resp.recommendations.len(), 1);
         assert_eq!(resp.recommendations[0].model, "nomic:latest");
     }
@@ -538,11 +581,11 @@ mod tests {
         let matrix = GpuMatrix::default();
 
         // Both quick and chat should see the completion model, not the embedding one
-        let quick = recommend("quick", &models, &instances, &matrix);
+        let quick = recommend("quick", &models, &instances, &matrix, None);
         assert_eq!(quick.recommendations.len(), 1);
         assert_eq!(quick.recommendations[0].model, "llama3:8b");
 
-        let chat = recommend("chat", &models, &instances, &matrix);
+        let chat = recommend("chat", &models, &instances, &matrix, None);
         assert_eq!(chat.recommendations.len(), 1);
         assert_eq!(chat.recommendations[0].model, "llama3:8b");
     }
@@ -569,7 +612,7 @@ mod tests {
             make_instance("s2", "http://s2:11434", &["a:latest"], &[]),
         );
 
-        let resp = recommend("chat", &models, &instances, &GpuMatrix::default());
+        let resp = recommend("chat", &models, &instances, &GpuMatrix::default(), None);
         // "a" on 2 stones gets 50 + 10 = 60, "b" on 1 stone gets 50
         assert_eq!(resp.recommendations[0].model, "a:latest");
         assert!(resp.recommendations[0].score > resp.recommendations[1].score);
@@ -609,7 +652,7 @@ mod tests {
             ],
         };
 
-        let resp = recommend("chat", &models, &instances, &matrix);
+        let resp = recommend("chat", &models, &instances, &matrix, None);
         let rec = &resp.recommendations[0];
         // Should use best stone (s2: Fast, 60 tps, 4s cold) — NOT sum of all 3.
         // Layer 0: 50 + 20 (2 extra × 10) = 70
@@ -651,7 +694,7 @@ mod tests {
             ],
         };
 
-        let resp = recommend("chat", &models, &instances, &matrix);
+        let resp = recommend("chat", &models, &instances, &matrix, None);
         assert_eq!(resp.recommendations[0].model, "fast:latest");
         assert!(resp.recommendations[0].score > resp.recommendations[1].score);
     }
@@ -682,7 +725,7 @@ mod tests {
             )],
         };
 
-        let resp = recommend("tools", &models, &instances, &matrix);
+        let resp = recommend("tools", &models, &instances, &matrix, None);
         assert_eq!(resp.recommendations.len(), 1);
         assert!(resp.recommendations[0].score > 0);
         assert_eq!(resp.recommendations[0].verdict.as_deref(), Some("fast"));
@@ -708,7 +751,7 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let resp = recommend("thinking", &models, &instances, &matrix);
+        let resp = recommend("thinking", &models, &instances, &matrix, None);
         // big gets max 256 bonus (256K/1000 = 256, now capped at 300)
         // small gets 4 bonus (4K/1000 = 4)
         assert_eq!(resp.recommendations[0].model, "big:latest");
@@ -745,7 +788,7 @@ mod tests {
             ],
         };
 
-        let resp = recommend("chat", &models, &instances, &matrix);
+        let resp = recommend("chat", &models, &instances, &matrix, None);
         assert_eq!(resp.recommendations[0].model, "good:latest");
         assert!(resp.recommendations[1].score < 0); // blocked penalty dominates
     }
@@ -805,7 +848,7 @@ mod tests {
             ],
         };
 
-        let resp = recommend("chat", &models, &instances, &matrix);
+        let resp = recommend("chat", &models, &instances, &matrix, None);
         assert_eq!(
             resp.recommendations[0].model, "qwen3.5:latest",
             "Chat should prefer the larger, more capable model"
@@ -856,7 +899,7 @@ mod tests {
             ],
         };
 
-        let resp = recommend("quick", &models, &instances, &matrix);
+        let resp = recommend("quick", &models, &instances, &matrix, None);
         assert_eq!(
             resp.recommendations[0].model, "tinyllama:latest",
             "Quick should prefer the faster model regardless of size"
@@ -890,7 +933,7 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let resp = recommend("chat", &models, &instances, &matrix);
+        let resp = recommend("chat", &models, &instances, &matrix, None);
         // big: quality = min(13 × 40, 400) = 400 (capped)
         // small: quality = min(1 × 40, 400) = 40
         assert_eq!(resp.recommendations[0].model, "big:latest");
@@ -909,7 +952,7 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let resp = recommend("chat", &models, &instances, &matrix);
+        let resp = recommend("chat", &models, &instances, &matrix, None);
         // No parameter_count, but parameter_size = "9.7B" → 9.7 × 40 = 388
         let expected_quality = ((9.7_f64 * 40.0) as i64).min(400);
         assert!(resp.recommendations[0].score > 0);
@@ -928,8 +971,8 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let chat = recommend("chat", &models, &instances, &matrix);
-        let completion = recommend("completion", &models, &instances, &matrix);
+        let chat = recommend("chat", &models, &instances, &matrix, None);
+        let completion = recommend("completion", &models, &instances, &matrix, None);
         assert_eq!(chat.recommendations[0].score, completion.recommendations[0].score);
     }
 
@@ -978,7 +1021,7 @@ mod tests {
             ],
         };
 
-        let synth = recommend("synthesis", &models, &instances, &matrix);
+        let synth = recommend("synthesis", &models, &instances, &matrix, None);
 
         // Synthesis: fast7b gets ctx=128 + quality=280 + tps=0
         // Synthesis: big14b gets ctx=32 + quality=400(capped) + tps=0
@@ -1011,8 +1054,8 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let chat = recommend("chat", &models, &instances, &matrix);
-        let synth = recommend("synthesis", &models, &instances, &matrix);
+        let chat = recommend("chat", &models, &instances, &matrix, None);
+        let synth = recommend("synthesis", &models, &instances, &matrix, None);
 
         // Chat context capped at 150, synthesis at 500
         // Chat: min(256, 150) = 150. Synthesis: min(256, 500) = 256.
@@ -1043,7 +1086,7 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let resp = recommend("ocr", &models, &instances, &matrix);
+        let resp = recommend("ocr", &models, &instances, &matrix, None);
         assert_eq!(resp.recommendations.len(), 1);
         assert_eq!(resp.recommendations[0].model, "llava:latest");
     }
@@ -1075,7 +1118,7 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let resp = recommend("ocr", &models, &instances, &matrix);
+        let resp = recommend("ocr", &models, &instances, &matrix, None);
         // minicpm-ocr gets +200 name affinity despite being smaller (7B vs 13B)
         // llava: quality = min(13×40, 400) = 400, no affinity = 400 total layers 3+4
         // minicpm-ocr: quality = min(7×40, 400) = 280, affinity = 200 = 480 total layers 3+4
@@ -1123,8 +1166,8 @@ mod tests {
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
 
-        let vision = recommend("vision", &models, &instances, &matrix);
-        let ocr = recommend("ocr", &models, &instances, &matrix);
+        let vision = recommend("vision", &models, &instances, &matrix, None);
+        let ocr = recommend("ocr", &models, &instances, &matrix, None);
 
         // Vision has no quality/context caps (all 0) so both models score 0 —
         // llava sorts first alphabetically.
@@ -1135,5 +1178,69 @@ mod tests {
             ocr.recommendations[0].model, "minicpm-ocr:latest",
             "OCR should prefer the purpose-built model"
         );
+    }
+
+    #[test]
+    fn pin_overrides_ranking() {
+        let mut models = HashMap::new();
+        models.insert(
+            "fast:latest".to_string(),
+            make_model("fast:latest", &["completion"], None),
+        );
+        models.insert(
+            "slow:latest".to_string(),
+            make_model("slow:latest", &["completion"], None),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance(
+                "s1",
+                "http://s1:11434",
+                &["fast:latest", "slow:latest"],
+                &[],
+            ),
+        );
+
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                make_entry("fast:latest", "s1", "http://s1:11434", Verdict::Fast, 100.0, 3000),
+                make_entry("slow:latest", "s1", "http://s1:11434", Verdict::Vetoed, 0.5, 95000),
+            ],
+        };
+
+        // Without pin: fast wins
+        let resp = recommend("chat", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations[0].model, "fast:latest");
+        assert!(!resp.recommendations[0].pinned);
+
+        // With pin: slow is forced to rank 1
+        let resp = recommend("chat", &models, &instances, &matrix, Some("slow:latest"));
+        assert_eq!(resp.recommendations[0].model, "slow:latest");
+        assert!(resp.recommendations[0].pinned);
+        assert_eq!(resp.recommendations[0].rank, 1);
+        assert_eq!(resp.selected.as_deref(), Some("slow:latest"));
+
+        // Pin a model that doesn't exist — ignored
+        let resp = recommend("chat", &models, &instances, &matrix, Some("missing:latest"));
+        assert_eq!(resp.recommendations[0].model, "fast:latest");
+        assert!(!resp.recommendations[0].pinned);
+    }
+
+    #[test]
+    fn recommendations_capped_at_five() {
+        let mut models = HashMap::new();
+        for i in 0..8 {
+            let name = format!("model{}:latest", i);
+            models.insert(name.clone(), make_model(&name, &["completion"], None));
+        }
+
+        let instances = HashMap::new();
+        let matrix = GpuMatrix::default();
+
+        let resp = recommend("chat", &models, &instances, &matrix, None);
+        assert!(resp.recommendations.len() <= 5);
     }
 }

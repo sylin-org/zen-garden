@@ -192,6 +192,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
             "auto_pull_mode": format!("{}", config.features.auto_pull_mode),
             "delete_on_idle": config.features.delete_on_idle,
             "metrics_enabled": config.features.metrics_enabled,
+            "pins": &config.features.pins,
         },
         "benchmark": &*bench_run,
     })

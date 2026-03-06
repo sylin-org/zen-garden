@@ -3,11 +3,12 @@
 use crate::app_state::AppState;
 use crate::infra::events::dashboard_sse_stream;
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{Html, IntoResponse},
     Json,
 };
+use serde::Deserialize;
 use serde_json::json;
 
 /// The dashboard HTML — embedded at compile time (same pattern as Moss Portrait).
@@ -112,4 +113,75 @@ pub async fn get_jobs(State(state): State<AppState>) -> impl IntoResponse {
         })
         .collect();
     Json(json!({"jobs": list}))
+}
+
+// ── Recommendation Pins ──────────────────────────────────────────
+
+const ALL_CAPABILITIES: &[&str] = &[
+    "quick", "chat", "synthesis", "vision", "ocr", "tools", "thinking", "embedding",
+];
+
+#[derive(Deserialize)]
+pub struct PinRequest {
+    pub model: String,
+}
+
+/// `PUT /api/recommendations/:capability/pin` — pin a model for a capability.
+pub async fn put_pin(
+    State(state): State<AppState>,
+    Path(capability): Path<String>,
+    Json(body): Json<PinRequest>,
+) -> impl IntoResponse {
+    if !ALL_CAPABILITIES.contains(&capability.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("unknown capability: {capability}")})),
+        );
+    }
+
+    let new_config = {
+        let mut config = state.config.write().await;
+        config.features.pins.insert(capability.clone(), body.model.clone());
+        config.clone()
+    };
+
+    if let Err(e) = crate::infra::persistence::save_config(&state.data_dir, &new_config).await {
+        tracing::warn!(error = %e, "failed to persist pin");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        );
+    }
+
+    state.emit_event("config.updated", "{}").await;
+    (
+        StatusCode::OK,
+        Json(json!({"status": "ok", "capability": capability, "model": body.model})),
+    )
+}
+
+/// `DELETE /api/recommendations/:capability/pin` — unpin a capability.
+pub async fn delete_pin(
+    State(state): State<AppState>,
+    Path(capability): Path<String>,
+) -> impl IntoResponse {
+    let new_config = {
+        let mut config = state.config.write().await;
+        config.features.pins.remove(&capability);
+        config.clone()
+    };
+
+    if let Err(e) = crate::infra::persistence::save_config(&state.data_dir, &new_config).await {
+        tracing::warn!(error = %e, "failed to persist unpin");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        );
+    }
+
+    state.emit_event("config.updated", "{}").await;
+    (
+        StatusCode::OK,
+        Json(json!({"status": "ok", "capability": capability})),
+    )
 }

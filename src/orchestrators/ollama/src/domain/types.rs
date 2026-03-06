@@ -283,6 +283,9 @@ pub struct FeatureConfig {
     pub delete_on_idle: bool,
     #[serde(default = "default_true")]
     pub metrics_enabled: bool,
+    /// User-pinned model overrides per capability (e.g. "chat" → "qwen3.5:9b").
+    #[serde(default)]
+    pub pins: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +304,7 @@ impl Default for FeatureConfig {
             auto_pull_mode: AutoPullMode::default(),
             delete_on_idle: false,
             metrics_enabled: true,
+            pins: HashMap::new(),
         }
     }
 }

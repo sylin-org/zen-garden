@@ -148,11 +148,12 @@ mod tests {
         }));
 
         // Storage events don't trigger chirps
-        let event = DomainEvent::Storage(crate::domain::events::StorageEvent::seed_bank_detected(
+        let event = DomainEvent::Storage(crate::domain::events::StorageEvent::storage_connected(
             "backup",
             "/dev/sdb1",
             "/mnt/backup",
             500,
+            vec!["seed-bank".to_string()],
         ));
         listener.on_event(&event).await;
 

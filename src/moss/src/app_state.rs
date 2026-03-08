@@ -259,13 +259,13 @@ pub struct AppState {
 
     /// Seed bank lifecycle objects — single source of truth (STORAGE-0007).
     ///
-    /// Keyed by seed bank ID (GUIDv7). Each `SeedBank` composes a `StorageDevice`
-    /// (mount health) and a `SeedBankStore` (I/O), plus domain state (role, pin).
+    /// Keyed by seed bank ID (GUIDv7). Each `ManagedStorage` composes a `StorageDevice`
+    /// (mount health) and a `ContentStore` (I/O), plus domain state (role, pin).
     ///
     /// Writers: bootstrap (init), coordinator (health tick, hotplug),
     ///          orchestration (role assignment), pin/unpin handlers.
     /// Readers: portrait, beacon builder, nurturing, replication, API handlers.
-    pub seed_banks: crate::domain::SeedBanks,
+    pub managed_storages: crate::domain::ManagedStorages,
 }
 
 // ============================================================================
@@ -913,14 +913,14 @@ impl AppState {
     /// updates health/capacity on existing ones.
     pub async fn refresh_seed_banks_from_scan(
         &self,
-        registry: &crate::infra::storage::SeedBankRegistry,
+        registry: &crate::infra::storage::StorageRegistry,
     ) {
-        use crate::domain::SeedBank;
+        use crate::domain::ManagedStorage;
         use crate::infra::storage::StorageDevice;
 
         let scanned = registry.list();
 
-        let mut banks = self.seed_banks.write().await;
+        let mut banks = self.managed_storages.write().await;
 
         let mut seen_ids: std::collections::HashSet<String> =
             std::collections::HashSet::with_capacity(scanned.len());
@@ -943,7 +943,7 @@ impl AppState {
                     .join("manifest.json");
                 let manifest = match tokio::fs::read_to_string(&manifest_path).await {
                     Ok(content) => {
-                        match serde_json::from_str::<garden_common::storage::SeedBankManifest>(
+                        match serde_json::from_str::<garden_common::storage::StorageManifest>(
                             &content,
                         ) {
                             Ok(m) => m,
@@ -966,7 +966,7 @@ impl AppState {
                 };
 
                 let storage = StorageDevice::from_seed_bank_info(info);
-                let bank = SeedBank::from_storage(storage, &manifest, None).await;
+                let bank = ManagedStorage::from_storage(storage, &manifest, None).await;
 
                 tracing::info!(
                     name = %bank.name,
@@ -993,23 +993,49 @@ impl AppState {
     }
 
     // ========================================================================
+    // Storage Service
+    // ========================================================================
+
+    /// Create a `StorageService` scoped to this stone's state.
+    ///
+    /// Cheap to construct (borrows only). Use per-request in handlers
+    /// instead of reimplementing resolution/routing logic.
+    pub fn storage_service(&self) -> crate::domain::StorageService<'_> {
+        crate::domain::StorageService::new(
+            &self.managed_storages,
+            &self.registry,
+            &self.stone_id,
+            Some(&self.storage_tick_tx),
+        )
+    }
+
+    // ========================================================================
     // Seed Bank Projections
     // ========================================================================
 
     /// Snapshot of roles keyed by seed bank name — for beacon/broadcast callers.
     pub async fn seed_bank_roles_snapshot(
         &self,
-    ) -> HashMap<String, garden_common::storage::SeedBankRole> {
-        let banks = self.seed_banks.read().await;
+    ) -> HashMap<String, garden_common::storage::StorageRole> {
+        let banks = self.managed_storages.read().await;
         banks
             .values()
             .map(|b| (b.name.clone(), b.role))
             .collect()
     }
 
+    /// Snapshot of (name, id) pairs for signpost share generation.
+    pub async fn storage_name_id_pairs(&self) -> Vec<(String, String)> {
+        let banks = self.managed_storages.read().await;
+        banks
+            .values()
+            .map(|b| (b.name.clone(), b.id.clone()))
+            .collect()
+    }
+
     /// Snapshot of pins keyed by seed bank name — for beacon/broadcast callers.
     pub async fn seed_bank_pins_snapshot(&self) -> HashMap<String, String> {
-        let banks = self.seed_banks.read().await;
+        let banks = self.managed_storages.read().await;
         banks
             .values()
             .filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string())))
@@ -1022,7 +1048,7 @@ impl AppState {
     /// device is probed for mount liveness and capacity, and domain state
     /// (pin) is reconciled from disk.
     pub async fn tick_seed_bank_health(&self) {
-        let mut banks = self.seed_banks.write().await;
+        let mut banks = self.managed_storages.write().await;
         for bank in banks.values_mut() {
             bank.health_tick().await;
         }

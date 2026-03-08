@@ -212,13 +212,14 @@ mod tests {
         let _handle = spawn_listener(&bus, listener.clone());
         sleep(Duration::from_millis(10)).await;
 
-        bus.emit(StorageEvent::seed_bank_detected(
+        bus.emit(StorageEvent::storage_connected(
             "backup",
             "/dev/sdb1",
             "/mnt/backup",
             500,
+            vec!["seed-bank".to_string()],
         ));
-        bus.emit(StorageEvent::seed_bank_removed("backup", "/dev/sdb1"));
+        bus.emit(StorageEvent::storage_removed("backup", "/dev/sdb1"));
 
         sleep(Duration::from_millis(50)).await;
 

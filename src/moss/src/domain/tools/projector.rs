@@ -8,7 +8,7 @@ use crate::domain::service_discovery::{self, FoundService};
 use crate::infra::storage::StorageHealth;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
-use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
+use garden_common::storage::DEFAULT_PUBLIC_STORAGE_NAME;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
 use std::collections::BTreeSet;
 
@@ -33,12 +33,12 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     // ── Seed-banks from lifecycle objects ─────────────────────────
     let endpoint = state.self_entry.read().await.address.http_base();
     let local_seed_banks: Vec<_> = {
-        let banks = state.seed_banks.read().await;
+        let banks = state.managed_storages.read().await;
         banks.values().cloned().collect()
     };
 
     for bank in &local_seed_banks {
-        let canonical = canonical_seed_bank_name(&bank.name);
+        let canonical = canonical_storage_name(&bank.name);
         let (status, ready) = seed_bank_health_to_readiness(&bank.storage.health);
         let visibility_str = bank.visibility.to_string();
 
@@ -94,6 +94,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 encrypted: bank.encrypted,
                 pin_id: bank.pin_id().map(|s| s.to_string()),
                 protocols,
+                roles: bank.roles.clone(),
             }),
         });
     }
@@ -199,8 +200,8 @@ fn seed_bank_health_to_readiness(health: &StorageHealth) -> (&'static str, bool)
     }
 }
 
-fn canonical_seed_bank_name(name: &str) -> String {
-    if name.eq_ignore_ascii_case(DEFAULT_PUBLIC_SEED_BANK_NAME) {
+fn canonical_storage_name(name: &str) -> String {
+    if name.eq_ignore_ascii_case(DEFAULT_PUBLIC_STORAGE_NAME) {
         "default".to_string()
     } else {
         name.trim().to_ascii_lowercase()
@@ -242,9 +243,9 @@ mod tests {
     #[test]
     fn canonical_seed_bank() {
         assert_eq!(
-            canonical_seed_bank_name(DEFAULT_PUBLIC_SEED_BANK_NAME),
+            canonical_storage_name(DEFAULT_PUBLIC_STORAGE_NAME),
             "default"
         );
-        assert_eq!(canonical_seed_bank_name("custom-bank"), "custom-bank");
+        assert_eq!(canonical_storage_name("custom-bank"), "custom-bank");
     }
 }

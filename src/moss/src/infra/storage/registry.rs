@@ -13,7 +13,7 @@
 
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
-use garden_common::storage::{SeedBankInfo, SeedBankManifest};
+use garden_common::storage::{StorageInfo, StorageManifest};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
@@ -56,9 +56,9 @@ pub fn create_mount_tracker() -> MountTracker {
 
 /// Registry of all seed banks discovered on this stone (in-memory only)
 #[derive(Debug, Clone, Default)]
-pub struct SeedBankRegistry {
+pub struct StorageRegistry {
     /// Map from seed bank id to info (keyed by id for replication support)
-    banks: HashMap<String, SeedBankInfo>,
+    banks: HashMap<String, StorageInfo>,
 }
 
 #[cfg(target_os = "linux")]
@@ -66,10 +66,10 @@ pub struct SeedBankRegistry {
 struct MountedSeedBank {
     device: String,
     mount_path: String,
-    manifest: SeedBankManifest,
+    manifest: StorageManifest,
 }
 
-impl SeedBankRegistry {
+impl StorageRegistry {
     /// Scan all mounted seed banks and build registry.
     ///
     /// This first auto-mounts any unmounted devices with the `zen-seed` label,
@@ -220,23 +220,23 @@ impl SeedBankRegistry {
 
     /// Ensure the canonical garden layout exists on the seed bank.
     async fn ensure_seed_bank_layout(mount_path: &str) -> Result<(), String> {
-        let memories = std::path::Path::new(mount_path).join(paths::SEED_BANK_MEMORIES_DIR);
-        let storage = std::path::Path::new(mount_path).join(paths::SEED_BANK_STORAGE_DIR);
+        let memories = std::path::Path::new(mount_path).join(paths::STORAGE_MEMORIES_DIR);
+        let storage = std::path::Path::new(mount_path).join(paths::STORAGE_OBJECTS_DIR);
 
         let mut created = Vec::new();
 
         if !memories.exists() {
             tokio::fs::create_dir_all(&memories).await.map_err(|e| {
-                format!("Failed to create {}: {}", paths::SEED_BANK_MEMORIES_DIR, e)
+                format!("Failed to create {}: {}", paths::STORAGE_MEMORIES_DIR, e)
             })?;
-            created.push(paths::SEED_BANK_MEMORIES_DIR);
+            created.push(paths::STORAGE_MEMORIES_DIR);
         }
 
         if !storage.exists() {
             tokio::fs::create_dir_all(&storage)
                 .await
-                .map_err(|e| format!("Failed to create {}: {}", paths::SEED_BANK_STORAGE_DIR, e))?;
-            created.push(paths::SEED_BANK_STORAGE_DIR);
+                .map_err(|e| format!("Failed to create {}: {}", paths::STORAGE_OBJECTS_DIR, e))?;
+            created.push(paths::STORAGE_OBJECTS_DIR);
         }
 
         if !created.is_empty() {
@@ -250,12 +250,12 @@ impl SeedBankRegistry {
         Ok(())
     }
 
-    /// Build SeedBankInfo from a manifest + mount context.
+    /// Build StorageInfo from a manifest + mount context.
     fn build_seed_bank_info(
-        manifest: SeedBankManifest,
+        manifest: StorageManifest,
         mount_path: &str,
         device: &str,
-    ) -> Option<SeedBankInfo> {
+    ) -> Option<StorageInfo> {
         let (used_bytes, capacity_bytes) = DeviceAnalyzer::get_disk_usage(mount_path)
             .map(|(used, avail)| (used, used + avail))
             .unwrap_or((0, 0));
@@ -277,7 +277,7 @@ impl SeedBankRegistry {
             .unwrap_or_else(|_| "unknown".to_string());
         let roaming = manifest.origin_stone != stone_name;
 
-        Some(SeedBankInfo::new(
+        Some(StorageInfo::new(
             manifest.id,
             manifest.name.clone(),
             device.to_string(),
@@ -291,16 +291,17 @@ impl SeedBankRegistry {
             roaming,
             true, // Verified: device is mounted and manifest is readable
             manifest.encrypted,
+            manifest.roles,
         ))
     }
 
     /// Read manifest from disk
-    async fn read_manifest(path: &Path) -> Result<SeedBankManifest> {
+    async fn read_manifest(path: &Path) -> Result<StorageManifest> {
         let content = tokio::fs::read_to_string(path)
             .await
             .context("Failed to read manifest file")?;
 
-        let manifest: SeedBankManifest =
+        let manifest: StorageManifest =
             serde_json::from_str(&content).context("Failed to parse manifest JSON")?;
 
         Ok(manifest)
@@ -341,7 +342,7 @@ impl SeedBankRegistry {
                 Err(_) => continue,
             };
 
-            let manifest: SeedBankManifest = match serde_json::from_str(&content) {
+            let manifest: StorageManifest = match serde_json::from_str(&content) {
                 Ok(m) => m,
                 Err(e) => {
                     warn!(
@@ -367,7 +368,7 @@ impl SeedBankRegistry {
     /// Include externally mounted seed banks in the registry if they aren't under mounts/.
     #[cfg(target_os = "linux")]
     async fn append_external_mounts(
-        registry: &mut SeedBankRegistry,
+        registry: &mut StorageRegistry,
         mounts_dir: &PathBuf,
     ) -> Result<()> {
         let mounts_prefix = mounts_dir.to_string_lossy();
@@ -734,8 +735,8 @@ impl SeedBankRegistry {
     /// If tracker is provided, successful mounts will be tracked for the
     /// resilient mount persistence system.
     ///
-    /// If event_bus is provided, emits StorageEvent::seed_bank_detected for
-    /// successfully mounted seed banks (flows to Firefly/Cricket via SSE).
+    /// If event_bus is provided, emits StorageEvent::storage_connected for
+    /// successfully mounted managed storage (flows to Firefly/Cricket via SSE).
     ///
     /// This uses manifest-first discovery (STORAGE-0005):
     /// - Scans ALL unmounted removable devices
@@ -840,20 +841,21 @@ impl SeedBankRegistry {
                                     .await;
                             }
 
-                            // Emit storage event for Companions (Firefly, Cricket)
+                            // Emit storage connected event for Companions (Firefly, Cricket)
                             if let Some(bus) = event_bus {
                                 // Get capacity from disk after mount
                                 let capacity_gb = DeviceAnalyzer::get_disk_usage(&mount_path)
                                     .map(|(used, avail)| (used + avail) / (1024 * 1024 * 1024))
                                     .unwrap_or(0);
-                                let storage_event = StorageEvent::seed_bank_detected(
+                                let storage_event = StorageEvent::storage_connected(
                                     &manifest.name,
                                     &device.device,
                                     &mount_path,
                                     capacity_gb,
+                                    manifest.roles.clone(),
                                 );
                                 bus.emit(storage_event);
-                                info!(name = %manifest.name, "Emitted storage.detected event");
+                                info!(name = %manifest.name, "Emitted storage.connected event");
                             }
                         }
                         Ok(output) => {
@@ -991,14 +993,15 @@ impl SeedBankRegistry {
                         let capacity_gb = DeviceAnalyzer::get_disk_usage(&desired)
                             .map(|(used, avail)| (used + avail) / (1024 * 1024 * 1024))
                             .unwrap_or(0);
-                        let storage_event = StorageEvent::seed_bank_detected(
+                        let storage_event = StorageEvent::storage_connected(
                             &sb.manifest.name,
                             &sb.device,
                             &desired,
                             capacity_gb,
+                            sb.manifest.roles.clone(),
                         );
                         bus.emit(storage_event);
-                        info!(name = %sb.manifest.name, "Emitted storage.detected event after rehome");
+                        info!(name = %sb.manifest.name, "Emitted storage.connected event after rehome");
                     }
                 }
                 Ok(output) => {
@@ -1083,7 +1086,7 @@ impl SeedBankRegistry {
     /// - Ok(None) if device has no manifest (not a seed bank)
     /// - Err if probe failed (device error)
     #[cfg(target_os = "linux")]
-    async fn probe_device_for_manifest(device_path: &str) -> Result<Option<SeedBankManifest>> {
+    async fn probe_device_for_manifest(device_path: &str) -> Result<Option<StorageManifest>> {
         use super::subprocess::run_sudo_timed_quiet;
         use garden_common::constants::timeouts;
 
@@ -1111,7 +1114,7 @@ impl SeedBankRegistry {
                 let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
                 let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await
                 {
-                    match serde_json::from_str::<SeedBankManifest>(&content) {
+                    match serde_json::from_str::<StorageManifest>(&content) {
                         Ok(m) => {
                             debug!(
                                 device = %device_path,
@@ -1175,17 +1178,17 @@ impl SeedBankRegistry {
     }
 
     /// Get a seed bank by name (returns first match — use `get_all_by_name` for replicas)
-    pub fn get(&self, name: &str) -> Option<&SeedBankInfo> {
+    pub fn get(&self, name: &str) -> Option<&StorageInfo> {
         self.banks.values().find(|b| b.name == name)
     }
 
     /// Get all seed banks sharing a name (replication-aware)
-    pub fn get_all_by_name(&self, name: &str) -> Vec<&SeedBankInfo> {
+    pub fn get_all_by_name(&self, name: &str) -> Vec<&StorageInfo> {
         self.banks.values().filter(|b| b.name == name).collect()
     }
 
     /// List all seed banks
-    pub fn list(&self) -> Vec<&SeedBankInfo> {
+    pub fn list(&self) -> Vec<&StorageInfo> {
         self.banks.values().collect()
     }
 
@@ -1195,27 +1198,27 @@ impl SeedBankRegistry {
     }
 
     /// Find seed bank by device path
-    pub fn find_by_device(&self, device: &str) -> Option<&SeedBankInfo> {
+    pub fn find_by_device(&self, device: &str) -> Option<&StorageInfo> {
         self.banks.values().find(|b| b.device == device)
     }
 
     /// Find seed bank by mount path
-    pub fn find_by_mount(&self, mount_path: &str) -> Option<&SeedBankInfo> {
+    pub fn find_by_mount(&self, mount_path: &str) -> Option<&StorageInfo> {
         self.banks.values().find(|b| b.mount_path == mount_path)
     }
 
     /// Find seed bank by ID (GUIDv7) — direct HashMap lookup
-    pub fn find_by_id(&self, id: &str) -> Option<&SeedBankInfo> {
+    pub fn find_by_id(&self, id: &str) -> Option<&StorageInfo> {
         self.banks.get(id)
     }
 
     /// Get seed bank by name (alias for get)
-    pub fn get_by_name(&self, name: &str) -> Option<&SeedBankInfo> {
+    pub fn get_by_name(&self, name: &str) -> Option<&StorageInfo> {
         self.get(name)
     }
 
     /// Get seed bank by ID (alias for find_by_id)
-    pub fn get_by_id(&self, id: &str) -> Option<&SeedBankInfo> {
+    pub fn get_by_id(&self, id: &str) -> Option<&StorageInfo> {
         self.find_by_id(id)
     }
 }
@@ -1227,7 +1230,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_scan() {
         // Just verify it doesn't crash on empty system
-        let registry = SeedBankRegistry::scan().await.unwrap();
+        let registry = StorageRegistry::scan().await.unwrap();
         assert!(registry.list().is_empty() || !registry.list().is_empty());
     }
 }

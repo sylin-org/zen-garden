@@ -133,6 +133,9 @@ pub struct StorageMetadata {
     /// Supported protocols: `["s3", "storage"]`.
     #[serde(default)]
     pub protocols: Vec<String>,
+    /// Composable roles (e.g., ["seed-bank"]).
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -504,14 +507,14 @@ fn parse_capability_selector(
 #[serde(rename_all = "kebab-case")]
 pub enum ToolType {
     Offering,
-    SeedBank,
+    ManagedStorage,
 }
 
 impl ToolType {
     pub fn as_category(self) -> &'static str {
         match self {
             Self::Offering => "offering",
-            Self::SeedBank => "storage",
+            Self::ManagedStorage => "storage",
         }
     }
 }

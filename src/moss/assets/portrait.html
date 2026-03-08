@@ -1184,10 +1184,10 @@
         // Render candidates (hopeful state)
         const candidateHtml = candidates.map(c => {
             const displayName = c.label || c.device.split('/').pop();
-            const canPrepare = c.state === 'empty' || c.state === 'unformatted';
+            const canAdd = c.state === 'empty' || c.state === 'unformatted' || c.state === 'has_data';
 
-            const actions = canPrepare
-                ? [{ label: 'Prepare', action: 'prepare', endpoint: `/api/v1/stone/storage/prepare`, body: { device: c.device, random_name: true }, hint: 'prepare as seed bank' }]
+            const actions = canAdd
+                ? [{ label: 'Add Storage', action: 'add', endpoint: `/api/v1/stone/storage/add`, body: { target: c.device, format: c.state !== 'has_data' }, hint: 'add as managed storage' }]
                 : [];
 
             return renderExpandableItem('seedbanks', { id: c.device, name: displayName }, {
@@ -1196,9 +1196,9 @@
                 meta: [`${c.capacity_gb.toFixed(0)} GB`, c.state],
                 dotClass: 'hopeful',
                 statusText: '[Candidate]',
-                description: canPrepare
-                    ? 'A candidate device is ready to join your garden as a seed bank.'
-                    : 'This device contains data and cannot be prepared automatically.',
+                description: canAdd
+                    ? 'This device can be added as managed storage.'
+                    : 'This device is not eligible for managed storage.',
                 details: [
                     { label: 'Device', value: c.device },
                     { label: 'Capacity', value: `${c.capacity_gb.toFixed(0)} GB` },

@@ -4,7 +4,7 @@
 //! Emits StorageEvents via EventBus when eligible devices are detected.
 
 use anyhow::{Context, Result};
-use garden_common::storage::{SeedBankManifest, StorageDetectedInfo};
+use garden_common::storage::{StorageManifest, StorageDetectedInfo};
 use std::path::Path;
 use tracing::{debug, error, info, warn};
 
@@ -18,20 +18,20 @@ pub struct StorageMonitor {
     event_bus: EventBus,
 }
 
-fn resolve_seed_bank_name(info: &StorageDetectedInfo) -> String {
-    if info.state == garden_common::storage::DeviceState::Prepared {
-        if let Some(mount_path) = info.mount_path.as_deref() {
-            let manifest_path = Path::new(mount_path).join(".zen-garden/manifest.json");
-            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                if let Ok(manifest) = serde_json::from_str::<SeedBankManifest>(&content) {
-                    if !manifest.name.trim().is_empty() {
-                        return manifest.name;
-                    }
-                }
-            }
+/// Read manifest from a prepared device (blocking — runs in udev thread).
+fn resolve_manifest(info: &StorageDetectedInfo) -> Option<StorageManifest> {
+    let mount_path = info.mount_path.as_deref()?;
+    let manifest_path = Path::new(mount_path).join(".zen-garden/manifest.json");
+    let content = std::fs::read_to_string(&manifest_path).ok()?;
+    serde_json::from_str::<StorageManifest>(&content).ok()
+}
+
+fn resolve_storage_name(info: &StorageDetectedInfo) -> String {
+    if let Some(manifest) = resolve_manifest(info) {
+        if !manifest.name.trim().is_empty() {
+            return manifest.name;
         }
     }
-
     info.label.as_deref().unwrap_or(&info.device).to_string()
 }
 
@@ -122,49 +122,91 @@ fn run_udev_monitor(event_bus: EventBus) -> Result<()> {
                 udev::EventType::Add => {
                     debug!("Block device added: {}", devnode);
 
-                    // Analyze the device (handles both partitions like /dev/sdb1
-                    // and whole-disk devices like /dev/sdd for manifest-first discovery)
                     match analyze_device(&devnode) {
                         Ok(info) => {
-                            // Emit events for both:
-                            // 1. Devices eligible for preparation (empty, unformatted, etc.)
-                            // 2. Already-prepared seed banks (state = Prepared)
-                            let is_prepared =
-                                info.state == garden_common::storage::DeviceState::Prepared;
+                            use garden_common::storage::DeviceState;
 
-                            if info.eligible || is_prepared {
-                                info!(
-                                    device = %devnode,
-                                    label = ?info.label,
-                                    capacity = info.capacity_bytes,
-                                    state = ?info.state,
-                                    prepared = is_prepared,
-                                    "USB storage detected"
-                                );
+                            let capacity_gb =
+                                info.capacity_bytes / (1024 * 1024 * 1024);
 
-                                // Print TTY ribbon
-                                if let Err(e) =
-                                    garden_common::console::print_storage_detected_ribbon(&info)
-                                {
-                                    warn!("Failed to print TTY ribbon: {}", e);
+                            // Three-way match on device state (STORAGE-0010)
+                            match info.state {
+                                DeviceState::Prepared => {
+                                    // Managed storage reconnected — read manifest, emit connected
+                                    let name = resolve_storage_name(&info);
+                                    let manifest = resolve_manifest(&info);
+                                    let roles = manifest
+                                        .as_ref()
+                                        .map(|m| m.roles.clone())
+                                        .unwrap_or_default();
+
+                                    info!(
+                                        device = %devnode,
+                                        name = %name,
+                                        "Managed storage connected"
+                                    );
+
+                                    if let Err(e) =
+                                        garden_common::console::print_storage_connected_ribbon(
+                                            &name,
+                                            &roles,
+                                            0, // used_bytes not yet known at detection time
+                                        )
+                                    {
+                                        warn!("Failed to print TTY ribbon: {}", e);
+                                    }
+
+                                    event_bus.emit(StorageEvent::storage_connected(
+                                        &name,
+                                        &info.device,
+                                        info.mount_path.as_deref().unwrap_or(""),
+                                        capacity_gb,
+                                        roles,
+                                    ));
                                 }
+                                DeviceState::HasData => {
+                                    // Unmanaged device with files — surface to user
+                                    info!(
+                                        device = %devnode,
+                                        "Unmanaged storage with files detected"
+                                    );
 
-                                // Emit StorageEvent via EventBus
-                                let display_name = resolve_seed_bank_name(&info);
-                                let storage_event = StorageEvent::seed_bank_detected(
-                                    &display_name,
-                                    &info.device,
-                                    info.mount_path.as_deref().unwrap_or(""),
-                                    info.capacity_bytes / (1024 * 1024 * 1024), // Convert to GB
-                                );
-                                event_bus.emit(storage_event);
-                            } else {
-                                debug!(
-                                    device = %devnode,
-                                    state = ?info.state,
-                                    reason = ?info.ineligible_reason,
-                                    "Device not eligible for seed bank"
-                                );
+                                    if let Err(e) =
+                                        garden_common::console::print_storage_has_data_ribbon(&info)
+                                    {
+                                        warn!("Failed to print TTY ribbon: {}", e);
+                                    }
+
+                                    event_bus.emit(StorageEvent::storage_detected(
+                                        &info.device,
+                                        "has_data",
+                                        capacity_gb,
+                                        0, // TODO: compute used_gb
+                                    ));
+                                }
+                                DeviceState::Empty
+                                | DeviceState::Unformatted
+                                | DeviceState::Unpartitioned => {
+                                    // Empty device — surface to user
+                                    info!(
+                                        device = %devnode,
+                                        state = ?info.state,
+                                        "Empty storage device detected"
+                                    );
+
+                                    if let Err(e) =
+                                        garden_common::console::print_storage_empty_ribbon(&info)
+                                    {
+                                        warn!("Failed to print TTY ribbon: {}", e);
+                                    }
+
+                                    event_bus.emit(StorageEvent::storage_detected(
+                                        &info.device,
+                                        &info.state.to_string(),
+                                        capacity_gb,
+                                        0,
+                                    ));
+                                }
                             }
                         }
                         Err(e) => {
@@ -175,14 +217,11 @@ fn run_udev_monitor(event_bus: EventBus) -> Result<()> {
                 udev::EventType::Remove => {
                     debug!("Block device removed: {}", devnode);
 
-                    // Mark seed bank offline in registry if this was a registered device
                     if let Err(e) = handle_device_removal(&devnode) {
                         warn!("Failed to handle device removal for {}: {}", devnode, e);
                     }
 
-                    // Emit removal event via EventBus
-                    let storage_event = StorageEvent::seed_bank_removed(&devnode, &devnode);
-                    event_bus.emit(storage_event);
+                    event_bus.emit(StorageEvent::storage_removed(&devnode, &devnode));
                 }
                 _ => {
                     // Change events, etc. - ignore for now

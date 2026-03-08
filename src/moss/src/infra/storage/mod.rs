@@ -19,17 +19,21 @@
 //! - Triggered on mount/unmount, visibility change, new stone online
 //! - All stones lurk-listen and update their StorageCache
 
+pub mod adapter;
 mod beacon;
 mod device;
+pub mod layout;
 mod lifecycle;
 mod objects;
 mod registry;
+mod signpost;
 mod store;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod subprocess;
 
 #[cfg(target_os = "linux")]
 mod monitor;
+pub mod watcher;
 
 pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
 pub use device::{
@@ -38,11 +42,14 @@ pub use device::{
 };
 pub use lifecycle::{StorageDevice, StorageHealth};
 pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
-pub use registry::SeedBankRegistry;
-pub use store::SeedBankStore;
+pub use registry::StorageRegistry;
+pub use signpost::refresh_signpost;
+pub use store::ContentStore;
 
 #[cfg(target_os = "linux")]
 pub use registry::{create_mount_tracker, MountTracker, TrackedMount};
 
 #[cfg(target_os = "linux")]
 pub use monitor::StorageMonitor;
+
+pub use watcher::StorageWatcherSet;

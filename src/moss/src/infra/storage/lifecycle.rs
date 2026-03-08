@@ -6,7 +6,7 @@
 //! - Self-healing: automatic remount on transient unmount
 //!
 //! This is the **infrastructure layer**: no business rules, no domain logic.
-//! Domain objects like `SeedBank` compose a `StorageDevice` and delegate
+//! Domain objects like `ManagedStorage` compose a `StorageDevice` and delegate
 //! mount verification before any I/O operation.
 
 use std::path::PathBuf;
@@ -283,10 +283,10 @@ impl StorageDevice {
 // ============================================================================
 
 impl StorageDevice {
-    /// Build from a `SeedBankInfo` (registry scan result).
+    /// Build from a `StorageInfo` (registry scan result).
     ///
     /// The info must represent a currently-mounted, live device (online = true).
-    pub fn from_seed_bank_info(info: &garden_common::storage::SeedBankInfo) -> Self {
+    pub fn from_seed_bank_info(info: &garden_common::storage::StorageInfo) -> Self {
         let fs = if info.btrfs {
             "btrfs".to_string()
         } else {

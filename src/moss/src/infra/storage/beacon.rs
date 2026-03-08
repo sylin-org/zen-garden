@@ -8,11 +8,11 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use garden_common::infra::communications::{announcement_types, p2p};
-use garden_common::storage::{SeedBankAnnouncement, SeedBankRole, StorageBeacon};
+use garden_common::storage::{StorageAnnouncement, StorageRole, StorageBeacon};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
-use super::SeedBankRegistry;
+use super::StorageRegistry;
 
 /// Build a storage beacon for this stone.
 ///
@@ -25,19 +25,19 @@ pub async fn build_beacon(
     stone_id: &str,
     stone_name: &str,
     endpoint: &str,
-    roles: Option<&HashMap<String, SeedBankRole>>,
+    roles: Option<&HashMap<String, StorageRole>>,
     pins: Option<&HashMap<String, String>>,
 ) -> Result<StorageBeacon> {
     // Scan current seed banks
-    let registry = SeedBankRegistry::scan()
+    let registry = StorageRegistry::scan()
         .await
         .context("Failed to scan seed banks")?;
 
-    let seed_banks: Vec<SeedBankAnnouncement> = registry
+    let seed_banks: Vec<StorageAnnouncement> = registry
         .list()
         .iter()
         .map(|info| {
-            let mut ann = SeedBankAnnouncement::from_info(info);
+            let mut ann = StorageAnnouncement::from_info(info);
             stamp_announcement(&mut ann, &info.name, roles, pins);
             ann
         })
@@ -47,7 +47,7 @@ pub async fn build_beacon(
         stone_id: stone_id.to_string(),
         stone_name: stone_name.to_string(),
         endpoint: endpoint.to_string(),
-        seed_banks,
+        storages: seed_banks,
         timestamp: Utc::now(),
     })
 }
@@ -62,12 +62,12 @@ pub async fn broadcast_beacon(
     stone_id: &str,
     stone_name: &str,
     endpoint: &str,
-    roles: Option<&HashMap<String, SeedBankRole>>,
+    roles: Option<&HashMap<String, StorageRole>>,
     pins: Option<&HashMap<String, String>>,
 ) -> Result<()> {
     let beacon = build_beacon(stone_id, stone_name, endpoint, roles, pins).await?;
 
-    let seed_bank_count = beacon.seed_banks.len();
+    let seed_bank_count = beacon.storages.len();
 
     // Skip broadcast if no storage capability (reduces noise)
     // Exception: Always broadcast if called explicitly (e.g., mount → empty after unmount)
@@ -98,11 +98,11 @@ pub async fn broadcast_if_has_storage(
     stone_id: &str,
     stone_name: &str,
     endpoint: &str,
-    roles: Option<&HashMap<String, SeedBankRole>>,
+    roles: Option<&HashMap<String, StorageRole>>,
     pins: Option<&HashMap<String, String>>,
 ) -> Result<bool> {
     // Quick check if we have any storage
-    let registry = match SeedBankRegistry::scan().await {
+    let registry = match StorageRegistry::scan().await {
         Ok(r) => r,
         Err(e) => {
             warn!(error = %e, "Failed to scan seed banks for beacon check");
@@ -124,9 +124,9 @@ pub async fn broadcast_if_has_storage(
 ///
 /// Pure helper extracted from `build_beacon()` for testability (STORAGE-0006).
 fn stamp_announcement(
-    ann: &mut SeedBankAnnouncement,
+    ann: &mut StorageAnnouncement,
     name: &str,
-    roles: Option<&HashMap<String, SeedBankRole>>,
+    roles: Option<&HashMap<String, StorageRole>>,
     pins: Option<&HashMap<String, String>>,
 ) {
     if let Some(r) = roles.and_then(|m| m.get(name)) {
@@ -142,11 +142,11 @@ mod tests {
     use super::*;
     use garden_common::storage::StorageAccess;
 
-    fn make_announcement(name: &str) -> SeedBankAnnouncement {
-        SeedBankAnnouncement {
+    fn make_announcement(name: &str) -> StorageAnnouncement {
+        StorageAnnouncement {
             id: format!("sb-{}", name),
             name: name.to_string(),
-            role: SeedBankRole::default(),
+            role: StorageRole::default(),
             protocols: vec!["storage".to_string()],
             access: StorageAccess::Direct,
             visibility: "open".to_string(),
@@ -155,6 +155,7 @@ mod tests {
             used_bytes: 0,
             encrypted: false,
             pin_id: None,
+            roles: vec![garden_common::storage::ROLE_SEED_BANK.to_string()],
         }
     }
 
@@ -170,11 +171,11 @@ mod tests {
     fn test_stamp_announcement_role_only() {
         let mut ann = make_announcement("mybank");
         let mut roles = HashMap::new();
-        roles.insert("mybank".to_string(), SeedBankRole::Dormant);
+        roles.insert("mybank".to_string(), StorageRole::Dormant);
 
         stamp_announcement(&mut ann, "mybank", Some(&roles), None);
 
-        assert_eq!(ann.role, SeedBankRole::Dormant);
+        assert_eq!(ann.role, StorageRole::Dormant);
         assert!(ann.pin_id.is_none(), "pin_id should remain None when pins is None");
     }
 
@@ -188,7 +189,7 @@ mod tests {
 
         assert_eq!(
             ann.role,
-            SeedBankRole::Primary,
+            StorageRole::Primary,
             "role should remain default"
         );
         assert_eq!(ann.pin_id.as_deref(), Some("019c6d5a-0000-7000-8000-000000000001"));
@@ -198,13 +199,13 @@ mod tests {
     fn test_stamp_announcement_both() {
         let mut ann = make_announcement("mybank");
         let mut roles = HashMap::new();
-        roles.insert("mybank".to_string(), SeedBankRole::Dormant);
+        roles.insert("mybank".to_string(), StorageRole::Dormant);
         let mut pins = HashMap::new();
         pins.insert("mybank".to_string(), "019c6d5a-0000-7000-8000-000000000001".to_string());
 
         stamp_announcement(&mut ann, "mybank", Some(&roles), Some(&pins));
 
-        assert_eq!(ann.role, SeedBankRole::Dormant);
+        assert_eq!(ann.role, StorageRole::Dormant);
         assert!(ann.pin_id.is_some());
     }
 
@@ -214,7 +215,7 @@ mod tests {
 
         stamp_announcement(&mut ann, "mybank", None, None);
 
-        assert_eq!(ann.role, SeedBankRole::Primary, "role default preserved");
+        assert_eq!(ann.role, StorageRole::Primary, "role default preserved");
         assert!(ann.pin_id.is_none(), "pin_id default preserved");
     }
 
@@ -233,13 +234,13 @@ mod tests {
     fn test_stamp_announcement_name_not_in_roles() {
         let mut ann = make_announcement("mybank");
         let mut roles = HashMap::new();
-        roles.insert("other-bank".to_string(), SeedBankRole::Dormant);
+        roles.insert("other-bank".to_string(), StorageRole::Dormant);
 
         stamp_announcement(&mut ann, "mybank", Some(&roles), None);
 
         assert_eq!(
             ann.role,
-            SeedBankRole::Primary,
+            StorageRole::Primary,
             "role should stay default when name not in roles map"
         );
     }

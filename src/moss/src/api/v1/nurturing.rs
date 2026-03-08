@@ -34,7 +34,7 @@ use crate::domain::nurturing::{
     build_memories_manifest, NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots,
     RemoteNurturingIndex, ReplicationResult,
 };
-use crate::infra::storage::SeedBankRegistry;
+use crate::infra::storage::StorageRegistry;
 use crate::tasks::{trigger_all_nurturing, trigger_nurturing, NurturingWorkflowResult};
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
@@ -353,14 +353,14 @@ pub async fn delete_nurturing(
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ReplicateRequest {
     /// Seed bank name or ID to replicate to
-    pub seed_bank: String,
+    pub storage: String,
 }
 
 /// Request for restoring from a remote seed bank
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct RestoreRemoteRequest {
     /// Seed bank name or ID
-    pub seed_bank: String,
+    pub storage: String,
     /// Optional specific harvest ID (defaults to latest)
     #[serde(default)]
     pub harvest_id: Option<String>,
@@ -396,11 +396,11 @@ pub async fn replicate_to_seed_bank(
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.seed_bank).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
-            format!("Seed bank '{}' not found: {}", request.seed_bank, e),
+            format!("Seed bank '{}' not found: {}", request.storage, e),
             None,
         )
     })?;
@@ -422,7 +422,7 @@ pub async fn replicate_to_seed_bank(
         &state.stone_name,
     );
 
-    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+    let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let result = state
         .nurturing_store
@@ -456,19 +456,19 @@ pub async fn replicate_to_seed_bank(
 
 pub async fn list_remote_snapshots(
     State(state): State<AppState>,
-    Path(seed_bank_name): Path<String>,
+    Path(storage_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&seed_bank_name).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&storage_name).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
-            format!("Seed bank '{}' not found: {}", seed_bank_name, e),
+            format!("Seed bank '{}' not found: {}", storage_name, e),
             None,
         )
     })?;
 
-    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+    let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let index = state
         .nurturing_store
@@ -519,11 +519,11 @@ pub async fn restore_from_seed_bank(
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.seed_bank).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
-            format!("Seed bank '{}' not found: {}", request.seed_bank, e),
+            format!("Seed bank '{}' not found: {}", request.storage, e),
             None,
         )
     })?;
@@ -546,7 +546,7 @@ pub async fn restore_from_seed_bank(
     }
 
     // Restore from seed bank
-    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+    let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
     let manifest = state
         .nurturing_store
         .restore_from_seed_bank(
@@ -654,8 +654,8 @@ pub async fn trigger_all_offerings_nurturing(
 // ============================================================================
 
 /// Find a seed bank by name or ID
-async fn find_seed_bank(name_or_id: &str) -> anyhow::Result<garden_common::storage::SeedBankInfo> {
-    let registry = SeedBankRegistry::scan().await?;
+async fn find_seed_bank(name_or_id: &str) -> anyhow::Result<garden_common::storage::StorageInfo> {
+    let registry = StorageRegistry::scan().await?;
 
     // Try by name first, then by ID
     registry

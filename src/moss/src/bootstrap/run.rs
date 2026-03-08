@@ -208,7 +208,7 @@ pub async fn run(
     let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
 
     // Seed bank lifecycle objects (STORAGE-0007) — created empty, populated after AppState
-    let seed_banks = crate::domain::new_seed_banks();
+    let seed_banks = crate::domain::new_managed_storages();
 
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
@@ -687,7 +687,7 @@ pub async fn run(
         // Orchestration nudge — immediate role re-evaluation trigger
         orchestration_nudge: orchestration_nudge.clone(),
         // Seed bank lifecycle objects — single source of truth (STORAGE-0007)
-        seed_banks: seed_banks.clone(),
+        managed_storages: seed_banks.clone(),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -740,11 +740,11 @@ pub async fn run(
     tracing::info!("Discovery handler initialized (using p2p transport)");
 
     // Phase 11.post4a: Initialize seed bank lifecycle objects (STORAGE-0007)
-    // Scan mounted devices, construct SeedBank objects with Storage + Store + pin state.
-    // This replaces the old scattered pin-loading code — SeedBank::from_storage loads pins.
+    // Scan mounted devices, construct ManagedStorage objects with Storage + Store + pin state.
+    // This replaces the old scattered pin-loading code — ManagedStorage::from_storage loads pins.
     {
-        if let Ok(registry) = crate::infra::storage::SeedBankRegistry::scan().await {
-            let mut banks = state.seed_banks.write().await;
+        if let Ok(registry) = crate::infra::storage::StorageRegistry::scan().await {
+            let mut banks = state.managed_storages.write().await;
             for info in registry.list() {
                 // Read manifest for full identity
                 let manifest_path = std::path::Path::new(&info.mount_path)
@@ -752,7 +752,7 @@ pub async fn run(
                     .join("manifest.json");
                 let manifest = match tokio::fs::read_to_string(&manifest_path).await {
                     Ok(content) => match serde_json::from_str::<
-                        garden_common::storage::SeedBankManifest,
+                        garden_common::storage::StorageManifest,
                     >(&content)
                     {
                         Ok(m) => m,
@@ -778,7 +778,7 @@ pub async fn run(
                 let storage =
                     crate::infra::storage::StorageDevice::from_seed_bank_info(info);
                 let bank =
-                    crate::domain::SeedBank::from_storage(storage, &manifest, None).await;
+                    crate::domain::ManagedStorage::from_storage(storage, &manifest, None).await;
                 tracing::info!(
                     name = %bank.name,
                     id = %bank.id,
@@ -1256,7 +1256,7 @@ pub async fn run(
         let sb_state = state.clone();
         let sb_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            if let Err(e) = crate::tasks::seed_bank_orchestration::seed_bank_orchestration_task(
+            if let Err(e) = crate::tasks::storage_orchestration::storage_orchestration_task(
                 sb_state, sb_token,
             )
             .await
@@ -1289,7 +1289,7 @@ pub async fn run(
         let repl_state = state.clone();
         let repl_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            if let Err(e) = crate::tasks::seed_bank_replication::seed_bank_replication_task(
+            if let Err(e) = crate::tasks::storage_replication::storage_replication_task(
                 repl_state, repl_token,
             )
             .await
@@ -1298,6 +1298,58 @@ pub async fn run(
             }
         });
         tracing::info!("Seed bank replication task started (STORAGE-0006)");
+    }
+
+    // Phase 17.9c: Cloud Filter sync provider (STORAGE-0009 Phase 4, Windows only)
+    // Registers a "Zen Garden" sync root in Explorer so storages appear natively.
+    #[cfg(target_os = "windows")]
+    {
+        let cf_endpoint = {
+            let entry = state.self_entry.read().await;
+            Arc::new(RwLock::new(entry.address.http_base()))
+        };
+        if let Err(e) = crate::infra::cloud_filter::start(
+            state.managed_storages.clone(),
+            state.registry.clone(),
+            state.stone_id.clone(),
+            state.storage_tick_tx.clone(),
+            cf_endpoint,
+            shutdown_token.child_token(),
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "Cloud Filter provider failed to start (non-fatal)");
+        } else {
+            tracing::info!("Cloud Filter sync provider started (STORAGE-0009 Phase 4)");
+        }
+    }
+
+    // Phase 17.9d: Filesystem watcher (STORAGE-0009 Phase 5)
+    // Detects external writes to managed storage mounts and records changelog
+    // entries so replication stays coherent.
+    {
+        let watcher_set = crate::infra::storage::StorageWatcherSet::new(
+            state.managed_storages.clone(),
+            state.storage_tick_tx.clone(),
+            shutdown_token.child_token(),
+        );
+        // Initial reconciliation — start watchers for already-mounted storages
+        watcher_set.reconcile().await;
+
+        // Periodic reconciliation — pick up new/removed storages
+        let watcher_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            let interval = tokio::time::Duration::from_secs(30);
+            loop {
+                tokio::select! {
+                    _ = watcher_token.cancelled() => break,
+                    _ = tokio::time::sleep(interval) => {
+                        watcher_set.reconcile().await;
+                    }
+                }
+            }
+        });
+        tracing::info!("Filesystem watcher started (STORAGE-0009 Phase 5)");
     }
 
     // Initialize tools projection from restored offerings + local seed-banks.

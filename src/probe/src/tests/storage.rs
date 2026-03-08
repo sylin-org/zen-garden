@@ -3,7 +3,6 @@
 use crate::registry::TestDef;
 use crate::{Bag, LiveGarden, StepResult};
 use anyhow::Result;
-use garden_common::constants::headers::HEADER_SEED_BANK;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::sync::Arc;
@@ -30,7 +29,7 @@ fn extract_bank_info(bank: &Value) -> Option<(String, String)> {
 
 async fn select_seed_bank(garden: &LiveGarden) -> Option<SelectedSeedBank> {
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/bank").await {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/banks").await {
             if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     if let Some((id, name)) = extract_bank_info(bank) {
@@ -317,7 +316,7 @@ async fn test_beacon_visibility(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         std::collections::HashMap::new();
 
     for stone in &garden.stones {
-        let result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let result = stone.get_json("/api/v1/stone/storage/banks").await;
 
         if let Ok(resp) = result {
             let banks: Vec<String> = resp
@@ -459,7 +458,7 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     let test_bytes = test_content.as_bytes().to_vec();
 
     // PUT the object
-    let put_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, test_key);
+    let put_path = format!("/api/v1/garden/storage/{}/objects/{}", bank_name, test_key);
     let put_start = Instant::now();
     let put_result = stone
         .put_bytes(&put_path, "text/plain", test_bytes.clone())
@@ -495,7 +494,7 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     }
 
     // LIST the bucket to confirm object shows up
-    let list_path = format!("/api/v1/stone/storage/bank/{}/{}/", bank_id, PROBE_BUCKET);
+    let list_path = format!("/api/v1/garden/storage/{}/objects/{}/", bank_name, PROBE_BUCKET);
     let list_start = Instant::now();
     let list_result = stone.get_json(&list_path).await;
     let list_duration = list_start.elapsed();
@@ -543,7 +542,7 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     }
 
     // GET the object back
-    let get_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, test_key);
+    let get_path = format!("/api/v1/garden/storage/{}/objects/{}", bank_name, test_key);
     let get_start = Instant::now();
     let get_result = stone.get_bytes(&get_path).await;
     let get_duration = get_start.elapsed();
@@ -587,7 +586,7 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     }
 
     // DELETE the object (cleanup)
-    let delete_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, test_key);
+    let delete_path = format!("/api/v1/garden/storage/{}/objects/{}", bank_name, test_key);
     let delete_start = Instant::now();
     let delete_result = stone.delete_status_code(&delete_path).await;
     let delete_duration = delete_start.elapsed();
@@ -642,7 +641,7 @@ pub fn gateway_roundtrip_test() -> TestDef {
     TestDef {
         id: "storage.gateway_roundtrip",
         name: "Gateway Roundtrip",
-        description: "Upload, retrieve, and delete an object via /api/v1/storage",
+        description: "Upload, retrieve, and delete an object via garden storage objects",
         category: "storage",
         tags: &["storage", "gateway", "object"],
         run: |garden, bag| Box::pin(test_gateway_roundtrip(garden, bag)),
@@ -681,8 +680,8 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     let test_content = format!("Zen Garden gateway test at {}", timestamp);
     let test_bytes = test_content.as_bytes().to_vec();
     let url = format!(
-        "{}/api/v1/storage/{}/{}",
-        gateway_stone.endpoint, bucket, key
+        "{}/api/v1/garden/storage/{}/objects/{}/{}",
+        gateway_stone.endpoint, seed_bank, bucket, key
     );
 
     bag.record_step(
@@ -695,7 +694,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         StepResult::ok_with(serde_json::json!({
             "gateway_stone": gateway_stone.name,
             "storage_stone": storage_stone.name,
-            "seed_bank": seed_bank,
+            "storage": seed_bank,
         })),
     );
 
@@ -704,7 +703,6 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     let put_resp = client
         .put(&url)
         .header("Content-Type", "text/plain")
-        .header(HEADER_SEED_BANK, &seed_bank)
         .body(test_bytes.clone())
         .send()
         .await?;
@@ -728,18 +726,18 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         StepResult::ok_with(serde_json::json!({
             "bucket": bucket,
             "key": key,
-            "seed_bank": seed_bank,
+            "storage": seed_bank,
             "response": put_json,
         })),
     );
 
     // LIST
-    let list_url = format!("{}/api/v1/storage/{}/", gateway_stone.endpoint, bucket);
+    let list_url = format!(
+        "{}/api/v1/garden/storage/{}/objects/{}/",
+        gateway_stone.endpoint, seed_bank, bucket
+    );
     let list_start = Instant::now();
-    let list_resp = client
-        .get(&list_url)
-        .header(HEADER_SEED_BANK, &seed_bank)
-        .send()
+    let list_resp = client.get(&list_url).send()
         .await?;
     let list_duration = list_start.elapsed();
 
@@ -784,10 +782,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     // GET
     let get_start = Instant::now();
-    let get_resp = client
-        .get(&url)
-        .header(HEADER_SEED_BANK, &seed_bank)
-        .send()
+    let get_resp = client.get(&url).send()
         .await?;
     let get_duration = get_start.elapsed();
 
@@ -828,10 +823,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     // DELETE
     let delete_start = Instant::now();
-    let delete_resp = client
-        .delete(&url)
-        .header(HEADER_SEED_BANK, &seed_bank)
-        .send()
+    let delete_resp = client.delete(&url).send()
         .await?;
     let delete_duration = delete_start.elapsed();
 
@@ -861,7 +853,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         StepResult::ok_with(serde_json::json!({
             "gateway_stone": gateway_stone.name,
             "storage_stone": storage_stone.name,
-            "seed_bank": seed_bank,
+            "storage": seed_bank,
             "bucket": bucket,
             "key": key,
         })),
@@ -871,14 +863,14 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 }
 
 // ============================================================================
-// storage.memories_index - List remote memories via /api/v1/memories
+// storage.memories_index - List remote memories via garden storage memories
 // ============================================================================
 
 pub fn memories_index_test() -> TestDef {
     TestDef {
         id: "storage.memories_index",
         name: "Memories Index",
-        description: "List remote snapshots via /api/v1/memories",
+        description: "List remote snapshots via garden storage memories endpoint",
         category: "storage",
         tags: &["storage", "memories", "hydration"],
         run: |garden, bag| Box::pin(test_memories_index(garden, bag)),
@@ -906,19 +898,18 @@ async fn test_memories_index(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
         .timeout(Duration::from_secs(30))
         .build()?;
 
-    let url = format!("{}/api/v1/memories", stone.endpoint);
+    let url = format!(
+        "{}/api/v1/garden/storage/{}/memories",
+        stone.endpoint, seed_bank
+    );
     let start = Instant::now();
-    let resp = client
-        .get(&url)
-        .header(HEADER_SEED_BANK, &seed_bank)
-        .send()
-        .await?;
+    let resp = client.get(&url).send().await?;
     let duration = start.elapsed();
 
     if resp.status() != StatusCode::OK {
         bag.record_step(
             "memories_index",
-            format!("GET /api/v1/memories failed with {}", resp.status()),
+            format!("GET memories endpoint failed with {}", resp.status()),
             duration.as_millis() as u64,
             StepResult::failed(format!("Status {}", resp.status())),
         );
@@ -940,7 +931,7 @@ async fn test_memories_index(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
     let id_matches = reported_id == seed_bank_id;
     let result = if id_matches {
         StepResult::ok_with(serde_json::json!({
-            "seed_bank": seed_bank,
+            "storage": seed_bank,
             "seed_bank_id": seed_bank_id,
             "snapshots": snapshots,
         }))
@@ -1309,11 +1300,10 @@ async fn test_pin_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     );
 
     // Step 1: PIN
-    let pin_body = serde_json::json!({ "name": bank_name });
+    let pin_url = format!("/api/v1/stone/storage/banks/{}/pin", bank_name);
+    let empty = serde_json::json!({});
     let pin_start = Instant::now();
-    let pin_result = stone
-        .post_json("/api/v1/stone/storage/bank/pin", &pin_body)
-        .await;
+    let pin_result = stone.post_json(&pin_url, &empty).await;
     let pin_duration = pin_start.elapsed();
 
     match &pin_result {
@@ -1394,11 +1384,9 @@ async fn test_pin_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     }
 
     // Step 3: UNPIN (always — cleanup)
-    let unpin_body = serde_json::json!({ "name": bank_name });
+    let unpin_url = format!("/api/v1/stone/storage/banks/{}/unpin", bank_name);
     let unpin_start = Instant::now();
-    let unpin_result = stone
-        .post_json("/api/v1/stone/storage/bank/unpin", &unpin_body)
-        .await;
+    let unpin_result = stone.post_json(&unpin_url, &empty).await;
     let unpin_duration = unpin_start.elapsed();
 
     match &unpin_result {
@@ -1463,10 +1451,10 @@ async fn test_replication(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
     };
 
     let stone = selected.stone;
-    let bank_id = &selected.id;
+    let bank_name = &selected.name;
 
     // Step 1: GET /changes with no cursor (initial sync)
-    let changes_path = format!("/api/v1/stone/storage/bank/{}/changes", bank_id);
+    let changes_path = format!("/api/v1/stone/storage/banks/{}/changes", bank_name);
     let start = Instant::now();
     let result = stone.get_json(&changes_path).await;
     let duration = start.elapsed();
@@ -1523,7 +1511,7 @@ async fn test_replication(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
     // Step 2: Write a probe object to generate a changelog entry
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f");
     let probe_key = format!("{}/repl-probe-{}.txt", PROBE_BUCKET, timestamp);
-    let put_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, probe_key);
+    let put_path = format!("/api/v1/garden/storage/{}/objects/{}", bank_name, probe_key);
     let put_start = Instant::now();
     let put_result = stone
         .put_bytes(&put_path, "text/plain", b"probe-replication-test".to_vec())
@@ -1631,7 +1619,7 @@ async fn test_replication(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
     }
 
     // Cleanup: delete the probe object
-    let del_path = format!("/api/v1/stone/storage/bank/{}/{}", bank_id, probe_key);
+    let del_path = format!("/api/v1/garden/storage/{}/objects/{}", bank_name, probe_key);
     let _ = stone.delete_status_code(&del_path).await;
 
     Ok(bag)

@@ -33,7 +33,7 @@ pub struct StoneEnrichment {
     /// Full offering list from the stone
     pub offerings: Vec<EnrichedOffering>,
     /// Seed bank information
-    pub seed_banks: Vec<EnrichedSeedBank>,
+    pub managed_storages: Vec<EnrichedStorage>,
     /// Companion information
     pub companions: Vec<EnrichedCompanion>,
     /// Live system resources (CPU, memory, disk)
@@ -58,7 +58,7 @@ pub struct EnrichedOffering {
 
 /// Seed bank data for dashboard display
 #[derive(Debug, Clone, Serialize)]
-pub struct EnrichedSeedBank {
+pub struct EnrichedStorage {
     pub id: String,
     pub name: String,
     pub capacity_bytes: u64,

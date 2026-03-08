@@ -212,79 +212,75 @@ pub fn nurturing_index_path() -> String {
 pub const ZEN_GARDEN_SENTINEL: &str = ".zen-garden-sentinel";
 
 // ============================================================================
-// Seed Bank Memories & Storage Paths
+// Managed Storage Paths (.zen-garden/ dotfolder layout — STORAGE-0009)
 // ============================================================================
 
-/// Seed bank garden root directory
-/// Layout: {mount_path}/garden/
-pub const SEED_BANK_GARDEN_DIR: &str = "garden";
+/// Managed storage dotfolder (Zen Garden bookkeeping)
+/// Layout: {mount_path}/.zen-garden/
+pub const STORAGE_DOTFOLDER: &str = ".zen-garden";
 
-/// Seed bank memories directory (nurturing backups)
-/// Layout: {mount_path}/garden/memories/
-pub const SEED_BANK_MEMORIES_DIR: &str = "garden/memories";
+/// Memories directory (offering backups, only for seed-bank role)
+/// Layout: {mount_path}/.zen-garden/memories/
+pub const STORAGE_MEMORIES_DIR: &str = ".zen-garden/memories";
 
-/// Seed bank memories index filename
-/// Layout: {mount_path}/garden/memories/index.json
-pub const SEED_BANK_MEMORIES_INDEX_FILE: &str = "index.json";
+/// Memories index filename
+pub const STORAGE_MEMORIES_INDEX_FILE: &str = "index.json";
 
-/// Seed bank memories offering manifest filename
-/// Layout: {mount_path}/garden/memories/{offering_id}/offering.json
-pub const SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE: &str = "offering.json";
+/// Memories offering manifest filename
+pub const STORAGE_MEMORIES_OFFERING_MANIFEST_FILE: &str = "offering.json";
 
-/// Seed bank storage directory (S3 root)
-/// Layout: {mount_path}/garden/storage/
-pub const SEED_BANK_STORAGE_DIR: &str = "garden/storage";
+/// Object storage directory (S3 root)
+/// Layout: {mount_path}/.zen-garden/storage/
+pub const STORAGE_OBJECTS_DIR: &str = ".zen-garden/storage";
 
-/// Get memories directory on a seed bank
-/// Layout: {mount_path}/garden/memories/
-pub fn seed_bank_memories_dir(mount_path: &str) -> String {
-    format!("{}/{}", mount_path, SEED_BANK_MEMORIES_DIR)
+/// Last-known-good directory for resilience snapshots
+/// Layout: {mount_path}/.zen-garden/last-known-good/
+pub const STORAGE_LAST_KNOWN_GOOD_DIR: &str = ".zen-garden/last-known-good";
+
+/// Get memories directory on managed storage
+pub fn storage_memories_dir(mount_path: &str) -> String {
+    format!("{}/{}", mount_path, STORAGE_MEMORIES_DIR)
 }
 
-/// Get memories index path on a seed bank
-/// Layout: {mount_path}/garden/memories/index.json
-pub fn seed_bank_memories_index_path(mount_path: &str) -> String {
+/// Get memories index path on managed storage
+pub fn storage_memories_index_path(mount_path: &str) -> String {
     format!(
         "{}/{}",
-        seed_bank_memories_dir(mount_path),
-        SEED_BANK_MEMORIES_INDEX_FILE
+        storage_memories_dir(mount_path),
+        STORAGE_MEMORIES_INDEX_FILE
     )
 }
 
-/// Get offering memories directory on a seed bank
-/// Layout: {mount_path}/garden/memories/{offering_id}/
-pub fn seed_bank_memory_offering_dir(mount_path: &str, offering_id: &str) -> String {
-    format!("{}/{}", seed_bank_memories_dir(mount_path), offering_id)
+/// Get offering memories directory on managed storage
+pub fn storage_memory_offering_dir(mount_path: &str, offering_id: &str) -> String {
+    format!("{}/{}", storage_memories_dir(mount_path), offering_id)
 }
 
-/// Get offering manifest path on a seed bank
-/// Layout: {mount_path}/garden/memories/{offering_id}/offering.json
-pub fn seed_bank_memory_offering_manifest_path(mount_path: &str, offering_id: &str) -> String {
+/// Get offering manifest path on managed storage
+pub fn storage_memory_offering_manifest_path(mount_path: &str, offering_id: &str) -> String {
     format!(
         "{}/{}",
-        seed_bank_memory_offering_dir(mount_path, offering_id),
-        SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE
+        storage_memory_offering_dir(mount_path, offering_id),
+        STORAGE_MEMORIES_OFFERING_MANIFEST_FILE
     )
 }
 
-/// Get harvest tarball path on a seed bank
-/// Layout: {mount_path}/garden/memories/{offering_id}/{harvest_id}.tar.gz
-pub fn seed_bank_memory_harvest_path(
+/// Get harvest tarball path on managed storage
+pub fn storage_memory_harvest_path(
     mount_path: &str,
     offering_id: &str,
     harvest_id: &str,
 ) -> String {
     format!(
         "{}/{}.tar.gz",
-        seed_bank_memory_offering_dir(mount_path, offering_id),
+        storage_memory_offering_dir(mount_path, offering_id),
         harvest_id
     )
 }
 
-/// Get storage directory on a seed bank
-/// Layout: {mount_path}/garden/storage/
-pub fn seed_bank_storage_dir(mount_path: &str) -> String {
-    format!("{}/{}", mount_path, SEED_BANK_STORAGE_DIR)
+/// Get object storage directory on managed storage
+pub fn storage_objects_dir(mount_path: &str) -> String {
+    format!("{}/{}", mount_path, STORAGE_OBJECTS_DIR)
 }
 
 // ========================================================================

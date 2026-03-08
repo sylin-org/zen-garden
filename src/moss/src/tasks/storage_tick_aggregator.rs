@@ -15,7 +15,7 @@
 //!
 //! ```text
 //!  ┌──────────────┐   raw ticks    ┌────────────────────┐  agg ticks   ┌───────────┐
-//!  │ SeedBankStore ├──────────────►│ StorageTickAggregator├────────────►│ SSE stream│
+//!  │ ContentStore ├──────────────►│ StorageTickAggregator├────────────►│ SSE stream│
 //!  │  (per write)  │               │  (per seed bank)    │             └───────────┘
 //!  └──────────────┘               │                     │  agg ticks   ┌───────────┐
 //!                                  │  2s quiet / 10s cap ├────────────►│ Replication│
@@ -47,7 +47,7 @@
 //! ```text
 //! storage_tick_tx  ──►  [aggregator task]  ──►  storage_agg_tx
 //!                                                  ├──► SSE /api/v1/stone/storage/stream
-//!                                                  └──► seed_bank_replication_task
+//!                                                  └──► storage_replication_task
 //! ```
 //!
 //! Raw channel (`storage_tick_tx`) is **internal-only** — downstream
@@ -120,7 +120,7 @@ impl BankWindow {
     fn to_tick(&self, seed_bank: &str) -> StorageTick {
         StorageTick {
             cursor: self.cursor.clone(),
-            seed_bank: seed_bank.to_string(),
+            storage: seed_bank.to_string(),
             creates: self.creates,
             modifies: self.modifies,
             deletes: self.deletes,
@@ -161,7 +161,7 @@ pub async fn storage_tick_aggregator_task(
                     Ok(tick) => {
                         let now = Instant::now();
                         banks
-                            .entry(tick.seed_bank.clone())
+                            .entry(tick.storage.clone())
                             .and_modify(|w| w.accumulate(&tick, now))
                             .or_insert_with(|| BankWindow::new(&tick, now));
                     }
@@ -226,5 +226,199 @@ fn emit(tx: &broadcast::Sender<StorageTick>, name: &str, window: &BankWindow) {
 fn flush_all(banks: &mut HashMap<String, BankWindow>, tx: &broadcast::Sender<StorageTick>) {
     for (name, window) in banks.drain() {
         emit(tx, &name, &window);
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_tick(storage: &str, creates: u32, modifies: u32, deletes: u32) -> StorageTick {
+        StorageTick {
+            cursor: format!("cursor-{}", creates + modifies + deletes),
+            storage: storage.to_string(),
+            creates,
+            modifies,
+            deletes,
+        }
+    }
+
+    // ── BankWindow::new ────────────────────────────────────────────────
+
+    #[test]
+    fn test_bank_window_new_captures_tick() {
+        let tick = make_tick("photos", 1, 0, 0);
+        let now = Instant::now();
+        let window = BankWindow::new(&tick, now);
+
+        assert_eq!(window.creates, 1);
+        assert_eq!(window.modifies, 0);
+        assert_eq!(window.deletes, 0);
+        assert_eq!(window.cursor, "cursor-1");
+        assert_eq!(window.window_start, now);
+        assert_eq!(window.last_event, now);
+    }
+
+    // ── BankWindow::accumulate ─────────────────────────────────────────
+
+    #[test]
+    fn test_accumulate_sums_counts() {
+        let tick1 = make_tick("photos", 2, 1, 0);
+        let now = Instant::now();
+        let mut window = BankWindow::new(&tick1, now);
+
+        let tick2 = make_tick("photos", 3, 0, 1);
+        let later = now + Duration::from_millis(500);
+        window.accumulate(&tick2, later);
+
+        assert_eq!(window.creates, 5);
+        assert_eq!(window.modifies, 1);
+        assert_eq!(window.deletes, 1);
+    }
+
+    #[test]
+    fn test_accumulate_updates_cursor() {
+        let tick1 = make_tick("data", 1, 0, 0);
+        let now = Instant::now();
+        let mut window = BankWindow::new(&tick1, now);
+
+        let tick2 = StorageTick {
+            cursor: "latest-cursor".to_string(),
+            storage: "data".to_string(),
+            creates: 0,
+            modifies: 1,
+            deletes: 0,
+        };
+        window.accumulate(&tick2, now + Duration::from_millis(100));
+
+        assert_eq!(window.cursor, "latest-cursor");
+    }
+
+    #[test]
+    fn test_accumulate_updates_last_event_not_window_start() {
+        let tick1 = make_tick("data", 1, 0, 0);
+        let t0 = Instant::now();
+        let mut window = BankWindow::new(&tick1, t0);
+
+        let t1 = t0 + Duration::from_secs(1);
+        let tick2 = make_tick("data", 0, 1, 0);
+        window.accumulate(&tick2, t1);
+
+        assert_eq!(window.window_start, t0, "window_start should not change");
+        assert_eq!(window.last_event, t1, "last_event should advance");
+    }
+
+    // ── BankWindow::to_tick ────────────────────────────────────────────
+
+    #[test]
+    fn test_to_tick_projects_correctly() {
+        let tick = make_tick("backups", 5, 3, 2);
+        let window = BankWindow::new(&tick, Instant::now());
+
+        let agg = window.to_tick("backups");
+        assert_eq!(agg.storage, "backups");
+        assert_eq!(agg.creates, 5);
+        assert_eq!(agg.modifies, 3);
+        assert_eq!(agg.deletes, 2);
+        assert_eq!(agg.cursor, "cursor-10");
+    }
+
+    // ── BankWindow::should_flush ───────────────────────────────────────
+
+    #[test]
+    fn test_should_flush_false_when_fresh() {
+        let tick = make_tick("data", 1, 0, 0);
+        let now = Instant::now();
+        let window = BankWindow::new(&tick, now);
+
+        // Immediately after creation — neither threshold met
+        assert!(!window.should_flush(now));
+        assert!(!window.should_flush(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn test_should_flush_true_after_quiet_threshold() {
+        let tick = make_tick("data", 1, 0, 0);
+        let now = Instant::now();
+        let window = BankWindow::new(&tick, now);
+
+        // Exactly at quiet threshold (2s)
+        assert!(window.should_flush(now + QUIET_THRESHOLD));
+        // Past quiet threshold
+        assert!(window.should_flush(now + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn test_should_flush_true_after_deadline_cap() {
+        let tick = make_tick("data", 1, 0, 0);
+        let t0 = Instant::now();
+        let mut window = BankWindow::new(&tick, t0);
+
+        // Keep accumulating within quiet threshold to prevent quiet-based flush
+        for i in 1..=9 {
+            let tick = make_tick("data", 1, 0, 0);
+            window.accumulate(&tick, t0 + Duration::from_secs(i));
+        }
+
+        // last_event is at t0+9s, so quiet threshold (2s) not met at t0+10s
+        // But deadline cap (10s from window_start) IS met
+        assert!(window.should_flush(t0 + DEADLINE_CAP));
+    }
+
+    #[test]
+    fn test_should_flush_quiet_resets_with_accumulate() {
+        let tick = make_tick("data", 1, 0, 0);
+        let t0 = Instant::now();
+        let mut window = BankWindow::new(&tick, t0);
+
+        // Almost at quiet threshold
+        let almost = t0 + Duration::from_millis(1900);
+        assert!(!window.should_flush(almost));
+
+        // Accumulate resets last_event
+        let tick2 = make_tick("data", 0, 1, 0);
+        window.accumulate(&tick2, almost);
+
+        // Now quiet threshold is 2s from the new last_event
+        assert!(!window.should_flush(almost + Duration::from_secs(1)));
+        assert!(window.should_flush(almost + QUIET_THRESHOLD));
+    }
+
+    // ── flush_all ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_flush_all_drains_banks() {
+        let (tx, mut rx) = broadcast::channel::<StorageTick>(16);
+        let mut banks = HashMap::new();
+
+        let tick1 = make_tick("alpha", 1, 0, 0);
+        let tick2 = make_tick("beta", 0, 2, 0);
+        let now = Instant::now();
+        banks.insert("alpha".to_string(), BankWindow::new(&tick1, now));
+        banks.insert("beta".to_string(), BankWindow::new(&tick2, now));
+
+        flush_all(&mut banks, &tx);
+
+        assert!(banks.is_empty(), "banks should be drained");
+
+        // Should have received 2 aggregated ticks
+        let mut received = vec![];
+        while let Ok(t) = rx.try_recv() {
+            received.push(t.storage);
+        }
+        received.sort();
+        assert_eq!(received, vec!["alpha", "beta"]);
+    }
+
+    // ── Constants ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_constants_ordering() {
+        assert!(QUIET_THRESHOLD < DEADLINE_CAP, "quiet < deadline");
+        assert!(POLL_INTERVAL < QUIET_THRESHOLD, "poll < quiet");
     }
 }

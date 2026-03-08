@@ -15,7 +15,7 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use garden_common::storage::SeedBankRole;
+use garden_common::storage::StorageRole;
 
 use crate::app_state::AppState;
 use crate::cli;
@@ -130,7 +130,7 @@ pub struct PortraitSeedBank {
     pub capacity_gb: f32,
     pub filesystem: String,
     pub visibility: String,
-    pub role: SeedBankRole,
+    pub role: StorageRole,
     pub pinned: bool,
     pub encrypted: bool,
     pub roaming: bool,
@@ -221,7 +221,7 @@ pub struct PortraitResponse {
     pub identity: PortraitIdentity,
     pub foundation: PortraitFoundation,
     pub offerings: Vec<PortraitOffering>,
-    pub seed_banks: Vec<PortraitSeedBank>,
+    pub managed_storages: Vec<PortraitSeedBank>,
     /// Candidate devices ready for seed bank preparation (hopeful state)
     pub candidates: Vec<PortraitCandidate>,
     pub companions: Vec<PortraitCompanion>,
@@ -543,7 +543,7 @@ pub async fn get_portrait_data(
     // === Seed Banks ===
     // STORAGE-0007: Read from unified lifecycle objects (single source of truth).
     let seed_banks = {
-        let banks = state.seed_banks.read().await;
+        let banks = state.managed_storages.read().await;
         banks
             .values()
             .map(|bank| PortraitSeedBank {
@@ -680,7 +680,7 @@ pub async fn get_portrait_data(
         identity,
         foundation,
         offerings,
-        seed_banks,
+        managed_storages: seed_banks,
         candidates,
         companions,
         pond,

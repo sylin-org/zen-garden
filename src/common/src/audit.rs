@@ -13,7 +13,7 @@ pub struct AuditAccessEntry {
     pub stone_id: String,
     pub stone_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub seed_bank: Option<String>,
+    pub storage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offering_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

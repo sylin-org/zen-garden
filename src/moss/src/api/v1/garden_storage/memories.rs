@@ -1,16 +1,11 @@
-//! Memories API - Garden-wide access to seed bank backups (read-only)
+//! Memories (harvest backup) access on managed storage
 //!
-//! Provides endpoints for external orchestrators to discover and retrieve
-//! nurturing backups without exposing garden/storage.
-//!
-//! - GET /api/v1/memories
-//! - GET /api/v1/memories/:offering_id
-//! - GET /api/v1/memories/:offering_id/manifest
-//! - GET /api/v1/memories/:offering_id/:harvest_id
+//! Read-only access to nurturing backups for external orchestrators.
+//! Storage name comes from the URL path — no header-based selection.
 
 use axum::{
     body::Bytes,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
     Json,
@@ -18,15 +13,17 @@ use axum::{
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::audit::{log_access, AuditAccessEntry};
 use garden_common::constants::headers::{
-    HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME, HEADER_SEED_BANK,
+    HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME,
 };
 use garden_common::constants::paths;
-use garden_common::storage::{MemoriesOfferingManifest, DEFAULT_PUBLIC_SEED_BANK_NAME};
+use garden_common::storage::MemoriesOfferingManifest;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
-use crate::infra::storage::SeedBankRegistry;
-use crate::{error_response, AppState};
+use crate::domain::{LocalStorage, ProxyTarget, StorageRoute};
+use crate::AppState;
+
+use super::{err, error_response_raw, has_path_traversal};
 
 // ============================================================================
 // Constants
@@ -42,90 +39,29 @@ const ACTION_DOWNLOAD: &str = "download";
 // Types
 // ============================================================================
 
-#[derive(Debug, Default, Deserialize)]
-pub struct SeedBankSelector {
-    #[serde(rename = "seed-bank")]
-    seed_bank: Option<String>,
-}
-
-impl SeedBankSelector {
-    fn name(&self) -> Option<String> {
-        self.seed_bank.clone()
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OfferingSnapshotsResponse {
     pub offering_id: String,
     pub snapshots: Vec<RemoteSnapshot>,
 }
 
-enum SeedBankRoute {
-    Local {
-        mount_path: String,
-        seed_bank_id: String,
-        seed_bank_name: String,
-    },
-    Remote {
-        endpoint: String,
-    },
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
 
-fn err(status: StatusCode, code: &str, msg: &str) -> (StatusCode, Json<ApiErrorResponse>) {
-    error_response(status, code, msg, None)
-}
-
-fn error_response_raw(status: StatusCode, code: &str, message: &str) -> Response {
-    let body = serde_json::json!({
-        "error": {
-            "code": code,
-            "message": message
-        }
-    });
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(body.to_string().into())
-        .unwrap()
-}
-
-fn get_seed_bank_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Option<String> {
-    if let Some(name) = headers.get(HEADER_SEED_BANK).and_then(|v| v.to_str().ok()) {
-        let trimmed = name.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
+fn validate_storage_layout(mount_path: &std::path::Path) -> Result<(), String> {
+    let memories = mount_path.join(paths::STORAGE_MEMORIES_DIR);
+    if !memories.is_dir() {
+        return Err(
+            "Storage layout invalid; missing .zen-garden/memories. Re-prepare the storage."
+                .to_string(),
+        );
     }
-    selector.name()
-}
-
-fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
-    let memories = std::path::Path::new(mount_path).join(paths::SEED_BANK_MEMORIES_DIR);
-    let storage = std::path::Path::new(mount_path).join(paths::SEED_BANK_STORAGE_DIR);
-
-    if !memories.is_dir() || !storage.is_dir() {
-        return Err("Seed bank is non-canonical; missing garden/memories and/or garden/storage. Re-prepare the seed bank.".to_string());
-    }
-
     Ok(())
 }
 
-fn has_path_traversal(value: &str) -> bool {
-    if value.contains('\\') {
-        return true;
-    }
-    std::path::Path::new(value).components().any(|c| {
-        matches!(
-            c,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        )
-    })
+fn mount_str(local: &LocalStorage) -> String {
+    local.mount_path.to_string_lossy().into_owned()
 }
 
 fn log_memories_access(
@@ -133,7 +69,7 @@ fn log_memories_access(
     headers: &HeaderMap,
     status: StatusCode,
     action: &str,
-    seed_bank: Option<&str>,
+    storage_name: Option<&str>,
     offering_id: Option<&str>,
     harvest_id: Option<&str>,
 ) {
@@ -161,7 +97,7 @@ fn log_memories_access(
         status: status.as_u16(),
         stone_id: state.stone_id.clone(),
         stone_name: state.stone_name.clone(),
-        seed_bank: seed_bank.map(|s| s.to_string()),
+        storage: storage_name.map(|s| s.to_string()),
         offering_id: offering_id.map(|s| s.to_string()),
         harvest_id: harvest_id.map(|s| s.to_string()),
         requesting_stone_id,
@@ -175,46 +111,10 @@ fn log_memories_access(
     });
 }
 
-async fn resolve_seed_bank_route(
-    state: &AppState,
-    name: &str,
-) -> Result<SeedBankRoute, (StatusCode, String)> {
-    let registry = SeedBankRegistry::scan().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to scan seed banks: {}", e),
-        )
-    })?;
-
-    if let Some(bank) = registry.get(name) {
-        if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
-            return Err((StatusCode::CONFLICT, msg));
-        }
-        return Ok(SeedBankRoute::Local {
-            mount_path: bank.mount_path.clone(),
-            seed_bank_id: bank.id.clone(),
-            seed_bank_name: bank.name.clone(),
-        });
-    }
-
-    let reg = state.registry.read().await;
-    if let Some((_stone_id, endpoint, _bank_id)) =
-        reg.route_to_primary(name, &state.stone_id)
-    {
-        return Ok(SeedBankRoute::Remote { endpoint });
-    }
-
-    Err((
-        StatusCode::SERVICE_UNAVAILABLE,
-        format!("Seed bank '{}' not available", name),
-    ))
-}
-
 async fn proxy_memories_request(
     method: reqwest::Method,
-    endpoint: &str,
+    target: &ProxyTarget,
     path: &str,
-    query: Vec<(String, String)>,
     headers: &HeaderMap,
     requesting_stone_id: &str,
     requesting_stone_name: &str,
@@ -222,14 +122,10 @@ async fn proxy_memories_request(
     let client = reqwest::Client::new();
     let url = format!(
         "{}/{}",
-        endpoint.trim_end_matches('/'),
+        target.endpoint.trim_end_matches('/'),
         path.trim_start_matches('/')
     );
     let mut request = client.request(method, url);
-
-    if !query.is_empty() {
-        request = request.query(&query);
-    }
 
     if let Some(user_agent) = headers
         .get(header::USER_AGENT)
@@ -241,24 +137,20 @@ async fn proxy_memories_request(
         request = request.header("x-forwarded-for", forwarded);
     }
 
-    if headers.get(HEADER_REQUESTING_STONE_ID).is_some() {
-        if let Some(value) = headers
-            .get(HEADER_REQUESTING_STONE_ID)
-            .and_then(|v| v.to_str().ok())
-        {
-            request = request.header(HEADER_REQUESTING_STONE_ID, value);
-        }
+    if let Some(value) = headers
+        .get(HEADER_REQUESTING_STONE_ID)
+        .and_then(|v| v.to_str().ok())
+    {
+        request = request.header(HEADER_REQUESTING_STONE_ID, value);
     } else {
         request = request.header(HEADER_REQUESTING_STONE_ID, requesting_stone_id);
     }
 
-    if headers.get(HEADER_REQUESTING_STONE_NAME).is_some() {
-        if let Some(value) = headers
-            .get(HEADER_REQUESTING_STONE_NAME)
-            .and_then(|v| v.to_str().ok())
-        {
-            request = request.header(HEADER_REQUESTING_STONE_NAME, value);
-        }
+    if let Some(value) = headers
+        .get(HEADER_REQUESTING_STONE_NAME)
+        .and_then(|v| v.to_str().ok())
+    {
+        request = request.header(HEADER_REQUESTING_STONE_NAME, value);
     } else {
         request = request.header(HEADER_REQUESTING_STONE_NAME, requesting_stone_name);
     }
@@ -292,76 +184,70 @@ async fn proxy_memories_request(
     builder.body(body.into()).unwrap()
 }
 
+async fn resolve_route(
+    state: &AppState,
+    name: &str,
+) -> Result<StorageRoute, (StatusCode, String)> {
+    let svc = state.storage_service();
+    svc.resolve_read(name).await.map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Storage '{}' not available: {}", name, e),
+        )
+    })
+}
+
 // ============================================================================
-// GET /api/v1/memories - List all snapshots
+// GET /api/v1/garden/storage/{name}/memories
 // ============================================================================
 
-pub async fn list_memories(
+/// List all offering snapshots on a storage.
+pub async fn list_memories_v1(
     State(state): State<AppState>,
-    Query(selector): Query<SeedBankSelector>,
+    Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
-
-    let route = resolve_seed_bank_route(&state, &selected)
+    let route = resolve_route(&state, &name)
         .await
-        .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
+        .map_err(|(status, msg)| err(status, "NO_STORAGE", &msg))?;
 
     match route {
-        SeedBankRoute::Local {
-            mount_path,
-            seed_bank_id,
-            seed_bank_name,
-        } => {
-            let store = crate::infra::storage::SeedBankStore::new_public(&mount_path);
-            let index = match state
+        StorageRoute::Local(local) => {
+            if let Err(msg) = validate_storage_layout(&local.mount_path) {
+                return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
+            }
+            let svc = state.storage_service();
+            let store = svc.content_store(&local);
+            match state
                 .nurturing_store
-                .list_remote_snapshots(&store, &seed_bank_id)
+                .list_remote_snapshots(&store, &local.id)
                 .await
             {
                 Ok(index) => {
                     log_memories_access(
-                        &state,
-                        &headers,
-                        StatusCode::OK,
-                        ACTION_LIST,
-                        Some(&seed_bank_name),
-                        None,
-                        None,
+                        &state, &headers, StatusCode::OK, ACTION_LIST,
+                        Some(&local.name), None, None,
                     );
-                    index
+                    Ok(Json(ApiResponse::new(index)))
                 }
                 Err(e) => {
                     log_memories_access(
-                        &state,
-                        &headers,
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ACTION_LIST,
-                        Some(&seed_bank_name),
-                        None,
-                        None,
+                        &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_LIST,
+                        Some(&local.name), None, None,
                     );
-                    return Err(err(
+                    Err(err(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "LIST_FAILED",
                         &e.to_string(),
-                    ));
+                    ))
                 }
-            };
-
-            Ok(Json(ApiResponse::new(index)))
-        }
-        SeedBankRoute::Remote { endpoint } => {
-            let mut query_params = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
-                query_params.push(("seed-bank".to_string(), selected));
             }
+        }
+        StorageRoute::Proxy(target) => {
             let response = proxy_memories_request(
                 reqwest::Method::GET,
-                &endpoint,
-                "/api/v1/memories",
-                query_params,
+                &target,
+                &format!("api/v1/garden/storage/{}/memories", name),
                 &headers,
                 &state.stone_id,
                 &state.stone_name,
@@ -387,13 +273,13 @@ pub async fn list_memories(
 }
 
 // ============================================================================
-// GET /api/v1/memories/:offering_id - List snapshots for offering
+// GET /api/v1/garden/storage/{name}/memories/{offering_id}
 // ============================================================================
 
-pub async fn list_offering_snapshots(
+/// List snapshots for a specific offering.
+pub async fn list_offering_snapshots_v1(
     State(state): State<AppState>,
-    Path(offering_id): Path<String>,
-    Query(selector): Query<SeedBankSelector>,
+    Path((name, offering_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<OfferingSnapshotsResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
@@ -404,43 +290,32 @@ pub async fn list_offering_snapshots(
         ));
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
-
-    let route = resolve_seed_bank_route(&state, &selected)
+    let route = resolve_route(&state, &name)
         .await
-        .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
+        .map_err(|(status, msg)| err(status, "NO_STORAGE", &msg))?;
 
     match route {
-        SeedBankRoute::Local {
-            mount_path,
-            seed_bank_id,
-            seed_bank_name,
-        } => {
-            let store = crate::infra::storage::SeedBankStore::new_public(&mount_path);
-            let index = match state
+        StorageRoute::Local(local) => {
+            if let Err(msg) = validate_storage_layout(&local.mount_path) {
+                return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
+            }
+            let svc = state.storage_service();
+            let store = svc.content_store(&local);
+            let index = state
                 .nurturing_store
-                .list_remote_snapshots(&store, &seed_bank_id)
+                .list_remote_snapshots(&store, &local.id)
                 .await
-            {
-                Ok(index) => index,
-                Err(e) => {
+                .map_err(|e| {
                     log_memories_access(
-                        &state,
-                        &headers,
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ACTION_LIST_OFFERING,
-                        Some(&seed_bank_name),
-                        Some(&offering_id),
-                        None,
+                        &state, &headers, StatusCode::INTERNAL_SERVER_ERROR,
+                        ACTION_LIST_OFFERING, Some(&local.name), Some(&offering_id), None,
                     );
-                    return Err(err(
+                    err(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "LIST_FAILED",
                         &e.to_string(),
-                    ));
-                }
-            };
+                    )
+                })?;
 
             let snapshots: Vec<RemoteSnapshot> = index
                 .snapshots
@@ -449,13 +324,8 @@ pub async fn list_offering_snapshots(
                 .collect();
 
             log_memories_access(
-                &state,
-                &headers,
-                StatusCode::OK,
-                ACTION_LIST_OFFERING,
-                Some(&seed_bank_name),
-                Some(&offering_id),
-                None,
+                &state, &headers, StatusCode::OK, ACTION_LIST_OFFERING,
+                Some(&local.name), Some(&offering_id), None,
             );
 
             Ok(Json(ApiResponse::new(OfferingSnapshotsResponse {
@@ -463,16 +333,11 @@ pub async fn list_offering_snapshots(
                 snapshots,
             })))
         }
-        SeedBankRoute::Remote { endpoint } => {
-            let mut query_params = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
-                query_params.push(("seed-bank".to_string(), selected));
-            }
+        StorageRoute::Proxy(target) => {
             let response = proxy_memories_request(
                 reqwest::Method::GET,
-                &endpoint,
-                &format!("/api/v1/memories/{}", offering_id),
-                query_params,
+                &target,
+                &format!("api/v1/garden/storage/{}/memories/{}", name, offering_id),
                 &headers,
                 &state.stone_id,
                 &state.stone_name,
@@ -498,13 +363,13 @@ pub async fn list_offering_snapshots(
 }
 
 // ============================================================================
-// GET /api/v1/memories/:offering_id/manifest - Offering manifest
+// GET /api/v1/garden/storage/{name}/memories/{offering_id}/manifest
 // ============================================================================
 
-pub async fn get_offering_manifest(
+/// Read the offering manifest from memories.
+pub async fn get_offering_manifest_v1(
     State(state): State<AppState>,
-    Path(offering_id): Path<String>,
-    Query(selector): Query<SeedBankSelector>,
+    Path((name, offering_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<MemoriesOfferingManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
@@ -515,31 +380,20 @@ pub async fn get_offering_manifest(
         ));
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
-
-    let route = resolve_seed_bank_route(&state, &selected)
+    let route = resolve_route(&state, &name)
         .await
-        .map_err(|(status, msg)| err(status, "NO_SEED_BANK", &msg))?;
+        .map_err(|(status, msg)| err(status, "NO_STORAGE", &msg))?;
 
     match route {
-        SeedBankRoute::Local {
-            mount_path,
-            seed_bank_name,
-            ..
-        } => {
-            let path = paths::seed_bank_memory_offering_manifest_path(&mount_path, &offering_id);
+        StorageRoute::Local(local) => {
+            let mount = mount_str(&local);
+            let path = paths::storage_memory_offering_manifest_path(&mount, &offering_id);
             let json = match tokio::fs::read_to_string(&path).await {
                 Ok(json) => json,
                 Err(_) => {
                     log_memories_access(
-                        &state,
-                        &headers,
-                        StatusCode::NOT_FOUND,
-                        ACTION_MANIFEST,
-                        Some(&seed_bank_name),
-                        Some(&offering_id),
-                        None,
+                        &state, &headers, StatusCode::NOT_FOUND, ACTION_MANIFEST,
+                        Some(&local.name), Some(&offering_id), None,
                     );
                     return Err(err(
                         StatusCode::NOT_FOUND,
@@ -553,13 +407,8 @@ pub async fn get_offering_manifest(
                 Ok(m) => m,
                 Err(e) => {
                     log_memories_access(
-                        &state,
-                        &headers,
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ACTION_MANIFEST,
-                        Some(&seed_bank_name),
-                        Some(&offering_id),
-                        None,
+                        &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_MANIFEST,
+                        Some(&local.name), Some(&offering_id), None,
                     );
                     return Err(err(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -570,27 +419,20 @@ pub async fn get_offering_manifest(
             };
 
             log_memories_access(
-                &state,
-                &headers,
-                StatusCode::OK,
-                ACTION_MANIFEST,
-                Some(&seed_bank_name),
-                Some(&offering_id),
-                None,
+                &state, &headers, StatusCode::OK, ACTION_MANIFEST,
+                Some(&local.name), Some(&offering_id), None,
             );
 
             Ok(Json(ApiResponse::new(manifest)))
         }
-        SeedBankRoute::Remote { endpoint } => {
-            let mut query_params = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
-                query_params.push(("seed-bank".to_string(), selected));
-            }
+        StorageRoute::Proxy(target) => {
             let response = proxy_memories_request(
                 reqwest::Method::GET,
-                &endpoint,
-                &format!("/api/v1/memories/{}/manifest", offering_id),
-                query_params,
+                &target,
+                &format!(
+                    "api/v1/garden/storage/{}/memories/{}/manifest",
+                    name, offering_id
+                ),
                 &headers,
                 &state.stone_id,
                 &state.stone_name,
@@ -616,13 +458,13 @@ pub async fn get_offering_manifest(
 }
 
 // ============================================================================
-// GET /api/v1/memories/:offering_id/:harvest_id - Download snapshot
+// GET /api/v1/garden/storage/{name}/memories/{offering_id}/{harvest_id}
 // ============================================================================
 
-pub async fn download_snapshot(
+/// Download a snapshot tarball.
+pub async fn download_snapshot_v1(
     State(state): State<AppState>,
-    Path((offering_id, harvest_id)): Path<(String, String)>,
-    Query(selector): Query<SeedBankSelector>,
+    Path((name, offering_id, harvest_id)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
@@ -640,32 +482,21 @@ pub async fn download_snapshot(
         );
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
-
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    let route = match resolve_route(&state, &name).await {
         Ok(route) => route,
-        Err((status, msg)) => return error_response_raw(status, "NO_SEED_BANK", &msg),
+        Err((status, msg)) => return error_response_raw(status, "NO_STORAGE", &msg),
     };
 
     match route {
-        SeedBankRoute::Local {
-            mount_path,
-            seed_bank_name,
-            ..
-        } => {
-            let path = paths::seed_bank_memory_harvest_path(&mount_path, &offering_id, &harvest_id);
+        StorageRoute::Local(local) => {
+            let mount = mount_str(&local);
+            let path = paths::storage_memory_harvest_path(&mount, &offering_id, &harvest_id);
             let data = match tokio::fs::read(&path).await {
                 Ok(bytes) => bytes,
                 Err(_) => {
                     log_memories_access(
-                        &state,
-                        &headers,
-                        StatusCode::NOT_FOUND,
-                        ACTION_DOWNLOAD,
-                        Some(&seed_bank_name),
-                        Some(&offering_id),
-                        Some(&harvest_id),
+                        &state, &headers, StatusCode::NOT_FOUND, ACTION_DOWNLOAD,
+                        Some(&local.name), Some(&offering_id), Some(&harvest_id),
                     );
                     return error_response_raw(
                         StatusCode::NOT_FOUND,
@@ -676,13 +507,8 @@ pub async fn download_snapshot(
             };
 
             log_memories_access(
-                &state,
-                &headers,
-                StatusCode::OK,
-                ACTION_DOWNLOAD,
-                Some(&seed_bank_name),
-                Some(&offering_id),
-                Some(&harvest_id),
+                &state, &headers, StatusCode::OK, ACTION_DOWNLOAD,
+                Some(&local.name), Some(&offering_id), Some(&harvest_id),
             );
 
             Response::builder()
@@ -692,16 +518,14 @@ pub async fn download_snapshot(
                 .body(Bytes::from(data).into())
                 .unwrap()
         }
-        SeedBankRoute::Remote { endpoint } => {
-            let mut query_params = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
-                query_params.push(("seed-bank".to_string(), selected));
-            }
+        StorageRoute::Proxy(target) => {
             proxy_memories_request(
                 reqwest::Method::GET,
-                &endpoint,
-                &format!("/api/v1/memories/{}/{}", offering_id, harvest_id),
-                query_params,
+                &target,
+                &format!(
+                    "api/v1/garden/storage/{}/memories/{}/{}",
+                    name, offering_id, harvest_id
+                ),
                 &headers,
                 &state.stone_id,
                 &state.stone_name,

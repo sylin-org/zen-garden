@@ -366,7 +366,7 @@ impl DeviceAnalyzer {
     ///
     /// Returns Ok if manifest is valid and complete, Err if corrupt or incomplete.
     /// This prevents treating partially-written seed banks as valid.
-    pub fn validate_manifest(zen_dir: &Path) -> Result<garden_common::storage::SeedBankManifest> {
+    pub fn validate_manifest(zen_dir: &Path) -> Result<garden_common::storage::StorageManifest> {
         let manifest_path = zen_dir.join("manifest.json");
 
         if !manifest_path.exists() {
@@ -376,7 +376,7 @@ impl DeviceAnalyzer {
         let content =
             std::fs::read_to_string(&manifest_path).context("Failed to read manifest file")?;
 
-        let manifest: garden_common::storage::SeedBankManifest =
+        let manifest: garden_common::storage::StorageManifest =
             serde_json::from_str(&content).context("Manifest JSON is corrupt or incomplete")?;
 
         // Validate required fields

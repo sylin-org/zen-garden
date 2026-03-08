@@ -24,7 +24,7 @@ use crate::{
 };
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
-use garden_common::storage::SeedBankRole;
+use garden_common::storage::StorageRole;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -129,7 +129,7 @@ pub async fn start_discovery_listener(
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
     orchestration_nudge: Arc<tokio::sync::Notify>,
-    seed_banks: crate::domain::SeedBanks,
+    seed_banks: crate::domain::ManagedStorages,
     token: CancellationToken,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
@@ -224,7 +224,7 @@ pub async fn start_discovery_listener(
 
                             let (roles, pins) = {
                                 let banks = local_seed_banks.read().await;
-                                let roles: HashMap<String, SeedBankRole> = banks.values().map(|b| (b.name.clone(), b.role)).collect();
+                                let roles: HashMap<String, StorageRole> = banks.values().map(|b| (b.name.clone(), b.role)).collect();
                                 let pins: HashMap<String, String> = banks.values().filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string()))).collect();
                                 (roles, pins)
                             };
@@ -319,7 +319,7 @@ pub async fn start_discovery_listener(
 
                     tracing::debug!(
                         stone = %beacon.stone_name,
-                        seed_banks = beacon.seed_banks.len(),
+                        seed_banks = beacon.storages.len(),
                         from = %from_addr,
                         "Storage beacon received, updating storage cache"
                     );
@@ -760,7 +760,7 @@ pub async fn start_lantern_registration(
 /// Both tasks share a MountTracker to maintain state about expected mounts.
 #[cfg(target_os = "linux")]
 pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
-    use crate::infra::storage::SeedBankRegistry;
+    use crate::infra::storage::StorageRegistry;
 
     // Use the mount tracker from AppState (shared with release handler — STORAGE-0006)
     let tracker = state.mount_tracker.clone();
@@ -789,7 +789,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
             }
 
             // Verify and recover any mounts that disappeared
-            let recovered = SeedBankRegistry::verify_and_recover_mounts(&tracker_persistence).await;
+            let recovered = StorageRegistry::verify_and_recover_mounts(&tracker_persistence).await;
 
             if recovered > 0 {
                 tracing::info!(
@@ -818,7 +818,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                 }
 
                 // Refresh seed bank cache + lifecycle objects
-                match SeedBankRegistry::scan().await {
+                match StorageRegistry::scan().await {
                     Ok(registry) => {
                         // STORAGE-0007: update lifecycle objects from fresh scan
                         state_persistence
@@ -855,7 +855,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
             // Scan triggers auto-mount for any new zen-seed devices
             // Use the tracker so new mounts are monitored for persistence
             // Pass event_bus to emit storage.detected events for Companions
-            match SeedBankRegistry::auto_mount_seed_banks_with_tracker(
+            match StorageRegistry::auto_mount_seed_banks_with_tracker(
                 Some(&tracker_hotplug),
                 Some(&state_hotplug.event_bus),
             )
@@ -874,7 +874,7 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
             state_hotplug.tick_seed_bank_health().await;
 
             // Scan to get registry state (also triggers auto-mount internally, but we need the result)
-            match SeedBankRegistry::scan().await {
+            match StorageRegistry::scan().await {
                 Ok(registry) => {
                     let count = registry.list().len();
                     if count > 0 {
@@ -945,7 +945,7 @@ fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationTo
             state.tick_seed_bank_health().await;
 
             // Scan triggers auto-mount for any new zen-seed devices
-            match crate::infra::storage::SeedBankRegistry::scan().await {
+            match crate::infra::storage::StorageRegistry::scan().await {
                 Ok(registry) => {
                     let count = registry.list().len();
                     if count > 0 {
@@ -1025,7 +1025,7 @@ pub async fn start_all_background_tasks(
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
         state.orchestration_nudge.clone(),
-        state.seed_banks.clone(),
+        state.managed_storages.clone(),
         token.child_token(),
     )
     .await;

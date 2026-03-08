@@ -304,30 +304,39 @@ impl JobEvent {
 // Storage Events
 // ============================================================================
 
-/// Storage-related events (seed banks, devices)
+/// Storage-related events (STORAGE-0010)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StorageEvent {
-    /// Seed bank detected and mounted
-    SeedBankDetected {
+    /// Managed storage reconnected (has `.zen-garden/`, auto-mounted)
+    StorageConnected {
         name: String,
         device: String,
         mount_path: String,
         capacity_gb: u64,
+        roles: Vec<String>,
         timestamp: DateTime<Utc>,
     },
-    /// Seed bank removed/unmounted
-    SeedBankRemoved {
+    /// Unmanaged device detected (needs `storage add`)
+    StorageDetected {
+        device: String,
+        state: String,
+        capacity_gb: u64,
+        used_gb: u64,
+        timestamp: DateTime<Utc>,
+    },
+    /// Storage removed/unmounted
+    StorageRemoved {
         name: String,
         device: String,
         timestamp: DateTime<Utc>,
     },
-    /// Seed bank sync started
+    /// Sync started
     SyncStarted {
         name: String,
         timestamp: DateTime<Utc>,
     },
-    /// Seed bank sync completed
+    /// Sync completed
     SyncCompleted {
         name: String,
         success: bool,
@@ -338,8 +347,9 @@ pub enum StorageEvent {
 impl StorageEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
-            Self::SeedBankDetected { .. } => event_types::STORAGE_DETECTED,
-            Self::SeedBankRemoved { .. } => event_types::STORAGE_REMOVED,
+            Self::StorageConnected { .. } => event_types::STORAGE_CONNECTED,
+            Self::StorageDetected { .. } => event_types::STORAGE_DETECTED,
+            Self::StorageRemoved { .. } => event_types::STORAGE_REMOVED,
             Self::SyncStarted { .. } => event_types::STORAGE_SYNC_STARTED,
             Self::SyncCompleted { .. } => event_types::STORAGE_SYNC_COMPLETED,
         }
@@ -347,43 +357,64 @@ impl StorageEvent {
 
     pub fn to_message(&self) -> String {
         match self {
-            Self::SeedBankDetected { name, device, .. } => {
-                format!("Seed bank '{}' detected on {}", name, device)
+            Self::StorageConnected { name, .. } => {
+                format!("Storage '{}' connected", name)
             }
-            Self::SeedBankRemoved { name, .. } => {
-                format!("Seed bank '{}' removed", name)
+            Self::StorageDetected { device, state, .. } => {
+                format!("Storage device detected: {} ({})", device, state)
+            }
+            Self::StorageRemoved { name, .. } => {
+                format!("Storage '{}' removed", name)
             }
             Self::SyncStarted { name, .. } => {
-                format!("Seed bank '{}' sync started", name)
+                format!("Storage '{}' sync started", name)
             }
             Self::SyncCompleted { name, success, .. } => {
                 if *success {
-                    format!("Seed bank '{}' sync completed", name)
+                    format!("Storage '{}' sync completed", name)
                 } else {
-                    format!("Seed bank '{}' sync failed", name)
+                    format!("Storage '{}' sync failed", name)
                 }
             }
         }
     }
 
     // Builder helpers
-    pub fn seed_bank_detected(
+
+    pub fn storage_connected(
         name: impl Into<String>,
         device: impl Into<String>,
         mount_path: impl Into<String>,
         capacity_gb: u64,
+        roles: Vec<String>,
     ) -> Self {
-        Self::SeedBankDetected {
+        Self::StorageConnected {
             name: name.into(),
             device: device.into(),
             mount_path: mount_path.into(),
             capacity_gb,
+            roles,
             timestamp: Utc::now(),
         }
     }
 
-    pub fn seed_bank_removed(name: impl Into<String>, device: impl Into<String>) -> Self {
-        Self::SeedBankRemoved {
+    pub fn storage_detected(
+        device: impl Into<String>,
+        state: impl Into<String>,
+        capacity_gb: u64,
+        used_gb: u64,
+    ) -> Self {
+        Self::StorageDetected {
+            device: device.into(),
+            state: state.into(),
+            capacity_gb,
+            used_gb,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn storage_removed(name: impl Into<String>, device: impl Into<String>) -> Self {
+        Self::StorageRemoved {
             name: name.into(),
             device: device.into(),
             timestamp: Utc::now(),

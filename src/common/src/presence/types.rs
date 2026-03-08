@@ -79,12 +79,12 @@ pub struct StoneState {
     // --- FIREFLY-0003: Seed bank summary ---
     /// Seed bank capacity (only present if a seed bank is plugged in)
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub seed_bank: Option<SeedBankSummary>,
+    pub seed_bank: Option<StorageSummary>,
 }
 
 /// Seed bank storage summary for presence protocol (FIREFLY-0003)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedBankSummary {
+pub struct StorageSummary {
     pub name: String,
     pub used_gb: u64,
     pub total_gb: u64,

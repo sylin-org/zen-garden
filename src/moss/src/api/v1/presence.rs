@@ -21,7 +21,7 @@ use crate::infra::PulseEvent;
 use crate::AppState;
 use garden_common::presence::{
     event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot,
-    SeedBankSummary, StoneState,
+    StorageSummary, StoneState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -199,8 +199,8 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: Seed bank summary (only if one is plugged in)
     let seed_bank = {
-        let banks = state.seed_banks.read().await;
-        banks.values().next().map(|b| SeedBankSummary {
+        let banks = state.managed_storages.read().await;
+        banks.values().next().map(|b| StorageSummary {
             name: b.name.clone(),
             used_gb: b.storage.used_bytes / 1_073_741_824,
             total_gb: b.storage.capacity_bytes / 1_073_741_824,

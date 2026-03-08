@@ -1042,99 +1042,84 @@ fn boot_symbol() -> &'static str {
 }
 
 // ============================================================================
-// Storage Ribbon Functions
+// Storage Ribbon Functions (STORAGE-0010 — context-aware hotplug banners)
 // ============================================================================
 
-/// Print seed bank detection ribbon to TTY1
+/// Managed storage reconnected (state = Prepared, has `.zen-garden/`).
 ///
-/// Displays a visual notification when a USB storage device is detected.
-/// Matches the visual style of existing boot/shutdown ribbons.
-pub fn print_storage_detected_ribbon(info: &crate::storage::StorageDetectedInfo) -> Result<()> {
+/// No call to action — the storage is live. Shows name, roles, and usage.
+pub fn print_storage_connected_ribbon(
+    name: &str,
+    roles: &[String],
+    used_bytes: u64,
+) -> Result<()> {
     use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
 
-    let label = info.label.as_deref().unwrap_or("USB Storage");
+    let used = crate::utils::format_bytes(used_bytes);
+    let role_display = if roles.is_empty() {
+        "Primary".to_string()
+    } else {
+        roles.join(", ")
+    };
+
+    print_ribbon(&[
+        &format!("{}🌱  ✓       Storage \"{}\" connected", USB_TOP, name),
+        &format!(
+            "{}            {}, {} used",
+            USB_BODY_ACTIVE, role_display, used
+        ),
+        USB_BOTTOM_CONN,
+    ])
+}
+
+/// Unmanaged device with existing files (state = HasData).
+///
+/// Guides user to `storage add` with the device path.
+pub fn print_storage_has_data_ribbon(info: &crate::storage::StorageDetectedInfo) -> Result<()> {
+    use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
+
     let capacity = crate::utils::format_bytes(info.capacity_bytes);
 
     print_ribbon(&[
-        &format!("{}🌱          Device: {} ({})", USB_TOP, label, capacity),
-        &format!("{}            A new seed bank awaits...", USB_BODY_ACTIVE),
         &format!(
-            "{}Prepare:    garden-rake prepare seed-bank",
-            USB_BOTTOM_CONN
+            "{}🌱          Storage device connected ({})",
+            USB_TOP, capacity
+        ),
+        &format!("{}            Contains existing files", USB_BODY_ACTIVE),
+        &format!(
+            "{}            garden-rake storage add {}",
+            USB_BOTTOM_CONN, info.device
         ),
     ])
 }
 
-/// Print seed bank detection ribbon for multiple devices
-pub fn print_storage_multi_ribbon(devices: &[crate::storage::StorageDetectedInfo]) -> Result<()> {
+/// Empty or unformatted device (state = Empty / Unformatted / Unpartitioned).
+///
+/// Guides user to `storage add` with the device path.
+pub fn print_storage_empty_ribbon(info: &crate::storage::StorageDetectedInfo) -> Result<()> {
     use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
 
-    if devices.is_empty() {
-        return Ok(());
-    }
-
-    if devices.len() == 1 {
-        return print_storage_detected_ribbon(&devices[0]);
-    }
-
-    // Multi-device ribbon needs custom structure for device list
-    tty_write("")?;
-    tty_write(RIBBON_DIVIDER)?;
-
-    // Header with USB art
-    tty_write(&format!(
-        "{}🌱          {} devices await preparation",
-        USB_TOP,
-        devices.len()
-    ))?;
-    tty_write(USB_BODY_ACTIVE)?;
-    tty_write(USB_BOTTOM_CONN)?;
-
-    // List each device
-    for dev in devices.iter() {
-        let label = dev.label.as_deref().unwrap_or("USB Storage");
-        let capacity = crate::utils::format_bytes(dev.capacity_bytes);
-        let mount = dev.mount_path.as_deref().unwrap_or(&dev.device);
-        tty_write(&format!(
-            "     │                    {} ({}) at {}",
-            label, capacity, mount
-        ))?;
-    }
-
-    // Footer with command hint
-    let first_label = devices[0].label.as_deref().unwrap_or(&devices[0].device);
-    tty_write("     │")?;
-    tty_write(&format!(
-        "     │        Prepare:    garden-rake prepare seed-bank {}",
-        first_label
-    ))?;
-
-    tty_write(RIBBON_DIVIDER)?;
-    tty_write("")?;
-
-    Ok(())
-}
-
-/// Print seed bank prepared confirmation ribbon
-pub fn print_storage_prepared_ribbon(name: &str, mount_path: &str) -> Result<()> {
-    use ribbon_art::{USB_BODY_ACTIVE, USB_BOTTOM_CONN, USB_TOP};
+    let capacity = crate::utils::format_bytes(info.capacity_bytes);
 
     print_ribbon(&[
-        &format!("{}✓           Seed bank ready: {}", USB_TOP, name),
-        &format!("{}            Mounted at: {}", USB_BODY_ACTIVE, mount_path),
         &format!(
-            "{}Release:    garden-rake release seed-bank",
-            USB_BOTTOM_CONN
+            "{}🌱          Empty storage connected ({})",
+            USB_TOP, capacity
+        ),
+        &format!("{}            ", USB_BODY_ACTIVE),
+        &format!(
+            "{}            garden-rake storage add {}",
+            USB_BOTTOM_CONN, info.device
         ),
     ])
 }
 
-/// Print seed bank released confirmation
+/// Storage released confirmation — safe to remove device.
 pub fn print_storage_released_ribbon(name: &str) -> Result<()> {
     use ribbon_art::{USB_BODY_EMPTY, USB_BOTTOM, USB_TOP};
 
     print_ribbon(&[
-        &format!("{}↓           Seed bank released: {}", USB_TOP, name),
+        &format!("{}↓           Storage released: {}", USB_TOP, name),
         &format!("{}            Safe to remove device", USB_BODY_EMPTY),
         USB_BOTTOM,
     ])

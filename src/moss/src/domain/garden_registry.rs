@@ -956,6 +956,7 @@ mod tests {
                 tool: Some(tool),
             }],
             timestamp: Utc::now(),
+            snapshot: false,
         };
 
         let applied = reg.apply_remote_beacon(&beacon);
@@ -987,6 +988,7 @@ mod tests {
             encrypted: false,
             pin_id: None,
             protocols: vec!["s3".to_string(), "storage".to_string()],
+            roles: vec!["seed-bank".to_string()],
         });
         reg.upsert(bank, EntryOrigin::Local);
 
@@ -1000,6 +1002,7 @@ mod tests {
             encrypted: false,
             pin_id: None,
             protocols: vec!["s3".to_string()],
+            roles: vec!["seed-bank".to_string()],
         });
         reg.upsert(
             bank2,

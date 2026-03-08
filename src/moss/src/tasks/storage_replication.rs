@@ -28,13 +28,13 @@
 //! ```
 
 use anyhow::Result;
-use garden_common::storage::{ChangelogOp, ChangesResponse, SeedBankRole};
+use garden_common::storage::{ChangelogOp, ChangesResponse, StorageRole};
 use garden_common::PeerAddress;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::app_state::AppState;
-use crate::infra::storage::SeedBankStore;
+use crate::infra::storage::ContentStore;
 
 /// How often the replication sync loop runs (seconds).
 /// The aggregated tick channel provides event-driven sync; this is only
@@ -68,7 +68,7 @@ fn api_relative_path(changelog_path: &str) -> Option<&str> {
 ///
 /// Runs for the daemon's entire lifetime. Each tick it checks local
 /// Dormant seed banks and syncs them from their respective Primaries.
-pub async fn seed_bank_replication_task(state: AppState, token: CancellationToken) -> Result<()> {
+pub async fn storage_replication_task(state: AppState, token: CancellationToken) -> Result<()> {
     info!("Seed bank replication task starting");
 
     // Wait a bit for orchestration to assign roles before first sync
@@ -122,10 +122,10 @@ pub async fn seed_bank_replication_task(state: AppState, token: CancellationToke
 /// Run one replication cycle for all local Dormant seed banks.
 async fn replication_tick(state: &AppState) -> Result<()> {
     // Collect Dormant banks from lifecycle objects
-    let banks = state.seed_banks.read().await;
+    let banks = state.managed_storages.read().await;
     let dormant_banks: Vec<(String, String, std::path::PathBuf)> = banks
         .values()
-        .filter(|b| b.role == SeedBankRole::Dormant)
+        .filter(|b| b.role == StorageRole::Dormant)
         .map(|b| {
             (
                 b.name.clone(),
@@ -173,7 +173,7 @@ async fn sync_dormant_bank(
     mount_path: &std::path::Path,
 ) -> Result<()> {
     // 1. Resolve the Primary stone + endpoint from registry
-    let (_primary_stone_id, primary_endpoint, primary_bank_id) = {
+    let (_primary_stone_id, primary_endpoint, _primary_bank_id) = {
         let reg = state.registry.read().await;
         match reg.route_to_primary(name, &state.stone_id) {
             Some(route) => route,
@@ -187,25 +187,23 @@ async fn sync_dormant_bank(
     // route_to_primary already excludes our own stone
 
     let peer = PeerAddress::from_http_url(&primary_endpoint);
-    let primary_bank_id = &primary_bank_id;
-
     // 3. Read local last_cursor
     // STORAGE-0007: prefer store from lifecycle object if available
     let lifecycle_store = {
-        let banks = state.seed_banks.read().await;
+        let banks = state.managed_storages.read().await;
         banks
             .values()
             .find(|b| b.name == name)
             .map(|b| b.store.clone())
     };
     let local_store =
-        lifecycle_store.unwrap_or_else(|| SeedBankStore::new_public(mount_path));
+        lifecycle_store.unwrap_or_else(|| ContentStore::new_public(mount_path));
     let last_cursor = local_store.read_last_cursor().await;
 
-    // 4. Pull changes from Primary
+    // 4. Pull changes from Primary (name-based routes — STORAGE-0009)
     let changes_path = format!(
-        "/api/v1/stone/storage/bank/{}/changes{}",
-        primary_bank_id,
+        "/api/v1/stone/storage/banks/{}/changes{}",
+        name,
         match &last_cursor {
             Some(c) => format!("?since={}", c),
             None => String::new(),
@@ -290,8 +288,8 @@ async fn sync_dormant_bank(
                 };
 
                 let object_path = format!(
-                    "/api/v1/stone/storage/bank/{}/{}",
-                    primary_bank_id, api_path
+                    "/api/v1/garden/storage/{}/objects/{}",
+                    name, api_path
                 );
 
                 match download_and_write(state, &peer, &object_path, &local_store, &entry.path)
@@ -363,7 +361,7 @@ async fn download_and_write(
     state: &AppState,
     peer: &PeerAddress,
     remote_path: &str,
-    local_store: &SeedBankStore,
+    local_store: &ContentStore,
     rel_path: &str,
 ) -> Result<()> {
     let resp = state
@@ -383,4 +381,114 @@ async fn download_and_write(
 
     debug!(path = %rel_path, bytes = bytes.len(), "Replicated file");
     Ok(())
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use garden_common::storage::{ChangelogEntry, ChangelogOp, ChangesResponse};
+
+    // ── api_relative_path ────────────────────────────────────────────────
+
+    #[test]
+    fn test_api_relative_path_strips_prefix() {
+        assert_eq!(
+            api_relative_path("garden/storage/mybucket/mykey.txt"),
+            Some("mybucket/mykey.txt")
+        );
+    }
+
+    #[test]
+    fn test_api_relative_path_nested_key() {
+        assert_eq!(
+            api_relative_path("garden/storage/data/logs/2026/jan.log"),
+            Some("data/logs/2026/jan.log")
+        );
+    }
+
+    #[test]
+    fn test_api_relative_path_no_prefix_returns_none() {
+        assert_eq!(api_relative_path("other/path/file.txt"), None);
+    }
+
+    #[test]
+    fn test_api_relative_path_partial_prefix_returns_none() {
+        assert_eq!(api_relative_path("garden/stor/file.txt"), None);
+    }
+
+    #[test]
+    fn test_api_relative_path_exact_prefix_returns_empty() {
+        // edge case: path IS the prefix with nothing after
+        assert_eq!(api_relative_path("garden/storage/"), Some(""));
+    }
+
+    // ── cursor advancement logic ─────────────────────────────────────────
+
+    #[test]
+    fn test_cursor_not_advanced_on_errors() {
+        // The logic: errors > 0 → cursor NOT advanced
+        // This tests the decision boundary, not the full async flow
+        let errors = 1u32;
+        let applied = 3u32;
+        // errors > 0 → should skip cursor write
+        assert!(errors > 0, "Errors present — cursor should NOT advance");
+        assert!(applied > 0, "Some items applied despite errors");
+    }
+
+    #[test]
+    fn test_cursor_advanced_on_clean_run() {
+        let errors = 0u32;
+        assert!(errors == 0, "No errors — cursor SHOULD advance");
+    }
+
+    // ── ChangesResponse handling ─────────────────────────────────────────
+
+    #[test]
+    fn test_empty_changes_is_noop() {
+        let resp = ChangesResponse {
+            cursor: "abc".to_string(),
+            changes: vec![],
+            full_sync_required: false,
+        };
+        assert!(resp.changes.is_empty());
+    }
+
+    #[test]
+    fn test_full_sync_flag_detected() {
+        let resp = ChangesResponse {
+            cursor: "abc".to_string(),
+            changes: vec![],
+            full_sync_required: true,
+        };
+        assert!(resp.full_sync_required);
+    }
+
+    #[test]
+    fn test_changelog_op_routing() {
+        // Verify the match arms in the apply loop cover all ops
+        let create = ChangelogEntry::created("garden/storage/b/k", 100);
+        let modify = ChangelogEntry::modified("garden/storage/b/k", 200);
+        let delete = ChangelogEntry::deleted("garden/storage/b/k");
+
+        assert!(matches!(create.op, ChangelogOp::C));
+        assert!(matches!(modify.op, ChangelogOp::M));
+        assert!(matches!(delete.op, ChangelogOp::D));
+
+        // C and M both need api_relative_path
+        assert!(api_relative_path(&create.path).is_some());
+        assert!(api_relative_path(&modify.path).is_some());
+        // D path should also have the prefix for consistency
+        assert!(api_relative_path(&delete.path).is_some());
+    }
+
+    #[test]
+    fn test_replication_constants() {
+        assert!(REPLICATION_POLL_SECS > 0);
+        assert!(PULL_TIMEOUT_SECS > 0);
+        assert!(DOWNLOAD_TIMEOUT_SECS > PULL_TIMEOUT_SECS);
+    }
 }

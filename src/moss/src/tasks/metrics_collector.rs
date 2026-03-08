@@ -14,7 +14,7 @@
 
 use tokio::time::interval;
 
-use crate::infra::storage::SeedBankRegistry;
+use crate::infra::storage::StorageRegistry;
 use crate::AppState;
 use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_interval};
 use garden_common::metrics::system::{
@@ -75,9 +75,9 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
     }
 
     // Collect initial seed bank registry
-    // Lifecycle objects (state.seed_banks) are the source of truth;
+    // Lifecycle objects (state.managed_storages) are the source of truth;
     // this scan populates disk usage via health ticks.
-    match SeedBankRegistry::scan().await {
+    match StorageRegistry::scan().await {
         Ok(registry) => {
             let count = registry.list().len();
             tracing::debug!(count, "Initial seed bank registry scanned");
@@ -179,7 +179,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Refresh seed bank disk usage via lifecycle objects' health ticks
                 // (used_bytes / capacity_bytes updated through StorageDevice::health_tick)
                 {
-                    let mut banks = state.seed_banks.write().await;
+                    let mut banks = state.managed_storages.write().await;
                     for bank in banks.values_mut() {
                         if let Some((used, avail)) = crate::infra::storage::DeviceAnalyzer::get_disk_usage(&bank.storage.mount_path.to_string_lossy()) {
                             bank.storage.used_bytes = used;

@@ -259,7 +259,7 @@ pub struct RestoreRemoteCommand {
     /// Offering name to restore
     pub offering: String,
     /// Seed bank name
-    pub seed_bank: String,
+    pub storage: String,
     /// Optional specific harvest ID (defaults to latest)
     pub harvest_id: Option<String>,
     /// Dry run mode
@@ -277,7 +277,7 @@ impl RestoreRemoteCommand {
     ) -> Self {
         Self {
             offering,
-            seed_bank,
+            storage: seed_bank,
             harvest_id,
             dry_run,
             quiet: false,
@@ -296,7 +296,7 @@ impl Command for RestoreRemoteCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for restore command"))?;
 
         // Get list of remote snapshots from seed bank
-        let seed_bank_path = urlencoding::encode(&self.seed_bank);
+        let seed_bank_path = urlencoding::encode(&self.storage);
         let remote_url = format!(
             "{}/api/v1/stone/nurturing/remote/{}",
             endpoint.trim_end_matches('/'),
@@ -353,7 +353,7 @@ impl Command for RestoreRemoteCommand {
                 "\n{} No remote snapshots found for '{}' on seed bank '{}'",
                 ui::status_indicator("warn", ctx.term.supports_color),
                 self.offering,
-                self.seed_bank
+                self.storage
             );
             return Ok(());
         }
@@ -368,7 +368,7 @@ impl Command for RestoreRemoteCommand {
                     anyhow::anyhow!(
                         "Harvest '{}' not found on seed bank '{}'",
                         harvest_id,
-                        self.seed_bank
+                        self.storage
                     )
                 })?
         } else {
@@ -385,7 +385,7 @@ impl Command for RestoreRemoteCommand {
             ui::section_header("NURTURING", &ctx.term)
         );
         println!("  Offering:    {}", self.offering);
-        println!("  Seed Bank:   {}", self.seed_bank);
+        println!("  Seed Bank:   {}", self.storage);
         println!("  Harvest ID:  {}", snapshot.harvest_id);
         println!("  Created:     {}", snapshot.created_at);
         if let Some(size) = snapshot.size_bytes {
@@ -404,7 +404,7 @@ impl Command for RestoreRemoteCommand {
         println!(
             "\n{} Restoring from seed bank '{}'...",
             ui::status_indicator("info", ctx.term.supports_color),
-            self.seed_bank
+            self.storage
         );
 
         let offering_path = urlencoding::encode(&self.offering);
@@ -415,7 +415,7 @@ impl Command for RestoreRemoteCommand {
         );
 
         let body = serde_json::json!({
-            "seed_bank": self.seed_bank,
+            "storage": self.storage,
             "harvest_id": snapshot.harvest_id
         });
 

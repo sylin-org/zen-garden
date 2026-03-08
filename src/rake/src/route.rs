@@ -547,23 +547,52 @@ pub async fn route(
         // Storage
         // =================================================================
 
-        "seed-banks" => Inv::remote(commands::storage::ShowSeedBanksCommand::new(), m),
-
-        "release-seed-bank" => Inv::remote(
-            commands::storage::ReleaseSeedBankCommand::new(req(m, "name")?),
-            m,
-        ),
-
-        "prepare" => Inv::remote(
-            commands::storage::PrepareSeedBankCommand::new(
-                opt(m, "device"),
-                opt(m, "name"),
-                m.get_flag("random"),
-                opt(m, "fs"),
-                m.get_flag("encrypted"),
-            ),
-            m,
-        ),
+        "storage" => match m.subcommand() {
+            Some(("add", sub)) => {
+                let roles: Vec<String> = sub
+                    .get_many::<String>("roles")
+                    .map(|v| v.cloned().collect())
+                    .unwrap_or_default();
+                Inv::remote(
+                    commands::storage::AddStorageCommand::new(
+                        opt(sub, "target"),
+                        opt(sub, "name"),
+                        roles,
+                        sub.get_flag("format"),
+                        opt(sub, "fs"),
+                        sub.get_flag("encrypted"),
+                        sub.get_flag("yes"),
+                    ),
+                    m,
+                )
+            }
+            Some(("list", _)) => {
+                Inv::remote(commands::storage::ListStorageCommand::new(), m)
+            }
+            Some(("status", _)) => {
+                Inv::remote(commands::storage::StorageStatusCommand::new(), m)
+            }
+            Some(("release", sub)) => {
+                Inv::remote(
+                    commands::storage::ReleaseStorageCommand::new(req(sub, "name")?),
+                    m,
+                )
+            }
+            Some(("pin", sub)) => {
+                Inv::remote(
+                    commands::storage::PinStorageCommand::new(req(sub, "name")?),
+                    m,
+                )
+            }
+            Some(("unpin", sub)) => {
+                Inv::remote(
+                    commands::storage::UnpinStorageCommand::new(req(sub, "name")?),
+                    m,
+                )
+            }
+            // Bare `storage` — list all storages (same as `storage list`)
+            _ => Inv::remote(commands::storage::ListStorageCommand::new(), m),
+        },
 
         "store" => return route_store(m, g),
 

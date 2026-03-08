@@ -49,6 +49,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let depths = state.queue_depths.read().await;
     let bench_run = state.benchmark_run.read().await;
     let advisor = state.advisor.read().await;
+    let demand_ledger = state.demand_ledger.read().await;
 
     // Pre-compute per-stone tok/s (generation + roundtrip)
     let tps_gen = metrics.tokens_per_sec_by_stone(300);
@@ -165,6 +166,25 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     // ── Topology advisor ──
     let advice_json = serde_json::to_value(&*advisor).unwrap_or_default();
 
+    // ── Demand ledger (ORCH-0009) ──
+    let now = std::time::Instant::now();
+    let capability_dist = demand_ledger.capability_distribution(now);
+    let capability_rates = demand_ledger.capability_rates(now);
+    let model_dist = demand_ledger.model_distribution(now);
+    let demand_ledger_json = json!({
+        "confidence": (demand_ledger.confidence() * 100.0).round() / 100.0,
+        "total_requests": demand_ledger.total_requests,
+        "capability_distribution": capability_dist.iter()
+            .map(|(c, s)| (c.as_str().to_string(), json!((s * 1000.0).round() / 1000.0)))
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+        "capability_rates": capability_rates.iter()
+            .map(|(c, r)| (c.as_str().to_string(), json!((r * 10.0).round() / 10.0)))
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+        "model_distribution": model_dist.iter()
+            .map(|(m, s)| (m.clone(), json!((s * 1000.0).round() / 1000.0)))
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+    });
+
     json!({
         "offering_name": state.offering_name,
         "uptime_secs": state.start_time.elapsed().as_secs(),
@@ -177,6 +197,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
             "stable": placement.stable,
         },
         "demand": demand_json,
+        "demand_ledger": demand_ledger_json,
         "advisor": advice_json,
         "metrics": {
             "requests_total": metrics.requests_total,

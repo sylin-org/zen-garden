@@ -153,6 +153,7 @@ pub async fn put_pin(
         );
     }
 
+    state.refresh_recommendations().await;
     state.emit_event("config.updated", "{}").await;
     (
         StatusCode::OK,
@@ -179,6 +180,7 @@ pub async fn delete_pin(
         );
     }
 
+    state.refresh_recommendations().await;
     state.emit_event("config.updated", "{}").await;
     (
         StatusCode::OK,

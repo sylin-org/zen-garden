@@ -3,11 +3,12 @@
 //! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
 //! Mutation goes through methods that acquire write locks.
 
-use crate::domain::fitness::BenchmarkRun;
 use crate::domain::advisor::TopologyAdvice;
+use crate::domain::demand::DemandLedger;
+use crate::domain::fitness::BenchmarkRun;
 use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
-use crate::domain::tiering;
+use crate::domain::{recommendation, tiering};
 use crate::domain::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -67,6 +68,10 @@ pub struct AppState {
     // ── Metrics ──
     pub metrics: Arc<RwLock<MetricsEngine>>,
 
+    // ── Demand Ledger (ORCH-0009) ──
+    /// Exponentially decayed demand tracking for the topology advisor.
+    pub demand_ledger: Arc<RwLock<DemandLedger>>,
+
     // ── Events ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
 
@@ -87,6 +92,11 @@ pub struct AppState {
     // ── Advisor ──
     /// Topology recommendation (cold T=0 + periodic refresh).
     pub advisor: Arc<RwLock<TopologyAdvice>>,
+
+    // ── Recommendations (ORCH-0011) ──
+    /// Cached moniker resolution: capability → selected model name.
+    /// Refreshed on model/instance/benchmark/pin changes.
+    pub recommended_models: Arc<RwLock<HashMap<String, String>>>,
 
     // ── Fitness ──
     /// Full benchmark run state (tree: run → stones → tests → samples).
@@ -133,12 +143,14 @@ impl AppState {
             queue_depths: Arc::new(RwLock::new(HashMap::new())),
             config: Arc::new(RwLock::new(config)),
             metrics: Arc::new(RwLock::new(engine)),
+            demand_ledger: Arc::new(RwLock::new(DemandLedger::new())),
             dashboard_tx,
             jobs: Arc::new(RwLock::new(VecDeque::with_capacity(20))),
             snapshot_rx,
             metrics_tx,
             placement: Arc::new(RwLock::new(PlacementPlan::default())),
             advisor: Arc::new(RwLock::new(TopologyAdvice::empty())),
+            recommended_models: Arc::new(RwLock::new(HashMap::new())),
             benchmark_run: Arc::new(RwLock::new(BenchmarkRun::idle())),
             benchmark_cancel: Arc::new(RwLock::new(None)),
             shutdown,
@@ -218,6 +230,7 @@ impl AppState {
         }
 
         self.recompute_tiers().await;
+        self.refresh_recommendations().await;
         self.emit_event("registry.updated", "{}").await;
     }
 
@@ -228,6 +241,7 @@ impl AppState {
             reg.remove(endpoint);
         }
         self.recompute_tiers().await;
+        self.refresh_recommendations().await;
         self.emit_event("registry.updated", "{}").await;
     }
 
@@ -255,12 +269,15 @@ impl AppState {
         models_available: Vec<String>,
         models_loaded: Vec<LoadedModel>,
     ) {
-        let mut reg = self.instances.write().await;
-        if let Some(inst) = reg.get_mut(endpoint) {
-            inst.models_available = models_available;
-            inst.models_loaded = models_loaded;
-            inst.last_profiled = Instant::now();
+        {
+            let mut reg = self.instances.write().await;
+            if let Some(inst) = reg.get_mut(endpoint) {
+                inst.models_available = models_available;
+                inst.models_loaded = models_loaded;
+                inst.last_profiled = Instant::now();
+            }
         }
+        self.refresh_recommendations().await;
     }
 
     /// Merge hardware data into an existing instance (partial update).
@@ -316,14 +333,20 @@ impl AppState {
 
     /// Add or update a model's metadata.
     pub async fn upsert_model(&self, info: ModelInfo) {
-        let mut models = self.models.write().await;
-        models.insert(info.name.clone(), info);
+        {
+            let mut models = self.models.write().await;
+            models.insert(info.name.clone(), info);
+        }
+        self.refresh_recommendations().await;
     }
 
     /// Remove a model from the global registry.
     pub async fn remove_model(&self, name: &str) {
-        let mut models = self.models.write().await;
-        models.remove(name);
+        {
+            let mut models = self.models.write().await;
+            models.remove(name);
+        }
+        self.refresh_recommendations().await;
     }
 
     // ── Tier Recomputation ───────────────────────────────────────
@@ -439,6 +462,35 @@ impl AppState {
             .and_then(|s| s.vram_budget_mb)
             .map(|mb| mb * 1_048_576)
             .unwrap_or(vram_total)
+    }
+
+    // ── Recommendations ────────────────────────────────────────
+
+    /// All user-facing recommendation capabilities.
+    const ALL_CAPABILITIES: &[&str] = &[
+        "quick", "chat", "synthesis", "vision", "ocr", "tools", "thinking", "embedding",
+    ];
+
+    /// Recompute the cached `recommended_models` map from current state.
+    ///
+    /// Called after any mutation that could change recommendation rankings:
+    /// model/instance registry, benchmark results, or pin changes.
+    pub async fn refresh_recommendations(&self) {
+        let models = self.models.read().await.clone();
+        let instances = self.instances.read().await.clone();
+        let gpu_matrix = self.benchmark_run.read().await.gpu_matrix.clone();
+        let pins = self.config.read().await.features.pins.clone();
+
+        let mut cache = HashMap::with_capacity(Self::ALL_CAPABILITIES.len());
+        for &cap in Self::ALL_CAPABILITIES {
+            let pin = pins.get(cap).map(|s| s.as_str());
+            let resp = recommendation::recommend(cap, &models, &instances, &gpu_matrix, pin);
+            if let Some(selected) = resp.selected {
+                cache.insert(cap.to_string(), selected);
+            }
+        }
+
+        *self.recommended_models.write().await = cache;
     }
 
     // ── Tending ──────────────────────────────────────────────────

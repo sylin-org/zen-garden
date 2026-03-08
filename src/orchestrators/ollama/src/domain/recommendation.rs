@@ -57,12 +57,14 @@ const MAX_RECOMMENDATIONS: usize = 5;
 // ── Capability mapping ──────────────────────────────────────────
 
 /// Map a user-facing capability string to the fitness `Capability` enum.
-/// Quick, chat, completion, synthesis, tools, and thinking all use the generate path.
+///
+/// Tools and Thinking have dedicated fitness benchmarks (ORCH-0010).
+/// Falls back to Generate when no Tools/Think entry exists in the matrix.
 fn fitness_capability(cap: &str) -> Option<Capability> {
     match cap {
-        "quick" | "chat" | "completion" | "synthesis" | "tools" | "thinking" => {
-            Some(Capability::Generate)
-        }
+        "tools" => Some(Capability::Tools),
+        "thinking" => Some(Capability::Think),
+        "quick" | "chat" | "completion" | "synthesis" => Some(Capability::Generate),
         "embedding" => Some(Capability::Embed),
         "vision" | "ocr" => Some(Capability::Vision),
         _ => None,
@@ -308,9 +310,24 @@ fn score_model(
 
     if let (Some(stones), Some(cap)) = (stones, fitness_cap) {
         for &(stone_name, endpoint, _loaded) in stones {
-            let entry = gpu_matrix.entries.iter().find(|e| {
-                e.model == model.name && e.capability == cap && e.endpoint == endpoint
-            });
+            let entry = gpu_matrix
+                .entries
+                .iter()
+                .find(|e| {
+                    e.model == model.name && e.capability == cap && e.endpoint == endpoint
+                })
+                // Fallback: Tools/Think → Generate when no specific entry exists
+                .or_else(|| {
+                    if matches!(cap, Capability::Tools | Capability::Think) {
+                        gpu_matrix.entries.iter().find(|e| {
+                            e.model == model.name
+                                && e.capability == Capability::Generate
+                                && e.endpoint == endpoint
+                        })
+                    } else {
+                        None
+                    }
+                });
 
             if let Some(e) = entry {
                 has_fitness = true;
@@ -533,15 +550,28 @@ mod tests {
         tps: f64,
         cold_ms: u64,
     ) -> GpuMatrixEntry {
+        make_entry_cap(model, stone, endpoint, Capability::Generate, verdict, tps, cold_ms)
+    }
+
+    fn make_entry_cap(
+        model: &str,
+        stone: &str,
+        endpoint: &str,
+        capability: Capability,
+        verdict: Verdict,
+        tps: f64,
+        cold_ms: u64,
+    ) -> GpuMatrixEntry {
         GpuMatrixEntry {
             model: model.to_string(),
-            capability: Capability::Generate,
+            capability,
             stone_name: stone.to_string(),
             endpoint: endpoint.to_string(),
             gpu_model: "RTX 3060".to_string(),
             verdict,
             median_tps: tps,
             cold_start_ms: cold_ms,
+            valid_ratio: None,
         }
     }
 
@@ -1242,5 +1272,195 @@ mod tests {
 
         let resp = recommend("chat", &models, &instances, &matrix, None);
         assert!(resp.recommendations.len() <= 5);
+    }
+
+    // ── Tools/Think fitness fallback tests (ORCH-0010) ──────────
+
+    #[test]
+    fn tools_uses_dedicated_tools_entry_over_generate() {
+        let mut models = HashMap::new();
+        models.insert(
+            "toolmodel:latest".to_string(),
+            make_model("toolmodel:latest", &["completion", "tools"], Some(32_000)),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance("s1", "http://s1:11434", &["toolmodel:latest"], &[]),
+        );
+
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                // Generate entry: Fast
+                make_entry("toolmodel:latest", "s1", "http://s1:11434", Verdict::Fast, 50.0, 5000),
+                // Tools entry: Degraded (flaky)
+                make_entry_cap(
+                    "toolmodel:latest", "s1", "http://s1:11434",
+                    Capability::Tools, Verdict::Degraded, 45.0, 6000,
+                ),
+            ],
+        };
+
+        let resp = recommend("tools", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations.len(), 1);
+        // Should use the Tools entry (Degraded), NOT the Generate entry (Fast)
+        assert_eq!(resp.recommendations[0].verdict.as_deref(), Some("degraded"));
+    }
+
+    #[test]
+    fn tools_falls_back_to_generate_when_no_tools_entry() {
+        let mut models = HashMap::new();
+        models.insert(
+            "toolmodel:latest".to_string(),
+            make_model("toolmodel:latest", &["completion", "tools"], Some(32_000)),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance("s1", "http://s1:11434", &["toolmodel:latest"], &[]),
+        );
+
+        // Only a Generate entry — no Tools entry
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                make_entry("toolmodel:latest", "s1", "http://s1:11434", Verdict::Fast, 50.0, 5000),
+            ],
+        };
+
+        let resp = recommend("tools", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations.len(), 1);
+        // Should fall back to Generate entry (Fast)
+        assert_eq!(resp.recommendations[0].verdict.as_deref(), Some("fast"));
+    }
+
+    #[test]
+    fn think_uses_dedicated_think_entry_over_generate() {
+        let mut models = HashMap::new();
+        models.insert(
+            "thinker:latest".to_string(),
+            make_model("thinker:latest", &["completion", "thinking"], Some(128_000)),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance("s1", "http://s1:11434", &["thinker:latest"], &[]),
+        );
+
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                // Generate: Fast (burst is fine)
+                make_entry("thinker:latest", "s1", "http://s1:11434", Verdict::Fast, 35.0, 8000),
+                // Think: Vetoed (sustained throughput collapses)
+                make_entry_cap(
+                    "thinker:latest", "s1", "http://s1:11434",
+                    Capability::Think, Verdict::Vetoed, 1.2, 50000,
+                ),
+            ],
+        };
+
+        let resp = recommend("thinking", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations.len(), 1);
+        // Should use the Think entry (Vetoed), NOT the Generate entry (Fast)
+        assert_eq!(resp.recommendations[0].verdict.as_deref(), Some("vetoed"));
+    }
+
+    #[test]
+    fn think_falls_back_to_generate_when_no_think_entry() {
+        let mut models = HashMap::new();
+        models.insert(
+            "thinker:latest".to_string(),
+            make_model("thinker:latest", &["completion", "thinking"], Some(128_000)),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance("s1", "http://s1:11434", &["thinker:latest"], &[]),
+        );
+
+        // Only Generate entry — no Think entry
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                make_entry("thinker:latest", "s1", "http://s1:11434", Verdict::Fast, 35.0, 8000),
+            ],
+        };
+
+        let resp = recommend("thinking", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations.len(), 1);
+        // Should fall back to Generate (Fast)
+        assert_eq!(resp.recommendations[0].verdict.as_deref(), Some("fast"));
+    }
+
+    #[test]
+    fn generate_does_not_fall_back_to_tools_or_think() {
+        // Only Tools/Think fall back to Generate, NOT the other way around
+        let mut models = HashMap::new();
+        models.insert(
+            "m:latest".to_string(),
+            make_model("m:latest", &["completion", "tools", "thinking"], Some(32_000)),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance("s1", "http://s1:11434", &["m:latest"], &[]),
+        );
+
+        // Only Tools and Think entries — no Generate entry
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                make_entry_cap("m:latest", "s1", "http://s1:11434", Capability::Tools, Verdict::Fast, 40.0, 5000),
+                make_entry_cap("m:latest", "s1", "http://s1:11434", Capability::Think, Verdict::Fast, 30.0, 8000),
+            ],
+        };
+
+        let resp = recommend("chat", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations.len(), 1);
+        // No Generate entry exists and chat doesn't fall back to Tools/Think
+        assert_eq!(resp.recommendations[0].verdict, None);
+    }
+
+    #[test]
+    fn tools_multi_stone_uses_best_dedicated_entry() {
+        let mut models = HashMap::new();
+        models.insert(
+            "m:latest".to_string(),
+            make_model("m:latest", &["completion", "tools"], Some(32_000)),
+        );
+
+        let mut instances = HashMap::new();
+        instances.insert(
+            "s1".to_string(),
+            make_instance("s1", "http://s1:11434", &["m:latest"], &[]),
+        );
+        instances.insert(
+            "s2".to_string(),
+            make_instance("s2", "http://s2:11434", &["m:latest"], &[]),
+        );
+
+        let matrix = GpuMatrix {
+            generated_at: None,
+            entries: vec![
+                // s1: Generate Fast, Tools Degraded (flaky on Q4)
+                make_entry("m:latest", "s1", "http://s1:11434", Verdict::Fast, 30.0, 5000),
+                make_entry_cap("m:latest", "s1", "http://s1:11434", Capability::Tools, Verdict::Degraded, 28.0, 6000),
+                // s2: Generate Fast, Tools Fast (reliable on Q8)
+                make_entry("m:latest", "s2", "http://s2:11434", Verdict::Fast, 45.0, 4000),
+                make_entry_cap("m:latest", "s2", "http://s2:11434", Capability::Tools, Verdict::Fast, 42.0, 4500),
+            ],
+        };
+
+        let resp = recommend("tools", &models, &instances, &matrix, None);
+        assert_eq!(resp.recommendations.len(), 1);
+        // Best stone for tools is s2 (Fast), so overall verdict should be Fast
+        assert_eq!(resp.recommendations[0].verdict.as_deref(), Some("fast"));
     }
 }

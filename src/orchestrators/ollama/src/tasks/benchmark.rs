@@ -87,8 +87,298 @@ const VISION_IMAGES: &[(&str, &[u8])] = &[
 
 const VISION_PROMPT: &str = "Describe what you see in this image in detail.";
 const NUM_PREDICT: u32 = 80;
+/// Sustained generation for Think benchmark (ORCH-0010).
+const THINK_NUM_PREDICT: u32 = 2000;
 const YIELD_DELAY: Duration = Duration::from_secs(5);
 const MAX_YIELD_WAIT: Duration = Duration::from_secs(300);
+
+// ── Think Benchmark Prompts (ORCH-0010) ─────────────────────────
+
+const THINK_PROMPTS: &[&str] = &[
+    "Solve step by step: A farmer has 3 fields of 120, 85, and 200 acres. He plants \
+     wheat on 40% of each field, corn on 35%, and leaves the rest fallow. Wheat yields \
+     42 bushels/acre at $6.50/bushel, corn yields 155 bushels/acre at $4.25/bushel. \
+     Calculate the total revenue from each crop, the total fallow acreage, and the \
+     average revenue per planted acre across all fields.",
+    "Compare and contrast 5 sorting algorithms (bubble sort, merge sort, quicksort, \
+     heapsort, and radix sort) in detail. For each algorithm, explain the mechanism, \
+     best/worst/average time complexity, space complexity, stability, and ideal use \
+     cases. Then rank them for three scenarios: nearly-sorted data, random integers, \
+     and strings of varying length.",
+    "Write a detailed project plan for building a community library from scratch in a \
+     small town. Cover site selection, funding sources, architectural requirements, \
+     construction phases, technology infrastructure, staffing plan, collection \
+     development, community programs, and a 24-month timeline with milestones.",
+];
+
+// ── Tools Benchmark: Graduated Pool Sizes (ORCH-0010) ───────────
+
+/// A single tools benchmark prompt with its pool context.
+struct ToolsPrompt {
+    user_message: &'static str,
+    tools: serde_json::Value,
+    expected_fns: Vec<&'static str>,
+    pool_size: usize,
+}
+
+/// Build a JSON tool schema from name, description, and parameter specs.
+fn tool_schema(name: &str, desc: &str, params: &[(&str, &str)]) -> serde_json::Value {
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::new();
+    for &(pname, ptype) in params {
+        properties.insert(
+            pname.to_string(),
+            serde_json::json!({"type": ptype, "description": pname}),
+        );
+        required.push(pname);
+    }
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": desc,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        }
+    })
+}
+
+/// 100 distractor tool schemas across 10 categories.
+/// None overlap with target tools (get_weather, calculate, search,
+/// get_time, send_email, translate_text, get_directions).
+fn distractor_pool() -> Vec<serde_json::Value> {
+    // (name, description, [(param_name, param_type)])
+    let defs: &[(&str, &str, &[(&str, &str)])] = &[
+        // ── Communication ──────────────────────────────────
+        ("post_slack_message", "Post a message to Slack", &[("channel", "string"), ("text", "string")]),
+        ("send_sms", "Send an SMS message", &[("phone_number", "string"), ("message", "string")]),
+        ("create_notification", "Create a push notification", &[("title", "string"), ("body", "string")]),
+        ("forward_message", "Forward a message", &[("message_id", "string"), ("recipient", "string")]),
+        ("read_inbox", "Read inbox messages", &[("folder", "string")]),
+        ("archive_message", "Archive a message", &[("message_id", "string")]),
+        ("create_channel", "Create a chat channel", &[("name", "string"), ("topic", "string")]),
+        ("list_contacts", "List contacts", &[("group", "string")]),
+        ("block_user", "Block a user", &[("username", "string")]),
+        ("unsubscribe", "Unsubscribe from notifications", &[("list_id", "string")]),
+        // ── Calendar ───────────────────────────────────────
+        ("create_event", "Create a calendar event", &[("title", "string"), ("date", "string"), ("time", "string")]),
+        ("list_events", "List calendar events", &[("date", "string")]),
+        ("delete_event", "Delete a calendar event", &[("event_id", "string")]),
+        ("update_event", "Update a calendar event", &[("event_id", "string"), ("title", "string")]),
+        ("set_reminder", "Set a reminder", &[("message", "string"), ("time", "string")]),
+        ("find_free_slot", "Find available time slots", &[("date", "string"), ("duration", "string")]),
+        ("accept_invite", "Accept a meeting invite", &[("invite_id", "string")]),
+        ("decline_invite", "Decline a meeting invite", &[("invite_id", "string")]),
+        ("reschedule_meeting", "Reschedule a meeting", &[("meeting_id", "string"), ("new_time", "string")]),
+        ("get_agenda", "Get today's agenda", &[("date", "string")]),
+        // ── File Operations ────────────────────────────────
+        ("read_file", "Read a file", &[("path", "string")]),
+        ("write_file", "Write to a file", &[("path", "string"), ("content", "string")]),
+        ("delete_file", "Delete a file", &[("path", "string")]),
+        ("list_directory", "List directory contents", &[("path", "string")]),
+        ("copy_file", "Copy a file", &[("source", "string"), ("destination", "string")]),
+        ("move_file", "Move a file", &[("source", "string"), ("destination", "string")]),
+        ("compress_files", "Compress files into archive", &[("files", "string"), ("output", "string")]),
+        ("extract_archive", "Extract an archive", &[("archive", "string"), ("destination", "string")]),
+        ("get_file_info", "Get file metadata", &[("path", "string")]),
+        ("create_folder", "Create a directory", &[("path", "string")]),
+        // ── Database ───────────────────────────────────────
+        ("query_database", "Execute a database query", &[("query", "string"), ("database", "string")]),
+        ("insert_record", "Insert a database record", &[("table", "string"), ("data", "string")]),
+        ("update_record", "Update a database record", &[("table", "string"), ("id", "string"), ("data", "string")]),
+        ("delete_record", "Delete a database record", &[("table", "string"), ("id", "string")]),
+        ("create_table", "Create a database table", &[("name", "string"), ("schema", "string")]),
+        ("drop_table", "Drop a database table", &[("name", "string")]),
+        ("run_migration", "Run database migration", &[("version", "string")]),
+        ("count_records", "Count records in a table", &[("table", "string")]),
+        ("export_data", "Export data to file", &[("table", "string"), ("format", "string")]),
+        ("import_data", "Import data from file", &[("file", "string"), ("table", "string")]),
+        // ── Web & API ──────────────────────────────────────
+        ("fetch_url", "Fetch content from URL", &[("url", "string")]),
+        ("scrape_webpage", "Scrape a webpage", &[("url", "string"), ("selector", "string")]),
+        ("check_website", "Check website status", &[("url", "string")]),
+        ("download_file", "Download a file from URL", &[("url", "string"), ("destination", "string")]),
+        ("upload_file", "Upload a file", &[("file", "string"), ("url", "string")]),
+        ("parse_html", "Parse HTML content", &[("html", "string")]),
+        ("validate_url", "Validate a URL", &[("url", "string")]),
+        ("shorten_url", "Shorten a URL", &[("url", "string")]),
+        ("ping_server", "Ping a server", &[("host", "string")]),
+        ("check_ssl_cert", "Check SSL certificate", &[("domain", "string")]),
+        // ── Finance ────────────────────────────────────────
+        ("get_stock_price", "Get stock price", &[("symbol", "string")]),
+        ("convert_currency", "Convert between currencies", &[("amount", "string"), ("from", "string"), ("to", "string")]),
+        ("calculate_interest", "Calculate interest", &[("principal", "string"), ("rate", "string"), ("years", "string")]),
+        ("track_expense", "Track an expense", &[("amount", "string"), ("category", "string")]),
+        ("create_invoice", "Create an invoice", &[("client", "string"), ("amount", "string")]),
+        ("process_payment", "Process a payment", &[("amount", "string"), ("method", "string")]),
+        ("get_balance", "Get account balance", &[("account", "string")]),
+        ("calculate_tax", "Calculate tax", &[("income", "string"), ("jurisdiction", "string")]),
+        ("get_exchange_rate", "Get exchange rate", &[("from", "string"), ("to", "string")]),
+        ("generate_report", "Generate financial report", &[("period", "string"), ("type", "string")]),
+        // ── System & DevOps ────────────────────────────────
+        ("get_system_info", "Get system information", &[("component", "string")]),
+        ("check_disk_space", "Check disk space", &[("path", "string")]),
+        ("list_processes", "List running processes", &[("filter", "string")]),
+        ("kill_process", "Kill a process", &[("pid", "string")]),
+        ("restart_service", "Restart a service", &[("service", "string")]),
+        ("check_memory", "Check memory usage", &[("unit", "string")]),
+        ("get_cpu_usage", "Get CPU usage", &[("interval", "string")]),
+        ("clear_cache", "Clear system cache", &[("type", "string")]),
+        ("rotate_logs", "Rotate log files", &[("service", "string")]),
+        ("run_healthcheck", "Run health check", &[("service", "string")]),
+        // ── Smart Home ─────────────────────────────────────
+        ("set_thermostat", "Set thermostat temperature", &[("temperature", "string"), ("zone", "string")]),
+        ("toggle_lights", "Toggle lights on/off", &[("room", "string"), ("state", "string")]),
+        ("lock_door", "Lock or unlock a door", &[("door", "string"), ("action", "string")]),
+        ("set_alarm", "Set an alarm", &[("time", "string"), ("label", "string")]),
+        ("check_camera", "Check security camera", &[("camera_id", "string")]),
+        ("play_music", "Play music", &[("song", "string"), ("room", "string")]),
+        ("set_timer", "Set a countdown timer", &[("duration", "string"), ("label", "string")]),
+        ("adjust_volume", "Adjust speaker volume", &[("level", "string"), ("room", "string")]),
+        ("water_plants", "Water the plants", &[("zone", "string"), ("duration", "string")]),
+        ("feed_pet", "Dispense pet food", &[("pet", "string"), ("portion", "string")]),
+        // ── Development ────────────────────────────────────
+        ("run_tests", "Run test suite", &[("path", "string"), ("filter", "string")]),
+        ("format_code", "Format source code", &[("file", "string"), ("style", "string")]),
+        ("lint_code", "Lint source code", &[("file", "string")]),
+        ("deploy_app", "Deploy application", &[("environment", "string"), ("version", "string")]),
+        ("create_branch", "Create a git branch", &[("name", "string"), ("base", "string")]),
+        ("review_code", "Review code changes", &[("pr_id", "string")]),
+        ("generate_docs", "Generate documentation", &[("source", "string"), ("output", "string")]),
+        ("profile_performance", "Profile code performance", &[("target", "string"), ("duration", "string")]),
+        ("run_benchmark_suite", "Run performance benchmarks", &[("suite", "string")]),
+        ("analyze_logs", "Analyze log files", &[("file", "string"), ("pattern", "string")]),
+        // ── Data & AI ──────────────────────────────────────
+        ("classify_text", "Classify text into categories", &[("text", "string"), ("categories", "string")]),
+        ("sentiment_analysis", "Analyze text sentiment", &[("text", "string")]),
+        ("extract_entities", "Extract named entities", &[("text", "string")]),
+        ("summarize_document", "Summarize a document", &[("text", "string"), ("max_length", "string")]),
+        ("generate_image", "Generate an image", &[("prompt", "string"), ("size", "string")]),
+        ("resize_image", "Resize an image", &[("path", "string"), ("width", "string"), ("height", "string")]),
+        ("detect_language", "Detect text language", &[("text", "string")]),
+        ("spell_check", "Check spelling", &[("text", "string")]),
+        ("convert_format", "Convert file format", &[("input", "string"), ("output_format", "string")]),
+        ("recognize_speech", "Recognize speech from audio", &[("audio_file", "string")]),
+    ];
+
+    defs.iter()
+        .map(|(name, desc, params)| tool_schema(name, desc, params))
+        .collect()
+}
+
+/// Target tool definitions used in benchmark prompts.
+fn target_tools() -> Vec<(&'static str, &'static str, Vec<(&'static str, &'static str)>)> {
+    vec![
+        ("get_weather", "Get current weather for a city", vec![("city", "string")]),
+        ("calculate", "Evaluate a math expression", vec![("expression", "string")]),
+        ("search", "Search for documents", vec![("query", "string"), ("limit", "integer")]),
+        ("get_time", "Get current time in a city", vec![("city", "string")]),
+        ("send_email", "Send an email message", vec![("to", "string"), ("subject", "string"), ("body", "string")]),
+        ("translate_text", "Translate text to another language", vec![("text", "string"), ("target_language", "string")]),
+        ("get_directions", "Get directions between two locations", vec![("origin", "string"), ("destination", "string")]),
+    ]
+}
+
+/// Build a tool array: the target tool(s) embedded in a pool of distractors.
+fn build_tool_pool(
+    target_names: &[&str],
+    pool_size: usize,
+    targets: &[(&str, &str, Vec<(&str, &str)>)],
+    distractors: &[serde_json::Value],
+) -> serde_json::Value {
+    let mut tools: Vec<serde_json::Value> = Vec::with_capacity(pool_size);
+
+    // Add target tools
+    for name in target_names {
+        if let Some((n, desc, params)) = targets.iter().find(|(n, _, _)| n == name) {
+            tools.push(tool_schema(n, desc, &params));
+        }
+    }
+
+    // Fill remaining slots with distractors
+    let needed = pool_size.saturating_sub(tools.len());
+    for d in distractors.iter().take(needed) {
+        tools.push(d.clone());
+    }
+
+    serde_json::Value::Array(tools)
+}
+
+/// Build the graduated tools benchmark prompt suite.
+///
+/// Pool sizes: 1, 1, 3, 3, 5, 10, 25, 50, 100
+/// Tests precision at increasing distractor density.
+fn build_tools_prompts() -> Vec<ToolsPrompt> {
+    let targets = target_tools();
+    let distractors = distractor_pool();
+
+    vec![
+        // ── Tier 1: Pool=1 — Baseline (no distractors) ────
+        ToolsPrompt {
+            user_message: "What's the weather in Tokyo?",
+            tools: build_tool_pool(&["get_weather"], 1, &targets, &distractors),
+            expected_fns: vec!["get_weather"],
+            pool_size: 1,
+        },
+        ToolsPrompt {
+            user_message: "Calculate 15% tip on $84.50",
+            tools: build_tool_pool(&["calculate"], 1, &targets, &distractors),
+            expected_fns: vec!["calculate"],
+            pool_size: 1,
+        },
+        // ── Tier 2: Pool=3 — Basic resolution ─────────────
+        ToolsPrompt {
+            user_message: "Find recent papers on transformers, limit 3",
+            tools: build_tool_pool(&["search"], 3, &targets, &distractors),
+            expected_fns: vec!["search"],
+            pool_size: 3,
+        },
+        ToolsPrompt {
+            user_message: "What time is it in London and Tokyo?",
+            tools: build_tool_pool(&["get_time"], 3, &targets, &distractors),
+            expected_fns: vec!["get_time", "get_time"],
+            pool_size: 3,
+        },
+        // ── Tier 3: Pool=5 — Multi-function resolution ────
+        ToolsPrompt {
+            user_message: "Search for 'rust async' and get weather in Berlin",
+            tools: build_tool_pool(&["search", "get_weather"], 5, &targets, &distractors),
+            expected_fns: vec!["search", "get_weather"],
+            pool_size: 5,
+        },
+        // ── Tier 4: Pool=10 — Moderate noise ──────────────
+        ToolsPrompt {
+            user_message: "Send an email to alice@example.com with subject 'Project Update' and body 'The release is on track.'",
+            tools: build_tool_pool(&["send_email"], 10, &targets, &distractors),
+            expected_fns: vec!["send_email"],
+            pool_size: 10,
+        },
+        // ── Tier 5: Pool=25 — High noise ──────────────────
+        ToolsPrompt {
+            user_message: "What's the weather like in Paris right now?",
+            tools: build_tool_pool(&["get_weather"], 25, &targets, &distractors),
+            expected_fns: vec!["get_weather"],
+            pool_size: 25,
+        },
+        // ── Tier 6: Pool=50 — Stress test ─────────────────
+        ToolsPrompt {
+            user_message: "Translate 'hello world' to French",
+            tools: build_tool_pool(&["translate_text"], 50, &targets, &distractors),
+            expected_fns: vec!["translate_text"],
+            pool_size: 50,
+        },
+        // ── Tier 7: Pool=100 — Full stress test ───────────
+        ToolsPrompt {
+            user_message: "Get directions from New York to Boston",
+            tools: build_tool_pool(&["get_directions"], 100, &targets, &distractors),
+            expected_fns: vec!["get_directions"],
+            pool_size: 100,
+        },
+    ]
+}
 
 // ── Public Entry Point ───────────────────────────────────────────
 
@@ -425,6 +715,7 @@ async fn run_benchmark(
         *guard = None;
     }
     persist(&state).await;
+    state.refresh_recommendations().await;
 
     if was_cancelled {
         tracing::info!("fitness benchmark cancelled");
@@ -665,6 +956,12 @@ async fn run_stone(
             Capability::Vision => {
                 bench_vision(client, endpoint, stone_name, model_name, state).await
             }
+            Capability::Tools => {
+                bench_tools(client, endpoint, stone_name, model_name, state).await
+            }
+            Capability::Think => {
+                bench_think(client, endpoint, stone_name, model_name, state).await
+            }
         };
 
         match result {
@@ -678,11 +975,15 @@ async fn run_stone(
                             .iter_mut()
                             .find(|t| t.model == model_name && t.capability == capability)
                         {
-                            test.summarise();
+                            // Tools has its own verdict logic (override_tools_verdict)
+                            // that already set the summary — don't overwrite it.
+                            if test.summary.is_none() {
+                                test.summarise();
+                            }
                             test.status = TestStatus::Done;
                             test.summary
                                 .as_ref()
-                                .map(|s| (s.verdict, s.median_tps, s.cold_start_ms))
+                                .map(|s| (s.verdict, s.median_tps, s.cold_start_ms, s.valid_ratio))
                         } else {
                             None
                         }
@@ -691,25 +992,24 @@ async fn run_stone(
                     }
                 };
                 persist(state).await;
-                if let Some((verdict, tps, cold)) = summary_info {
+                if let Some((verdict, tps, cold, valid_ratio)) = summary_info {
                     tracing::info!(
                         stone = %stone_name, model = %model_name,
                         mode = %capability, verdict = %verdict,
                         cold_ms = cold, tps = format!("{:.1}", tps),
                         "benchmark result"
                     );
-                    notify(
-                        state,
-                        "benchmark.test.done",
-                        &serde_json::json!({
-                            "stone": stone_name, "model": &model_name,
-                            "capability": capability.to_string(),
-                            "verdict": verdict.to_string(),
-                            "tps": (tps * 10.0).round() / 10.0,
-                            "cold_start_ms": cold,
-                        }),
-                    )
-                    .await;
+                    let mut event = serde_json::json!({
+                        "stone": stone_name, "model": &model_name,
+                        "capability": capability.to_string(),
+                        "verdict": verdict.to_string(),
+                        "tps": (tps * 10.0).round() / 10.0,
+                        "cold_start_ms": cold,
+                    });
+                    if let Some(vr) = valid_ratio {
+                        event["valid_ratio"] = serde_json::json!(vr);
+                    }
+                    notify(state, "benchmark.test.done", &event).await;
                 }
             }
             Err(e) => {
@@ -924,6 +1224,245 @@ async fn bench_vision(
     Ok(())
 }
 
+// ── Tools Benchmark (ORCH-0010) ─────────────────────────────────
+
+async fn bench_tools(
+    client: &OllamaClient,
+    endpoint: &str,
+    stone_name: &str,
+    model: &str,
+    state: &AppState,
+) -> Result<()> {
+    let prompts = build_tools_prompts();
+    let mut valid_count: u32 = 0;
+    let total_prompts = prompts.len() as u32;
+
+    for (i, prompt) in prompts.iter().enumerate() {
+        let resp = client
+            .benchmark_chat_tools(endpoint, model, prompt.user_message, &prompt.tools)
+            .await?;
+
+        // Extract timing from the chat response
+        let cold_ms = resp
+            .get("load_duration")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            / 1_000_000;
+        let eval_count = resp
+            .get("eval_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let eval_dur = resp
+            .get("eval_duration")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let total_ms = resp
+            .get("total_duration")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            / 1_000_000;
+        let tps = if eval_dur > 0 {
+            eval_count as f64 / (eval_dur as f64 / 1_000_000_000.0)
+        } else {
+            0.0
+        };
+
+        // Validate tool calls in the response
+        let is_valid = validate_tool_calls(&resp, &prompt.expected_fns);
+        if is_valid {
+            valid_count += 1;
+        }
+
+        add_sample(
+            state,
+            stone_name,
+            model,
+            Capability::Tools,
+            Sample {
+                prompt_index: i as u32,
+                cold_start_ms: cold_ms,
+                tokens_per_second: tps,
+                total_duration_ms: total_ms,
+                error: if is_valid {
+                    None
+                } else {
+                    Some(format!("invalid tool call (pool={})", prompt.pool_size))
+                },
+            },
+        )
+        .await;
+
+        notify(
+            state,
+            "benchmark.sample",
+            &serde_json::json!({
+                "stone": stone_name, "model": model,
+                "capability": "tools", "index": i,
+                "of": total_prompts,
+                "pool_size": prompt.pool_size,
+                "valid": is_valid,
+                "tps": (tps * 10.0).round() / 10.0,
+            }),
+        )
+        .await;
+    }
+
+    // Override the summarise() verdict with tools-specific correctness logic.
+    // We do this after all samples are recorded.
+    override_tools_verdict(state, stone_name, model, valid_count, total_prompts).await;
+
+    Ok(())
+}
+
+/// Validate that the chat response contains valid tool calls matching expected function names.
+fn validate_tool_calls(resp: &serde_json::Value, expected_fns: &[&str]) -> bool {
+    // Ollama returns tool calls in message.tool_calls
+    let tool_calls = resp
+        .get("message")
+        .and_then(|m| m.get("tool_calls"))
+        .and_then(|tc| tc.as_array());
+
+    let calls = match tool_calls {
+        Some(arr) if !arr.is_empty() => arr,
+        _ => return false,
+    };
+
+    // Check that at least one expected function name appears in the tool calls.
+    // We validate: (1) function name exists, (2) it matches an expected name,
+    // (3) arguments parse as a JSON object.
+    let mut matched_fns: Vec<bool> = vec![false; expected_fns.len()];
+
+    for call in calls {
+        let fn_name = call
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|n| n.as_str());
+
+        let has_args = call
+            .get("function")
+            .and_then(|f| f.get("arguments"))
+            .map(|a| a.is_object())
+            .unwrap_or(false);
+
+        if let Some(name) = fn_name {
+            if has_args {
+                // Mark the first unmatched expected function with this name
+                for (idx, expected) in expected_fns.iter().enumerate() {
+                    if !matched_fns[idx] && *expected == name {
+                        matched_fns[idx] = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // All expected functions must have been matched
+    matched_fns.iter().all(|&m| m)
+}
+
+/// Override the standard summarise() verdict for tools with correctness-aware logic.
+async fn override_tools_verdict(
+    state: &AppState,
+    stone_name: &str,
+    model: &str,
+    valid_count: u32,
+    total_prompts: u32,
+) {
+    let mut run = state.benchmark_run.write().await;
+    if let Some(sr) = run.stones.iter_mut().find(|s| s.stone_name == stone_name) {
+        if let Some(test) = sr
+            .tests
+            .iter_mut()
+            .find(|t| t.model == model && t.capability == Capability::Tools)
+        {
+            // Compute median tps and cold start from successful samples
+            let ok_samples: Vec<&Sample> = test.samples.iter().filter(|s| s.error.is_none()).collect();
+            let median_tps = if ok_samples.is_empty() {
+                0.0
+            } else {
+                super::super::domain::fitness::median_f64(
+                    &ok_samples.iter().map(|s| s.tokens_per_second).collect::<Vec<_>>(),
+                )
+            };
+            let cold_start_ms = ok_samples.first().map(|s| s.cold_start_ms).unwrap_or(0);
+            let median_duration_ms = if ok_samples.is_empty() {
+                0
+            } else {
+                super::super::domain::fitness::median_u64(
+                    &ok_samples.iter().map(|s| s.total_duration_ms).collect::<Vec<_>>(),
+                )
+            };
+
+            let ratio = if total_prompts > 0 {
+                valid_count as f64 / total_prompts as f64
+            } else {
+                0.0
+            };
+            let verdict = Verdict::compute_tools(valid_count, total_prompts, cold_start_ms, median_tps);
+            test.summary = Some(TestSummary {
+                median_tps,
+                cold_start_ms,
+                median_duration_ms,
+                verdict,
+                valid_ratio: Some(ratio),
+            });
+        }
+    }
+}
+
+// ── Think Benchmark (ORCH-0010) ─────────────────────────────────
+
+async fn bench_think(
+    client: &OllamaClient,
+    endpoint: &str,
+    stone_name: &str,
+    model: &str,
+    state: &AppState,
+) -> Result<()> {
+    for (i, prompt) in THINK_PROMPTS.iter().enumerate() {
+        let resp = client
+            .benchmark_generate_long(endpoint, model, prompt, THINK_NUM_PREDICT)
+            .await?;
+
+        let cold_ms = resp.load_duration / 1_000_000;
+        let tps = if resp.eval_duration > 0 {
+            resp.eval_count as f64 / (resp.eval_duration as f64 / 1_000_000_000.0)
+        } else {
+            0.0
+        };
+        let total_ms = resp.total_duration / 1_000_000;
+
+        add_sample(
+            state,
+            stone_name,
+            model,
+            Capability::Think,
+            Sample {
+                prompt_index: i as u32,
+                cold_start_ms: cold_ms,
+                tokens_per_second: tps,
+                total_duration_ms: total_ms,
+                error: None,
+            },
+        )
+        .await;
+
+        notify(
+            state,
+            "benchmark.sample",
+            &serde_json::json!({
+                "stone": stone_name, "model": model,
+                "capability": "think", "index": i,
+                "of": THINK_PROMPTS.len(),
+                "tps": (tps * 10.0).round() / 10.0,
+            }),
+        )
+        .await;
+    }
+    Ok(())
+}
+
 // ── Capability Detection ─────────────────────────────────────────
 
 fn capabilities_to_test(model: &ModelInfo) -> Vec<Capability> {
@@ -939,6 +1478,14 @@ fn capabilities_to_test(model: &ModelInfo) -> Vec<Capability> {
 
     if model.capabilities.iter().any(|c| c == "vision") {
         modes.push(Capability::Vision);
+    }
+
+    if model.capabilities.iter().any(|c| c == "tools") {
+        modes.push(Capability::Tools);
+    }
+
+    if model.capabilities.iter().any(|c| c == "thinking") {
+        modes.push(Capability::Think);
     }
 
     if modes.is_empty() {
@@ -1035,6 +1582,7 @@ async fn record_synthetic_verdict(
                     cold_start_ms: 999_999,
                     median_duration_ms: 999_999,
                     verdict,
+                    valid_ratio: None,
                 });
                 test.status = TestStatus::Done;
                 test.error = Some(note.to_string());
@@ -1159,4 +1707,398 @@ async fn pull_model_and_wait(client: &OllamaClient, endpoint: &str, model: &str)
         let _bytes = chunk?;
     }
     Ok(())
+}
+
+// ── Tests ────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::types::ModelInfo;
+    use serde_json::json;
+
+    fn make_model_info(caps: &[&str]) -> ModelInfo {
+        ModelInfo {
+            name: "test:latest".into(),
+            parameter_count: None,
+            parameter_size: Some("7B".into()),
+            quantization_level: None,
+            family: None,
+            families: vec![],
+            capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            format: None,
+            size_disk: 4_000_000_000,
+            vram_bytes: None,
+            context_length: None,
+        }
+    }
+
+    // ── validate_tool_calls ─────────────────────────────────────
+
+    #[test]
+    fn valid_single_tool_call() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": {"city": "Tokyo"}
+                    }
+                }]
+            }
+        });
+        assert!(validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn valid_multiple_tool_calls_different_functions() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [
+                    {"function": {"name": "search", "arguments": {"query": "rust"}}},
+                    {"function": {"name": "get_weather", "arguments": {"city": "Berlin"}}}
+                ]
+            }
+        });
+        assert!(validate_tool_calls(&resp, &["search", "get_weather"]));
+    }
+
+    #[test]
+    fn valid_multiple_tool_calls_same_function() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [
+                    {"function": {"name": "get_time", "arguments": {"city": "London"}}},
+                    {"function": {"name": "get_time", "arguments": {"city": "Tokyo"}}}
+                ]
+            }
+        });
+        assert!(validate_tool_calls(&resp, &["get_time", "get_time"]));
+    }
+
+    #[test]
+    fn missing_tool_calls_field() {
+        let resp = json!({"message": {"content": "I can't do that"}});
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn empty_tool_calls_array() {
+        let resp = json!({"message": {"tool_calls": []}});
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn wrong_function_name() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {"name": "get_time", "arguments": {"city": "Tokyo"}}
+                }]
+            }
+        });
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn missing_arguments_field() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {"name": "get_weather"}
+                }]
+            }
+        });
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn arguments_not_an_object() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {"name": "get_weather", "arguments": "not an object"}
+                }]
+            }
+        });
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn arguments_is_array_not_object() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {"name": "get_weather", "arguments": ["Tokyo"]}
+                }]
+            }
+        });
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn extra_tool_calls_beyond_expected_still_valid() {
+        // Model calls more tools than expected — OK as long as expected ones are present
+        let resp = json!({
+            "message": {
+                "tool_calls": [
+                    {"function": {"name": "get_weather", "arguments": {"city": "Tokyo"}}},
+                    {"function": {"name": "get_time", "arguments": {"city": "Tokyo"}}}
+                ]
+            }
+        });
+        assert!(validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn missing_one_of_two_expected_functions() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [
+                    {"function": {"name": "search", "arguments": {"query": "rust"}}}
+                ]
+            }
+        });
+        // Expected both search and get_weather, only got search
+        assert!(!validate_tool_calls(&resp, &["search", "get_weather"]));
+    }
+
+    #[test]
+    fn duplicate_expected_but_only_one_actual_call() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [
+                    {"function": {"name": "get_time", "arguments": {"city": "London"}}}
+                ]
+            }
+        });
+        // Expected 2 get_time calls, only got 1
+        assert!(!validate_tool_calls(&resp, &["get_time", "get_time"]));
+    }
+
+    #[test]
+    fn missing_function_name_field() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {"arguments": {"city": "Tokyo"}}
+                }]
+            }
+        });
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn null_arguments_treated_as_missing() {
+        let resp = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {"name": "get_weather", "arguments": null}
+                }]
+            }
+        });
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    #[test]
+    fn no_message_field_at_all() {
+        let resp = json!({"model": "llama3:8b", "done": true});
+        assert!(!validate_tool_calls(&resp, &["get_weather"]));
+    }
+
+    // ── capabilities_to_test ────────────────────────────────────
+
+    #[test]
+    fn caps_completion_only_gets_generate() {
+        let model = make_model_info(&["completion"]);
+        let caps = capabilities_to_test(&model);
+        assert_eq!(caps, vec![Capability::Generate]);
+    }
+
+    #[test]
+    fn caps_tools_tag_adds_tools_capability() {
+        let model = make_model_info(&["completion", "tools"]);
+        let caps = capabilities_to_test(&model);
+        assert!(caps.contains(&Capability::Generate));
+        assert!(caps.contains(&Capability::Tools));
+        assert_eq!(caps.len(), 2);
+    }
+
+    #[test]
+    fn caps_thinking_tag_adds_think_capability() {
+        let model = make_model_info(&["completion", "thinking"]);
+        let caps = capabilities_to_test(&model);
+        assert!(caps.contains(&Capability::Generate));
+        assert!(caps.contains(&Capability::Think));
+        assert_eq!(caps.len(), 2);
+    }
+
+    #[test]
+    fn caps_all_five_capabilities() {
+        let model = make_model_info(&["completion", "embedding", "vision", "tools", "thinking"]);
+        let caps = capabilities_to_test(&model);
+        assert!(caps.contains(&Capability::Generate));
+        assert!(caps.contains(&Capability::Embed));
+        assert!(caps.contains(&Capability::Vision));
+        assert!(caps.contains(&Capability::Tools));
+        assert!(caps.contains(&Capability::Think));
+        assert_eq!(caps.len(), 5);
+    }
+
+    #[test]
+    fn caps_empty_defaults_to_generate() {
+        let model = make_model_info(&[]);
+        let caps = capabilities_to_test(&model);
+        assert_eq!(caps, vec![Capability::Generate]);
+    }
+
+    #[test]
+    fn caps_embedding_only_excludes_generate() {
+        let model = make_model_info(&["embedding"]);
+        let caps = capabilities_to_test(&model);
+        assert_eq!(caps, vec![Capability::Embed]);
+    }
+
+    #[test]
+    fn caps_vision_model_gets_generate_and_vision() {
+        let model = make_model_info(&["completion", "vision"]);
+        let caps = capabilities_to_test(&model);
+        assert!(caps.contains(&Capability::Generate));
+        assert!(caps.contains(&Capability::Vision));
+        assert_eq!(caps.len(), 2);
+    }
+
+    #[test]
+    fn caps_tools_without_completion_still_no_generate() {
+        // A model with only "tools" tag — no "completion" means no Generate
+        let model = make_model_info(&["tools"]);
+        let caps = capabilities_to_test(&model);
+        assert!(caps.contains(&Capability::Tools));
+        // No "completion" tag → no Generate, but empty fallback kicks in
+        // Actually: capabilities is not empty, so the completion check fails.
+        // The function only adds Generate if capabilities is empty OR has "completion".
+        assert!(!caps.contains(&Capability::Generate));
+    }
+
+    // ── Graduated pool generation ───────────────────────────────
+
+    #[test]
+    fn tools_prompts_have_graduated_pool_sizes() {
+        let prompts = build_tools_prompts();
+        assert!(prompts.len() >= 9, "expected at least 9 tools prompts");
+
+        let pool_sizes: Vec<usize> = prompts.iter().map(|p| p.pool_size).collect();
+        // Should include small, medium, and large pools
+        assert!(pool_sizes.contains(&1), "missing pool_size=1");
+        assert!(pool_sizes.contains(&3), "missing pool_size=3");
+        assert!(pool_sizes.contains(&10), "missing pool_size=10");
+        assert!(pool_sizes.contains(&25), "missing pool_size=25");
+        assert!(pool_sizes.contains(&50), "missing pool_size=50");
+        assert!(pool_sizes.contains(&100), "missing pool_size=100");
+    }
+
+    #[test]
+    fn tools_pool_contains_correct_number_of_tools() {
+        let prompts = build_tools_prompts();
+        for prompt in &prompts {
+            let tools = prompt.tools.as_array().expect("tools should be an array");
+            assert_eq!(
+                tools.len(),
+                prompt.pool_size,
+                "prompt '{}' declares pool_size={} but has {} tools",
+                prompt.user_message,
+                prompt.pool_size,
+                tools.len()
+            );
+        }
+    }
+
+    #[test]
+    fn target_tool_present_in_every_pool() {
+        let prompts = build_tools_prompts();
+        for prompt in &prompts {
+            let tools = prompt.tools.as_array().unwrap();
+            for expected_fn in &prompt.expected_fns {
+                let found = tools.iter().any(|t| {
+                    t.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        == Some(expected_fn)
+                });
+                assert!(
+                    found,
+                    "expected function '{}' not found in pool for prompt '{}'",
+                    expected_fn, prompt.user_message
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn distractor_pool_has_100_unique_tools() {
+        let pool = distractor_pool();
+        assert_eq!(pool.len(), 100, "distractor pool should have exactly 100 tools");
+
+        let names: Vec<&str> = pool
+            .iter()
+            .map(|t| {
+                t.get("function")
+                    .unwrap()
+                    .get("name")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+
+        // All unique
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "distractor pool has duplicate tool names"
+        );
+    }
+
+    #[test]
+    fn distractor_pool_does_not_overlap_with_targets() {
+        let pool = distractor_pool();
+        let targets = target_tools();
+        let target_names: Vec<&str> = targets.iter().map(|(n, _, _)| *n).collect();
+
+        for tool in &pool {
+            let name = tool
+                .get("function")
+                .unwrap()
+                .get("name")
+                .unwrap()
+                .as_str()
+                .unwrap();
+            assert!(
+                !target_names.contains(&name),
+                "distractor '{}' overlaps with target tool",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_schema_generates_valid_json() {
+        let schema = tool_schema("my_func", "Does something", &[("arg1", "string"), ("arg2", "integer")]);
+        assert_eq!(
+            schema["function"]["name"].as_str().unwrap(),
+            "my_func"
+        );
+        assert_eq!(
+            schema["function"]["description"].as_str().unwrap(),
+            "Does something"
+        );
+        let props = schema["function"]["parameters"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("arg1"));
+        assert!(props.contains_key("arg2"));
+        assert_eq!(props["arg1"]["type"].as_str().unwrap(), "string");
+        assert_eq!(props["arg2"]["type"].as_str().unwrap(), "integer");
+    }
 }

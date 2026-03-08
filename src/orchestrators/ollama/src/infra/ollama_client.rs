@@ -285,6 +285,63 @@ impl OllamaClient {
         resp.json().await.context("vision response parse failed")
     }
 
+    /// Benchmark timeout for sustained generation (2000 tokens, thinking).
+    const THINK_TIMEOUT: Duration = Duration::from_secs(300);
+
+    /// Run a non-streaming generate with extended timeout for sustained generation (Think benchmark).
+    pub async fn benchmark_generate_long(
+        &self,
+        endpoint: &str,
+        model: &str,
+        prompt: &str,
+        num_predict: u32,
+    ) -> Result<OllamaInferenceFinal> {
+        let url = format!("{endpoint}/api/generate");
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Self::THINK_TIMEOUT)
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": prompt,
+                "stream": false,
+                "options": { "num_predict": num_predict }
+            }))
+            .send()
+            .await
+            .context("think generate request timed out or unreachable")?;
+        let resp = check_status(resp, "benchmark think generate").await?;
+        resp.json().await.context("think generate response parse failed")
+    }
+
+    /// Run a non-streaming chat request with tool definitions.
+    ///
+    /// Returns the raw JSON response for tool call validation.
+    pub async fn benchmark_chat_tools(
+        &self,
+        endpoint: &str,
+        model: &str,
+        user_message: &str,
+        tools: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{endpoint}/api/chat");
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Self::BENCH_TIMEOUT)
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": user_message}],
+                "tools": tools,
+                "stream": false
+            }))
+            .send()
+            .await
+            .context("tools chat request timed out or unreachable")?;
+        let resp = check_status(resp, "benchmark chat tools").await?;
+        resp.json().await.context("tools chat response parse failed")
+    }
+
     /// Run an embed request and return timing data.
     pub async fn benchmark_embed(
         &self,

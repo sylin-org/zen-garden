@@ -979,6 +979,24 @@ let connected = true;
 let activityRing = [];
 const MAX_ACTIVITY = 30;
 
+// ── Capability Metadata ────────────────────────────────────────
+// Single registry — no hardcoded lists. `rank` controls display order.
+const CAP_META = {
+  generate: { rank: 0, label: 'Completion', css: 'completion' },
+  embed:    { rank: 1, label: 'Embedding',  css: 'embedding'  },
+  vision:   { rank: 2, label: 'Vision',     css: 'vision'     },
+  tools:    { rank: 3, label: 'Tool Use',   css: 'tools'      },
+  think:    { rank: 4, label: 'Thinking',   css: 'thinking'   },
+  thinking: { rank: 4, label: 'Thinking',   css: 'thinking'   },  // alias (model metadata uses "thinking")
+};
+function capLabel(cap) { return (CAP_META[cap] || {}).label || cap; }
+function capClass(cap) { return (CAP_META[cap] || {}).css   || cap; }
+function capRank(cap)  { return (CAP_META[cap] || {}).rank  ?? 99;  }
+/// Derive ordered capability list from the keys actually present in `dataKeys`.
+function capOrder(dataKeys) {
+  return [...new Set(dataKeys)].sort((a, b) => capRank(a) - capRank(b));
+}
+
 // ── Stone Color Palette ────────────────────────────────────────
 const STONE_COLORS = [
   '#84a59d', // sage
@@ -1242,7 +1260,7 @@ function renderModels(models) {
       `<span class="stone-dot loaded" title="${esc(s)}" style="--dot-color:${stoneColor(s)}; background:${stoneColor(s)}"></span>`
     ).join('') || '—';
     const caps = (m.capabilities || []).map(c =>
-      `<span class="cap-badge ${esc(c)}">${esc(c)}</span>`
+      `<span class="cap-badge ${capClass(c)}">${capLabel(c)}</span>`
     ).join('') || '—';
     const spec = [m.parameter_size, m.quantization_level].filter(Boolean).join(' / ') || '—';
     const ctx = m.context_length ? (m.context_length >= 1024 ? Math.round(m.context_length / 1024) + 'K' : m.context_length) : '—';
@@ -2036,10 +2054,6 @@ function renderBenchmark(run, stones) {
 }
 
 // ── Shared table helpers ──────────────────────────────────────────
-const CAP_LABEL = { generate: 'Completion', embed: 'Embedding', vision: 'Vision' };
-const CAP_CLASS = { generate: 'completion', embed: 'embedding', vision: 'vision' };
-const CAP_ORDER = ['generate', 'embed', 'vision'];
-
 function buildStoneHeaders(stoneNames, stoneInfo) {
   let html = '<th class="col-model">Model</th><th class="col-cap">Capability</th>';
   stoneNames.forEach(sn => {
@@ -2078,34 +2092,44 @@ function buildLegend(stoneNames) {
   return html;
 }
 
-function renderResultCell(verdict, medianTps, coldMs, cap, isBest) {
+function renderResultCell(verdict, medianTps, coldMs, cap, isBest, validRatio) {
   const v = (verdict || 'unknown').toLowerCase();
   let cls = 'verdict-cell verdict-' + v;
   if (isBest) cls += ' verdict-best';
-  // Blocked: show explicit label instead of meaningless 0.0 stats.
   if (v === 'blocked') {
     return `<td class="${cls}" data-tip="blocked — model errors on this stone"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats">blocked</span></div></td>`;
   }
   const tps = (medianTps || 0).toFixed(1);
   const cold = (coldMs / 1000).toFixed(1);
-  const tip = cap === 'embed'
-    ? `${v} · cold start ${cold}s`
-    : `${v} · ${tps} tok/s · cold start ${cold}s`;
-  const inner = cap === 'embed'
-    ? `<span class="verdict-dot"></span><span class="verdict-stats">${cold}s</span>`
-    : `<span class="verdict-dot"></span><span class="verdict-stats">${tps} · ${cold}s</span>`;
+  let tip, inner;
+  if (cap === 'tools' && validRatio != null) {
+    // Tools: reliability is the primary metric, speed secondary
+    const pct = Math.round(validRatio * 100);
+    tip = `${v} · ${pct}% valid · ${tps} tok/s · cold ${cold}s`;
+    inner = `<span class="verdict-dot"></span><span class="verdict-stats">${pct}% · ${tps}</span>`;
+  } else if (cap === 'embed') {
+    tip = `${v} · cold start ${cold}s`;
+    inner = `<span class="verdict-dot"></span><span class="verdict-stats">${cold}s</span>`;
+  } else {
+    // generate, vision, think: speed + cold start
+    tip = `${v} · ${tps} tok/s · cold start ${cold}s`;
+    inner = `<span class="verdict-dot"></span><span class="verdict-stats">${tps} · ${cold}s</span>`;
+  }
   return `<td class="${cls}" data-tip="${esc(tip)}"><div class="verdict-inner">${inner}</div></td>`;
 }
 
 /// Score a result for best-stone comparison.
-/// Higher is better.  Verdict rank dominates, then TPS, then cold (inverted).
-function bestStoneScore(verdict, medianTps, coldMs, cap) {
+/// Higher is better.  Verdict rank dominates, then capability-appropriate secondary.
+function bestStoneScore(verdict, medianTps, coldMs, cap, validRatio) {
   const vRank = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
   const vr = vRank[(verdict || '').toLowerCase()] || 0;
   const tps = medianTps || 0;
   const cold = coldMs || 999999;
-  // Embed has no TPS — rank by verdict then cold start only.
   if (cap === 'embed') return vr * 1e9 + (1e6 - cold);
+  // Tools: reliability dominates after verdict, then speed as tiebreaker.
+  if (cap === 'tools' && validRatio != null) {
+    return vr * 1e9 + validRatio * 1e6 + tps * 1e2 + (1e6 - cold);
+  }
   return vr * 1e9 + tps * 1e4 + (1e6 - cold);
 }
 
@@ -2114,7 +2138,7 @@ function findBestStone(results, cap) {
   if (results.length === 0) return null;
   let best = null, bestScore = -Infinity;
   for (const r of results) {
-    const s = bestStoneScore(r.verdict, r.medianTps, r.coldMs, cap);
+    const s = bestStoneScore(r.verdict, r.medianTps, r.coldMs, cap, r.validRatio);
     if (s > bestScore) { bestScore = s; best = r.stone; }
   }
   return best;
@@ -2187,7 +2211,7 @@ function buildModelRows(modelNames, capsFn, cellFn) {
       if (isLast) cls.push('model-last-row');
       html += `<tr class="${cls.join(' ')}">`;
       if (isFirst) html += `<td class="model-cell" rowspan="${modelCaps.length}">${esc(model)}</td>`;
-      html += `<td class="cap-cell"><span class="cap-badge ${CAP_CLASS[cap]}">${CAP_LABEL[cap]}</span></td>`;
+      html += `<td class="cap-cell"><span class="cap-badge ${capClass(cap)}">${capLabel(cap)}</span></td>`;
       html += cellFn(model, cap);
       html += '</tr>';
     });
@@ -2216,7 +2240,9 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
   });
 
   const modelSet = new Set();
-  stoneReports.forEach(sr => (sr.tests || []).forEach(t => modelSet.add(t.model)));
+  const capSet = new Set();
+  stoneReports.forEach(sr => (sr.tests || []).forEach(t => { modelSet.add(t.model); capSet.add(t.capability); }));
+  const liveCaps = capOrder([...capSet]);
 
   // Build model-level score index for sorting
   const modelMetaLookup = new Map();
@@ -2229,7 +2255,7 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
     let aggMax = -Infinity;
     stoneNames.forEach(sn => {
       let stoneMax = -Infinity;
-      CAP_ORDER.forEach(cap => {
+      liveCaps.forEach(cap => {
         const t = testLookup.get(`${model}|${sn}|${cap}`);
         let score = -Infinity;
         if (t && t.status === 'done' && t.summary) {
@@ -2258,17 +2284,17 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
   html += buildStoneHeaders(stoneNames, stoneInfo);
   html += '</tr></thead><tbody>';
   html += buildModelRows(modelNames,
-    model => CAP_ORDER.filter(cap => stoneNames.some(sn => testLookup.has(`${model}|${sn}|${cap}`))),
+    model => liveCaps.filter(cap => stoneNames.some(sn => testLookup.has(`${model}|${sn}|${cap}`))),
     (model, cap) => {
       // Collect completed results across stones for best-stone detection
       const results = [];
       stoneNames.forEach(sn => {
         const t = testLookup.get(`${model}|${sn}|${cap}`);
         if (t && t.status === 'done' && t.summary) {
-          results.push({ stone: sn, verdict: t.summary.verdict, medianTps: t.summary.median_tps, coldMs: t.summary.cold_start_ms });
+          results.push({ stone: sn, verdict: t.summary.verdict, medianTps: t.summary.median_tps, coldMs: t.summary.cold_start_ms, validRatio: t.summary.valid_ratio });
         } else if (t && t.status === 'done') {
           const me = matrixLookup.get(`${model}|${sn}|${cap}`);
-          if (me) results.push({ stone: sn, verdict: me.verdict, medianTps: me.median_tps, coldMs: me.cold_start_ms });
+          if (me) results.push({ stone: sn, verdict: me.verdict, medianTps: me.median_tps, coldMs: me.cold_start_ms, validRatio: me.valid_ratio });
         }
       });
       const bestStone = findBestStone(results, cap);
@@ -2278,10 +2304,10 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
         const t = testLookup.get(`${model}|${sn}|${cap}`);
         if (!t) { cells += '<td class="verdict-cell verdict-unknown">—</td>'; return; }
         if (t.status === 'done' && t.summary) {
-          cells += renderResultCell(t.summary.verdict, t.summary.median_tps, t.summary.cold_start_ms, cap, sn === bestStone);
+          cells += renderResultCell(t.summary.verdict, t.summary.median_tps, t.summary.cold_start_ms, cap, sn === bestStone, t.summary.valid_ratio);
         } else if (t.status === 'done') {
           const me = matrixLookup.get(`${model}|${sn}|${cap}`);
-          if (me) cells += renderResultCell(me.verdict, me.median_tps, me.cold_start_ms, cap, sn === bestStone);
+          if (me) cells += renderResultCell(me.verdict, me.median_tps, me.cold_start_ms, cap, sn === bestStone, me.valid_ratio);
           else cells += renderStatusCell('done');
         } else {
           cells += renderStatusCell(t.status, t.error);
@@ -2300,6 +2326,7 @@ function buildFinalMatrix(stoneReports, entries) {
   const stoneNames = [...new Set(entries.map(e => e.stone_name))].sort();
   const lookup = new Map();
   entries.forEach(e => lookup.set(`${e.model}|${e.stone_name}|${e.capability}`, e));
+  const finalCaps = capOrder(entries.map(e => e.capability));
 
   const stoneInfo = new Map();
   stoneReports.forEach(sr => stoneInfo.set(sr.stone_name, { gpu: sr.gpu_model || '', vram_mb: sr.vram_mb || 0 }));
@@ -2315,7 +2342,7 @@ function buildFinalMatrix(stoneReports, entries) {
     let aggMax = -Infinity;
     stoneNames.forEach(sn => {
       let stoneMax = -Infinity;
-      CAP_ORDER.forEach(cap => {
+      finalCaps.forEach(cap => {
         const e = lookup.get(`${model}|${sn}|${cap}`);
         if (e) {
           const score = bestStoneScore(e.verdict, e.median_tps, e.cold_start_ms, cap);
@@ -2340,19 +2367,19 @@ function buildFinalMatrix(stoneReports, entries) {
   html += buildStoneHeaders(stoneNames, stoneInfo);
   html += '</tr></thead><tbody>';
   html += buildModelRows(modelNames,
-    model => CAP_ORDER.filter(cap => stoneNames.some(sn => lookup.has(`${model}|${sn}|${cap}`))),
+    model => finalCaps.filter(cap => stoneNames.some(sn => lookup.has(`${model}|${sn}|${cap}`))),
     (model, cap) => {
       const results = [];
       stoneNames.forEach(sn => {
         const e = lookup.get(`${model}|${sn}|${cap}`);
-        if (e) results.push({ stone: sn, verdict: e.verdict, medianTps: e.median_tps, coldMs: e.cold_start_ms });
+        if (e) results.push({ stone: sn, verdict: e.verdict, medianTps: e.median_tps, coldMs: e.cold_start_ms, validRatio: e.valid_ratio });
       });
       const bestStone = findBestStone(results, cap);
 
       let cells = '';
       stoneNames.forEach(sn => {
         const e = lookup.get(`${model}|${sn}|${cap}`);
-        if (e) cells += renderResultCell(e.verdict, e.median_tps, e.cold_start_ms, cap, sn === bestStone);
+        if (e) cells += renderResultCell(e.verdict, e.median_tps, e.cold_start_ms, cap, sn === bestStone, e.valid_ratio);
         else cells += '<td class="verdict-cell verdict-unknown">—</td>';
       });
       return cells;

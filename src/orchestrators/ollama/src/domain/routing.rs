@@ -582,6 +582,7 @@ mod tests {
                     verdict: Verdict::Vetoed,
                     median_tps: 0.5,
                     cold_start_ms: 100_000,
+                    valid_ratio: None,
                 },
                 GpuMatrixEntry {
                     model: "m7b".into(),
@@ -592,6 +593,7 @@ mod tests {
                     verdict: Verdict::Fast,
                     median_tps: 25.0,
                     cold_start_ms: 3_000,
+                    valid_ratio: None,
                 },
             ],
         };
@@ -638,6 +640,7 @@ mod tests {
                 verdict: Verdict::Blocked,
                 median_tps: 0.0,
                 cold_start_ms: 0,
+                valid_ratio: None,
             }],
         };
 
@@ -682,6 +685,7 @@ mod tests {
                     verdict: Verdict::Blocked,
                     median_tps: 0.0,
                     cold_start_ms: 0,
+                    valid_ratio: None,
                 },
                 GpuMatrixEntry {
                     model: "m7b".into(),
@@ -692,6 +696,7 @@ mod tests {
                     verdict: Verdict::Fast,
                     median_tps: 25.0,
                     cold_start_ms: 3_000,
+                    valid_ratio: None,
                 },
             ],
         };

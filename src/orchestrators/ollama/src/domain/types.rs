@@ -478,6 +478,8 @@ pub enum MetricEvent {
     Request {
         stone: String,
         model: String,
+        /// Request capability inferred from endpoint path (ORCH-0009).
+        capability: super::demand::RequestCapability,
         tokens_in: u64,
         tokens_out: u64,
         duration_ns: u64,

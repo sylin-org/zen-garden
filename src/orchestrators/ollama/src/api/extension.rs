@@ -316,6 +316,7 @@ pub async fn put_pin(
         );
     }
 
+    state.app.refresh_recommendations().await;
     state.app.emit_event("config.updated", "{}").await;
     (
         StatusCode::OK,
@@ -344,6 +345,7 @@ pub async fn delete_pin(
         );
     }
 
+    state.app.refresh_recommendations().await;
     state.app.emit_event("config.updated", "{}").await;
     (
         StatusCode::OK,

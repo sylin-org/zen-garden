@@ -1,6 +1,6 @@
 ﻿# STORAGE-0002: Storage API Structure
 
-**Status:** Partially superseded by [STORAGE-0008](STORAGE-0008-garden-stone-api-split.md)  
+**Status:** Superseded by [STORAGE-0009](STORAGE-0009-managed-storage-and-file-sharing.md)
 **Date:** 2026-01-28  
 **Context:** S3 interface implementation for seed bank object storage
 

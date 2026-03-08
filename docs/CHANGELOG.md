@@ -2,8 +2,38 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-08
+
+- **STORAGE-0010**: Unified `storage add` command replaces `prepare` and `adopt`. Single CLI entry point (`garden-rake storage add <device-or-path>`) with zen keywords (`as <name>`, `role <role>`, `with` noise word). Single API endpoint `POST /api/v1/stone/storage/add` replaces `/prepare` and `/adopt`. Three-way hotplug banners (connected, has_data, empty) with distinct domain events (`StorageConnected` vs `StorageDetected`). See [STORAGE-0010](decisions/STORAGE-0010-unified-storage-add-command.md).
+
+## 2026-03-07
+
+- **STORAGE-0009 Phase 6**: Discovery polish. Content catalog on adopt (walk existing files, seed changelog for replication baseline), `garden-rake storage-status` command with per-storage space breakdown (capacity/used/available, role, health), SMB signpost share (generates `.url` shortcuts and Samba config fragment for network browser discovery). See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- **STORAGE-0009 Phase 5**: Extended adapters and filesystem watchers. NAS adapter (NFS/SMB mount with reconnect-on-failure), cross-platform filesystem watcher (`notify` crate) detects external writes to managed storage mounts and records changelog entries so replication stays coherent. Debounced 2s window, `.zen-garden/` events filtered. See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- **STORAGE-0009 Phase 4**: Cloud Filter integration (Windows). Managed storages appear natively in Explorer via the Windows Cloud Sync Provider API (`cloud-filter` crate). Files are fetched on-demand from the hosting stone; placeholder directories appear/disappear as storage beacons arrive. Sync root at `%USERPROFILE%\Zen Garden\`. See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- **STORAGE-0009 Phase 3**: WebDAV file access for managed storage. Users can mount storage in Finder, Explorer, or Linux file managers via `http://stone-name:7185/dav/{storage-name}/`. See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- WebDAV handler with `dav-server` crate (`LocalFs` backend, `FakeLs` locks) — full RFC 4918 support (PROPFIND, GET, PUT, DELETE, MKCOL, COPY, MOVE, LOCK/UNLOCK)
+- Primary-or-proxy routing: any stone is a WebDAV entry point; requests for remote storage are proxied to the hosting stone
+- Changelog recording: mutations via WebDAV emit replication changelog entries so Dormant replicas stay current
+- `.zen-garden/` internals hidden from directory listings and direct access blocked; `Zen Garden` symlink visible (intentional transparency)
+- Updated `api-endpoints.md` with STORAGE-0009 garden-tier, stone-tier, and WebDAV routes
+
 ## 2026-03-06
 
+- **ORCH-0011**: Recommended model monikers — use `recommended:chat`, `recommended:vision`, etc. as the model name. The orchestrator resolves to the top-ranked model for that capability, rewrites the request, and routes normally. Response includes `X-Zen-Resolved-Model` header.
+  See: [ORCH-0011](decisions/ORCH-0011-recommended-model-monikers.md) | [Usage guide](guides/ollama-orchestrator.md)
+- **ORCH-0009**: Demand-weighted topology advisor. Three-axis optimization (Demand × Topology × Fitness) replaces static VRAM-only placement. See [ORCH-0009](decisions/ORCH-0009-demand-weighted-topology-advisor.md).
+- New `DemandLedger` with exponentially decayed counters tracks per-capability and per-model demand at three time horizons (reactive 15m, tactical 6h, strategic 3d)
+- GPU projected fitness catalog: 100+ GPU entries mapping GPU name → relative performance score (0–100) for T=0 placement before any benchmarks
+- Three-source fitness resolver: Observed (live proxy tok/s) > Benchmarked (formal eval) > Projected (GPU name lookup)
+- Fitness-weighted model placement: hot models placed on fastest GPUs with VRAM headroom
+- Demand-weighted parallelism: embedding-heavy workloads get higher parallelism caps
+- Typed recommendations with priority (Urgent/Suggested/Informational) and auto-applicable flag
+- Advisor task now feeds demand context and benchmark data into topology computation
+- **ORCH-0010**: Extended fitness capabilities — Tools and Think benchmarks. See [ORCH-0010](decisions/ORCH-0010-extended-fitness-capabilities.md).
+- Tools benchmark: 5 structured prompts with tool schemas, validates JSON correctness per stone. Correctness gates the verdict (flaky = Degraded, unreliable = Vetoed, no tool calls = Blocked)
+- Think benchmark: 3 long-reasoning prompts with `num_predict: 2000` measuring sustained throughput under KV cache pressure. Relaxed thresholds (3 tok/s for Fast, 60s cold start)
+- Recommendation engine uses dedicated Tools/Think fitness entries with Generate fallback
 - **MOSS-0005**: Manageable environment variables for adopted bare-metal services. Manifests declare an allowlist of env vars; Moss reads/writes them cross-platform (Linux `/etc/default` + systemd overrides, Windows registry via `winreg`, macOS `launchctl`). See [MOSS-0005](decisions/MOSS-0005-manageable-env-vars.md).
 - New `PATCH /api/v1/stone/services/{service}/env` endpoint — set/delete env vars with allowlist validation
 - Enhanced `GET /api/v1/stone/services/{service}/env` — returns `manageable` var list and reads current values for adopted services

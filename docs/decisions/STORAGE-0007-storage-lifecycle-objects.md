@@ -10,7 +10,7 @@ last_verified: 2026-02-17
 **Date**: 2026-02-17
 **Status**: Accepted
 **Depends on**: STORAGE-0004 (Resilience), STORAGE-0005 (Manifest-First Discovery), STORAGE-0006 (Replication & Roles)
-**Depended on by**: —
+**Depended on by**: STORAGE-0009 (Managed Storage and File Sharing — evolves the lifecycle model)
 
 ## Context
 

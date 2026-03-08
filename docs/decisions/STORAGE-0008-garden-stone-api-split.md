@@ -8,7 +8,7 @@ supersedes: STORAGE-0002 (partially)
 
 ## Status
 
-**Accepted** — Implemented in v1 API
+**Accepted** — Implemented in v1 API. API surface superseded by [STORAGE-0009](STORAGE-0009-managed-storage-and-file-sharing.md).
 
 ## Context
 

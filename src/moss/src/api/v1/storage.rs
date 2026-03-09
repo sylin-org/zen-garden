@@ -1,7 +1,8 @@
 //! Storage API endpoints for managed storage (stone-local)
 //!
-//! Design: USB device manifests ARE the source of truth. No persistence file.
-//! The registry is built in-memory by scanning mounted devices.
+//! Design: The Volumes domain (`domain::storage::Volumes`) is the single source
+//! of truth. Populated at boot by `initial_scan()`, updated in real-time by the
+//! cross-platform volume watcher (STORAGE-0011).
 //!
 //! ## API Structure (STORAGE-0010)
 //!
@@ -36,15 +37,16 @@ use axum::{
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::constants::paths;
 use garden_common::storage::{
-    AddStorageRequest, AddStorageResponse, DeviceState,
-    RenameStorageRequest, SetRolesRequest, SetVisibilityRequest, StorageInfo, StorageDetectedInfo,
-    StorageManifest, StorageVisibility, DEFAULT_PRIVATE_STORAGE_NAME,
+    AddStorageRequest, AddStorageResponse, CandidatesResponse, DeviceState, MediumAction,
+    MediumInfo, MediumPartitionInfo, RenameStorageRequest, SetRolesRequest, SetVisibilityRequest,
+    StorageDetectedInfo, StorageInfo, StorageManifest, StorageVisibility,
+    DEFAULT_PRIVATE_STORAGE_NAME,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
-use crate::infra::storage::{analyze_device, layout, ContentStore, StorageRegistry};
+use crate::infra::storage::{analyze_device, layout, ContentStore};
 use crate::infra::{DomainPulse, PulseEvent};
 use crate::{error_response, AppState};
 use garden_common::presence::event_types;
@@ -235,27 +237,21 @@ fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
 pub async fn storage_overview_v1(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // Get local banks from filesystem (for local stats)
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let local_banks: Vec<&StorageInfo> = registry
-        .list()
-        .into_iter()
-        .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
-        .collect();
+    // Get local banks from the unified Volumes domain (STORAGE-0011)
+    let local_banks: Vec<StorageInfo> = {
+        let map = state.volumes.read().await;
+        map.values()
+            .filter_map(|v| v.to_storage_info())
+            .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
+            .collect()
+    };
     let total_capacity: u64 = local_banks.iter().map(|b| b.capacity_bytes).sum();
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
 
     // Get garden-wide view from unified registry
     let reg = state.registry.read().await;
-    let local_roles = state.seed_bank_roles_snapshot().await;
-    let local_pins = state.seed_bank_pins_snapshot().await;
+    let local_roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
+    let local_pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
     let mut garden_banks = Vec::new();
 
     for entry in reg.storage_entries() {
@@ -320,19 +316,16 @@ pub async fn storage_overview_v1(
 
 /// Get storage readiness for this stone (mounted + canonical + writable).
 pub async fn storage_health_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageHealth>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    let managed: Vec<StorageInfo> = {
+        let map = state.volumes.read().await;
+        map.values().filter_map(|v| v.to_storage_info()).collect()
+    };
 
     let mut banks = Vec::new();
 
-    for bank in registry.list() {
+    for bank in &managed {
         let mut issues = Vec::new();
 
         let canonical = validate_seed_bank_layout(&bank.mount_path).is_ok();
@@ -392,22 +385,15 @@ pub async fn storage_health_v1(
 
 /// List all seed banks
 pub async fn list_banks_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<StorageInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let banks: Vec<StorageInfo> = registry
-        .list()
-        .into_iter()
-        .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
-        .cloned()
-        .collect();
+    let banks: Vec<StorageInfo> = {
+        let map = state.volumes.read().await;
+        map.values()
+            .filter_map(|v| v.to_storage_info())
+            .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
+            .collect()
+    };
     Ok(Json(ApiResponse::new(banks)))
 }
 
@@ -417,30 +403,22 @@ pub async fn list_banks_v1(
 
 /// Get seed bank details by name
 pub async fn get_bank_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let bank = registry.get_by_name(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("Bank '{}' not found", name),
-        )
-    })?;
+    let bank = {
+        let map = state.volumes.read().await;
+        map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .and_then(|v| v.to_storage_info())
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?
+    };
 
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    Ok(Json(ApiResponse::new(bank.clone())))
+    Ok(Json(ApiResponse::new(bank)))
 }
 
 // ============================================================================
@@ -452,21 +430,16 @@ pub async fn delete_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
-    // Check if still mounted
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    if registry.get_by_name(&name).is_some() {
-        return Err(err(
-            StatusCode::CONFLICT,
-            "BANK_MOUNTED",
-            "Bank must be released before deletion",
-        ));
+    // Check if still mounted (managed volume present = still mounted)
+    {
+        let map = state.volumes.read().await;
+        if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.online) {
+            return Err(err(
+                StatusCode::CONFLICT,
+                "BANK_MOUNTED",
+                "Bank must be released before deletion",
+            ));
+        }
     }
 
     // Remove mount directory if it exists
@@ -527,34 +500,26 @@ pub async fn release_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<ApiResponse<ReleaseResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let _bank = registry.get_by_name(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("Bank '{}' not found", name),
-        )
-    })?;
+    let _mount_path = {
+        let map = state.volumes.read().await;
+        let vol = map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        vol.mount_path.to_string_lossy().to_string()
+    };
 
     // STORAGE-0006: Remove from MountTracker BEFORE unmount to prevent
     // persistence task re-mounting the device we're releasing.
     #[cfg(target_os = "linux")]
     {
         let mut tracker = state.mount_tracker.write().await;
-        if tracker.remove(&_bank.mount_path).is_some() {
-            debug!(mount_path = %_bank.mount_path, "Removed from mount tracker before release");
+        if tracker.remove(&_mount_path).is_some() {
+            debug!(mount_path = %_mount_path, "Removed from mount tracker before release");
         }
     }
 
     #[cfg(target_os = "linux")]
-    unmount_device(&_bank.mount_path).await.map_err(|e| {
+    unmount_device(&_mount_path).await.map_err(|e| {
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "UNMOUNT_FAILED",
@@ -575,16 +540,14 @@ pub async fn release_bank_v1(
         warn!("Failed to print released ribbon: {}", e);
     }
 
-    // STORAGE-0007: Remove from lifecycle objects (keyed by ID)
+    // STORAGE-0011: Remove management from the released volume
     {
-        let mut banks = state.managed_storages.write().await;
-        let id_to_remove: Option<String> = banks
-            .iter()
-            .find(|(_, b)| b.name == name)
-            .map(|(id, _)| id.clone());
-        if let Some(id) = id_to_remove {
-            banks.remove(&id);
-            debug!(name = %name, "Removed released bank from lifecycle objects");
+        let mut map = state.volumes.write().await;
+        if let Some(vol) = map.values_mut().find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name)
+        }) {
+            vol.management = None;
+            debug!(name = %name, "Cleared management from released volume");
         }
     }
 
@@ -593,12 +556,15 @@ pub async fn release_bank_v1(
     let tools_state = state.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -624,22 +590,6 @@ pub async fn rename_bank_v1(
     Path(name): Path<String>,
     Json(request): Json<RenameStorageRequest>,
 ) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let bank = registry.get_by_name(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("Bank '{}' not found", name),
-        )
-    })?;
-
     // Validate new name
     if request.new_name.is_empty() {
         return Err(err(
@@ -649,13 +599,18 @@ pub async fn rename_bank_v1(
         ));
     }
 
-    let old_mount_path = bank.mount_path.clone();
-    let bank_id = bank.id.clone();
+    let mount_path = {
+        let map = state.volumes.read().await;
+        let vol = map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        vol.mount_path.to_string_lossy().to_string()
+    };
 
     // Renaming into an existing name is allowed — joins a replica group (STORAGE-0006)
 
     // Update manifest on device
-    update_manifest_name(&old_mount_path, &request.new_name)
+    update_manifest_name(&mount_path, &request.new_name)
         .await
         .map_err(|e| {
             err(
@@ -665,43 +620,42 @@ pub async fn rename_bank_v1(
             )
         })?;
 
-    // Re-scan to get updated info (look up by ID since name just changed)
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let updated = registry.find_by_id(&bank_id).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            "Bank not found after rename",
-        )
-    })?;
-
-    info!(old_name = %name, new_name = %request.new_name, "Bank renamed");
-
-    // STORAGE-0007: Sync name to lifecycle object
+    // Sync name to volume management
     {
-        let mut banks = state.managed_storages.write().await;
-        if let Some(bank) = banks.values_mut().find(|b| b.name == name) {
-            bank.name = request.new_name.clone();
+        let mut map = state.volumes.write().await;
+        if let Some(vol) = map.values_mut().find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name)
+        }) {
+            if let Some(ref mut mgmt) = vol.management {
+                mgmt.name = request.new_name.clone();
+            }
         }
     }
+
+    // Re-read updated info from volumes
+    let updated = {
+        let map = state.volumes.read().await;
+        map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == request.new_name))
+            .and_then(|v| v.to_storage_info())
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after rename"))?
+    };
+
+    info!(old_name = %name, new_name = %request.new_name, "Bank renamed");
 
     let tools_state = state.clone();
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -718,22 +672,84 @@ pub async fn rename_bank_v1(
 // GET /api/v1/stone/storage/candidates
 // ============================================================================
 
-/// List eligible devices awaiting preparation
+/// List eligible devices awaiting preparation.
+///
+/// Returns unmanaged, removable, online volumes from the Volumes domain.
 pub async fn list_candidates_v1(
-    State(_state): State<AppState>,
-) -> Result<(StatusCode, Json<Vec<StorageDetectedInfo>>), (StatusCode, Json<ApiErrorResponse>)> {
-    #[cfg(target_os = "linux")]
-    let candidates = scan_candidates().await.unwrap_or_default();
-    #[cfg(not(target_os = "linux"))]
-    let candidates = Vec::new();
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<CandidatesResponse>), (StatusCode, Json<ApiErrorResponse>)> {
+    // Space candidates: mounted volumes that are unmanaged, removable, and online.
+    let volumes_map = state.volumes.read().await;
+    let spaces: Vec<StorageDetectedInfo> = volumes_map
+        .values()
+        .filter(|v| !v.is_managed() && v.removable && v.online)
+        .map(|v| StorageDetectedInfo {
+            device: v.path.clone(),
+            mount_path: Some(v.mount_path.to_string_lossy().to_string()),
+            label: v.label.clone(),
+            capacity_bytes: v.capacity_bytes,
+            state: DeviceState::Empty,
+            eligible: true,
+            removable: v.removable,
+            ineligible_reason: None,
+        })
+        .collect();
 
-    Ok((StatusCode::OK, Json(candidates)))
-}
+    // Medium candidates: physical disks (USB/external only).
+    let media_map = state.media.read().await;
+    let media: Vec<MediumInfo> = media_map
+        .values()
+        .filter(|m| m.removable)
+        .map(|m| {
+            let managed = m.has_managed_space(&volumes_map);
+            let suggested_action = match m.condition {
+                crate::infra::storage::platform::MediumCondition::Unreadable => {
+                    MediumAction::Unreadable
+                }
+                crate::infra::storage::platform::MediumCondition::Raw => {
+                    MediumAction::NeedsPartition
+                }
+                crate::infra::storage::platform::MediumCondition::Partitioned => {
+                    if managed {
+                        MediumAction::AlreadyManaged
+                    } else if m.has_mounted_space() {
+                        MediumAction::Ready
+                    } else {
+                        MediumAction::NeedsFormat
+                    }
+                }
+            };
 
-#[cfg(target_os = "linux")]
-async fn scan_candidates() -> anyhow::Result<Vec<StorageDetectedInfo>> {
-    use crate::infra::storage::list_usb_partitions;
-    tokio::task::spawn_blocking(|| list_usb_partitions()).await?
+            MediumInfo {
+                device_id: m.device_id.clone(),
+                model: m.model.clone(),
+                bus_type: garden_common::storage::BusType::from(m.bus_type),
+                size_bytes: m.size_bytes,
+                removable: m.removable,
+                condition: garden_common::storage::MediumCondition::from(m.condition),
+                partitions: m
+                    .partitions
+                    .iter()
+                    .map(|p| MediumPartitionInfo {
+                        index: p.index,
+                        size_bytes: p.size_bytes,
+                        filesystem: p.filesystem.clone(),
+                        mount_path: p.mount_path.clone(),
+                        label: p.label.clone(),
+                    })
+                    .collect(),
+                managed,
+                suggested_action,
+            }
+        })
+        .collect();
+    drop(volumes_map);
+    drop(media_map);
+
+    Ok((
+        StatusCode::OK,
+        Json(CandidatesResponse { spaces, media }),
+    ))
 }
 
 // ============================================================================
@@ -815,11 +831,11 @@ pub async fn add_storage_v1(
         });
 
         // Same-name replicas are fine (STORAGE-0006)
-        let registry = StorageRegistry::scan().await.map_err(|e| {
-            err(StatusCode::INTERNAL_SERVER_ERROR, "SCAN_FAILED", &e.to_string())
-        })?;
-        if registry.exists(&name) {
-            info!(name = %name, "Same-name storage exists — new device will be a replica");
+        {
+            let map = state.volumes.read().await;
+            if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name)) {
+                info!(name = %name, "Same-name storage exists — new device will be a replica");
+            }
         }
 
         if needs_format {
@@ -853,12 +869,15 @@ pub async fn add_storage_v1(
                 ).await {
                     Ok(()) => {
                         tools_state.refresh_local_tools_projection().await;
+                        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+                        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
                         if let Err(e) = crate::infra::storage::broadcast_beacon(
                             &tools_state.stone_id,
                             &tools_state.stone_name,
                             &format!("http://{}:{}", stone_name, api_port),
-                            Some(&tools_state.seed_bank_roles_snapshot().await),
-                            Some(&tools_state.seed_bank_pins_snapshot().await),
+                            &tools_state.volumes,
+                            Some(&roles),
+                            Some(&pins),
                         ).await {
                             warn!(error = %e, "Failed to broadcast beacon after format");
                         }
@@ -909,6 +928,7 @@ pub async fn add_storage_v1(
 
         #[cfg(target_os = "linux")]
         {
+            #[allow(unused_imports)]
             use anyhow::Context;
             let output = tokio::process::Command::new("sudo")
                 .args(["mkdir", "-p", &mount_dir.to_string_lossy()])
@@ -947,7 +967,7 @@ pub async fn add_storage_v1(
         ));
     }
 
-    let name = request.name.clone().unwrap_or_else(|| generate_storage_name());
+    let name = request.name.clone().unwrap_or_else(generate_storage_name);
 
     let visibility = if request.encrypted {
         StorageVisibility::Closed
@@ -1015,18 +1035,28 @@ async fn add_at_path(
         "Storage added"
     );
 
+    // Signal the volume watcher to re-scan. The existing pipeline will
+    // re-classify this volume (finding the new manifest), update candidates
+    // notification, emit pulses, and broadcast the beacon.
+    state.request_volume_rescan();
+
     // Refresh tools + broadcast beacon
     state.refresh_local_tools_projection().await;
-    if let Err(e) = crate::infra::storage::broadcast_beacon(
-        &state.stone_id, &state.stone_name,
-        &format!("http://{}:{}", state.stone_name, state.api_port),
-        Some(&state.seed_bank_roles_snapshot().await),
-        Some(&state.seed_bank_pins_snapshot().await),
-    ).await {
-        warn!(error = %e, "Failed to broadcast beacon after add");
+    {
+        let roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &state.stone_id, &state.stone_name,
+            &format!("http://{}:{}", state.stone_name, state.api_port),
+            &state.volumes,
+            Some(&roles),
+            Some(&pins),
+        ).await {
+            warn!(error = %e, "Failed to broadcast beacon after add");
+        }
     }
 
-    let storages = state.storage_name_id_pairs().await;
+    let storages = crate::domain::storage::name_id_pairs(&state.volumes).await;
     if let Err(e) = crate::infra::storage::refresh_signpost(
         &state.stone_name, state.api_port, &storages,
     ).await {
@@ -1252,23 +1282,15 @@ pub async fn set_visibility_v1(
     Path(name): Path<String>,
     Json(request): Json<SetVisibilityRequest>,
 ) -> Result<(StatusCode, Json<StorageInfo>), (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    let mount_path = {
+        let map = state.volumes.read().await;
+        let vol = map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", &format!("Seed bank '{}' not found", name)))?;
+        vol.mount_path.to_string_lossy().to_string()
+    };
 
-    let bank = registry.get(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "SEED_BANK_NOT_FOUND",
-            &format!("Seed bank '{}' not found", name),
-        )
-    })?;
-
-    update_manifest_visibility(&bank.mount_path, request.visibility)
+    update_manifest_visibility(&mount_path, request.visibility)
         .await
         .map_err(|e| {
             err(
@@ -1278,43 +1300,42 @@ pub async fn set_visibility_v1(
             )
         })?;
 
-    // Re-scan to get updated info
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let updated = registry.get(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "SEED_BANK_NOT_FOUND",
-            "Seed bank disappeared after update",
-        )
-    })?;
-
-    info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
-
-    // STORAGE-0007: Sync visibility to lifecycle object
+    // Sync visibility to volume management
     {
-        let mut banks = state.managed_storages.write().await;
-        if let Some(bank) = banks.values_mut().find(|b| b.name == name) {
-            bank.visibility = request.visibility;
+        let mut map = state.volumes.write().await;
+        if let Some(vol) = map.values_mut().find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name)
+        }) {
+            if let Some(ref mut mgmt) = vol.management {
+                mgmt.visibility = request.visibility;
+            }
         }
     }
+
+    // Re-read updated info
+    let updated = {
+        let map = state.volumes.read().await;
+        map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .and_then(|v| v.to_storage_info())
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", "Seed bank disappeared after update"))?
+    };
+
+    info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
 
     // STORAGE-0003: Refresh tools AND broadcast beacon
     let tools_state = state.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1420,23 +1441,15 @@ pub async fn set_roles_v1(
     Path(name): Path<String>,
     Json(request): Json<SetRolesRequest>,
 ) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    let mount_path = {
+        let map = state.volumes.read().await;
+        let vol = map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        vol.mount_path.to_string_lossy().to_string()
+    };
 
-    let bank = registry.get_by_name(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("Bank '{}' not found", name),
-        )
-    })?;
-
-    update_manifest_roles(&bank.mount_path, &request.roles)
+    update_manifest_roles(&mount_path, &request.roles)
         .await
         .map_err(|e| {
             err(
@@ -1446,22 +1459,26 @@ pub async fn set_roles_v1(
             )
         })?;
 
-    // Re-scan to get updated info
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    // Sync roles to volume management
+    {
+        let mut map = state.volumes.write().await;
+        if let Some(vol) = map.values_mut().find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name)
+        }) {
+            if let Some(ref mut mgmt) = vol.management {
+                mgmt.roles = request.roles.clone();
+            }
+        }
+    }
 
-    let updated = registry.get_by_name(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            "Bank not found after role update",
-        )
-    })?;
+    // Re-read updated info
+    let updated = {
+        let map = state.volumes.read().await;
+        map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .and_then(|v| v.to_storage_info())
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after role update"))?
+    };
 
     info!(name = %name, roles = ?request.roles, "Bank roles updated");
 
@@ -1469,12 +1486,15 @@ pub async fn set_roles_v1(
     let tools_state = state.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1493,42 +1513,45 @@ pub async fn set_roles_v1(
 pub async fn release_all_seed_banks_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<Vec<ReleaseResponse>>), (StatusCode, Json<ApiErrorResponse>)> {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    // Collect managed bank info before mutating
+    let managed: Vec<(String, String)> = {
+        let map = state.volumes.read().await;
+        map.values()
+            .filter_map(|v| {
+                let mgmt = v.management.as_ref()?;
+                Some((mgmt.name.clone(), v.mount_path.to_string_lossy().to_string()))
+            })
+            .collect()
+    };
 
     let mut results = Vec::new();
 
-    for bank in registry.list() {
+    for (name, _mount_path) in &managed {
         // STORAGE-0006: Remove from MountTracker BEFORE unmount to prevent
         // persistence task re-mounting the device we're releasing.
         #[cfg(target_os = "linux")]
         {
             let mut tracker = state.mount_tracker.write().await;
-            if tracker.remove(&bank.mount_path).is_some() {
-                debug!(mount_path = %bank.mount_path, "Removed from mount tracker before release-all");
+            if tracker.remove(_mount_path.as_str()).is_some() {
+                debug!(mount_path = %_mount_path, "Removed from mount tracker before release-all");
             }
         }
 
         #[cfg(target_os = "linux")]
         {
-            match unmount_device(&bank.mount_path).await {
+            match unmount_device(_mount_path).await {
                 Ok(_) => {
                     results.push(ReleaseResponse {
                         released: true,
-                        name: bank.name.clone(),
+                        name: name.clone(),
                         message: "Seed bank safely released.".to_string(),
                     });
                 }
                 Err(e) => {
-                    warn!(name = %bank.name, error = %e, "Failed to unmount seed bank");
+                    warn!(name = %name, error = %e, "Failed to unmount seed bank");
                     results.push(ReleaseResponse {
                         released: false,
-                        name: bank.name.clone(),
+                        name: name.clone(),
                         message: format!("Failed to unmount: {}", e),
                     });
                 }
@@ -1537,7 +1560,7 @@ pub async fn release_all_seed_banks_v1(
         #[cfg(not(target_os = "linux"))]
         results.push(ReleaseResponse {
             released: true,
-            name: bank.name.clone(),
+            name: name.clone(),
             message: "Seed bank released (non-Linux).".to_string(),
         });
     }
@@ -1551,21 +1574,26 @@ pub async fn release_all_seed_banks_v1(
     );
     let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
 
-    // STORAGE-0007: Clear all lifecycle objects (all banks released)
+    // STORAGE-0011: Clear management from all volumes (all banks released)
     {
-        let mut banks = state.managed_storages.write().await;
-        banks.clear();
+        let mut map = state.volumes.write().await;
+        for vol in map.values_mut() {
+            vol.management = None;
+        }
     }
 
     let tools_state = state.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1619,12 +1647,12 @@ pub async fn pin_bank_v1(
         ));
     }
 
-    // STORAGE-0007: Use lifecycle objects — pin() verifies mount before writing.
+    // STORAGE-0011: Pin via Volume — writes pin.json, sets role to Primary.
     let pin_id = {
-        let mut banks = state.managed_storages.write().await;
-        let bank = banks
+        let mut map = state.volumes.write().await;
+        let vol = map
             .values_mut()
-            .find(|b| b.name == name)
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .ok_or_else(|| {
                 err(
                     StatusCode::NOT_FOUND,
@@ -1633,8 +1661,7 @@ pub async fn pin_bank_v1(
                 )
             })?;
 
-        // pin() calls storage.ensure_mounted() → verifies mount → writes pin.json → sets role
-        bank.pin().await.map_err(|e| {
+        vol.pin().await.map_err(|e| {
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PIN_FAILED",
@@ -1648,12 +1675,15 @@ pub async fn pin_bank_v1(
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1689,11 +1719,13 @@ pub async fn unpin_bank_v1(
         ));
     }
 
-    // STORAGE-0007: Use lifecycle objects — unpin() clears pin + deletes disk file.
+    // STORAGE-0011: Unpin via Volume — clears pin + deletes disk file.
     let _was_pinned = {
-        let mut banks = state.managed_storages.write().await;
-        if let Some(bank) = banks.values_mut().find(|b| b.name == name) {
-            match bank.unpin().await {
+        let mut map = state.volumes.write().await;
+        if let Some(vol) = map.values_mut().find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name)
+        }) {
+            match vol.unpin().await {
                 Ok(old_pin_id) => old_pin_id,
                 Err(e) => {
                     warn!(name = %name, error = %e, "Unpin encountered an error");
@@ -1701,7 +1733,7 @@ pub async fn unpin_bank_v1(
                 }
             }
         } else {
-            debug!(name = %name, "Seed bank not found for unpin — no-op");
+            debug!(name = %name, "Volume not found for unpin — no-op");
             None
         }
     };
@@ -1711,12 +1743,15 @@ pub async fn unpin_bank_v1(
     let nudge = state.orchestration_nudge.clone();
     tokio::spawn(async move {
         tools_state.refresh_local_tools_projection().await;
+        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &tools_state.stone_id,
             &tools_state.stone_name,
             &tools_state.self_entry.read().await.address.http_base(),
-            Some(&tools_state.seed_bank_roles_snapshot().await),
-            Some(&tools_state.seed_bank_pins_snapshot().await),
+            &tools_state.volumes,
+            Some(&roles),
+            Some(&pins),
         )
         .await
         {
@@ -1743,34 +1778,26 @@ pub async fn unpin_bank_v1(
 ///
 /// Returns `ChangesResponse { cursor, changes }`.
 pub async fn bank_changes_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(name): Path<String>,
     Query(params): Query<ChangesQuery>,
 ) -> Result<
     Json<ApiResponse<garden_common::storage::ChangesResponse>>,
     (StatusCode, Json<ApiErrorResponse>),
 > {
-    let registry = StorageRegistry::scan().await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "SCAN_FAILED",
-            &e.to_string(),
-        )
-    })?;
+    let mount_path = {
+        let map = state.volumes.read().await;
+        let vol = map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        vol.mount_path.to_string_lossy().to_string()
+    };
 
-    let bank = registry.get_by_name(&name).ok_or_else(|| {
-        err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("Bank '{}' not found", name),
-        )
-    })?;
-
-    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+    if let Err(msg) = validate_seed_bank_layout(&mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    let store = ContentStore::new_public(&bank.mount_path);
+    let store = ContentStore::new_public(&mount_path);
     let resp = store
         .changes_since(params.since.as_deref())
         .await

@@ -28,7 +28,7 @@ use tracing::debug;
 use tokio::sync::broadcast;
 
 use crate::domain::garden_registry::GardenRegistry;
-use crate::domain::managed_storage::ManagedStorages;
+use crate::domain::storage::Volumes;
 use crate::infra::storage::{ContentStore, ObjectStore};
 use garden_common::storage::StorageTick;
 
@@ -80,7 +80,7 @@ pub struct ProxyTarget {
 /// Constructed per-request from shared state references. Cheap to create
 /// (no allocations, no I/O — just borrows).
 pub struct StorageService<'a> {
-    managed_storages: &'a ManagedStorages,
+    volumes: &'a Volumes,
     registry: &'a GardenRegistry,
     stone_id: &'a str,
     tick_tx: Option<&'a broadcast::Sender<StorageTick>>,
@@ -89,13 +89,13 @@ pub struct StorageService<'a> {
 impl<'a> StorageService<'a> {
     /// Create a new StorageService from shared state references.
     pub fn new(
-        managed_storages: &'a ManagedStorages,
+        volumes: &'a Volumes,
         registry: &'a GardenRegistry,
         stone_id: &'a str,
         tick_tx: Option<&'a broadcast::Sender<StorageTick>>,
     ) -> Self {
         Self {
-            managed_storages,
+            volumes,
             registry,
             stone_id,
             tick_tx,
@@ -161,16 +161,18 @@ impl<'a> StorageService<'a> {
 
     /// List all locally-managed storages.
     pub async fn list_local(&self) -> Vec<LocalStorage> {
-        let banks = self.managed_storages.read().await;
-        banks
-            .values()
-            .map(|bank| LocalStorage {
-                id: bank.id.clone(),
-                name: bank.name.clone(),
-                mount_path: bank.storage.mount_path.clone(),
-                role: bank.role,
-                encrypted: bank.encrypted,
-                roles: bank.roles.clone(),
+        let map = self.volumes.read().await;
+        map.values()
+            .filter_map(|vol| {
+                let mgmt = vol.management.as_ref()?;
+                Some(LocalStorage {
+                    id: mgmt.id.clone(),
+                    name: mgmt.name.clone(),
+                    mount_path: vol.mount_path.clone(),
+                    role: mgmt.role,
+                    encrypted: mgmt.encrypted,
+                    roles: mgmt.roles.clone(),
+                })
             })
             .collect()
     }
@@ -210,29 +212,41 @@ impl<'a> StorageService<'a> {
     // Internal helpers
     // ========================================================================
 
-    /// Find a storage by name in the local `ManagedStorages` map.
+    /// Find a managed storage by name in the local `Volumes` map.
     async fn find_local(&self, name: &str) -> Option<LocalStorage> {
-        let banks = self.managed_storages.read().await;
-        banks.values().find(|b| b.name == name).map(|bank| LocalStorage {
-            id: bank.id.clone(),
-            name: bank.name.clone(),
-            mount_path: bank.storage.mount_path.clone(),
-            role: bank.role,
-            encrypted: bank.encrypted,
-            roles: bank.roles.clone(),
+        let map = self.volumes.read().await;
+        map.values().find_map(|vol| {
+            let mgmt = vol.management.as_ref()?;
+            if mgmt.name != name {
+                return None;
+            }
+            Some(LocalStorage {
+                id: mgmt.id.clone(),
+                name: mgmt.name.clone(),
+                mount_path: vol.mount_path.clone(),
+                role: mgmt.role,
+                encrypted: mgmt.encrypted,
+                roles: mgmt.roles.clone(),
+            })
         })
     }
 
-    /// Find a storage by ID in the local `ManagedStorages` map.
+    /// Find a managed storage by ID in the local `Volumes` map.
     async fn find_local_by_id(&self, id: &str) -> Option<LocalStorage> {
-        let banks = self.managed_storages.read().await;
-        banks.get(id).map(|bank| LocalStorage {
-            id: bank.id.clone(),
-            name: bank.name.clone(),
-            mount_path: bank.storage.mount_path.clone(),
-            role: bank.role,
-            encrypted: bank.encrypted,
-            roles: bank.roles.clone(),
+        let map = self.volumes.read().await;
+        map.values().find_map(|vol| {
+            let mgmt = vol.management.as_ref()?;
+            if mgmt.id != id {
+                return None;
+            }
+            Some(LocalStorage {
+                id: mgmt.id.clone(),
+                name: mgmt.name.clone(),
+                mount_path: vol.mount_path.clone(),
+                role: mgmt.role,
+                encrypted: mgmt.encrypted,
+                roles: mgmt.roles.clone(),
+            })
         })
     }
 
@@ -271,138 +285,124 @@ impl<'a> StorageService<'a> {
 mod tests {
     use super::*;
     use crate::domain::garden_registry::new_registry;
-    use crate::domain::managed_storage::{new_managed_storages, ManagedStorage};
-    use crate::infra::storage::{ContentStore, StorageDevice};
+    use crate::domain::storage::{new_volumes, Management, Volume, VolumeHealth};
+    use crate::infra::storage::ContentStore;
     use garden_common::storage::{StorageRole, StorageVisibility};
     use std::path::PathBuf;
 
-    /// Helper: build a test ManagedStorage with configurable role.
-    fn make_bank(id: &str, name: &str, role: StorageRole, mount: &str) -> ManagedStorage {
-        ManagedStorage {
-            id: id.to_string(),
-            short_id: id[..8.min(id.len())].to_string(),
-            name: name.to_string(),
-            encrypted: false,
-            roaming: false,
-            origin_stone: "stone-test".to_string(),
-            created_at: chrono::Utc::now(),
-            visibility: StorageVisibility::Open,
-            roles: vec!["seed-bank".to_string()],
-            role,
-            pin: None,
-            storage: StorageDevice::new(
-                "/dev/sda1",
-                mount,
-                "ext4",
-                100_000_000_000,
-                10_000_000_000,
-            ),
-            store: ContentStore::new_public(mount),
+    /// Helper: build a test Volume with management configured.
+    fn make_volume(id: &str, name: &str, role: StorageRole, mount: &str) -> Volume {
+        Volume {
+            path: "/dev/sda1".to_string(),
+            mount_path: PathBuf::from(mount),
+            label: None,
+            capacity_bytes: 100_000_000_000,
+            used_bytes: 10_000_000_000,
+            removable: true,
+            online: true,
+            health: VolumeHealth::Healthy,
+            management: Some(Management {
+                id: id.to_string(),
+                short_id: id[..8.min(id.len())].to_string(),
+                name: name.to_string(),
+                encrypted: false,
+                roaming: false,
+                origin_stone: "stone-test".to_string(),
+                created_at: chrono::Utc::now(),
+                visibility: StorageVisibility::Open,
+                roles: vec!["seed-bank".to_string()],
+                role,
+                pin: None,
+                store: ContentStore::new_public(mount),
+            }),
         }
     }
 
     #[tokio::test]
     async fn test_resolve_read_finds_local_primary() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "photos", StorageRole::Primary, "/mnt/photos"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let route = svc.resolve_read("photos").await.unwrap();
         assert!(matches!(route, StorageRoute::Local(l) if l.name == "photos"));
     }
 
     #[tokio::test]
     async fn test_resolve_read_accepts_dormant() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "photos", StorageRole::Dormant, "/mnt/photos"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let route = svc.resolve_read("photos").await.unwrap();
-        // Dormant is acceptable for reads
         assert!(matches!(route, StorageRoute::Local(l) if l.role == StorageRole::Dormant));
     }
 
     #[tokio::test]
     async fn test_resolve_read_not_found_returns_error() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let result = svc.resolve_read("nonexistent").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_resolve_write_accepts_primary() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "photos", StorageRole::Primary, "/mnt/photos"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let route = svc.resolve_write("photos").await.unwrap();
         assert!(matches!(route, StorageRoute::Local(l) if l.role == StorageRole::Primary));
     }
 
     #[tokio::test]
     async fn test_resolve_write_rejects_dormant_no_remote() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "photos", StorageRole::Dormant, "/mnt/photos"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
-        // Local is Dormant, no remote Primary → error
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let result = svc.resolve_write("photos").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_resolve_local_returns_none_for_missing() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         assert!(svc.resolve_local("missing").await.is_none());
     }
 
     #[tokio::test]
     async fn test_resolve_local_by_id() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-123".into(),
-                make_bank("id-123", "data", StorageRole::Primary, "/mnt/data"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-123", "data", StorageRole::Primary, "/mnt/data"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let found = svc.resolve_local_by_id("id-123").await;
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "data");
@@ -412,21 +412,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_local_returns_all() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "photos", StorageRole::Primary, "/mnt/photos"),
-            );
-            banks.insert(
-                "id-2".into(),
-                make_bank("id-2", "backups", StorageRole::Dormant, "/mnt/backups"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"));
+            map.insert("/dev/sdb1".into(), make_volume("id-2", "backups", StorageRole::Dormant, "/mnt/backups"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let all = svc.list_local().await;
         assert_eq!(all.len(), 2);
 
@@ -437,17 +431,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_content_store_construction() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "data", StorageRole::Primary, "/mnt/data"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "data", StorageRole::Primary, "/mnt/data"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let local = svc.resolve_local("data").await.unwrap();
 
         let store = svc.content_store(&local);
@@ -457,53 +448,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_notifying_store_without_tx() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "data", StorageRole::Primary, "/mnt/data"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "data", StorageRole::Primary, "/mnt/data"));
         }
 
-        // No tick_tx → notifying_content_store still works (just no notifications)
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let local = svc.resolve_local("data").await.unwrap();
         let _store = svc.notifying_content_store(&local);
     }
 
     #[tokio::test]
     async fn test_notifying_store_with_tx() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         let (tx, _rx) = broadcast::channel::<StorageTick>(16);
         {
-            let mut banks = storages.write().await;
-            banks.insert(
-                "id-1".into(),
-                make_bank("id-1", "data", StorageRole::Primary, "/mnt/data"),
-            );
+            let mut map = volumes.write().await;
+            map.insert("/dev/sda1".into(), make_volume("id-1", "data", StorageRole::Primary, "/mnt/data"));
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", Some(&tx));
+        let svc = StorageService::new(&volumes, &registry, "stone-01", Some(&tx));
         let local = svc.resolve_local("data").await.unwrap();
         let _store = svc.notifying_content_store(&local);
     }
 
     #[tokio::test]
     async fn test_local_storage_carries_metadata() {
-        let storages = new_managed_storages();
+        let volumes = new_volumes();
         let registry = new_registry();
         {
-            let mut banks = storages.write().await;
-            let mut bank = make_bank("id-1", "encrypted-bank", StorageRole::Primary, "/mnt/enc");
-            bank.encrypted = true;
-            bank.roles = vec!["seed-bank".into(), "archive".into()];
-            banks.insert("id-1".into(), bank);
+            let mut map = volumes.write().await;
+            let mut vol = make_volume("id-1", "encrypted-bank", StorageRole::Primary, "/mnt/enc");
+            if let Some(ref mut mgmt) = vol.management {
+                mgmt.encrypted = true;
+                mgmt.roles = vec!["seed-bank".into(), "archive".into()];
+            }
+            map.insert("/dev/sda1".into(), vol);
         }
 
-        let svc = StorageService::new(&storages, &registry, "stone-01", None);
+        let svc = StorageService::new(&volumes, &registry, "stone-01", None);
         let local = svc.resolve_local("encrypted-bank").await.unwrap();
         assert!(local.encrypted);
         assert_eq!(local.roles, vec!["seed-bank", "archive"]);

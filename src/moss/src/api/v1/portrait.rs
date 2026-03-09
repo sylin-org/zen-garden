@@ -541,42 +541,44 @@ pub async fn get_portrait_data(
     };
 
     // === Seed Banks ===
-    // STORAGE-0007: Read from unified lifecycle objects (single source of truth).
-    let seed_banks = {
-        let banks = state.managed_storages.read().await;
-        banks
+    // STORAGE-0011: Read from unified Volumes collection.
+    let (seed_banks, candidates) = {
+        let map = state.volumes.read().await;
+        let banks: Vec<PortraitSeedBank> = map
             .values()
-            .map(|bank| PortraitSeedBank {
-                id: bank.id.clone(),
-                short_id: bank.short_id.clone(),
-                name: bank.name.clone(),
-                used_gb: bank.storage.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                capacity_gb: bank.storage.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                filesystem: bank.storage.filesystem.clone(),
-                visibility: bank.visibility.to_string(),
-                role: bank.role,
-                pinned: bank.is_pinned(),
-                encrypted: bank.encrypted,
-                roaming: bank.roaming,
-                online: bank.storage.health.is_usable(),
+            .filter_map(|vol| {
+                let mgmt = vol.management.as_ref()?;
+                Some(PortraitSeedBank {
+                    id: mgmt.id.clone(),
+                    short_id: mgmt.short_id.clone(),
+                    name: mgmt.name.clone(),
+                    used_gb: vol.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                    capacity_gb: vol.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                    filesystem: String::new(), // populated by platform adapter (future)
+                    visibility: mgmt.visibility.to_string(),
+                    role: mgmt.role,
+                    pinned: vol.is_pinned(),
+                    encrypted: mgmt.encrypted,
+                    roaming: mgmt.roaming,
+                    online: vol.health.is_usable(),
+                })
             })
-            .collect()
-    };
+            .collect();
 
-    // === Candidates (hopeful state - devices ready to become seed banks) ===
-    // NOTE: Read from cache - populated by metrics_collector task + storage events
-    let candidates = {
-        let cached = state.candidates_cache.read().await;
-        cached
-            .iter()
-            .map(|c| PortraitCandidate {
-                device: c.device.clone(),
-                label: c.label.clone(),
-                capacity_gb: c.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                state: format!("{:?}", c.state).to_lowercase(),
-                mount_path: c.mount_path.clone(),
+        // Candidates: unmanaged removable volumes
+        let cands: Vec<PortraitCandidate> = map
+            .values()
+            .filter(|vol| vol.management.is_none() && vol.removable)
+            .map(|vol| PortraitCandidate {
+                device: vol.path.clone(),
+                label: vol.label.clone(),
+                capacity_gb: vol.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                state: "empty".to_string(),
+                mount_path: Some(vol.mount_path.to_string_lossy().to_string()),
             })
-            .collect()
+            .collect();
+
+        (banks, cands)
     };
 
     // === Companions (adapters) ===

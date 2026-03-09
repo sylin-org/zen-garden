@@ -97,7 +97,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         let adoptable_manifests = state
             .manifest_registry
             .offerings_by_mode(&OfferingMode::Adopted);
-        tracing::info!(
+        tracing::debug!(
             count = adoptable_manifests.len(),
             scan = scan_count,
             elapsed_secs = elapsed_secs,

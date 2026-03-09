@@ -199,11 +199,14 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: Seed bank summary (only if one is plugged in)
     let seed_bank = {
-        let banks = state.managed_storages.read().await;
-        banks.values().next().map(|b| StorageSummary {
-            name: b.name.clone(),
-            used_gb: b.storage.used_bytes / 1_073_741_824,
-            total_gb: b.storage.capacity_bytes / 1_073_741_824,
+        let map = state.volumes.read().await;
+        map.values().find_map(|v| {
+            let mgmt = v.management.as_ref()?;
+            Some(StorageSummary {
+                name: mgmt.name.clone(),
+                used_gb: v.used_bytes / 1_073_741_824,
+                total_gb: v.capacity_bytes / 1_073_741_824,
+            })
         })
     };
 

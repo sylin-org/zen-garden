@@ -8,8 +8,8 @@
 //! - Dual-primary resolution: lower stone_id yields to higher
 //! - 6 s stale detection (2 × reconciliation window)
 //!
-//! The task updates roles on lifecycle objects (`state.managed_storages`) which
-//! the beacon builder reads when constructing `StorageAnnouncement::role`.
+//! The task updates roles on `state.volumes` (STORAGE-0011) which the beacon
+//! builder reads when constructing `StorageAnnouncement::role`.
 
 use anyhow::Result;
 use garden_common::storage::StorageRole;
@@ -17,7 +17,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::app_state::AppState;
-use crate::infra::storage::StorageRegistry;
 
 /// Startup reconciliation window — wait before asserting Primary (ms).
 const STARTUP_RECONCILIATION_MS: u64 = 3_000;
@@ -122,39 +121,32 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 /// 4. If both local and remote claim Primary (dual-primary) → lower stone_id yields.
 /// 5. Pinned Primary always wins — never reassigned by orchestration.
 async fn orchestration_tick(state: &AppState) -> Result<()> {
-    // Scan local seed banks
-    let registry = match StorageRegistry::scan().await {
-        Ok(r) => r,
-        Err(e) => {
-            debug!(error = %e, "Skipping seed bank orchestration — scan failed");
-            return Ok(());
+    // Read current managed volumes
+    let (current_roles, current_pins, local_names) = {
+        let map = state.volumes.read().await;
+        let mut names = Vec::new();
+        let mut roles = std::collections::HashMap::new();
+        let mut pins = std::collections::HashMap::new();
+        for vol in map.values() {
+            if let Some(ref mgmt) = vol.management {
+                names.push(mgmt.name.clone());
+                roles.insert(mgmt.name.clone(), mgmt.role);
+                if let Some(ref pin) = mgmt.pin {
+                    pins.insert(mgmt.name.clone(), pin.pin_id.clone());
+                }
+            }
         }
+        names.sort();
+        names.dedup();
+        (roles, pins, names)
     };
 
-    let local_banks = registry.list();
-    if local_banks.is_empty() {
+    if local_names.is_empty() {
         return Ok(());
     }
 
-    // Collect unique local names
-    let mut local_names: Vec<String> = local_banks.iter().map(|b| b.name.clone()).collect();
-    local_names.sort();
-    local_names.dedup();
-
     let my_stone_id = &state.stone_id;
     let reg = state.registry.read().await;
-
-    // Read current roles and pins from lifecycle objects
-    let (current_roles, current_pins) = {
-        let banks = state.managed_storages.read().await;
-        let roles: std::collections::HashMap<String, StorageRole> =
-            banks.values().map(|b| (b.name.clone(), b.role)).collect();
-        let pins: std::collections::HashMap<String, String> = banks
-            .values()
-            .filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string())))
-            .collect();
-        (roles, pins)
-    };
 
     let mut new_roles = std::collections::HashMap::new();
     let mut any_changed = false;
@@ -222,14 +214,16 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
     drop(reg);
 
-    // Apply auto-unpin and role updates via lifecycle objects
+    // Apply auto-unpin and role updates via unified Volumes
     {
-        let mut banks = state.managed_storages.write().await;
+        let mut map = state.volumes.write().await;
 
         for name in &auto_unpin {
-            if let Some(bank) = banks.values_mut().find(|b| b.name == *name) {
-                if let Err(e) = bank.unpin().await {
-                    warn!(name = %name, error = %e, "Failed to auto-unpin via lifecycle object");
+            if let Some(vol) = map.values_mut().find(|v| {
+                v.management.as_ref().is_some_and(|m| m.name == *name)
+            }) {
+                if let Err(e) = vol.unpin().await {
+                    warn!(name = %name, error = %e, "Failed to auto-unpin volume");
                 }
             }
         }
@@ -238,8 +232,12 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         }
 
         for (name, role) in &new_roles {
-            if let Some(bank) = banks.values_mut().find(|b| b.name == *name) {
-                bank.role = *role;
+            if let Some(vol) = map.values_mut().find(|v| {
+                v.management.as_ref().is_some_and(|m| m.name == *name)
+            }) {
+                if let Some(ref mut mgmt) = vol.management {
+                    mgmt.role = *role;
+                }
             }
         }
     }
@@ -248,13 +246,14 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     // so other stones see the resolved roles (not default Primary).
     if any_changed {
         let endpoint = state.self_entry.read().await.address.http_base();
-        let roles = state.seed_bank_roles_snapshot().await;
-        let pins = state.seed_bank_pins_snapshot().await;
+        let roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
         state.refresh_local_tools_projection().await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
             &state.stone_id,
             &state.stone_name,
             &endpoint,
+            &state.volumes,
             Some(&roles),
             Some(&pins),
         )
@@ -288,26 +287,27 @@ async fn compact_primary_changelogs(state: &AppState) {
 
     let cutoff_cursor = build_cutoff_cursor(cutoff_ms);
 
-    let banks = state.managed_storages.read().await;
-    for bank in banks.values() {
-        if bank.role != StorageRole::Primary {
-            continue;
-        }
+    let map = state.volumes.read().await;
+    for vol in map.values() {
+        let mgmt = match vol.management.as_ref() {
+            Some(m) if m.role == StorageRole::Primary => m,
+            _ => continue,
+        };
 
-        match bank.store.compact_changelog(&cutoff_cursor).await {
+        match mgmt.store.compact_changelog(&cutoff_cursor).await {
             Ok(0) => {}
             Ok(pruned) => {
                 info!(
-                    bank = %bank.name,
-                    bank_id = %bank.id,
+                    bank = %mgmt.name,
+                    bank_id = %mgmt.id,
                     pruned = pruned,
                     "Changelog compacted"
                 );
             }
             Err(e) => {
                 warn!(
-                    bank = %bank.name,
-                    bank_id = %bank.id,
+                    bank = %mgmt.name,
+                    bank_id = %mgmt.id,
                     error = %e,
                     "Changelog compaction failed"
                 );

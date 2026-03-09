@@ -34,7 +34,6 @@ use crate::domain::nurturing::{
     build_memories_manifest, NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots,
     RemoteNurturingIndex, ReplicationResult,
 };
-use crate::infra::storage::StorageRegistry;
 use crate::tasks::{trigger_all_nurturing, trigger_nurturing, NurturingWorkflowResult};
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
@@ -396,7 +395,7 @@ pub async fn replicate_to_seed_bank(
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -459,7 +458,7 @@ pub async fn list_remote_snapshots(
     Path(storage_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&storage_name).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.volumes, &storage_name).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -519,7 +518,7 @@ pub async fn restore_from_seed_bank(
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -653,14 +652,16 @@ pub async fn trigger_all_offerings_nurturing(
 // Helper functions
 // ============================================================================
 
-/// Find a seed bank by name or ID
-async fn find_seed_bank(name_or_id: &str) -> anyhow::Result<garden_common::storage::StorageInfo> {
-    let registry = StorageRegistry::scan().await?;
-
-    // Try by name first, then by ID
-    registry
-        .get_by_name(name_or_id)
-        .or_else(|| registry.get_by_id(name_or_id))
-        .cloned()
+/// Find a seed bank by name or ID from the Volumes domain.
+async fn find_seed_bank(
+    volumes: &crate::domain::storage::Volumes,
+    name_or_id: &str,
+) -> anyhow::Result<garden_common::storage::StorageInfo> {
+    let map = volumes.read().await;
+    map.values()
+        .find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name_or_id || m.id == name_or_id)
+        })
+        .and_then(|v| v.to_storage_info())
         .ok_or_else(|| anyhow::anyhow!("Seed bank not found: {}", name_or_id))
 }

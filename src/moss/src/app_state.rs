@@ -22,7 +22,6 @@ use crate::infra::{
 use crate::mdns::MdnsHandle;
 use crate::tasks::NetworkMonitor;
 use garden_common::console::ConsolePrinter;
-use garden_common::storage::StorageDetectedInfo;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
@@ -208,11 +207,6 @@ pub struct AppState {
     // Background tasks are responsible for keeping caches fresh.
 
 
-    /// Cached candidate devices (empty USB drives ready for preparation)
-    /// Background task: storage_monitor (USB events) + periodic refresh
-    /// Linux-only; always empty on other platforms
-    pub candidates_cache: Arc<RwLock<Vec<StorageDetectedInfo>>>,
-
     /// Cached network metrics (updated every 5s by health_monitor task)
     pub network_metrics_cache: Arc<RwLock<Option<NetworkMetrics>>>,
 
@@ -257,15 +251,24 @@ pub struct AppState {
     /// resolution doesn't have to wait for the next 3-second tick.
     pub orchestration_nudge: Arc<tokio::sync::Notify>,
 
-    /// Seed bank lifecycle objects — single source of truth (STORAGE-0007).
+    /// Unified volume collection (STORAGE-0011) — keyed by device path.
     ///
-    /// Keyed by seed bank ID (GUIDv7). Each `ManagedStorage` composes a `StorageDevice`
-    /// (mount health) and a `ContentStore` (I/O), plus domain state (role, pin).
+    /// Single source of truth for all local storage volumes (Spaces).
+    /// Populated by `initial_scan()` at boot, kept current by the volume watcher.
+    pub volumes: crate::domain::Volumes,
+
+    /// Physical storage media (STORAGE-0011) — keyed by OS device ID.
     ///
-    /// Writers: bootstrap (init), coordinator (health tick, hotplug),
-    ///          orchestration (role assignment), pin/unpin handlers.
-    /// Readers: portrait, beacon builder, nurturing, replication, API handlers.
-    pub managed_storages: crate::domain::ManagedStorages,
+    /// Host-only. Detects physical disks including those without partitions
+    /// or drive letters. Used for candidate discovery and `storage add`.
+    pub media: crate::domain::Media,
+
+    /// Signal to request a volume rescan (STORAGE-0011).
+    ///
+    /// API handlers send on this after mutating on-disk state (e.g. writing
+    /// a manifest during `storage add`). The volume watcher loop listens and
+    /// triggers a full reconcile through the existing detection pipeline.
+    pub volume_rescan_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 // ============================================================================
@@ -323,6 +326,14 @@ impl Default for DockerSubSystem {
 }
 
 impl AppState {
+    /// Request the volume watcher to re-scan and re-classify all volumes.
+    ///
+    /// Non-blocking. If the channel is full (a rescan is already pending),
+    /// the request is silently dropped — one rescan is sufficient.
+    pub fn request_volume_rescan(&self) {
+        let _ = self.volume_rescan_tx.try_send(());
+    }
+
     /// Get stone ID (GUID v7)
     pub fn stone_id(&self) -> &str {
         &self.stone_id
@@ -903,96 +914,6 @@ impl AppState {
     }
 
     // ========================================================================
-    // Seed Bank Lifecycle (STORAGE-0007)
-    // ========================================================================
-
-    /// Refresh `seed_banks` from a registry scan.
-    ///
-    /// Called by coordinator hotplug/persistence tasks after mount recovery or
-    /// device detection. Adds new seed banks, removes departed ones, and
-    /// updates health/capacity on existing ones.
-    pub async fn refresh_seed_banks_from_scan(
-        &self,
-        registry: &crate::infra::storage::StorageRegistry,
-    ) {
-        use crate::domain::ManagedStorage;
-        use crate::infra::storage::StorageDevice;
-
-        let scanned = registry.list();
-
-        let mut banks = self.managed_storages.write().await;
-
-        let mut seen_ids: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(scanned.len());
-
-        for info in &scanned {
-            seen_ids.insert(info.id.clone());
-
-            if let Some(existing) = banks.get_mut(&info.id) {
-                existing.storage.capacity_bytes = info.capacity_bytes;
-                existing.storage.used_bytes = info.used_bytes;
-                existing.name = info.name.clone();
-                existing.visibility = info.visibility;
-                if info.online {
-                    existing.storage.health =
-                        crate::infra::storage::StorageHealth::Healthy;
-                }
-            } else {
-                let manifest_path = std::path::Path::new(&info.mount_path)
-                    .join(".zen-garden")
-                    .join("manifest.json");
-                let manifest = match tokio::fs::read_to_string(&manifest_path).await {
-                    Ok(content) => {
-                        match serde_json::from_str::<garden_common::storage::StorageManifest>(
-                            &content,
-                        ) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::warn!(
-                                    name = %info.name, error = %e,
-                                    "Failed to parse manifest for new seed bank"
-                                );
-                                continue;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            name = %info.name, error = %e,
-                            "Failed to read manifest for new seed bank"
-                        );
-                        continue;
-                    }
-                };
-
-                let storage = StorageDevice::from_seed_bank_info(info);
-                let bank = ManagedStorage::from_storage(storage, &manifest, None).await;
-
-                tracing::info!(
-                    name = %bank.name,
-                    id = %bank.id,
-                    "New seed bank lifecycle object created (hotplug)"
-                );
-
-                banks.insert(bank.id.clone(), bank);
-            }
-        }
-
-        banks.retain(|id, bank| {
-            if seen_ids.contains(id) {
-                true
-            } else {
-                tracing::info!(
-                    name = %bank.name,
-                    id = %id,
-                    "Seed bank departed — removing lifecycle object"
-                );
-                false
-            }
-        });
-    }
-
-    // ========================================================================
     // Storage Service
     // ========================================================================
 
@@ -1002,55 +923,11 @@ impl AppState {
     /// instead of reimplementing resolution/routing logic.
     pub fn storage_service(&self) -> crate::domain::StorageService<'_> {
         crate::domain::StorageService::new(
-            &self.managed_storages,
+            &self.volumes,
             &self.registry,
             &self.stone_id,
             Some(&self.storage_tick_tx),
         )
     }
 
-    // ========================================================================
-    // Seed Bank Projections
-    // ========================================================================
-
-    /// Snapshot of roles keyed by seed bank name — for beacon/broadcast callers.
-    pub async fn seed_bank_roles_snapshot(
-        &self,
-    ) -> HashMap<String, garden_common::storage::StorageRole> {
-        let banks = self.managed_storages.read().await;
-        banks
-            .values()
-            .map(|b| (b.name.clone(), b.role))
-            .collect()
-    }
-
-    /// Snapshot of (name, id) pairs for signpost share generation.
-    pub async fn storage_name_id_pairs(&self) -> Vec<(String, String)> {
-        let banks = self.managed_storages.read().await;
-        banks
-            .values()
-            .map(|b| (b.name.clone(), b.id.clone()))
-            .collect()
-    }
-
-    /// Snapshot of pins keyed by seed bank name — for beacon/broadcast callers.
-    pub async fn seed_bank_pins_snapshot(&self) -> HashMap<String, String> {
-        let banks = self.managed_storages.read().await;
-        banks
-            .values()
-            .filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string())))
-            .collect()
-    }
-
-    /// Run health ticks on all local seed bank lifecycle objects.
-    ///
-    /// Called by the coordinator health tick (~10s). Each bank's storage
-    /// device is probed for mount liveness and capacity, and domain state
-    /// (pin) is reconciled from disk.
-    pub async fn tick_seed_bank_health(&self) {
-        let mut banks = self.managed_storages.write().await;
-        for bank in banks.values_mut() {
-            bank.health_tick().await;
-        }
-    }
 }

@@ -121,20 +121,19 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
 
 /// Run one replication cycle for all local Dormant seed banks.
 async fn replication_tick(state: &AppState) -> Result<()> {
-    // Collect Dormant banks from lifecycle objects
-    let banks = state.managed_storages.read().await;
-    let dormant_banks: Vec<(String, String, std::path::PathBuf)> = banks
+    // Collect Dormant volumes from unified collection
+    let map = state.volumes.read().await;
+    let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
         .values()
-        .filter(|b| b.role == StorageRole::Dormant)
-        .map(|b| {
-            (
-                b.name.clone(),
-                b.id.clone(),
-                b.storage.mount_path.clone(),
-            )
+        .filter_map(|vol| {
+            let mgmt = vol.management.as_ref()?;
+            if mgmt.role != StorageRole::Dormant {
+                return None;
+            }
+            Some((mgmt.name.clone(), mgmt.id.clone(), vol.mount_path.clone()))
         })
         .collect();
-    drop(banks);
+    drop(map);
 
     if dormant_banks.is_empty() {
         return Ok(());
@@ -188,13 +187,18 @@ async fn sync_dormant_bank(
 
     let peer = PeerAddress::from_http_url(&primary_endpoint);
     // 3. Read local last_cursor
-    // STORAGE-0007: prefer store from lifecycle object if available
+    // STORAGE-0011: prefer store from Volume management if available
     let lifecycle_store = {
-        let banks = state.managed_storages.read().await;
-        banks
-            .values()
-            .find(|b| b.name == name)
-            .map(|b| b.store.clone())
+        let map = state.volumes.read().await;
+        map.values()
+            .find_map(|vol| {
+                let mgmt = vol.management.as_ref()?;
+                if mgmt.name == name {
+                    Some(mgmt.store.clone())
+                } else {
+                    None
+                }
+            })
     };
     let local_store =
         lifecycle_store.unwrap_or_else(|| ContentStore::new_public(mount_path));

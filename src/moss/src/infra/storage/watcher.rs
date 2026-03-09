@@ -35,7 +35,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::domain::managed_storage::ManagedStorages;
+use crate::domain::Volumes;
 
 // ============================================================================
 // Constants
@@ -56,8 +56,8 @@ const DEBOUNCE_SECS: u64 = 2;
 pub struct StorageWatcherSet {
     /// Active watchers keyed by storage ID.
     watchers: Arc<RwLock<HashMap<String, ActiveWatcher>>>,
-    /// Shared managed storages for looking up mount paths.
-    managed_storages: ManagedStorages,
+    /// Shared volumes for looking up managed storage mount paths.
+    volumes: Volumes,
     /// Storage tick sender for replication notifications.
     tick_tx: broadcast::Sender<StorageTick>,
     /// Parent shutdown token.
@@ -76,13 +76,13 @@ struct ActiveWatcher {
 impl StorageWatcherSet {
     /// Create a new watcher set.
     pub fn new(
-        managed_storages: ManagedStorages,
+        volumes: Volumes,
         tick_tx: broadcast::Sender<StorageTick>,
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
             watchers: Arc::new(RwLock::new(HashMap::new())),
-            managed_storages,
+            volumes,
             tick_tx,
             shutdown_token,
         }
@@ -94,15 +94,11 @@ impl StorageWatcherSet {
     /// watchers for new storages, stops watchers for departed ones.
     pub async fn reconcile(&self) {
         let current_storages: Vec<(String, String, PathBuf)> = {
-            let banks = self.managed_storages.read().await;
-            banks
-                .values()
-                .map(|b| {
-                    (
-                        b.id.clone(),
-                        b.name.clone(),
-                        b.storage.mount_path.clone(),
-                    )
+            let map = self.volumes.read().await;
+            map.values()
+                .filter_map(|v| {
+                    let mgmt = v.management.as_ref()?;
+                    Some((mgmt.id.clone(), mgmt.name.clone(), v.mount_path.clone()))
                 })
                 .collect()
         };

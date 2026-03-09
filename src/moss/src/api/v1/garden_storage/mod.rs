@@ -339,17 +339,22 @@ pub async fn discover_v1(
 
     // Check local storages
     if let Some(local) = svc.resolve_local(&name).await {
-        let banks = state.managed_storages.read().await;
-        let pin_id = banks
+        let map = state.volumes.read().await;
+        let (pin_id, roles) = map
             .values()
-            .find(|b| b.name == name)
-            .and_then(|b| b.pin_id().map(|s| s.to_string()));
-        let roles = banks
-            .values()
-            .find(|b| b.name == name)
-            .map(|b| b.roles.clone())
+            .find_map(|v| {
+                let m = v.management.as_ref()?;
+                if m.name == name {
+                    Some((
+                        v.pin_id().map(|s| s.to_string()),
+                        m.roles.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default();
-        drop(banks);
+        drop(map);
 
         let local_endpoint = state.self_entry.read().await.address.http_base();
 

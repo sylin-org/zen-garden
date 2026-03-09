@@ -20,24 +20,12 @@ use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
-use garden_common::storage::{AddStorageRequest, StorageInfo, StorageRole, StorageSummary};
+use garden_common::storage::{
+    AddStorageRequest, CandidatesResponse, MediumAction, StorageInfo, StorageRole, StorageSummary,
+};
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
-
-// ============================================================================
-// Response Types (mirror of API responses)
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct CandidateDevice {
-    pub device: String,
-    pub capacity_bytes: u64,
-    pub label: Option<String>,
-    pub state: String,
-    pub eligible: bool,
-    pub ineligible_reason: Option<String>,
-}
 
 /// Storage overview response from GET /api/v1/stone/storage
 #[derive(Debug, Deserialize)]
@@ -250,15 +238,48 @@ impl AddStorageCommand {
             anyhow::bail!("API error {}: {}", status, text);
         }
 
-        let candidates: Vec<CandidateDevice> = response
-            .json::<ApiResponse<Vec<CandidateDevice>>>()
+        let resp: CandidatesResponse = response
+            .json()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse candidates: {}", e))?
-            .data;
+            .map_err(|e| anyhow::anyhow!("Failed to parse candidates: {}", e))?;
 
-        let eligible: Vec<&CandidateDevice> = candidates.iter().filter(|c| c.eligible).collect();
+        // Build a flat list of eligible targets from spaces (mounted volumes).
+        struct EligibleTarget {
+            device: String,
+            capacity_bytes: u64,
+            label: String,
+        }
+        let eligible: Vec<EligibleTarget> = resp
+            .spaces
+            .iter()
+            .filter(|s| s.eligible)
+            .map(|s| EligibleTarget {
+                device: s.device.clone(),
+                capacity_bytes: s.capacity_bytes,
+                label: s.label.as_deref().unwrap_or("(no label)").to_string(),
+            })
+            .collect();
 
         if eligible.is_empty() {
+            // Check if there are media that need action
+            let actionable: Vec<_> = resp
+                .media
+                .iter()
+                .filter(|m| matches!(m.suggested_action, MediumAction::NeedsPartition | MediumAction::NeedsFormat))
+                .collect();
+            if !actionable.is_empty() {
+                let mut msg = String::from("No ready volumes found, but detected physical media:\n");
+                for m in &actionable {
+                    msg.push_str(&format!(
+                        "  {} ({}) — {}\n",
+                        m.model.as_deref().unwrap_or(&m.device_id),
+                        format_bytes(m.size_bytes),
+                        m.suggested_action,
+                    ));
+                }
+                msg.push_str("\nPartition and format these disks first, then try again.");
+                anyhow::bail!(msg);
+            }
             anyhow::bail!(
                 "No eligible devices found. Insert a USB drive or specify a directory path."
             );
@@ -280,14 +301,12 @@ impl AddStorageCommand {
             ui::status_indicator("info", ctx.term.supports_color)
         );
         for (i, dev) in eligible.iter().enumerate() {
-            let label = dev.label.as_deref().unwrap_or("(no label)");
             println!(
-                "  [{}] {} - {} - {} ({})",
+                "  [{}] {} - {} - {}",
                 i + 1,
                 dev.device,
                 format_bytes(dev.capacity_bytes),
-                label,
-                dev.state
+                dev.label,
             );
         }
 
@@ -489,18 +508,17 @@ impl Command for ListStorageCommand {
             _ => Vec::new(),
         };
 
-        // Fetch candidates if on Linux
-        let candidates: Vec<CandidateDevice> = {
+        // Fetch candidates (cross-platform)
+        let candidates: Option<CandidatesResponse> = {
             let cand_url = format!(
                 "{}/api/v1/stone/storage/candidates",
                 endpoint.trim_end_matches('/')
             );
             match ctx.client.get(&cand_url).send().await {
-                Ok(resp) if resp.status().is_success() => resp
-                    .json::<Vec<CandidateDevice>>()
-                    .await
-                    .unwrap_or_default(),
-                _ => Vec::new(),
+                Ok(resp) if resp.status().is_success() => {
+                    resp.json::<CandidatesResponse>().await.ok()
+                }
+                _ => None,
             }
         };
 
@@ -579,26 +597,57 @@ impl Command for ListStorageCommand {
         }
 
         // Display candidates
-        if !candidates.is_empty() {
-            let eligible_candidates: Vec<_> = candidates.iter().filter(|c| c.eligible).collect();
-            if !eligible_candidates.is_empty() {
+        if let Some(ref cands) = candidates {
+            // Ready volumes (can be added immediately)
+            let eligible: Vec<_> = cands.spaces.iter().filter(|s| s.eligible).collect();
+            if !eligible.is_empty() {
                 println!("\n{}", ui::section_header("ELIGIBLE DEVICES", &ctx.term));
-                for c in eligible_candidates {
+                for s in &eligible {
+                    let label = s.label.as_deref().unwrap_or("");
+                    let mount = s.mount_path.as_deref().unwrap_or(&s.device);
                     println!(
-                        "  {} {} - {} - available (use: storage add {})",
+                        "  {} {} - {} {} (use: storage add {})",
                         ui::status_indicator("info", ctx.term.supports_color),
-                        c.device,
-                        format_bytes(c.capacity_bytes),
-                        c.device,
+                        mount,
+                        format_bytes(s.capacity_bytes),
+                        label,
+                        mount,
+                    );
+                }
+            }
+
+            // Physical media needing action
+            let actionable: Vec<_> = cands
+                .media
+                .iter()
+                .filter(|m| {
+                    matches!(
+                        m.suggested_action,
+                        MediumAction::NeedsPartition | MediumAction::NeedsFormat
+                    )
+                })
+                .collect();
+            if !actionable.is_empty() {
+                println!("\n{}", ui::section_header("PHYSICAL MEDIA (needs setup)", &ctx.term));
+                for m in &actionable {
+                    let name = m.model.as_deref().unwrap_or(&m.device_id);
+                    println!(
+                        "  {} {} - {} via {} — {}",
+                        ui::status_indicator("warn", ctx.term.supports_color),
+                        name,
+                        format_bytes(m.size_bytes),
+                        m.bus_type,
+                        m.suggested_action,
                     );
                 }
             }
         }
 
-        if storages.is_empty()
-            && garden_banks.is_empty()
-            && candidates.iter().all(|c| !c.eligible)
-        {
+        let has_candidates = candidates
+            .as_ref()
+            .map(|c| !c.spaces.is_empty() || !c.media.is_empty())
+            .unwrap_or(false);
+        if storages.is_empty() && garden_banks.is_empty() && !has_candidates {
             println!("\nTip: Insert a USB drive to see available devices");
         }
 

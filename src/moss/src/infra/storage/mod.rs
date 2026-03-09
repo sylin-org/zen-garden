@@ -1,23 +1,22 @@
-//! Storage and seed bank infrastructure
+//! Storage infrastructure (STORAGE-0011)
 //!
-//! Handles USB storage device detection, preparation, and management.
-//! Linux-only: Uses udev for device monitoring.
+//! Platform-agnostic volume detection, object storage, and broadcast.
 //!
-//! Design: No persistence file - USB device manifests ARE the source of truth.
-//! The registry is built in-memory by scanning mounted devices.
+//! ## Modules
 //!
-//! ## Object Storage
+//! - `platform` — cross-platform volume adapter (scan, watch, usage) [NEW]
+//! - `layout` — `.zen-garden/` dotfolder structure
+//! - `store` — `ContentStore` filesystem I/O
+//! - `objects` — S3-compatible object storage
+//! - `beacon` — UDP broadcast of storage beacons
+//! - `signpost` — SMB signpost generation
+//! - `adapter` — `StorageAdapter` trait for `storage add`
 //!
-//! The `objects` module provides S3-compatible object storage on seed banks:
-//! - Objects stored at: `{mount}/garden/storage/{bucket}/{key}`
-//! - Metadata in sidecar files: `{key}.meta.json`
-//! - Atomic writes with temp-file + rename
+//! ## Legacy modules (STORAGE-0007, being migrated to STORAGE-0011)
 //!
-//! ## Storage Beacon (STORAGE-0003)
-//!
-//! The `beacon` module broadcasts storage capability announcements:
-//! - Triggered on mount/unmount, visibility change, new stone online
-//! - All stones lurk-listen and update their StorageCache
+//! - `device` — Linux device analysis (being replaced by `platform`)
+//! - `lifecycle` — StorageDevice health (being replaced by `domain::storage::Volume`)
+//! - `registry` — StorageRegistry scan (being replaced by `domain::storage::Volumes`)
 
 pub mod adapter;
 mod beacon;
@@ -25,6 +24,7 @@ mod device;
 pub mod layout;
 mod lifecycle;
 mod objects;
+pub mod platform;
 mod registry;
 mod signpost;
 mod store;
@@ -35,21 +35,23 @@ mod subprocess;
 mod monitor;
 pub mod watcher;
 
+// New (STORAGE-0011)
 pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
+pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
+pub use signpost::refresh_signpost;
+pub use store::ContentStore;
+pub use watcher::StorageWatcherSet;
+
+// Legacy (will be removed as consumers migrate to domain::storage::Volume)
 pub use device::{
     analyze_device, list_unmounted_removable_devices, list_usb_partitions, DeviceAnalyzer,
     UnmountedDevice,
 };
 pub use lifecycle::{StorageDevice, StorageHealth};
-pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
 pub use registry::StorageRegistry;
-pub use signpost::refresh_signpost;
-pub use store::ContentStore;
 
 #[cfg(target_os = "linux")]
 pub use registry::{create_mount_tracker, MountTracker, TrackedMount};
 
 #[cfg(target_os = "linux")]
 pub use monitor::StorageMonitor;
-
-pub use watcher::StorageWatcherSet;

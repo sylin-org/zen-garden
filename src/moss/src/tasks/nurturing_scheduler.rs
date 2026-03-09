@@ -15,7 +15,6 @@
 //! targets based on routing strategy. Implements failover if primary fails.
 
 use crate::domain::nurturing::{build_memories_manifest, NurturingResult, ReplicationResult};
-use crate::infra::storage::StorageRegistry;
 use crate::AppState;
 use anyhow::{Context, Result};
 use garden_common::storage::{StorageInfo, StorageRole};
@@ -302,20 +301,15 @@ impl NurturingScheduler {
         attempts
     }
 
-    /// Find available seed banks from local registry
+    /// Find available seed banks from Volumes domain.
     ///
-    /// Scans mounted seed banks and returns those that are online.
-    /// For remote seed banks (via S3 gateway), use the storage_cache
-    /// routing separately.
+    /// Returns managed volumes that are online and healthy.
     async fn find_available_seed_banks(&self) -> Result<Vec<StorageInfo>> {
-        let local_registry = StorageRegistry::scan().await?;
-
-        // Get all local seed banks that are online
-        let seed_banks: Vec<StorageInfo> = local_registry
-            .list()
-            .into_iter()
-            .filter(|sb| sb.online)
-            .cloned()
+        let map = self.state.volumes.read().await;
+        let seed_banks: Vec<StorageInfo> = map
+            .values()
+            .filter(|v| v.is_managed() && v.online)
+            .filter_map(|v| v.to_storage_info())
             .collect();
 
         Ok(seed_banks)
@@ -330,14 +324,17 @@ impl NurturingScheduler {
     ///
     /// STORAGE-0007: Uses lifecycle objects for role lookup.
     async fn select_targets(&self, seed_banks: &[StorageInfo]) -> Vec<StorageInfo> {
-        let lifecycle_banks = self.state.managed_storages.read().await;
+        let volumes_map = self.state.volumes.read().await;
 
         let primary_banks: Vec<StorageInfo> = seed_banks
             .iter()
             .filter(|sb| {
-                let role = lifecycle_banks
-                    .get(&sb.id)
-                    .map(|b| b.role)
+                let role = volumes_map
+                    .values()
+                    .find_map(|v| {
+                        let m = v.management.as_ref()?;
+                        if m.id == sb.id { Some(m.role) } else { None }
+                    })
                     .unwrap_or(StorageRole::Primary);
                 if role == StorageRole::Dormant {
                     tracing::debug!(
@@ -388,12 +385,14 @@ impl NurturingScheduler {
             "Attempting replication"
         );
 
-        // STORAGE-0007: prefer store from lifecycle object; fall back to ad-hoc
+        // STORAGE-0011: prefer store from Volume management; fall back to ad-hoc
         let store = {
-            let banks = self.state.managed_storages.read().await;
-            banks
-                .get(&seed_bank.id)
-                .map(|b| b.store.clone())
+            let map = self.state.volumes.read().await;
+            map.values()
+                .find_map(|v| {
+                    let m = v.management.as_ref()?;
+                    if m.id == seed_bank.id { Some(m.store.clone()) } else { None }
+                })
                 .unwrap_or_else(|| {
                     crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path)
                 })

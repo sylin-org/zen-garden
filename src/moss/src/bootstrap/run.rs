@@ -207,8 +207,10 @@ pub async fn run(
     // Create orchestration nudge early — shared between discovery listener and AppState
     let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
 
-    // Seed bank lifecycle objects (STORAGE-0007) — created empty, populated after AppState
-    let seed_banks = crate::domain::new_managed_storages();
+    // Unified volume collection (STORAGE-0011) — created empty, populated after AppState
+    let volumes = crate::domain::new_volumes();
+    // Volume rescan channel — API handlers poke tx, watcher loop consumes rx
+    let (volume_rescan_tx, volume_rescan_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
@@ -224,7 +226,7 @@ pub async fn run(
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
         orchestration_nudge.clone(),
-        seed_banks.clone(),
+        volumes.clone(),
         shutdown_token.child_token(),
     )
     .await;
@@ -661,7 +663,6 @@ pub async fn run(
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
         infrastructure_handlers: infrastructure_handlers.clone(),
         // Cached metrics - populated by background tasks, read-only for endpoints
-        candidates_cache: Arc::new(RwLock::new(Vec::new())),
         network_metrics_cache: Arc::new(RwLock::new(None)),
         // FIREFLY-0003: GPU utilization cache
         gpu_utilization: Arc::new(RwLock::new(None)),
@@ -686,8 +687,14 @@ pub async fn run(
         },
         // Orchestration nudge — immediate role re-evaluation trigger
         orchestration_nudge: orchestration_nudge.clone(),
-        // Seed bank lifecycle objects — single source of truth (STORAGE-0007)
-        managed_storages: seed_banks.clone(),
+        // Unified volume collection (STORAGE-0011)
+        volumes: volumes.clone(),
+        // Physical media (STORAGE-0011) — host-only, for candidate discovery
+        media: crate::domain::new_media(),
+        // Volume rescan signal (STORAGE-0011) — API handlers poke this after
+        // mutating on-disk state (e.g. writing a manifest). The volume watcher
+        // loop consumes the rx side and triggers a full reconcile.
+        volume_rescan_tx: volume_rescan_tx.clone(),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -739,60 +746,23 @@ pub async fn run(
     });
     tracing::info!("Discovery handler initialized (using p2p transport)");
 
-    // Phase 11.post4a: Initialize seed bank lifecycle objects (STORAGE-0007)
-    // Scan mounted devices, construct ManagedStorage objects with Storage + Store + pin state.
-    // This replaces the old scattered pin-loading code — ManagedStorage::from_storage loads pins.
+    // Phase 11.post4a: Initial volume scan (STORAGE-0011)
+    // Populates the unified Volumes map with all currently attached volumes.
+    // Cross-platform: uses platform::scan_volumes() (Linux: /proc/mounts, Windows: GetLogicalDrives).
     {
-        if let Ok(registry) = crate::infra::storage::StorageRegistry::scan().await {
-            let mut banks = state.managed_storages.write().await;
-            for info in registry.list() {
-                // Read manifest for full identity
-                let manifest_path = std::path::Path::new(&info.mount_path)
-                    .join(".zen-garden")
-                    .join("manifest.json");
-                let manifest = match tokio::fs::read_to_string(&manifest_path).await {
-                    Ok(content) => match serde_json::from_str::<
-                        garden_common::storage::StorageManifest,
-                    >(&content)
-                    {
-                        Ok(m) => m,
-                        Err(e) => {
-                            tracing::warn!(
-                                name = %info.name,
-                                error = %e,
-                                "Failed to parse seed bank manifest — skipping"
-                            );
-                            continue;
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!(
-                            name = %info.name,
-                            error = %e,
-                            "Failed to read seed bank manifest — skipping"
-                        );
-                        continue;
-                    }
-                };
+        let volumes = state.volumes.clone();
+        crate::domain::storage::initial_scan(&volumes).await;
+    }
 
-                let storage =
-                    crate::infra::storage::StorageDevice::from_seed_bank_info(info);
-                let bank =
-                    crate::domain::ManagedStorage::from_storage(storage, &manifest, None).await;
-                tracing::info!(
-                    name = %bank.name,
-                    id = %bank.id,
-                    pinned = bank.is_pinned(),
-                    "Seed bank lifecycle object initialized"
-                );
-
-                banks.insert(bank.id.clone(), bank);
-            }
-            let count = banks.len();
-            if count > 0 {
-                tracing::info!(count, "Seed bank lifecycle objects initialized (STORAGE-0007)");
-            }
-        }
+    // Phase 11.post4b: Initial media scan (STORAGE-0011)
+    // Detects physical disks including those without partitions or drive letters.
+    // Uses PowerShell Get-Disk (Windows) or lsblk (Linux).
+    {
+        let media = state.media.clone();
+        let snapshots = tokio::task::spawn_blocking(crate::infra::storage::platform::scan_media)
+            .await
+            .unwrap_or_default();
+        crate::domain::storage::reconcile_media(&media, &snapshots).await;
     }
 
     // Phase 11.post4: Start offering lifecycle event listeners
@@ -1208,6 +1178,150 @@ pub async fn run(
         }
     }
 
+    // Phase 17.5.1: Cross-platform volume watcher (STORAGE-0011)
+    // Detects volume hotplug/removal events and feeds them into the Volumes domain.
+    // Also emits DomainPulse events so presence SSE (ribbon notifications) and
+    // the candidates notification stay current.
+    {
+        use crate::infra::storage::platform::VolumeEvent;
+        use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+
+        let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel(32);
+        crate::infra::storage::platform::start_volume_watcher(vol_tx);
+
+        let volumes_for_watcher = state.volumes.clone();
+        let pulse_tx_for_watcher = state.pulse_tx.clone();
+        let notifications = state.notifications.clone();
+        let watcher_token = shutdown_token.child_token();
+        let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
+        tokio::spawn(async move {
+            /// Process a single volume event: classify, emit pulse, update notifications.
+            async fn handle_volume_event(
+                ev: VolumeEvent,
+                volumes: &crate::domain::Volumes,
+                pulse_tx: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
+                notifications: &garden_common::NotificationRegistry,
+            ) {
+                // Build pulse before ingest consumes the event info
+                let pulse = match &ev {
+                    VolumeEvent::Appeared(snap) => {
+                        let capacity_gb = snap.capacity_bytes / 1_000_000_000;
+                        Some(infra::DomainPulse::storage_event(
+                            "storage_detected",
+                            format!("Volume appeared: {} ({})", snap.mount_path, snap.label.as_deref().unwrap_or("unlabeled")),
+                            "info",
+                            None,
+                            Some(serde_json::json!({
+                                "device": snap.path,
+                                "mount_path": snap.mount_path,
+                                "label": snap.label,
+                                "capacity_gb": capacity_gb,
+                                "removable": snap.removable,
+                            })),
+                        ))
+                    }
+                    VolumeEvent::Disappeared { path } => {
+                        Some(infra::DomainPulse::storage_event(
+                            "storage_removed",
+                            format!("Volume disappeared: {}", path),
+                            "info",
+                            None,
+                            Some(serde_json::json!({ "device": path })),
+                        ))
+                    }
+                };
+
+                // Ingest into Volumes domain
+                crate::domain::storage::ingest_event(volumes, ev).await;
+
+                // Emit pulse for presence SSE / ribbon notifications
+                if let Some(p) = pulse {
+                    let _ = pulse_tx.send(infra::PulseEvent::Domain(p));
+                }
+
+                // Update candidates notification
+                let candidate_count = {
+                    let map = volumes.read().await;
+                    map.values()
+                        .filter(|v| !v.is_managed() && v.removable && v.online)
+                        .count()
+                };
+                notifications.set_if(
+                    NOTIF_SOURCE_CANDIDATES,
+                    NotificationTag::Opportunity,
+                    candidate_count > 0,
+                );
+            }
+
+            loop {
+                tokio::select! {
+                    _ = watcher_token.cancelled() => break,
+                    event = vol_rx.recv() => {
+                        let Some(ev) = event else { break };
+                        handle_volume_event(
+                            ev,
+                            &volumes_for_watcher,
+                            &pulse_tx_for_watcher,
+                            &notifications,
+                        ).await;
+                    }
+                    _ = rescan_rx.recv() => {
+                        // Ad-hoc rescan requested (e.g. after `storage add` wrote a manifest).
+                        // Re-scan all volumes through the standard pipeline.
+                        let snaps = tokio::task::spawn_blocking(
+                            crate::infra::storage::platform::scan_volumes
+                        )
+                        .await
+                        .unwrap_or_default();
+                        crate::domain::storage::reconcile(&volumes_for_watcher, &snaps).await;
+                        crate::domain::storage::health_tick_all(&volumes_for_watcher).await;
+
+                        // Update candidates notification after rescan
+                        let candidate_count = {
+                            let map = volumes_for_watcher.read().await;
+                            map.values()
+                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .count()
+                        };
+                        notifications.set_if(
+                            NOTIF_SOURCE_CANDIDATES,
+                            NotificationTag::Opportunity,
+                            candidate_count > 0,
+                        );
+                        tracing::debug!("Ad-hoc volume rescan complete");
+                    }
+                }
+            }
+        });
+        tracing::info!("Volume watcher started (STORAGE-0011)");
+    }
+
+    // Phase 17.5.2: Physical media watcher (STORAGE-0011)
+    // Polls physical disks (PowerShell/lsblk) to detect media without partitions.
+    // Lower cadence than the volume watcher since physical changes are rarer.
+    {
+        let media = state.media.clone();
+        let media_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.tick().await; // skip first immediate tick (initial scan already done)
+            loop {
+                tokio::select! {
+                    _ = media_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        let snapshots = tokio::task::spawn_blocking(
+                            crate::infra::storage::platform::scan_media
+                        )
+                        .await
+                        .unwrap_or_default();
+                        crate::domain::storage::reconcile_media(&media, &snapshots).await;
+                    }
+                }
+            }
+        });
+        tracing::info!("Media watcher started (STORAGE-0011)");
+    }
+
     // Phase 17.6: Topology + storage cache maintenance
     // Topology: mark stale stones offline, evict old, persist dirty cache to disk
     crate::tasks::start_topology_maintenance(
@@ -1300,6 +1414,17 @@ pub async fn run(
         tracing::info!("Seed bank replication task started (STORAGE-0006)");
     }
 
+    // Phase 17.9b2: Shell integration (Windows only)
+    // Registers "Zen Garden" context menu on drives for storage adoption.
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = crate::infra::shell_integration::register() {
+            tracing::warn!(error = %e, "Shell integration failed to register (non-fatal)");
+        } else {
+            tracing::info!("Shell integration: drive context menu registered");
+        }
+    }
+
     // Phase 17.9c: Cloud Filter sync provider (STORAGE-0009 Phase 4, Windows only)
     // Registers a "Zen Garden" sync root in Explorer so storages appear natively.
     #[cfg(target_os = "windows")]
@@ -1309,7 +1434,7 @@ pub async fn run(
             Arc::new(RwLock::new(entry.address.http_base()))
         };
         if let Err(e) = crate::infra::cloud_filter::start(
-            state.managed_storages.clone(),
+            state.volumes.clone(),
             state.registry.clone(),
             state.stone_id.clone(),
             state.storage_tick_tx.clone(),
@@ -1329,7 +1454,7 @@ pub async fn run(
     // entries so replication stays coherent.
     {
         let watcher_set = crate::infra::storage::StorageWatcherSet::new(
-            state.managed_storages.clone(),
+            state.volumes.clone(),
             state.storage_tick_tx.clone(),
             shutdown_token.child_token(),
         );

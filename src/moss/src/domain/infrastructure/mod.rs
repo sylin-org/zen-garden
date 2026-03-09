@@ -144,7 +144,7 @@ impl InfrastructureHandlerRegistry {
         // Get all online stones from topology
         let stones = crate::domain::topology::get_online_stones(topology_cache).await;
 
-        tracing::info!(
+        tracing::debug!(
             stone_count = stones.len(),
             total_services = stones.iter().map(|s| s.services.len()).sum::<usize>(),
             "Infrastructure handlers: processing topology"

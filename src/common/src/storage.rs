@@ -55,7 +55,7 @@ impl std::fmt::Display for DeviceState {
 // Storage Detection Types
 // ============================================================================
 
-/// Information about a detected storage device
+/// Information about a detected storage device (partition/volume level)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageDetectedInfo {
     /// Device path (e.g., "/dev/sdb1")
@@ -84,6 +84,143 @@ pub struct StorageDetectedInfo {
     /// Reason if not eligible
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ineligible_reason: Option<String>,
+}
+
+// ============================================================================
+// Medium Detection Types (physical disk layer)
+// ============================================================================
+
+/// Bus type of the physical connection (matches infra::storage::platform::BusType).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BusType {
+    Usb,
+    Sata,
+    Nvme,
+    Scsi,
+    Mmc,
+    Unknown,
+}
+
+impl std::fmt::Display for BusType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usb => write!(f, "USB"),
+            Self::Sata => write!(f, "SATA"),
+            Self::Nvme => write!(f, "NVMe"),
+            Self::Scsi => write!(f, "SCSI"),
+            Self::Mmc => write!(f, "MMC"),
+            Self::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// Condition of a physical medium (matches infra::storage::platform::MediumCondition).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediumCondition {
+    /// No partition table — brand new or wiped disk.
+    Raw,
+    /// Has a partition table with 1+ partitions.
+    Partitioned,
+    /// Device is offline or reporting I/O errors.
+    Unreadable,
+}
+
+impl std::fmt::Display for MediumCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Raw => write!(f, "raw"),
+            Self::Partitioned => write!(f, "partitioned"),
+            Self::Unreadable => write!(f, "unreadable"),
+        }
+    }
+}
+
+/// A partition on a detected medium (for API responses).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediumPartitionInfo {
+    /// Partition number (1-based).
+    pub index: u32,
+    /// Size in bytes.
+    pub size_bytes: u64,
+    /// Filesystem type if known (e.g., "NTFS", "ext4").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<String>,
+    /// Drive letter (Windows) or mount point (Linux).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_path: Option<String>,
+    /// Volume label if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Information about a physical storage medium (disk-level).
+///
+/// Host-only — never broadcast to the garden. Used for `rake storage candidates`
+/// to show physical disks that may need partitioning or formatting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediumInfo {
+    /// OS device identifier (e.g., `\\.\PhysicalDrive2`, `/dev/sdb`).
+    pub device_id: String,
+    /// Vendor/model name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Physical bus type.
+    pub bus_type: BusType,
+    /// Total size in bytes.
+    pub size_bytes: u64,
+    /// Whether the medium is external/removable.
+    pub removable: bool,
+    /// Physical condition.
+    pub condition: MediumCondition,
+    /// Partitions on this medium.
+    pub partitions: Vec<MediumPartitionInfo>,
+    /// Whether any partition is already managed by Zen Garden.
+    pub managed: bool,
+    /// Suggested action for the user.
+    pub suggested_action: MediumAction,
+}
+
+/// What action the user should take for this medium.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediumAction {
+    /// Disk needs partitioning and formatting before use.
+    NeedsPartition,
+    /// Disk has partition(s) but no filesystem — needs formatting.
+    NeedsFormat,
+    /// Disk is ready — has a mounted volume that can be added with `storage add`.
+    Ready,
+    /// Disk is already managed by Zen Garden.
+    AlreadyManaged,
+    /// Disk is unreadable — may need physical inspection.
+    Unreadable,
+}
+
+impl std::fmt::Display for MediumAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NeedsPartition => write!(f, "needs partition"),
+            Self::NeedsFormat => write!(f, "needs format"),
+            Self::Ready => write!(f, "ready"),
+            Self::AlreadyManaged => write!(f, "already managed"),
+            Self::Unreadable => write!(f, "unreadable"),
+        }
+    }
+}
+
+/// Combined candidates response for GET /api/v1/stone/storage/candidates.
+///
+/// Returns both partition-level candidates (mounted volumes ready for `storage add`)
+/// and physical media (disks that may need partitioning/formatting).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidatesResponse {
+    /// Mounted volumes eligible for `storage add` (unmanaged, removable, online).
+    pub spaces: Vec<StorageDetectedInfo>,
+    /// Physical media visible to this stone (USB drives, external disks).
+    /// Includes disks without partitions or drive letters.
+    pub media: Vec<MediumInfo>,
 }
 
 // ============================================================================

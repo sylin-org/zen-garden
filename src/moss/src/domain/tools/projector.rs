@@ -5,7 +5,7 @@
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
 use crate::domain::service_discovery::{self, FoundService};
-use crate::infra::storage::StorageHealth;
+use crate::domain::storage::VolumeHealth;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
 use garden_common::storage::DEFAULT_PUBLIC_STORAGE_NAME;
@@ -30,19 +30,23 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     // by the gateway API (PUT /api/v1/garden/gateway). They are NOT projected
     // here — the reconcile_local() call skips Registered entries.
 
-    // ── Seed-banks from lifecycle objects ─────────────────────────
+    // ── Managed storages from unified volumes ────────────────────
     let endpoint = state.self_entry.read().await.address.http_base();
-    let local_seed_banks: Vec<_> = {
-        let banks = state.managed_storages.read().await;
-        banks.values().cloned().collect()
+    let managed_vols: Vec<_> = {
+        let map = state.volumes.read().await;
+        map.values()
+            .filter(|v| v.is_managed())
+            .cloned()
+            .collect()
     };
 
-    for bank in &local_seed_banks {
-        let canonical = canonical_storage_name(&bank.name);
-        let (status, ready) = seed_bank_health_to_readiness(&bank.storage.health);
-        let visibility_str = bank.visibility.to_string();
+    for vol in &managed_vols {
+        let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
+        let canonical = canonical_storage_name(&mgmt.name);
+        let (status, ready) = volume_health_to_readiness(&vol.health);
+        let visibility_str = mgmt.visibility.to_string();
 
-        // Local seed banks always support s3 + storage protocols
+        // Local storages always support s3 + storage protocols
         let protocols = vec!["s3".to_string(), "storage".to_string()];
         let protocol = "s3".to_string();
 
@@ -67,7 +71,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 name: String::new(),
                 tool_type: "seed-bank".to_string(),
                 category: "storage".to_string(),
-                id: bank.id.clone(),
+                id: mgmt.id.clone(),
                 tags: Vec::new(),
             },
             stone: Stone {
@@ -87,14 +91,14 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
             },
             capabilities: Vec::new(),
             storage: Some(garden_common::tools::StorageMetadata {
-                role: Some(bank.role.to_string().to_ascii_lowercase()),
-                capacity_bytes: bank.storage.capacity_bytes,
-                used_bytes: bank.storage.used_bytes,
+                role: Some(mgmt.role.to_string().to_ascii_lowercase()),
+                capacity_bytes: vol.capacity_bytes,
+                used_bytes: vol.used_bytes,
                 visibility: visibility_str,
-                encrypted: bank.encrypted,
-                pin_id: bank.pin_id().map(|s| s.to_string()),
+                encrypted: mgmt.encrypted,
+                pin_id: vol.pin_id().map(|s| s.to_string()),
                 protocols,
-                roles: bank.roles.clone(),
+                roles: mgmt.roles.clone(),
             }),
         });
     }
@@ -188,15 +192,12 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     })
 }
 
-/// Map `StorageHealth` to `(status, ready)` for tool projection.
-///
-/// Equivalent to `seed_bank_readiness` but works with the lifecycle
-/// `StorageHealth` enum instead of the announcement health string.
-fn seed_bank_health_to_readiness(health: &StorageHealth) -> (&'static str, bool) {
+/// Map `VolumeHealth` to `(status, ready)` for tool projection.
+fn volume_health_to_readiness(health: &VolumeHealth) -> (&'static str, bool) {
     match health {
-        StorageHealth::Healthy => ("running", true),
-        StorageHealth::Degraded(_) => ("degraded", false),
-        StorageHealth::Unmounted | StorageHealth::Lost => ("stopped", false),
+        VolumeHealth::Healthy => ("running", true),
+        VolumeHealth::Degraded(_) => ("degraded", false),
+        VolumeHealth::Unmounted | VolumeHealth::Lost => ("stopped", false),
     }
 }
 

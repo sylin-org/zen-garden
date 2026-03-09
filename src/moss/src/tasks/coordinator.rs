@@ -24,9 +24,7 @@ use crate::{
 };
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
-use garden_common::storage::StorageRole;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -129,7 +127,7 @@ pub async fn start_discovery_listener(
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
     orchestration_nudge: Arc<tokio::sync::Notify>,
-    seed_banks: crate::domain::ManagedStorages,
+    volumes: crate::domain::Volumes,
     token: CancellationToken,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
@@ -211,7 +209,7 @@ pub async fn start_discovery_listener(
                         let local_endpoint = api_endpoint.clone();
                         let local_entry = self_entry.clone();
                         let local_registry = registry.clone();
-                        let local_seed_banks = seed_banks.clone();
+                        let local_volumes = volumes.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
                                 let current = local_entry.read().await.address.http_base();
@@ -222,16 +220,13 @@ pub async fn start_discovery_listener(
                                 }
                             };
 
-                            let (roles, pins) = {
-                                let banks = local_seed_banks.read().await;
-                                let roles: HashMap<String, StorageRole> = banks.values().map(|b| (b.name.clone(), b.role)).collect();
-                                let pins: HashMap<String, String> = banks.values().filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string()))).collect();
-                                (roles, pins)
-                            };
+                            let roles = crate::domain::storage::roles_snapshot(&local_volumes).await;
+                            let pins = crate::domain::storage::pins_snapshot(&local_volumes).await;
                             match crate::infra::storage::broadcast_if_has_storage(
                                 &local_stone_id,
                                 &local_stone_name,
                                 &resolved_endpoint,
+                                &local_volumes,
                                 Some(&roles),
                                 Some(&pins),
                             )
@@ -800,12 +795,13 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                 // TOOLS-0003: Refresh registry + broadcast storage beacon
                 state_persistence.refresh_local_tools_projection().await;
                 let endpoint = state_persistence.self_entry.read().await.address.http_base();
-                let roles = state_persistence.seed_bank_roles_snapshot().await;
-                let pins = state_persistence.seed_bank_pins_snapshot().await;
+                let roles = crate::domain::storage::roles_snapshot(&state_persistence.volumes).await;
+                let pins = crate::domain::storage::pins_snapshot(&state_persistence.volumes).await;
                 if let Err(e) = crate::infra::storage::broadcast_beacon(
                     &state_persistence.stone_id,
                     &state_persistence.stone_name,
                     &endpoint,
+                    &state_persistence.volumes,
                     Some(&roles),
                     Some(&pins),
                 )
@@ -815,22 +811,6 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                         error = %e,
                         "Failed to broadcast storage beacon after mount recovery"
                     );
-                }
-
-                // Refresh seed bank cache + lifecycle objects
-                match StorageRegistry::scan().await {
-                    Ok(registry) => {
-                        // STORAGE-0007: update lifecycle objects from fresh scan
-                        state_persistence
-                            .refresh_seed_banks_from_scan(&registry)
-                            .await;
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            error = %e,
-                            "Failed to refresh seed bank cache after mount recovery"
-                        );
-                    }
                 }
             }
         }
@@ -870,48 +850,28 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                 }
             }
 
-            // STORAGE-0007: health tick all seed banks (~10s)
-            state_hotplug.tick_seed_bank_health().await;
+            // STORAGE-0011: health tick all volumes (~10s)
+            crate::domain::storage::health_tick_all(&state_hotplug.volumes).await;
 
-            // Scan to get registry state (also triggers auto-mount internally, but we need the result)
-            match StorageRegistry::scan().await {
-                Ok(registry) => {
-                    let count = registry.list().len();
-                    if count > 0 {
-                        tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
-                    }
-
-                    // STORAGE-0007: refresh lifecycle objects
-                    state_hotplug
-                        .refresh_seed_banks_from_scan(&registry)
-                        .await;
-
-                    // TOOLS-0003: Refresh registry + broadcast storage beacon
-                    state_hotplug.refresh_local_tools_projection().await;
-                    let endpoint = state_hotplug.self_entry.read().await.address.http_base();
-                    let roles = state_hotplug.seed_bank_roles_snapshot().await;
-                    let pins = state_hotplug.seed_bank_pins_snapshot().await;
-                    if let Err(e) = crate::infra::storage::broadcast_beacon(
-                        &state_hotplug.stone_id,
-                        &state_hotplug.stone_name,
-                        &endpoint,
-                        Some(&roles),
-                        Some(&pins),
-                    )
-                    .await
-                    {
-                        tracing::trace!(
-                            error = %e,
-                            "Failed to broadcast storage beacon during hot-plug scan"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::trace!(
-                        error = %e,
-                        "Hot-plug scan failed"
-                    );
-                }
+            // TOOLS-0003: Refresh registry + broadcast storage beacon
+            state_hotplug.refresh_local_tools_projection().await;
+            let endpoint = state_hotplug.self_entry.read().await.address.http_base();
+            let roles = crate::domain::storage::roles_snapshot(&state_hotplug.volumes).await;
+            let pins = crate::domain::storage::pins_snapshot(&state_hotplug.volumes).await;
+            if let Err(e) = crate::infra::storage::broadcast_beacon(
+                &state_hotplug.stone_id,
+                &state_hotplug.stone_name,
+                &endpoint,
+                &state_hotplug.volumes,
+                Some(&roles),
+                Some(&pins),
+            )
+            .await
+            {
+                tracing::trace!(
+                    error = %e,
+                    "Failed to broadcast storage beacon during hot-plug scan"
+                );
             }
         }
     });
@@ -941,46 +901,28 @@ fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationTo
                 }
             }
 
-            // STORAGE-0007: health tick all seed banks (~10s)
-            state.tick_seed_bank_health().await;
+            // STORAGE-0011: health tick all volumes (~10s)
+            crate::domain::storage::health_tick_all(&state.volumes).await;
 
-            // Scan triggers auto-mount for any new zen-seed devices
-            match crate::infra::storage::StorageRegistry::scan().await {
-                Ok(registry) => {
-                    let count = registry.list().len();
-                    if count > 0 {
-                        tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
-                    }
-
-                    // STORAGE-0007: refresh lifecycle objects
-                    state.refresh_seed_banks_from_scan(&registry).await;
-
-                    // TOOLS-0003: Refresh registry + broadcast storage beacon
-                    state.refresh_local_tools_projection().await;
-                    let endpoint = state.self_entry.read().await.address.http_base();
-                    let roles = state.seed_bank_roles_snapshot().await;
-                    let pins = state.seed_bank_pins_snapshot().await;
-                    if let Err(e) = crate::infra::storage::broadcast_beacon(
-                        &state.stone_id,
-                        &state.stone_name,
-                        &endpoint,
-                        Some(&roles),
-                        Some(&pins),
-                    )
-                    .await
-                    {
-                        tracing::trace!(
-                            error = %e,
-                            "Failed to broadcast storage beacon during hot-plug scan"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::trace!(
-                        error = %e,
-                        "Hot-plug scan failed"
-                    );
-                }
+            // TOOLS-0003: Refresh registry + broadcast storage beacon
+            state.refresh_local_tools_projection().await;
+            let endpoint = state.self_entry.read().await.address.http_base();
+            let roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
+            let pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
+            if let Err(e) = crate::infra::storage::broadcast_beacon(
+                &state.stone_id,
+                &state.stone_name,
+                &endpoint,
+                &state.volumes,
+                Some(&roles),
+                Some(&pins),
+            )
+            .await
+            {
+                tracing::trace!(
+                    error = %e,
+                    "Failed to broadcast storage beacon during hot-plug scan"
+                );
             }
         }
     });
@@ -1025,7 +967,7 @@ pub async fn start_all_background_tasks(
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
         state.orchestration_nudge.clone(),
-        state.managed_storages.clone(),
+        state.volumes.clone(),
         token.child_token(),
     )
     .await;

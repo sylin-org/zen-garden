@@ -1,53 +1,41 @@
-//! Cloud Filter integration (STORAGE-0009 Phase 4)
+//! Cloud Filter integration (STORAGE-0009 Phase 4, rebuilt per STORAGE-0012)
 //!
 //! Registers a Windows Cloud Sync Provider so managed storages appear
-//! natively in Explorer. Files are fetched on demand from the hosting
-//! stone's storage API; saves push back to the Primary.
+//! natively in Explorer under "Zen Garden".  Files are fetched on demand
+//! from the hosting stone's storage API.
+//!
+//! ## Module layout (STORAGE-0012)
+//!
+//! - `registration.rs` — sync root registration lifecycle
+//! - `provider.rs`     — CfApi `Filter` trait callbacks
+//! - `placeholders.rs` — shared placeholder helpers (valid timestamps)
 //!
 //! ## Lifecycle
 //!
-//! 1. `start()` registers the "Zen Garden" sync root (idempotent)
-//! 2. A background task watches the `GardenRegistry` for storage
-//!    beacons and creates/removes top-level placeholder directories
-//! 3. The `ZenGardenProvider` implements Cloud Filter's `Filter` trait,
-//!    serving `fetch_data` and `fetch_placeholders` callbacks
-//! 4. On shutdown, the connection is dropped (disconnects the provider)
-//!
-//! ## Architecture
-//!
-//! Thin infra layer — delegates all I/O to `StorageService` (domain).
-//! No business logic here, just the CfApi adapter.
+//! 1. `start()` ensures the sync root is registered (idempotent)
+//! 2. Connects the `ZenGardenProvider` to the sync root
+//! 3. Spawns a storage watcher that creates/removes placeholder dirs
+//! 4. On shutdown, the connection drops (disconnects the provider)
 
+mod placeholders;
 mod provider;
+mod registration;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use cloud_filter::root::{HydrationType, PopulationType, Session, SyncRootId, SyncRootIdBuilder, SyncRootInfo};
+use cloud_filter::root::Session;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::domain::garden_registry::GardenRegistry;
-use crate::domain::managed_storage::ManagedStorages;
+use crate::domain::storage::Volumes;
 use garden_common::storage::StorageTick;
 
 use self::provider::ZenGardenProvider;
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/// Provider name registered with Windows.
-const PROVIDER_NAME: &str = "ZenGarden";
-
-/// Display name shown in Explorer's navigation pane.
-const DISPLAY_NAME: &str = "Zen Garden";
-
-/// Folder name under the user's home directory.
-const SYNC_ROOT_FOLDER: &str = "Zen Garden";
 
 // ============================================================================
 // Public API
@@ -57,10 +45,8 @@ const SYNC_ROOT_FOLDER: &str = "Zen Garden";
 ///
 /// Registers the sync root, connects the filter, and spawns a background
 /// task that watches the garden registry for storage changes.
-///
-/// Returns a `CancellationToken` child — cancel to shut down.
 pub async fn start(
-    managed_storages: ManagedStorages,
+    volumes: Volumes,
     registry: GardenRegistry,
     stone_id: String,
     tick_tx: tokio::sync::broadcast::Sender<StorageTick>,
@@ -68,26 +54,32 @@ pub async fn start(
     shutdown_token: CancellationToken,
 ) -> Result<()> {
     // Check platform support
-    if !cloud_filter::root::is_supported().unwrap_or(false) {
-        warn!("Cloud Filter API not supported on this Windows version (requires 1709+)");
-        return Ok(());
+    match cloud_filter::root::is_supported() {
+        Ok(true) => {}
+        Ok(false) => {
+            info!("Cloud Filter API not supported on this Windows version");
+            return Ok(());
+        }
+        Err(e) => {
+            warn!(error = %e, "Cloud Filter support check failed");
+            return Ok(());
+        }
     }
 
-    let sync_root_path = default_sync_root_path()?;
+    // Log process context for diagnostics
+    info!(
+        elevated = registration::is_elevated(),
+        service = registration::is_running_as_service(),
+        username = %std::env::var("USERNAME").unwrap_or_default(),
+        "Cloud Filter: process context"
+    );
 
-    // Ensure sync root directory exists
-    tokio::fs::create_dir_all(&sync_root_path)
-        .await
-        .context("Failed to create sync root directory")?;
+    // Step 1: Ensure sync root is registered
+    let sync_root_path = registration::ensure_registered().await?;
 
-    // Register sync root (idempotent)
-    register_sync_root(&sync_root_path)?;
-
-    info!(path = %sync_root_path.display(), "Cloud Filter sync root registered");
-
-    // Build the provider
+    // Step 2: Connect the provider
     let provider = ZenGardenProvider {
-        managed_storages: managed_storages.clone(),
+        volumes: volumes.clone(),
         registry: registry.clone(),
         stone_id: stone_id.clone(),
         tick_tx,
@@ -95,7 +87,12 @@ pub async fn start(
         local_endpoint,
     };
 
-    // Connect to CfApi — the connection must stay alive
+    // CfApi callbacks fire on Windows threadpool threads (not inside a tokio
+    // async context), so Handle::block_on is safe here.  We cannot use
+    // futures::executor::block_on because our Filter impl uses
+    // tokio::sync::RwLock which participates in Tokio's cooperative
+    // scheduling — futures::executor wouldn't drive the coop budget and
+    // would deadlock on uncontended locks.
     let rt = tokio::runtime::Handle::current();
     let connection = Session::new()
         .connect_async(
@@ -103,202 +100,145 @@ pub async fn start(
             provider,
             move |future| rt.block_on(future),
         )
-        .context("Failed to connect Cloud Filter provider")?;
+        .context("failed to connect Cloud Filter provider")?;
 
-    info!("Cloud Filter provider connected");
+    info!(path = %sync_root_path.display(), "Cloud Filter provider connected");
 
-    // Spawn storage watcher task
+    // Step 3: Spawn storage watcher (keeps connection alive)
     let watcher_token = shutdown_token.child_token();
-    let watcher_storages = managed_storages.clone();
-    let watcher_registry = registry.clone();
-    let watcher_root = sync_root_path.clone();
-    let watcher_stone_id = stone_id.clone();
-
     tokio::spawn(async move {
-        // Keep connection alive until shutdown
-        let _connection = connection;
+        let _connection = connection; // kept alive until shutdown
 
-        storage_watcher_task(
-            watcher_storages,
-            watcher_registry,
-            &watcher_stone_id,
-            &watcher_root,
+        storage_watcher(
+            volumes,
+            registry,
+            &sync_root_path,
             watcher_token,
         )
         .await;
 
-        // Connection drops here, disconnecting the provider
         info!("Cloud Filter provider disconnected");
     });
 
     Ok(())
 }
 
-// ============================================================================
-// Sync root registration
-// ============================================================================
-
-/// Determine the default sync root path: `%USERPROFILE%\Zen Garden\`
-fn default_sync_root_path() -> Result<PathBuf> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .context("Could not determine user home directory")?;
-    Ok(PathBuf::from(home).join(SYNC_ROOT_FOLDER))
-}
-
-/// Build the sync root ID for this provider + user.
-fn build_sync_root_id() -> Result<SyncRootId> {
-    let sid = cloud_filter::root::SecurityId::current_user()
-        .context("Failed to get current user SID")?;
-
-    Ok(SyncRootIdBuilder::new(PROVIDER_NAME)
-        .user_security_id(sid)
-        .build())
-}
-
-/// Register the sync root with Windows (idempotent).
-fn register_sync_root(path: &Path) -> Result<()> {
-    let sync_root_id = build_sync_root_id()?;
-
-    if sync_root_id.is_registered().unwrap_or(false) {
-        debug!("Cloud Filter sync root already registered");
-        return Ok(());
-    }
-
-    let info = SyncRootInfo::default()
-        .with_display_name(DISPLAY_NAME)
-        .with_hydration_type(HydrationType::Full)
-        .with_population_type(PopulationType::Full)
-        .with_path(path)
-        .context("Failed to set sync root path")?;
-
-    sync_root_id
-        .register(info)
-        .context("Failed to register Cloud Filter sync root")?;
-
-    Ok(())
+/// Unregister the sync root (for clean uninstall).
+pub fn unregister() -> Result<()> {
+    registration::unregister()
 }
 
 // ============================================================================
 // Storage watcher task
 // ============================================================================
 
-/// Background task that watches for storage changes and creates/removes
-/// top-level placeholder directories under the sync root.
+/// Watches `Volumes` + `GardenRegistry` for changes and creates/removes
+/// placeholder directories under the sync root.
 ///
-/// Polls every 10 seconds — matches the storage beacon cadence.
-async fn storage_watcher_task(
-    managed_storages: ManagedStorages,
+/// Polls every 10 seconds.  Uses `placeholders::create_storage_placeholder`
+/// (with valid timestamps) for additions.
+async fn storage_watcher(
+    volumes: Volumes,
     registry: GardenRegistry,
-    stone_id: &str,
     sync_root_path: &Path,
     shutdown_token: CancellationToken,
 ) {
-    let mut known_storages: HashSet<String> = HashSet::new();
+    // Seed `known` from existing placeholder directories so we detect and
+    // remove stale entries from previous sessions on the first reconcile pass.
+    let mut known = scan_existing_placeholders(sync_root_path).await;
     let poll_interval = tokio::time::Duration::from_secs(10);
+
+    debug!(
+        existing = known.len(),
+        "storage watcher started (poll every 10s)"
+    );
 
     loop {
         tokio::select! {
             _ = shutdown_token.cancelled() => {
-                debug!("Cloud Filter storage watcher shutting down");
+                debug!("storage watcher shutting down");
                 break;
             }
             _ = tokio::time::sleep(poll_interval) => {
-                if let Err(e) = reconcile_storage_folders(
-                    &managed_storages,
-                    &registry,
-                    stone_id,
-                    sync_root_path,
-                    &mut known_storages,
-                ).await {
-                    warn!(error = %e, "Cloud Filter: failed to reconcile storage folders");
+                let current = collect_storage_names(&volumes, &registry).await;
+
+                if current == known {
+                    debug!(total = current.len(), "no storage changes");
+                    continue;
                 }
+
+                let added: Vec<_> = current.difference(&known).cloned().collect();
+                let removed: Vec<_> = known.difference(&current).cloned().collect();
+
+                for name in &added {
+                    placeholders::create_storage_placeholder(sync_root_path, name);
+                }
+                if !added.is_empty() {
+                    info!(storages = ?added, "new storages visible in Explorer");
+                }
+
+                for name in &removed {
+                    placeholders::remove_storage_placeholder(sync_root_path, name).await;
+                }
+                if !removed.is_empty() {
+                    info!(storages = ?removed, "storages removed from Explorer");
+                }
+
+                known = current;
             }
         }
     }
 }
 
-/// Reconcile sync root subdirectories with the current set of known storages.
+/// Scan existing subdirectories under the sync root to seed `known`.
 ///
-/// Creates directories for new storages, removes directories for departed ones.
-async fn reconcile_storage_folders(
-    managed_storages: &ManagedStorages,
-    registry: &GardenRegistry,
-    _stone_id: &str,
-    sync_root_path: &Path,
-    known: &mut HashSet<String>,
-) -> Result<()> {
-    let mut current: HashSet<String> = HashSet::new();
+/// Without this, a restart would leave stale placeholder directories from
+/// previous storage names — the watcher starts with an empty `known` set
+/// and never detects that old names departed.
+async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut dir = match tokio::fs::read_dir(sync_root_path).await {
+        Ok(d) => d,
+        Err(e) => {
+            debug!(error = %e, "could not scan sync root for existing placeholders");
+            return names;
+        }
+    };
 
-    // Collect local storage names
-    {
-        let banks = managed_storages.read().await;
-        for bank in banks.values() {
-            current.insert(bank.name.clone());
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if let Ok(ft) = entry.file_type().await {
+            if ft.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                names.insert(name);
+            }
         }
     }
 
-    // Collect remote storage names from registry
+    names
+}
+
+/// Collect the set of all storage names (local managed + remote registry).
+async fn collect_storage_names(volumes: &Volumes, registry: &GardenRegistry) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    {
+        let map = volumes.read().await;
+        for vol in map.values() {
+            if let Some(ref mgmt) = vol.management {
+                names.insert(mgmt.name.clone());
+            }
+        }
+    }
+
     {
         let reg = registry.read().await;
         for entry in reg.storage_entries() {
-            current.insert(entry.tool.tool.name.clone());
-        }
-    }
-
-    // Create directories for new storages
-    for name in &current {
-        if !known.contains(name) {
-            let dir = sync_root_path.join(name);
-            if !dir.exists() {
-                if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-                    warn!(storage = %name, error = %e, "Cloud Filter: failed to create storage folder");
-                } else {
-                    info!(storage = %name, "Cloud Filter: storage folder created in sync root");
-                }
-            }
-            known.insert(name.clone());
-        }
-    }
-
-    // Remove directories for departed storages
-    let departed: Vec<String> = known
-        .iter()
-        .filter(|name| !current.contains(*name))
-        .cloned()
-        .collect();
-
-    for name in departed {
-        let dir = sync_root_path.join(&name);
-        if dir.exists() {
-            // Only remove if empty (don't delete user data)
-            if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-                if entries.next_entry().await.ok().flatten().is_none() {
-                    let _ = tokio::fs::remove_dir(&dir).await;
-                    info!(storage = %name, "Cloud Filter: empty storage folder removed");
-                } else {
-                    debug!(storage = %name, "Cloud Filter: storage departed but folder not empty, keeping");
-                }
+            let name = &entry.tool.fqid;
+            if !name.is_empty() {
+                names.insert(name.clone());
             }
         }
-        known.remove(&name);
     }
 
-    Ok(())
-}
-
-// ============================================================================
-// Cleanup
-// ============================================================================
-
-/// Unregister the sync root (for clean uninstall).
-pub fn unregister() -> Result<()> {
-    let sync_root_id = build_sync_root_id()?;
-    if sync_root_id.is_registered().unwrap_or(false) {
-        sync_root_id
-            .unregister()
-            .context("Failed to unregister Cloud Filter sync root")?;
-        info!("Cloud Filter sync root unregistered");
-    }
-    Ok(())
+    names
 }

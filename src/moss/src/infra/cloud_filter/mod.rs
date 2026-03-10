@@ -4,10 +4,11 @@
 //! natively in Explorer under "Zen Garden".  Files are fetched on demand
 //! from the hosting stone's storage API.
 //!
-//! ## Module layout (STORAGE-0012)
+//! ## Module layout
 //!
 //! - `registration.rs` — sync root registration lifecycle
-//! - `provider.rs`     — CfApi `Filter` trait callbacks
+//! - `provider.rs`     — CfApi `Filter` trait callbacks (download path)
+//! - `ingest.rs`       — write-back from Explorer (upload path)
 //! - `placeholders.rs` — shared placeholder helpers (valid timestamps)
 //!
 //! ## Lifecycle
@@ -18,26 +19,85 @@
 //! 4. Spawns an ingest watcher that copies user-pasted files to storage
 //! 5. On shutdown, the connection drops (disconnects the provider)
 
+mod ingest;
 mod placeholders;
 mod provider;
 mod registration;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use cloud_filter::root::Session;
-use notify::Watcher;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
-use garden_common::storage::{StorageChanged, StorageTick};
+use garden_common::storage::{StorageChanged, StorageTick, DEFAULT_REPLICA_SET_DISPLAY};
 
 use self::provider::ZenGardenProvider;
+
+// ============================================================================
+// Shared utilities
+// ============================================================================
+
+/// Decompose a path under the sync root into (storage_name, relative_path).
+///
+/// Returns `None` if the path is not under the sync root.
+/// Returns `("", PathBuf::new())` if the path IS the sync root.
+pub(crate) fn decompose_sync_root_path(
+    path: &Path,
+    sync_root_path: &Path,
+) -> Option<(String, PathBuf)> {
+    let rel = path.strip_prefix(sync_root_path).ok()?;
+    let mut components = rel.components();
+    let storage_name = match components.next() {
+        Some(c) => c.as_os_str().to_string_lossy().to_string(),
+        None => return Some((String::new(), PathBuf::new())),
+    };
+    let remainder: PathBuf = components.collect();
+    Some((storage_name, remainder))
+}
+
+/// Enumerate all known storage replica set names (local + remote).
+///
+/// Used by both the placeholder reconciler and the provider's
+/// `fetch_placeholders` callback.
+pub(crate) async fn enumerate_storage_names(
+    volumes: &Volumes,
+    registry: &GardenRegistry,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    {
+        let map = volumes.read().await;
+        for vol in map.values() {
+            if let Some(ref mgmt) = vol.management {
+                let rs_name = if mgmt.replica_set_name.is_empty() {
+                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                } else {
+                    mgmt.replica_set_name.clone()
+                };
+                names.insert(rs_name);
+            }
+        }
+    }
+
+    {
+        let reg = registry.read().await;
+        for entry in reg.storage_entries() {
+            let name = &entry.tool.fqid;
+            if !name.is_empty() {
+                names.insert(name.clone());
+            }
+        }
+    }
+
+    names
+}
 
 // ============================================================================
 // Public API
@@ -45,8 +105,8 @@ use self::provider::ZenGardenProvider;
 
 /// Start the Cloud Filter sync provider.
 ///
-/// Registers the sync root, connects the filter, and spawns a background
-/// task that watches the garden registry for storage changes.
+/// Registers the sync root, connects the filter, and spawns background
+/// tasks for placeholder reconciliation and ingest (write-back).
 pub async fn start(
     volumes: Volumes,
     registry: GardenRegistry,
@@ -126,10 +186,10 @@ pub async fn start(
         info!("Cloud Filter provider disconnected");
     });
 
-    // Step 4: Spawn sync root ingest watcher (write-back from Explorer)
+    // Step 4: Spawn ingest watcher (write-back from Explorer)
     let ingest_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        sync_root_ingest_watcher(ingest_volumes, ingest_sync_root, ingest_token).await;
+        ingest::run(ingest_volumes, ingest_sync_root, ingest_token).await;
         info!("Cloud Filter ingest watcher stopped");
     });
 
@@ -206,7 +266,7 @@ async fn reconcile_placeholders(
     sync_root_path: &Path,
     known: &mut HashSet<String>,
 ) {
-    let current = collect_storage_names(volumes, registry).await;
+    let current = enumerate_storage_names(volumes, registry).await;
 
     if current == *known {
         debug!(total = current.len(), "no storage changes");
@@ -258,372 +318,4 @@ async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
     }
 
     names
-}
-
-/// Collect the set of all storage replica set names (local managed + remote registry).
-async fn collect_storage_names(volumes: &Volumes, registry: &GardenRegistry) -> HashSet<String> {
-    let mut names = HashSet::new();
-
-    {
-        let map = volumes.read().await;
-        for vol in map.values() {
-            if let Some(ref mgmt) = vol.management {
-                let rs_name = if mgmt.replica_set_name.is_empty() {
-                    garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                } else {
-                    mgmt.replica_set_name.clone()
-                };
-                names.insert(rs_name);
-            }
-        }
-    }
-
-    {
-        let reg = registry.read().await;
-        for entry in reg.storage_entries() {
-            let name = &entry.tool.fqid;
-            if !name.is_empty() {
-                names.insert(name.clone());
-            }
-        }
-    }
-
-    names
-}
-
-// ============================================================================
-// Sync root ingest watcher (write-back from Explorer)
-// ============================================================================
-
-/// Watch the sync root for user-created files and copy them to the actual
-/// storage mount (write-back path for Cloud Filter).
-///
-/// Without this, files pasted into the Explorer "Zen Garden" folder sit at
-/// the sync root with a "sync pending" overlay but never reach the storage
-/// mount — the existing filesystem watcher only monitors the mount path.
-async fn sync_root_ingest_watcher(
-    volumes: Volumes,
-    sync_root_path: PathBuf,
-    shutdown_token: CancellationToken,
-) {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<notify::Event>(256);
-
-    let watch_path = sync_root_path.clone();
-    let _watcher = match spawn_sync_root_notify_watcher(watch_path, tx) {
-        Ok(w) => w,
-        Err(e) => {
-            warn!(error = %e, "failed to start sync root ingest watcher");
-            return;
-        }
-    };
-
-    let debounce = tokio::time::Duration::from_secs(2);
-    let mut pending: HashMap<PathBuf, ()> = HashMap::new();
-    let mut debounce_deadline = tokio::time::Instant::now() + debounce;
-
-    info!("sync root ingest watcher started");
-
-    // Initial scan — catch files pasted before the watcher started
-    initial_ingest_scan(&volumes, &sync_root_path).await;
-
-    loop {
-        tokio::select! {
-            _ = shutdown_token.cancelled() => {
-                debug!("sync root ingest watcher shutting down");
-                break;
-            }
-            event = rx.recv() => {
-                let Some(event) = event else { break; };
-
-                // Only handle Create and Modify events (new or changed files)
-                match event.kind {
-                    notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {}
-                    _ => continue,
-                }
-
-                for path in &event.paths {
-                    if should_ingest(path, &sync_root_path) {
-                        pending.insert(path.clone(), ());
-                    }
-                }
-
-                debounce_deadline = tokio::time::Instant::now() + debounce;
-            }
-            _ = tokio::time::sleep_until(debounce_deadline) => {
-                if pending.is_empty() {
-                    debounce_deadline = tokio::time::Instant::now() + debounce;
-                    continue;
-                }
-
-                let batch: Vec<PathBuf> = pending.drain().map(|(p, _)| p).collect();
-                ingest_sync_root_files(&volumes, &sync_root_path, &batch).await;
-
-                debounce_deadline = tokio::time::Instant::now() + debounce;
-            }
-        }
-    }
-}
-
-/// Check if a path should be considered for ingestion from the sync root.
-///
-/// Filters out:
-/// - Top-level directories (storage name placeholders — managed separately)
-/// - `.zen-garden` metadata directories at any depth
-/// - Dehydrated CfApi placeholders (have `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`)
-fn should_ingest(path: &Path, sync_root_path: &Path) -> bool {
-    let rel = match path.strip_prefix(sync_root_path) {
-        Ok(r) => r,
-        Err(_) => return false,
-    };
-
-    // Need at least storage_name/relative_path (2+ components)
-    let components: Vec<_> = rel.components().collect();
-    if components.len() < 2 {
-        return false;
-    }
-
-    // Skip .zen-garden metadata at any depth
-    for c in &components {
-        if let std::path::Component::Normal(s) = c {
-            let s = s.to_string_lossy();
-            if s == ".zen-garden" || s == "Zen Garden" {
-                return false;
-            }
-        }
-    }
-
-    // Skip dehydrated CfApi placeholders — reading them would trigger
-    // fetch_data (hydration loop).  Real user-pasted files don't have
-    // the recall attribute.
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-        if let Ok(meta) = std::fs::metadata(path) {
-            if meta.file_attributes() & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-/// Process a batch of sync root paths, copying new files to the storage mount.
-async fn ingest_sync_root_files(
-    volumes: &Volumes,
-    sync_root_path: &Path,
-    paths: &[PathBuf],
-) {
-    let mut ingested = 0u32;
-
-    for path in paths {
-        let rel = match path.strip_prefix(sync_root_path) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-
-        let mut components = rel.components();
-        let storage_name = match components.next() {
-            Some(c) => c.as_os_str().to_string_lossy().to_string(),
-            None => continue,
-        };
-        let remainder: PathBuf = components.collect();
-        if remainder.as_os_str().is_empty() {
-            continue;
-        }
-
-        // Resolve local mount path for this storage (by replica set name)
-        let mount_path = resolve_local_mount(volumes, &storage_name).await;
-        let Some(mount_path) = mount_path else {
-            debug!(storage = %storage_name, "no local mount for ingest, skipping");
-            continue;
-        };
-
-        let target = mount_path.join(&remainder);
-
-        // Already exists at the mount — nothing to do
-        if target.exists() {
-            continue;
-        }
-
-        if path.is_dir() {
-            if let Err(e) = tokio::fs::create_dir_all(&target).await {
-                warn!(
-                    storage = %storage_name,
-                    path = %remainder.display(),
-                    error = %e,
-                    "ingest: failed to create directory in storage mount"
-                );
-            } else {
-                debug!(
-                    storage = %storage_name,
-                    path = %remainder.display(),
-                    "ingest: created directory in storage mount"
-                );
-                mark_in_sync(path);
-                ingested += 1;
-            }
-        } else if path.is_file() {
-            if let Some(parent) = target.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            match tokio::fs::copy(path, &target).await {
-                Ok(bytes) => {
-                    debug!(
-                        storage = %storage_name,
-                        path = %remainder.display(),
-                        bytes,
-                        "ingest: copied file to storage mount"
-                    );
-                    mark_in_sync(path);
-                    ingested += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        storage = %storage_name,
-                        path = %remainder.display(),
-                        error = %e,
-                        "ingest: failed to copy file to storage mount"
-                    );
-                }
-            }
-        }
-    }
-
-    if ingested > 0 {
-        info!(count = ingested, "ingested files from Explorer to storage");
-    }
-}
-
-/// Initial scan: find files in the sync root that don't exist at the
-/// storage mount.  Covers files pasted before the watcher started.
-async fn initial_ingest_scan(volumes: &Volumes, sync_root_path: &Path) {
-    let mut pending = Vec::new();
-    let mut dirs_to_scan = vec![sync_root_path.to_path_buf()];
-
-    while let Some(dir_path) = dirs_to_scan.pop() {
-        let mut dir = match tokio::fs::read_dir(&dir_path).await {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-
-        while let Ok(Some(entry)) = dir.next_entry().await {
-            let path = entry.path();
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-
-            // Skip managed metadata directories
-            if name_str == ".zen-garden" || name_str == "Zen Garden" {
-                continue;
-            }
-
-            let is_dir = entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false);
-
-            if should_ingest(&path, sync_root_path) {
-                pending.push(path.clone());
-            }
-
-            if is_dir {
-                dirs_to_scan.push(path);
-            }
-        }
-    }
-
-    if !pending.is_empty() {
-        debug!(count = pending.len(), "initial ingest scan found files to sync");
-        ingest_sync_root_files(volumes, sync_root_path, &pending).await;
-    }
-}
-
-/// Look up the local mount path for a storage by its replica set name.
-async fn resolve_local_mount(volumes: &Volumes, storage_name: &str) -> Option<PathBuf> {
-    let map = volumes.read().await;
-    map.values().find_map(|v| {
-        let mgmt = v.management.as_ref()?;
-        let rs_name = if mgmt.replica_set_name.is_empty() {
-            garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY
-        } else {
-            &mgmt.replica_set_name
-        };
-        if rs_name == storage_name {
-            Some(v.mount_path.clone())
-        } else {
-            None
-        }
-    })
-}
-
-/// Convert a user-created file/directory in the sync root to a CfApi
-/// placeholder and mark it as in-sync, clearing the "sync pending" overlay.
-///
-/// Uses `CfConvertToPlaceholder` with `CF_CONVERT_FLAG_MARK_IN_SYNC` and
-/// `CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE` (the file isn't yet a
-/// cloud placeholder).
-fn mark_in_sync(path: &Path) {
-    #[cfg(windows)]
-    {
-        use cloud_filter::placeholder::{ConvertOptions, Placeholder};
-        use std::os::windows::fs::OpenOptionsExt;
-
-        let open_result = if path.is_dir() {
-            // Directories require FILE_FLAG_BACKUP_SEMANTICS to open.
-            // access_mode: FILE_LIST_DIRECTORY | FILE_ADD_FILE | SYNCHRONIZE | READ_CONTROL
-            std::fs::OpenOptions::new()
-                .access_mode(0x0012_0003)
-                .share_mode(7)
-                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
-                .open(path)
-        } else {
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(path)
-        };
-
-        let file = match open_result {
-            Ok(f) => f,
-            Err(e) => {
-                debug!(path = %path.display(), error = %e, "ingest: open for in-sync failed");
-                return;
-            }
-        };
-
-        let mut ph = Placeholder::from(file);
-        match ph.convert_to_placeholder(
-            ConvertOptions::default().mark_in_sync().force(),
-            None,
-        ) {
-            Ok(_) => {
-                debug!(path = %path.display(), "ingest: marked in-sync");
-            }
-            Err(e) => {
-                debug!(path = %path.display(), error = %e, "ingest: convert_to_placeholder failed");
-            }
-        }
-    }
-}
-
-/// Spawn a `notify` watcher on the sync root directory.
-fn spawn_sync_root_notify_watcher(
-    path: PathBuf,
-    tx: tokio::sync::mpsc::Sender<notify::Event>,
-) -> Result<notify::RecommendedWatcher> {
-    let mut watcher = notify::recommended_watcher(
-        move |res: std::result::Result<notify::Event, notify::Error>| match res {
-            Ok(event) => {
-                let _ = tx.try_send(event);
-            }
-            Err(e) => {
-                warn!(error = %e, "sync root ingest watcher error");
-            }
-        },
-    )
-    .context("failed to create sync root ingest watcher")?;
-
-    watcher
-        .watch(&path, notify::RecursiveMode::Recursive)
-        .context("failed to watch sync root for ingestion")?;
-
-    Ok(watcher)
 }

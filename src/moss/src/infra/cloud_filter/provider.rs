@@ -3,6 +3,24 @@
 //!
 //! Each callback delegates to the Moss storage API (local or proxied)
 //! via `StorageService` (domain).  Pure adapter — no business logic.
+//!
+//! ## Callback coverage
+//!
+//! | Callback              | Status    | Behavior                                   |
+//! |-----------------------|-----------|--------------------------------------------|
+//! | `fetch_data`          | Active    | Hydrate placeholder from mount or proxy    |
+//! | `fetch_placeholders`  | Active    | Populate directory from mount or proxy      |
+//! | `rename`              | Active    | Propagate to mount; out-of-scope = delete  |
+//! | `renamed`             | Logging   | Post-rename confirmation                   |
+//! | `delete`              | Active    | Propagate to mount, approve                |
+//! | `deleted`             | Logging   | Post-delete confirmation                   |
+//! | `dehydrate`           | Active    | Approve (free disk space)                  |
+//! | `dehydrated`          | Logging   | Post-dehydration confirmation              |
+//! | `opened`              | Logging   | Detect corrupt/unsupported metadata        |
+//! | `closed`              | Logging   | Detect close-after-delete                  |
+//! | `state_changed`       | Logging   | Attribute changes (pin/unpin)              |
+//! | `cancel_fetch_*`      | Default   | No-op (CfApi handles cancellation)         |
+//! | `validate_data`       | Default   | Not required (no ValidationRequired policy)|
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,6 +60,10 @@ pub(crate) struct DirEntry {
     pub size: u64,
 }
 
+// ============================================================================
+// Helper methods
+// ============================================================================
+
 impl ZenGardenProvider {
     /// Build a `StorageService` from our shared state.
     fn storage_service(&self) -> crate::domain::StorageService<'_> {
@@ -57,53 +79,25 @@ impl ZenGardenProvider {
     ///
     /// Layout: `{sync_root}/{storage_name}/{relative_path}`.
     fn resolve_path(&self, request_path: &std::path::Path) -> Option<(String, String)> {
-        let rel = request_path.strip_prefix(&self.sync_root_path).ok()?;
-        let mut components = rel.components();
-
-        let storage_name = match components.next() {
-            Some(c) => c.as_os_str().to_string_lossy().to_string(),
-            None => return Some((String::new(), String::new())),
-        };
-
-        let remainder: PathBuf = components.collect();
+        let (storage_name, remainder) =
+            super::decompose_sync_root_path(request_path, &self.sync_root_path)?;
         let rel_path = remainder.to_string_lossy().replace('\\', "/");
         Some((storage_name, rel_path))
+    }
+
+    /// Build a reusable HTTP client for proxy requests.
+    fn http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .unwrap_or_default()
     }
 
     /// List all known storages (local + remote) as directory entries.
     ///
     /// Uses replica set names as the user-facing identity.
     pub(crate) async fn list_storages(&self) -> Vec<DirEntry> {
-        let mut names = std::collections::HashSet::new();
-
-        // Local managed storages — use replica set name
-        {
-            let map = self.volumes.read().await;
-            for vol in map.values() {
-                if let Some(ref mgmt) = vol.management {
-                    let rs_name = if mgmt.replica_set_name.is_empty() {
-                        garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                    } else {
-                        mgmt.replica_set_name.clone()
-                    };
-                    debug!(storage = %rs_name, "found local managed storage");
-                    names.insert(rs_name);
-                }
-            }
-        }
-
-        // Remote storages from registry (fqid is already replica_set_name)
-        {
-            let reg = self.registry.read().await;
-            for entry in reg.storage_entries() {
-                let name = &entry.tool.fqid;
-                if !name.is_empty() {
-                    debug!(storage = %name, "found remote storage in registry");
-                    names.insert(name.clone());
-                }
-            }
-        }
-
+        let names = super::enumerate_storage_names(&self.volumes, &self.registry).await;
         debug!(total = names.len(), "storage enumeration complete");
 
         let mut entries: Vec<DirEntry> = names
@@ -117,6 +111,10 @@ impl ZenGardenProvider {
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         entries
     }
+
+    // ========================================================================
+    // Domain operations (fetch, delete, rename)
+    // ========================================================================
 
     /// Fetch file content and write it to the placeholder.
     async fn do_fetch_data(
@@ -149,12 +147,7 @@ impl ZenGardenProvider {
                     rel_path
                 );
                 debug!(url = %url, "proxying fetch to remote");
-                let client = reqwest::Client::builder()
-                    .danger_accept_invalid_certs(true)
-                    .build()
-                    .unwrap_or_default();
-
-                let resp = client.get(&url).send().await.map_err(|e| {
+                let resp = Self::http_client().get(&url).send().await.map_err(|e| {
                     warn!(error = %e, "proxy fetch failed");
                     CloudErrorKind::NetworkUnavailable
                 })?;
@@ -237,87 +230,104 @@ impl ZenGardenProvider {
         Ok(())
     }
 
-    /// List a local directory.
-    async fn list_local_dir(dir_path: &std::path::Path) -> CResult<Vec<DirEntry>> {
-        let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(dir_path).await.map_err(|e| {
-            warn!(path = %dir_path.display(), error = %e, "read_dir failed");
+    /// Delete a file/directory from the storage mount (or proxy to remote).
+    async fn do_delete(&self, storage_name: &str, rel_path: &str, is_dir: bool) -> CResult<()> {
+        let svc = self.storage_service();
+        let route = svc.resolve_write(storage_name).await.map_err(|e| {
+            warn!(storage = %storage_name, error = %e, "storage not found for delete");
             CloudErrorKind::NotInSync
         })?;
 
-        while let Ok(Some(entry)) = dir.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let meta = entry.metadata().await.ok();
-            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            entries.push(DirEntry { name, is_dir, size });
+        match route {
+            StorageRoute::Local(local) => {
+                let target = local.mount_path.join(rel_path);
+                if !target.exists() {
+                    return Ok(()); // already gone
+                }
+                if is_dir {
+                    tokio::fs::remove_dir_all(&target).await.map_err(|e| {
+                        warn!(path = %target.display(), error = %e, "delete: rmdir failed");
+                        CloudErrorKind::NotInSync
+                    })?;
+                } else {
+                    tokio::fs::remove_file(&target).await.map_err(|e| {
+                        warn!(path = %target.display(), error = %e, "delete: rm failed");
+                        CloudErrorKind::NotInSync
+                    })?;
+                }
+                debug!(storage = %storage_name, path = %rel_path, "deleted from mount");
+            }
+            StorageRoute::Proxy(target) => {
+                let url = format!(
+                    "{}/api/v1/garden/storage/{}/files/{}",
+                    target.endpoint.trim_end_matches('/'),
+                    storage_name,
+                    rel_path
+                );
+                let resp = Self::http_client().delete(&url).send().await.map_err(|e| {
+                    warn!(error = %e, "proxy delete failed");
+                    CloudErrorKind::NetworkUnavailable
+                })?;
+                if !resp.status().is_success() {
+                    warn!(
+                        status = %resp.status(),
+                        storage = %storage_name,
+                        path = %rel_path,
+                        "proxy delete returned error"
+                    );
+                    return Err(CloudErrorKind::NotInSync);
+                }
+                debug!(storage = %storage_name, path = %rel_path, "deleted via proxy");
+            }
         }
-
-        Ok(entries)
+        Ok(())
     }
 
-    /// List a remote directory via the garden storage API.
-    async fn list_remote_dir(
-        endpoint: &str,
+    /// Rename/move a file within a storage on the mount (or proxy to remote).
+    async fn do_rename_subpath(
+        &self,
         storage_name: &str,
-        rel_path: &str,
-    ) -> CResult<Vec<DirEntry>> {
-        let path_segment = if rel_path.is_empty() { "" } else { rel_path };
-        let url = format!(
-            "{}/api/v1/garden/storage/{}/files/{}",
-            endpoint.trim_end_matches('/'),
-            storage_name,
-            path_segment
-        );
+        old_rel: &str,
+        new_rel: &str,
+    ) -> CResult<()> {
+        let svc = self.storage_service();
+        if let Some(local) = svc.resolve_local(storage_name).await {
+            let src = local.mount_path.join(old_rel);
+            let dst = local.mount_path.join(new_rel);
 
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .unwrap_or_default();
-
-        let resp = client.get(&url).send().await.map_err(|e| {
-            warn!(error = %e, url = %url, "remote list failed");
-            CloudErrorKind::NetworkUnavailable
-        })?;
-
-        let body = resp.text().await.unwrap_or_default();
-        let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-        let entries_json = json
-            .get("data")
-            .and_then(|d| d.get("entries"))
-            .and_then(|e| e.as_array());
-
-        let mut entries = Vec::new();
-        if let Some(arr) = entries_json {
-            for item in arr {
-                let name = item
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let is_dir = item.get("type").and_then(|t| t.as_str()) == Some("dir");
-                let size = item.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                if !name.is_empty() {
-                    entries.push(DirEntry { name, is_dir, size });
-                }
+            if !src.exists() {
+                // Source doesn't exist on mount (placeholder-only) — nothing to move
+                return Ok(());
             }
-        } else {
-            warn!(
-                url = %url,
-                body_preview = %body.chars().take(200).collect::<String>(),
-                "could not parse remote dir listing"
+
+            if let Some(parent) = dst.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+
+            tokio::fs::rename(&src, &dst).await.map_err(|e| {
+                warn!(
+                    storage = %storage_name,
+                    src = %old_rel,
+                    dst = %new_rel,
+                    error = %e,
+                    "rename: fs::rename failed"
+                );
+                CloudErrorKind::NotInSync
+            })?;
+
+            debug!(
+                storage = %storage_name,
+                src = %old_rel,
+                dst = %new_rel,
+                "renamed on mount"
             );
         }
-
-        Ok(entries)
+        // Remote-only storages: the rename in the sync root is cosmetic
+        // (placeholder only).  Next fetch_placeholders will restore the
+        // original names.  Cross-stone rename requires API support.
+        Ok(())
     }
-}
 
-// ============================================================================
-// Filter trait implementation (async)
-// ============================================================================
-
-impl ZenGardenProvider {
     /// Rename a top-level storage folder (replica set name) via Explorer.
     ///
     /// Updates `replica_set_name` on both the in-memory volume and the on-disk
@@ -379,9 +389,89 @@ impl ZenGardenProvider {
         info!(old = %old_name, new = %new_name, volumes = mount_paths.len(), "replica set renamed via Explorer");
         Ok(())
     }
+
+    // ========================================================================
+    // Directory listing helpers
+    // ========================================================================
+
+    /// List a local directory.
+    async fn list_local_dir(dir_path: &std::path::Path) -> CResult<Vec<DirEntry>> {
+        let mut entries = Vec::new();
+        let mut dir = tokio::fs::read_dir(dir_path).await.map_err(|e| {
+            warn!(path = %dir_path.display(), error = %e, "read_dir failed");
+            CloudErrorKind::NotInSync
+        })?;
+
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let meta = entry.metadata().await.ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            entries.push(DirEntry { name, is_dir, size });
+        }
+
+        Ok(entries)
+    }
+
+    /// List a remote directory via the garden storage API.
+    async fn list_remote_dir(
+        endpoint: &str,
+        storage_name: &str,
+        rel_path: &str,
+    ) -> CResult<Vec<DirEntry>> {
+        let path_segment = if rel_path.is_empty() { "" } else { rel_path };
+        let url = format!(
+            "{}/api/v1/garden/storage/{}/files/{}",
+            endpoint.trim_end_matches('/'),
+            storage_name,
+            path_segment
+        );
+
+        let resp = Self::http_client().get(&url).send().await.map_err(|e| {
+            warn!(error = %e, url = %url, "remote list failed");
+            CloudErrorKind::NetworkUnavailable
+        })?;
+
+        let body = resp.text().await.unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let entries_json = json
+            .get("data")
+            .and_then(|d| d.get("entries"))
+            .and_then(|e| e.as_array());
+
+        let mut entries = Vec::new();
+        if let Some(arr) = entries_json {
+            for item in arr {
+                let name = item
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_dir = item.get("type").and_then(|t| t.as_str()) == Some("dir");
+                let size = item.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                if !name.is_empty() {
+                    entries.push(DirEntry { name, is_dir, size });
+                }
+            }
+        } else {
+            warn!(
+                url = %url,
+                body_preview = %body.chars().take(200).collect::<String>(),
+                "could not parse remote dir listing"
+            );
+        }
+
+        Ok(entries)
+    }
 }
 
+// ============================================================================
+// Filter trait — all 14 callbacks
+// ============================================================================
+
 impl Filter for ZenGardenProvider {
+    // ---- Data hydration (download path) ----
+
     async fn fetch_data(
         &self,
         request: Request,
@@ -394,7 +484,6 @@ impl Filter for ZenGardenProvider {
             None => return Err(CloudErrorKind::NotUnderSyncRoot),
         };
 
-        // Directories are not fetchable data
         if storage_name.is_empty() || rel_path.is_empty() {
             return Ok(());
         }
@@ -452,7 +541,6 @@ impl Filter for ZenGardenProvider {
                 CloudErrorKind::NotInSync
             })?;
 
-            // Log per-entry results for diagnostics
             for ph in &phs {
                 match ph.result() {
                     Ok(usn) => debug!(usn, "placeholder entry OK"),
@@ -469,13 +557,100 @@ impl Filter for ZenGardenProvider {
         self.do_fetch_placeholders(&storage_name, &rel_path, &ticket).await
     }
 
-    /// Approve or reject a rename/move operation.
-    ///
-    /// - **Top-level folder rename** (storage rename): update the storage name
-    ///   via the domain layer, then approve.
-    /// - **Sub-path rename** (file/folder inside a storage): approve — the
-    ///   filesystem watcher will detect the change and record a changelog entry.
-    /// - **Move out of scope**: reject (we don't support drag-out).
+    // ---- File handle lifecycle ----
+
+    async fn opened(&self, request: Request, info: info::Opened) {
+        if info.metadata_corrupt() || info.metadata_unsupported() {
+            warn!(
+                path = %request.path().display(),
+                corrupt = info.metadata_corrupt(),
+                unsupported = info.metadata_unsupported(),
+                "opened: placeholder metadata issue"
+            );
+        }
+    }
+
+    async fn closed(&self, request: Request, info: info::Closed) {
+        if info.deleted() {
+            debug!(path = %request.path().display(), "closed (deleted)");
+        }
+    }
+
+    // ---- Dehydration (free disk space) ----
+
+    async fn dehydrate(
+        &self,
+        request: Request,
+        ticket: ticket::Dehydrate,
+        info: info::Dehydrate,
+    ) -> CResult<()> {
+        debug!(
+            path = %request.path().display(),
+            background = info.background(),
+            reason = ?info.reason(),
+            "dehydrate approved"
+        );
+        ticket.pass().map_err(|e| {
+            warn!(error = %e, "dehydrate ticket.pass() failed");
+            CloudErrorKind::NotInSync
+        })?;
+        Ok(())
+    }
+
+    async fn dehydrated(&self, request: Request, info: info::Dehydrated) {
+        debug!(
+            path = %request.path().display(),
+            background = info.background(),
+            reason = ?info.reason(),
+            "dehydrated"
+        );
+    }
+
+    // ---- Delete ----
+
+    async fn delete(
+        &self,
+        request: Request,
+        ticket: ticket::Delete,
+        delete_info: info::Delete,
+    ) -> CResult<()> {
+        let path = request.path();
+        let (storage_name, rel_path) = match self.resolve_path(&path) {
+            Some(r) => r,
+            None => return Err(CloudErrorKind::NotUnderSyncRoot),
+        };
+
+        if storage_name.is_empty() {
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        if rel_path.is_empty() {
+            warn!(
+                storage = %storage_name,
+                "delete rejected: use 'rake storage release' to remove a storage"
+            );
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        // Propagate delete to the storage mount (or proxy to remote Primary)
+        self.do_delete(&storage_name, &rel_path, delete_info.is_directory()).await?;
+
+        // Approve the deletion in the sync root
+        ticket.pass().map_err(|e| {
+            warn!(error = %e, "delete ticket.pass() failed");
+            CloudErrorKind::NotInSync
+        })?;
+
+        info!(storage = %storage_name, path = %rel_path, "delete approved and propagated");
+        Ok(())
+    }
+
+    async fn deleted(&self, request: Request, _info: info::Deleted) {
+        debug!(path = %request.path().display(), "deleted (post-completion)");
+    }
+
+    // ---- Rename / Move ----
+
     async fn rename(
         &self,
         request: Request,
@@ -494,28 +669,50 @@ impl Filter for ZenGardenProvider {
             "rename callback"
         );
 
-        // Reject moves out of the sync root
-        if !rename_info.target_in_scope() {
-            warn!("rename rejected: target is outside sync root");
-            return Err(CloudErrorKind::NotSupported);
-        }
-
         let (old_storage, old_rel) = match self.resolve_path(&source_path) {
-            Some(r) => r,
-            None => return Err(CloudErrorKind::NotUnderSyncRoot),
-        };
-        let (new_storage, new_rel) = match self.resolve_path(&target_path) {
             Some(r) => r,
             None => return Err(CloudErrorKind::NotUnderSyncRoot),
         };
 
         if old_storage.is_empty() {
-            // Renaming the sync root itself — reject
             return Err(CloudErrorKind::NotSupported);
         }
 
+        // Move OUT of sync root (e.g. Explorer "Delete" → Recycle Bin).
+        // Treat as a delete: propagate removal to storage, then approve.
+        if !rename_info.target_in_scope() {
+            if !old_rel.is_empty() {
+                if let Err(e) = self
+                    .do_delete(&old_storage, &old_rel, rename_info.is_directory())
+                    .await
+                {
+                    warn!(
+                        storage = %old_storage,
+                        path = %old_rel,
+                        error = ?e,
+                        "rename-out: propagation failed, approving anyway"
+                    );
+                }
+            }
+            ticket.pass().map_err(|e| {
+                warn!(error = %e, "rename ticket.pass() failed");
+                CloudErrorKind::NotInSync
+            })?;
+            info!(
+                storage = %old_storage,
+                path = %old_rel,
+                "file moved out of sync root (delete)"
+            );
+            return Ok(());
+        }
+
+        let (new_storage, new_rel) = match self.resolve_path(&target_path) {
+            Some(r) => r,
+            None => return Err(CloudErrorKind::NotUnderSyncRoot),
+        };
+
+        // Top-level storage rename (replica set name change)
         if old_rel.is_empty() && new_rel.is_empty() && old_storage != new_storage {
-            // Top-level storage rename: seed-gentle-valley → new-name
             self.do_rename_storage(&old_storage, &new_storage).await?;
             ticket.pass().map_err(|e| {
                 warn!(error = %e, "rename ticket.pass() failed");
@@ -524,7 +721,21 @@ impl Filter for ZenGardenProvider {
             return Ok(());
         }
 
-        // Sub-path rename within a storage — approve and let the fs watcher handle it
+        // Cross-storage move — not supported
+        if old_storage != new_storage {
+            warn!(
+                src_storage = %old_storage,
+                dst_storage = %new_storage,
+                "rename rejected: cross-storage moves not supported"
+            );
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        // Sub-path rename within a storage — propagate to mount
+        if !old_rel.is_empty() && !new_rel.is_empty() {
+            self.do_rename_subpath(&old_storage, &old_rel, &new_rel).await?;
+        }
+
         ticket.pass().map_err(|e| {
             warn!(error = %e, "rename ticket.pass() failed");
             CloudErrorKind::NotInSync
@@ -532,49 +743,17 @@ impl Filter for ZenGardenProvider {
         Ok(())
     }
 
-    /// Post-rename notification — log only.
     async fn renamed(&self, request: Request, rename_info: info::Renamed) {
         debug!(
             source = %rename_info.source_path().display(),
             target = %request.path().display(),
-            "renamed callback (post-completion)"
+            "renamed (post-completion)"
         );
     }
 
-    /// Approve delete operations for files/folders within storages.
-    ///
-    /// Top-level storage folder deletes are rejected — use `rake storage release`.
-    async fn delete(
-        &self,
-        request: Request,
-        ticket: ticket::Delete,
-        _delete_info: info::Delete,
-    ) -> CResult<()> {
-        let path = request.path();
-        let (storage_name, rel_path) = match self.resolve_path(&path) {
-            Some(r) => r,
-            None => return Err(CloudErrorKind::NotUnderSyncRoot),
-        };
+    // ---- State changes (attribute monitoring) ----
 
-        if storage_name.is_empty() {
-            return Err(CloudErrorKind::NotSupported);
-        }
-
-        if rel_path.is_empty() {
-            // Deleting a top-level storage folder — reject
-            warn!(
-                storage = %storage_name,
-                "delete rejected: use 'rake storage release' to remove a storage"
-            );
-            return Err(CloudErrorKind::NotSupported);
-        }
-
-        // Sub-path delete — approve, fs watcher records the changelog
-        debug!(storage = %storage_name, path = %rel_path, "delete approved");
-        ticket.pass().map_err(|e| {
-            warn!(error = %e, "delete ticket.pass() failed");
-            CloudErrorKind::NotInSync
-        })?;
-        Ok(())
+    async fn state_changed(&self, changes: Vec<PathBuf>) {
+        debug!(count = changes.len(), "state_changed: attribute changes detected");
     }
 }

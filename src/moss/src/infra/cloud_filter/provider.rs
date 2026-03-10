@@ -432,6 +432,12 @@ impl ZenGardenProvider {
             CloudErrorKind::NetworkUnavailable
         })?;
 
+        let status = resp.status();
+        if !status.is_success() {
+            warn!(url = %url, status = %status, "remote storage returned error for dir listing");
+            return Ok(vec![]);
+        }
+
         let body = resp.text().await.unwrap_or_default();
         let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
         let entries_json = json

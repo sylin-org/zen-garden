@@ -171,6 +171,7 @@ pub async fn start(
     let watcher_token = shutdown_token.child_token();
     let ingest_volumes = volumes.clone();
     let ingest_sync_root = sync_root_path.clone();
+    let ingest_storage_rx = storage_changed_rx.resubscribe();
     tokio::spawn(async move {
         let _connection = connection; // kept alive until shutdown
 
@@ -189,7 +190,7 @@ pub async fn start(
     // Step 4: Spawn ingest watcher (write-back from Explorer)
     let ingest_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        ingest::run(ingest_volumes, ingest_sync_root, ingest_token).await;
+        ingest::run(ingest_volumes, ingest_sync_root, ingest_storage_rx, ingest_token).await;
         info!("Cloud Filter ingest watcher stopped");
     });
 

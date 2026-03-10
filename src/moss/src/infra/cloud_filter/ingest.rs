@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::domain::storage::Volumes;
-use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
+use garden_common::storage::{StorageChanged, DEFAULT_REPLICA_SET_DISPLAY};
 
 // ============================================================================
 // Constants
@@ -41,9 +41,13 @@ const DEBOUNCE_SECS: u64 = 2;
 ///
 /// Monitors the sync root for user-created files and copies them to the
 /// corresponding storage mount.  Runs as a long-lived task.
+///
+/// Listens on `storage_changed_rx` so that files pasted while a storage was
+/// offline are retried as soon as the storage comes back online.
 pub(crate) async fn run(
     volumes: Volumes,
     sync_root_path: PathBuf,
+    mut storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
     shutdown_token: CancellationToken,
 ) {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<notify::Event>(256);
@@ -86,6 +90,18 @@ pub(crate) async fn run(
                 }
 
                 debounce_deadline = tokio::time::Instant::now() + debounce;
+            }
+            result = storage_changed_rx.recv() => {
+                let should_rescan = match result {
+                    Ok(StorageChanged::Added { .. }) | Ok(StorageChanged::Reclassified) => true,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => true,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => false,
+                };
+                if should_rescan {
+                    debug!("storage came online — re-scanning sync root for pending files");
+                    initial_scan(&volumes, &sync_root_path).await;
+                }
             }
             _ = tokio::time::sleep_until(debounce_deadline) => {
                 if !pending.is_empty() {

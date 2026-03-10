@@ -461,6 +461,7 @@ async fn ingest_sync_root_files(
                     path = %remainder.display(),
                     "ingest: created directory in storage mount"
                 );
+                mark_in_sync(path);
                 ingested += 1;
             }
         } else if path.is_file() {
@@ -475,6 +476,7 @@ async fn ingest_sync_root_files(
                         bytes,
                         "ingest: copied file to storage mount"
                     );
+                    mark_in_sync(path);
                     ingested += 1;
                 }
                 Err(e) => {
@@ -550,6 +552,56 @@ async fn resolve_local_mount(volumes: &Volumes, storage_name: &str) -> Option<Pa
             None
         }
     })
+}
+
+/// Convert a user-created file/directory in the sync root to a CfApi
+/// placeholder and mark it as in-sync, clearing the "sync pending" overlay.
+///
+/// Uses `CfConvertToPlaceholder` with `CF_CONVERT_FLAG_MARK_IN_SYNC` and
+/// `CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE` (the file isn't yet a
+/// cloud placeholder).
+fn mark_in_sync(path: &Path) {
+    #[cfg(windows)]
+    {
+        use cloud_filter::placeholder::{ConvertOptions, Placeholder};
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let open_result = if path.is_dir() {
+            // Directories require FILE_FLAG_BACKUP_SEMANTICS to open.
+            // access_mode: FILE_LIST_DIRECTORY | FILE_ADD_FILE | SYNCHRONIZE | READ_CONTROL
+            std::fs::OpenOptions::new()
+                .access_mode(0x0012_0003)
+                .share_mode(7)
+                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                .open(path)
+        } else {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+        };
+
+        let file = match open_result {
+            Ok(f) => f,
+            Err(e) => {
+                debug!(path = %path.display(), error = %e, "ingest: open for in-sync failed");
+                return;
+            }
+        };
+
+        let mut ph = Placeholder::from(file);
+        match ph.convert_to_placeholder(
+            ConvertOptions::default().mark_in_sync().force(),
+            None,
+        ) {
+            Ok(_) => {
+                debug!(path = %path.display(), "ingest: marked in-sync");
+            }
+            Err(e) => {
+                debug!(path = %path.display(), error = %e, "ingest: convert_to_placeholder failed");
+            }
+        }
+    }
 }
 
 /// Spawn a `notify` watcher on the sync root directory.

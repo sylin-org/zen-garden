@@ -228,13 +228,6 @@ pub struct AppState {
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 
-    /// Mount tracker for seed bank mount persistence (STORAGE-0006)
-    /// Shared with coordinator (persistence + hotplug tasks) and release handler.
-    /// Prevents the fight-loop where persistence re-mounts a just-released device.
-    #[cfg(target_os = "linux")]
-    pub mount_tracker: crate::infra::storage::MountTracker,
-
-
 
     /// Storage replication tick channel — **raw** (STORAGE-0006 Phase 4)
     /// Primary seed-bank stores emit `StorageTick` on every write/delete.

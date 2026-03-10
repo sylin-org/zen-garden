@@ -672,9 +672,6 @@ pub async fn run(
         log_tx: log_tx.clone(),
         // Subsystem readiness (network_ready managed by NetworkMonitor)
         subsystems: subsystems.clone(),
-        // Mount tracker — shared with coordinator + release handler (STORAGE-0006)
-        #[cfg(target_os = "linux")]
-        mount_tracker: crate::infra::storage::create_mount_tracker(),
         // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
         storage_tick_tx: {
             let (tx, _) = tokio::sync::broadcast::channel(64);
@@ -1154,37 +1151,7 @@ pub async fn run(
         );
     }
 
-    // Phase 17.5: Storage monitoring (Linux only)
-    #[cfg(target_os = "linux")]
-    {
-        tracing::info!("Starting storage monitor");
-        let storage_monitor = crate::infra::storage::StorageMonitor::new(state.event_bus.clone());
-        if let Err(e) = storage_monitor.start() {
-            tracing::error!("Failed to start storage monitor: {}", e);
-        } else {
-            // Scan for existing devices at startup
-            match storage_monitor.scan_existing().await {
-                Ok(devices) => {
-                    tracing::info!(
-                        "Scanned existing storage devices, found {} eligible",
-                        devices.len()
-                    );
-                    for device_info in devices {
-                        tracing::info!(
-                            "Found existing device: {} ({} GB)",
-                            device_info.device,
-                            device_info.capacity_bytes / 1_000_000_000
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to scan existing storage devices: {}", e);
-                }
-            }
-        }
-    }
-
-    // Phase 17.5.1: Cross-platform volume watcher (STORAGE-0011)
+    // Phase 17.5: Cross-platform volume watcher (STORAGE-0011)
     // Detects volume hotplug/removal events and feeds them into the Volumes domain.
     // Also emits DomainPulse events so presence SSE (ribbon notifications) and
     // the candidates notification stay current.
@@ -1343,15 +1310,12 @@ pub async fn run(
         shutdown_token.child_token(),
     );
 
-    // Seed bank resilience + storage cache hygiene
-    // Ensures hot-plugged prepared devices are auto-mounted and cache stays fresh.
-    #[cfg(target_os = "linux")]
-    {
-        crate::tasks::coordinator::start_seedbank_resilient_mount_system(
-            state.clone(),
-            shutdown_token.child_token(),
-        );
-    }
+    // Storage lifecycle (STORAGE-0011): auto-mount, health, beacon — all platforms.
+    // Replaces legacy seed bank resilience + hot-plug detection.
+    crate::tasks::coordinator::start_storage_lifecycle(
+        state.clone(),
+        shutdown_token.child_token(),
+    );
     // Phase 17.7: Offering orchestration (ORCH-0001)
     // Manages Primary/Dormant/Joining/Degraded lifecycle for replicated offerings.
     // Must run after registry loader, health monitor, and catalog builder are ready.

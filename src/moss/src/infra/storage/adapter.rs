@@ -9,8 +9,8 @@
 //! - **Unmounting**: safely detaching a device
 //! - **Health**: medium-specific health assessment
 //!
-//! After mounting, the adapter hands off to `StorageDevice` for ongoing
-//! lifecycle management (health ticks, self-healing remount, capacity tracking).
+//! After mounting, the adapter hands off to `domain::storage::Volume` for ongoing
+//! lifecycle management (health ticks, capacity tracking).
 
 use std::path::PathBuf;
 
@@ -100,7 +100,7 @@ impl StorageAdapter for UsbAdapter {
     }
 
     async fn discover(&self) -> Result<Vec<StorageCandidate>> {
-        let devices = super::list_unmounted_removable_devices()?;
+        let devices = super::platform::list_unmounted_removable();
         Ok(devices
             .into_iter()
             .map(|d| StorageCandidate {
@@ -114,54 +114,14 @@ impl StorageAdapter for UsbAdapter {
     }
 
     async fn mount(&self, device: &str, mount_path: &std::path::Path) -> Result<PathBuf> {
-        #[cfg(target_os = "linux")]
-        {
-            tokio::fs::create_dir_all(mount_path).await?;
-            let mount_str = mount_path.to_string_lossy().to_string();
-
-            let output = tokio::process::Command::new("sudo")
-                .args(["mount", device, &mount_str])
-                .output()
-                .await?;
-
-            if output.status.success() {
-                Ok(mount_path.to_path_buf())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("mount {} -> {} failed: {}", device, mount_str, stderr.trim())
-            }
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = (device, mount_path);
-            anyhow::bail!("USB mount not supported on this platform")
-        }
+        let mount_str = mount_path.to_string_lossy().to_string();
+        super::platform::mount_device(device, &mount_str).await?;
+        Ok(mount_path.to_path_buf())
     }
 
     async fn unmount(&self, mount_path: &std::path::Path) -> Result<()> {
-        #[cfg(target_os = "linux")]
-        {
-            let mount_str = mount_path.to_string_lossy().to_string();
-
-            let output = tokio::process::Command::new("sudo")
-                .args(["umount", &mount_str])
-                .output()
-                .await?;
-
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("umount {} failed: {}", mount_str, stderr.trim())
-            }
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = mount_path;
-            anyhow::bail!("USB unmount not supported on this platform")
-        }
+        let mount_str = mount_path.to_string_lossy().to_string();
+        super::platform::unmount(&mount_str).await
     }
 
     async fn is_available(&self, device: &str) -> bool {
@@ -317,20 +277,9 @@ impl StorageAdapter for NasAdapter {
     async fn unmount(&self, mount_path: &std::path::Path) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let mount_str = mount_path.to_string_lossy().to_string();
-
             // Lazy unmount for NAS — avoids blocking on hung shares
-            let output = tokio::process::Command::new("sudo")
-                .args(["umount", "-l", &mount_str])
-                .output()
-                .await?;
-
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("umount -l {} failed: {}", mount_str, stderr.trim())
-            }
+            let mount_str = mount_path.to_string_lossy().to_string();
+            super::platform::unmount_lazy(&mount_str).await
         }
 
         #[cfg(target_os = "windows")]

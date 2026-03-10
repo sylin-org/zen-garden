@@ -116,6 +116,12 @@ pub struct Capability {
 /// model — no transforms needed, read sites access fields directly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageMetadata {
+    /// Replica set ID (GUIDv7, STORAGE-0013).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replica_set_id: String,
+    /// Replica set display name (STORAGE-0013).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replica_set_name: String,
     /// Replication role: `"primary"`, `"dormant"`, or `None` if unassigned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,

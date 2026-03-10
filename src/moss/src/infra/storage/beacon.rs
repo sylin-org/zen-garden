@@ -34,9 +34,9 @@ pub async fn build_beacon(
     let storages: Vec<StorageAnnouncement> = map
         .values()
         .filter_map(|vol| {
-            let info = vol.to_storage_info()?;
-            let mut ann = StorageAnnouncement::from_info(&info);
-            stamp_announcement(&mut ann, &info.name, roles, pins);
+            let mut ann = vol.to_announcement()?;
+            let name = ann.name.clone();
+            stamp_announcement(&mut ann, &name, roles, pins);
             Some(ann)
         })
         .collect();
@@ -137,6 +137,9 @@ mod tests {
         StorageAnnouncement {
             id: format!("sb-{}", name),
             name: name.to_string(),
+            replica_set_id: format!("rs-{}", name),
+            replica_set_name: String::new(),
+            replica_set_name_updated_at: None,
             role: StorageRole::default(),
             protocols: vec!["storage".to_string()],
             access: StorageAccess::Direct,
@@ -146,7 +149,7 @@ mod tests {
             used_bytes: 0,
             encrypted: false,
             pin_id: None,
-            roles: vec![garden_common::storage::ROLE_SEED_BANK.to_string()],
+            roles: vec![garden_common::constants::ROLE_SEED_BANK.to_string()],
         }
     }
 

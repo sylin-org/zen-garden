@@ -311,7 +311,7 @@ pub async fn list_storages_v1(
                     .unwrap_or_default(),
             });
         entry.replica_count += 1;
-        if sm.and_then(|s| s.role.as_deref()) == Some("primary") && entry.primary_stone.is_none() {
+        if sm.and_then(|s| s.role.as_deref()) == Some(garden_common::constants::ROLE_PRIMARY) && entry.primary_stone.is_none() {
             entry.primary_stone = Some(storage_entry.tool.stone.name.clone());
         }
     }
@@ -366,8 +366,8 @@ pub async fn discover_v1(
             pinned: pin_id.is_some(),
             pin_id,
             endpoint: local_endpoint,
-            visibility: "open".to_string(),
-            health: "healthy".to_string(),
+            visibility: garden_common::constants::VISIBILITY_OPEN.to_string(),
+            health: garden_common::constants::HEALTH_HEALTHY.to_string(),
             roles,
         });
     }
@@ -384,7 +384,7 @@ pub async fn discover_v1(
             stone_name: entry.tool.stone.name.clone(),
             storage_id: entry.tool.tool.id.clone(),
             role: match sm.and_then(|s| s.role.as_deref()) {
-                Some("primary") => StorageRole::Primary,
+                Some(garden_common::constants::ROLE_PRIMARY) => StorageRole::Primary,
                 _ => StorageRole::Dormant,
             },
             pinned: sm.and_then(|s| s.pin_id.as_ref()).is_some(),
@@ -392,7 +392,7 @@ pub async fn discover_v1(
             endpoint: entry.tool.stone.endpoint.clone(),
             visibility: sm
                 .map(|s| s.visibility.clone())
-                .unwrap_or_else(|| "open".to_string()),
+                .unwrap_or_else(|| garden_common::constants::VISIBILITY_OPEN.to_string()),
             health: entry.tool.service.status.clone(),
             roles: sm.map(|s| s.roles.clone()).unwrap_or_default(),
         });

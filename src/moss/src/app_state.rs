@@ -269,6 +269,16 @@ pub struct AppState {
     /// a manifest during `storage add`). The volume watcher loop listens and
     /// triggers a full reconcile through the existing detection pipeline.
     pub volume_rescan_tx: tokio::sync::mpsc::Sender<()>,
+
+    /// Storage domain event channel (STORAGE-0013).
+    ///
+    /// Emitted by storage mutation operations (add, remove, rename, role change,
+    /// health change, rescan). Subscribers react by pulling fresh state from
+    /// AppState boundary methods — the event is a notification, not data carrier.
+    ///
+    /// Consumers: tools projector, cloud filter, beacon, watcher reconciler,
+    /// coordinator, metrics collector, API SSE streams.
+    pub storage_changed_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
 }
 
 // ============================================================================
@@ -928,6 +938,59 @@ impl AppState {
             &self.stone_id,
             Some(&self.storage_tick_tx),
         )
+    }
+
+    // ========================================================================
+    // Storage Events (STORAGE-0013)
+    // ========================================================================
+
+    /// Emit a storage domain event.
+    ///
+    /// Subscribers (beacon, cloud filter, watcher, coordinator, projector)
+    /// react by pulling fresh state from AppState boundary methods.
+    /// Also triggers an immediate tools projection refresh so the registry
+    /// stays coherent with storage state.
+    pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
+        tracing::debug!(event = ?event, "Storage domain event");
+        let _ = self.storage_changed_tx.send(event);
+
+        // Storage mutations affect the tools projection (seed-bank entries).
+        // Refresh immediately so registry consumers see the change without polling.
+        self.refresh_local_tools_projection().await;
+    }
+
+    /// Subscribe to storage domain events.
+    ///
+    /// Returns a broadcast receiver. Callers should `select!` on this alongside
+    /// their shutdown token. Missed events (lagged receiver) are non-fatal —
+    /// subscribers should do a full reconcile on lag.
+    pub fn subscribe_storage_changed(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
+        self.storage_changed_tx.subscribe()
+    }
+
+    /// Broadcast a storage beacon to the garden.
+    ///
+    /// Reads current volumes, roles, and pins from the AppState boundary,
+    /// then sends a UDP STORAGE_BEACON announcement. This is the single
+    /// codepath for beacon broadcasting — callers should not inline this logic.
+    pub async fn broadcast_storage_beacon(&self) {
+        let endpoint = self.self_entry.read().await.address.http_base();
+        let roles = crate::domain::storage::roles_snapshot(&self.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&self.volumes).await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &self.stone_id,
+            &self.stone_name,
+            &endpoint,
+            &self.volumes,
+            Some(&roles),
+            Some(&pins),
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "Failed to broadcast storage beacon");
+        }
     }
 
 }

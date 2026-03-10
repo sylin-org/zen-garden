@@ -280,6 +280,8 @@ impl StorageRegistry {
         Some(StorageInfo::new(
             manifest.id,
             manifest.name.clone(),
+            manifest.replica_set_id.clone(),
+            manifest.replica_set_name.clone(),
             device.to_string(),
             mount_path.to_string(),
             capacity_bytes,

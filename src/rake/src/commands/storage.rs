@@ -21,7 +21,7 @@ use crate::context::CommandContext;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
 use garden_common::storage::{
-    AddStorageRequest, CandidatesResponse, MediumAction, StorageInfo, StorageRole, StorageSummary,
+    AddStorageRequest, CandidatesResponse, MediumAction, StorageInfo, StorageRole,
 };
 use serde::Deserialize;
 use std::io::{self, Write};
@@ -38,7 +38,17 @@ pub struct StorageOverview {
 #[derive(Debug, Deserialize)]
 pub struct GardenBankInfo {
     pub id: String,
+    /// Replica set display name (user-facing identity)
     pub name: String,
+    /// Individual volume/device name
+    #[serde(default)]
+    pub volume_name: String,
+    /// Replica set ID (STORAGE-0013).
+    #[serde(default)]
+    pub replica_set_id: String,
+    /// Replica set display name (STORAGE-0013).
+    #[serde(default)]
+    pub replica_set_name: String,
     pub stone_name: String,
     pub is_local: bool,
     pub capacity_bytes: u64,
@@ -522,14 +532,14 @@ impl Command for ListStorageCommand {
             }
         };
 
-        // Display storages — grouped by logical name with garden-wide view
+        // Display storages — grouped by replica set name with volumes underneath
         if storages.is_empty() && garden_banks.is_empty() {
             println!(
                 "\n{} No managed storage found.",
                 ui::status_indicator("info", ctx.term.supports_color)
             );
         } else if !garden_banks.is_empty() {
-            // Group by logical name for garden-wide view
+            // Group by replica set name (user-facing identity)
             let mut by_name: std::collections::BTreeMap<String, Vec<&GardenBankInfo>> =
                 std::collections::BTreeMap::new();
             for gb in &garden_banks {
@@ -539,38 +549,45 @@ impl Command for ListStorageCommand {
             println!("\n{}", ui::section_header("STORAGE", &ctx.term));
             for (name, replicas) in &by_name {
                 let replica_count = replicas.len();
-                let primary = replicas.iter().find(|r| r.role == StorageRole::Primary);
-                let _primary_stone = primary.map(|p| p.stone_name.as_str()).unwrap_or("unknown");
                 let is_encrypted = replicas.iter().any(|r| r.encrypted);
                 let is_pinned = replicas.iter().any(|r| r.pinned);
 
                 let enc_label = if is_encrypted { " [encrypted]" } else { "" };
-                let pin_label = if is_pinned { " ★ pinned" } else { "" };
+                let pin_label = if is_pinned { " pinned" } else { "" };
+
+                // Total capacity across all volumes in this replica set
+                let total_cap: u64 = replicas.iter().map(|r| r.capacity_bytes).sum();
+                let cap_str = format_bytes(total_cap);
 
                 println!(
-                    "\n  {} {}  ({} replica{}){}{}",
+                    "\n  {} {}  ({} volume{}, {}){}{}",
                     ui::status_indicator("success", ctx.term.supports_color),
                     name,
                     replica_count,
                     if replica_count == 1 { "" } else { "s" },
+                    cap_str,
                     enc_label,
                     pin_label,
                 );
 
                 for r in replicas {
-                    let summary = StorageSummary {
-                        short_id: StorageInfo::short_id(&r.id),
-                        name: r.name.clone(),
-                        capacity_gb: r.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                        device: None,
-                        stone_name: Some(r.stone_name.clone()),
-                        role: r.role,
-                        pinned: r.pinned,
-                        encrypted: r.encrypted,
-                        online: true,
-                        roles: r.roles.clone(),
+                    let vol_name = if r.volume_name.is_empty() {
+                        &r.id[..8.min(r.id.len())]
+                    } else {
+                        &r.volume_name
                     };
-                    println!("  {}", summary.format_line());
+                    let role_tag = match r.role {
+                        StorageRole::Primary => " [primary]",
+                        StorageRole::Dormant => " [dormant]",
+                    };
+                    let cap = format_bytes(r.capacity_bytes);
+                    println!(
+                        "      {} — {} ({}){}",
+                        vol_name,
+                        r.stone_name,
+                        cap,
+                        role_tag,
+                    );
                 }
             }
         } else {
@@ -1608,6 +1625,15 @@ impl Command for StorageStatusCommand {
                 "    Visibility: {}",
                 bank.visibility,
             );
+            if !bank.replica_set_id.is_empty() {
+                let rs_display = if bank.replica_set_name.is_empty() {
+                    "storage".to_string()
+                } else {
+                    bank.replica_set_name.clone()
+                };
+                let rs_short = StorageInfo::short_id(&bank.replica_set_id);
+                println!("    Replica set: {} ({})", rs_display, rs_short);
+            }
             if !roles_label.is_empty() {
                 println!("   {}", roles_label);
             }

@@ -611,7 +611,7 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
         }
         // Check if this stone has the offering with role "primary"
         for svc in &entry.services {
-            if svc.name.to_string() == fqn && svc.role.as_deref() == Some("primary") {
+            if svc.name.to_string() == fqn && svc.role.as_deref() == Some(garden_common::constants::ROLE_PRIMARY) {
                 return Some(stone_id.clone());
             }
         }

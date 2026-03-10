@@ -142,7 +142,7 @@ async fn fetch_portrait(client: &MossClient, endpoint: &str) -> anyhow::Result<S
                     visibility: b
                         .get("visibility")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("open")
+                        .unwrap_or(garden_common::constants::VISIBILITY_OPEN)
                         .to_string(),
                     online: b.get("online").and_then(|v| v.as_bool()).unwrap_or(true),
                     encrypted: b

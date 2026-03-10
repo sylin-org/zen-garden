@@ -51,6 +51,9 @@ pub struct ContentStore {
     /// Storage name — used in StorageTick notifications.
     storage_name: Option<String>,
 
+    /// Replica set ID — included in StorageTick notifications (STORAGE-0013).
+    replica_set_id: Option<String>,
+
     /// Optional notification channel for changelog ticks.
     notify_tx: Option<tokio::sync::broadcast::Sender<StorageTick>>,
 }
@@ -62,6 +65,7 @@ impl ContentStore {
             mount_root: mount_root.into(),
             dek: None,
             storage_name: None,
+            replica_set_id: None,
             notify_tx: None,
         }
     }
@@ -72,6 +76,7 @@ impl ContentStore {
             mount_root: mount_root.into(),
             dek: Some(dek),
             storage_name: None,
+            replica_set_id: None,
             notify_tx: None,
         }
     }
@@ -82,20 +87,23 @@ impl ContentStore {
             mount_root: mount_root.into(),
             dek,
             storage_name: None,
+            replica_set_id: None,
             notify_tx: None,
         }
     }
 
-    /// Attach a notification channel and seed bank name.
+    /// Attach a notification channel, storage name, and replica set ID.
     ///
     /// Call this on Primary stores so writes/deletes emit `StorageTick`
     /// events to the SSE notification stream.
     pub fn with_notifications(
         mut self,
         name: String,
+        replica_set_id: String,
         tx: tokio::sync::broadcast::Sender<StorageTick>,
     ) -> Self {
         self.storage_name = Some(name);
+        self.replica_set_id = Some(replica_set_id);
         self.notify_tx = Some(tx);
         self
     }
@@ -299,6 +307,7 @@ impl ContentStore {
             let tick = StorageTick {
                 cursor: entry.c.clone(),
                 storage: name.clone(),
+                replica_set_id: self.replica_set_id.clone().unwrap_or_default(),
                 creates: c,
                 modifies: m,
                 deletes: d,
@@ -1172,7 +1181,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (tx, mut rx) = tokio::sync::broadcast::channel::<StorageTick>(16);
         let store =
-            ContentStore::new_public(tmp.path()).with_notifications("test-bank".to_string(), tx);
+            ContentStore::new_public(tmp.path()).with_notifications("test-bank".to_string(), "rs-test".to_string(), tx);
 
         tokio::fs::create_dir_all(tmp.path().join(".zen-garden"))
             .await

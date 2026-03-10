@@ -89,6 +89,8 @@ struct BankWindow {
     deletes: u32,
     /// Latest cursor seen (carries through to the emitted tick).
     cursor: String,
+    /// Replica set ID (STORAGE-0013). Propagated from the raw tick.
+    replica_set_id: String,
     /// When the first raw tick in this window arrived (for deadline cap).
     window_start: Instant,
     /// When the most recent raw tick arrived (for quiet threshold).
@@ -102,6 +104,7 @@ impl BankWindow {
             modifies: tick.modifies,
             deletes: tick.deletes,
             cursor: tick.cursor.clone(),
+            replica_set_id: tick.replica_set_id.clone(),
             window_start: now,
             last_event: now,
         }
@@ -113,6 +116,9 @@ impl BankWindow {
         self.modifies += tick.modifies;
         self.deletes += tick.deletes;
         self.cursor = tick.cursor.clone();
+        if !tick.replica_set_id.is_empty() {
+            self.replica_set_id = tick.replica_set_id.clone();
+        }
         self.last_event = now;
     }
 
@@ -121,6 +127,7 @@ impl BankWindow {
         StorageTick {
             cursor: self.cursor.clone(),
             storage: seed_bank.to_string(),
+            replica_set_id: self.replica_set_id.clone(),
             creates: self.creates,
             modifies: self.modifies,
             deletes: self.deletes,
@@ -241,6 +248,7 @@ mod tests {
         StorageTick {
             cursor: format!("cursor-{}", creates + modifies + deletes),
             storage: storage.to_string(),
+            replica_set_id: String::new(),
             creates,
             modifies,
             deletes,
@@ -289,6 +297,7 @@ mod tests {
         let tick2 = StorageTick {
             cursor: "latest-cursor".to_string(),
             storage: "data".to_string(),
+            replica_set_id: String::new(),
             creates: 0,
             modifies: 1,
             deletes: 0,

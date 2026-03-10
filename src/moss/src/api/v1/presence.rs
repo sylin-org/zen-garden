@@ -249,11 +249,11 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 /// Compute stone health from metrics
 fn compute_health(cpu: f64, memory: f64) -> String {
     if cpu > 95.0 || memory > 95.0 {
-        "wilting".to_string()
+        garden_common::constants::VITALITY_WILTING.to_string()
     } else if cpu > 80.0 || memory > 80.0 {
-        "withering".to_string()
+        garden_common::constants::VITALITY_WITHERING.to_string()
     } else {
-        "thriving".to_string()
+        garden_common::constants::VITALITY_THRIVING.to_string()
     }
 }
 

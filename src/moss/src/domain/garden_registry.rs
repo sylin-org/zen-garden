@@ -530,7 +530,7 @@ impl GardenRegistryInner {
     pub fn storage_entries(&self) -> Vec<&RegistryEntry> {
         self.entries
             .values()
-            .filter(|e| e.tool.tool.category == "storage")
+            .filter(|e| e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE)
             .collect()
     }
 
@@ -539,7 +539,7 @@ impl GardenRegistryInner {
         self.entries
             .values()
             .filter(|e| {
-                e.tool.tool.category == "storage"
+                e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE
                     && (e.tool.fqid.eq_ignore_ascii_case(name)
                         || e.tool.tool.name.eq_ignore_ascii_case(name))
             })
@@ -556,7 +556,7 @@ impl GardenRegistryInner {
                 .storage
                 .as_ref()
                 .and_then(|s| s.role.as_deref())
-                .is_some_and(|r| r.eq_ignore_ascii_case("primary"))
+                .is_some_and(|r| r.eq_ignore_ascii_case(garden_common::constants::ROLE_PRIMARY))
         });
         primary.copied().or_else(|| replicas.into_iter().next())
     }
@@ -579,7 +579,7 @@ impl GardenRegistryInner {
                     .storage
                     .as_ref()
                     .and_then(|s| s.role.as_deref())
-                    .is_some_and(|r| r.eq_ignore_ascii_case("primary"))
+                    .is_some_and(|r| r.eq_ignore_ascii_case(garden_common::constants::ROLE_PRIMARY))
         });
 
         // Fallback: any replica on a different stone
@@ -603,11 +603,11 @@ impl GardenRegistryInner {
         self.entries
             .values()
             .filter(|e| {
-                e.tool.tool.category == "storage"
+                e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE
                     && e.tool
                         .storage
                         .as_ref()
-                        .is_some_and(|s| s.protocols.iter().any(|p| p == "s3"))
+                        .is_some_and(|s| s.protocols.iter().any(|p| p == garden_common::constants::PROTOCOL_S3))
             })
             .collect()
     }
@@ -615,7 +615,7 @@ impl GardenRegistryInner {
     /// Find a storage entry by seed bank ID across all stones.
     pub fn storage_by_id(&self, id: &str) -> Option<&RegistryEntry> {
         self.entries.values().find(|e| {
-            e.tool.tool.category == "storage" && e.tool.tool.id == id
+            e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE && e.tool.tool.id == id
         })
     }
 
@@ -626,7 +626,7 @@ impl GardenRegistryInner {
     pub fn storage_grouped_by_stone(&self) -> BTreeMap<String, Vec<&RegistryEntry>> {
         let mut grouped: BTreeMap<String, Vec<&RegistryEntry>> = BTreeMap::new();
         for entry in self.entries.values() {
-            if entry.tool.tool.category == "storage" {
+            if entry.tool.tool.category == garden_common::constants::CATEGORY_STORAGE {
                 grouped
                     .entry(entry.tool.stone.id.clone())
                     .or_default()
@@ -645,7 +645,7 @@ impl GardenRegistryInner {
     pub fn storage_count(&self) -> usize {
         self.entries
             .values()
-            .filter(|e| e.tool.tool.category == "storage")
+            .filter(|e| e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE)
             .count()
     }
 
@@ -981,6 +981,8 @@ mod tests {
         let mut bank = sample_tool("seed-clear-valley", "storage", "stone-a");
         bank.tool.tool_type = "seed-bank".to_string();
         bank.storage = Some(StorageMetadata {
+            replica_set_id: String::new(),
+            replica_set_name: String::new(),
             role: Some("primary".to_string()),
             capacity_bytes: 1_000_000_000,
             used_bytes: 500_000_000,
@@ -995,6 +997,8 @@ mod tests {
         let mut bank2 = sample_tool("seed-clear-valley", "storage", "stone-b");
         bank2.tool.tool_type = "seed-bank".to_string();
         bank2.storage = Some(StorageMetadata {
+            replica_set_id: String::new(),
+            replica_set_name: String::new(),
             role: Some("dormant".to_string()),
             capacity_bytes: 1_000_000_000,
             used_bytes: 500_000_000,

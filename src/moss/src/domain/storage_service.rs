@@ -48,10 +48,14 @@ pub enum StorageRoute {
 /// A locally-resolved storage with everything needed for I/O.
 #[derive(Debug, Clone)]
 pub struct LocalStorage {
-    /// Storage ID (GUIDv7).
+    /// Device ID (GUIDv7).
     pub id: String,
-    /// Logical storage name.
+    /// Device display name (sugar).
     pub name: String,
+    /// Replica set ID (GUIDv7) — groups devices replicating same content.
+    pub replica_set_id: String,
+    /// Replica set display name. Empty = default set ("storage").
+    pub replica_set_name: String,
     /// Mount path on this stone.
     pub mount_path: PathBuf,
     /// Current role (Primary / Dormant).
@@ -168,6 +172,8 @@ impl<'a> StorageService<'a> {
                 Some(LocalStorage {
                     id: mgmt.id.clone(),
                     name: mgmt.name.clone(),
+                    replica_set_id: mgmt.replica_set_id.clone(),
+                    replica_set_name: mgmt.replica_set_name.clone(),
                     mount_path: vol.mount_path.clone(),
                     role: mgmt.role,
                     encrypted: mgmt.encrypted,
@@ -192,7 +198,7 @@ impl<'a> StorageService<'a> {
     pub fn notifying_content_store(&self, local: &LocalStorage) -> ContentStore {
         let store = ContentStore::new(local.mount_path.clone(), None);
         if let Some(tx) = self.tick_tx {
-            store.with_notifications(local.name.clone(), tx.clone())
+            store.with_notifications(local.name.clone(), local.replica_set_id.clone(), tx.clone())
         } else {
             store
         }
@@ -212,17 +218,27 @@ impl<'a> StorageService<'a> {
     // Internal helpers
     // ========================================================================
 
-    /// Find a managed storage by name in the local `Volumes` map.
+    /// Find a managed storage by replica set name in the local `Volumes` map.
+    ///
+    /// Matches on `replica_set_name` (the user-facing identity).
+    /// Falls back to DEFAULT_REPLICA_SET_DISPLAY for empty replica set names.
     async fn find_local(&self, name: &str) -> Option<LocalStorage> {
         let map = self.volumes.read().await;
         map.values().find_map(|vol| {
             let mgmt = vol.management.as_ref()?;
-            if mgmt.name != name {
+            let display_name = if mgmt.replica_set_name.is_empty() {
+                garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY
+            } else {
+                &mgmt.replica_set_name
+            };
+            if display_name != name {
                 return None;
             }
             Some(LocalStorage {
                 id: mgmt.id.clone(),
                 name: mgmt.name.clone(),
+                replica_set_id: mgmt.replica_set_id.clone(),
+                replica_set_name: mgmt.replica_set_name.clone(),
                 mount_path: vol.mount_path.clone(),
                 role: mgmt.role,
                 encrypted: mgmt.encrypted,
@@ -242,6 +258,8 @@ impl<'a> StorageService<'a> {
             Some(LocalStorage {
                 id: mgmt.id.clone(),
                 name: mgmt.name.clone(),
+                replica_set_id: mgmt.replica_set_id.clone(),
+                replica_set_name: mgmt.replica_set_name.clone(),
                 mount_path: vol.mount_path.clone(),
                 role: mgmt.role,
                 encrypted: mgmt.encrypted,
@@ -305,6 +323,9 @@ mod tests {
                 id: id.to_string(),
                 short_id: id[..8.min(id.len())].to_string(),
                 name: name.to_string(),
+                replica_set_id: format!("rs-{}", id),
+                replica_set_name: name.to_string(),
+                replica_set_name_updated_at: None,
                 encrypted: false,
                 roaming: false,
                 origin_stone: "stone-test".to_string(),

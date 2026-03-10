@@ -93,12 +93,17 @@ impl StorageWatcherSet {
     /// Call periodically (e.g. every 30s from the coordinator). Starts
     /// watchers for new storages, stops watchers for departed ones.
     pub async fn reconcile(&self) {
-        let current_storages: Vec<(String, String, PathBuf)> = {
+        let current_storages: Vec<(String, String, String, PathBuf)> = {
             let map = self.volumes.read().await;
             map.values()
                 .filter_map(|v| {
                     let mgmt = v.management.as_ref()?;
-                    Some((mgmt.id.clone(), mgmt.name.clone(), v.mount_path.clone()))
+                    Some((
+                        mgmt.id.clone(),
+                        mgmt.name.clone(),
+                        mgmt.replica_set_id.clone(),
+                        v.mount_path.clone(),
+                    ))
                 })
                 .collect()
         };
@@ -106,7 +111,7 @@ impl StorageWatcherSet {
         let mut watchers = self.watchers.write().await;
 
         // Start watchers for new storages
-        for (id, name, mount_path) in &current_storages {
+        for (id, name, replica_set_id, mount_path) in &current_storages {
             if watchers.contains_key(id) {
                 continue;
             }
@@ -114,12 +119,14 @@ impl StorageWatcherSet {
             let cancel = self.shutdown_token.child_token();
             let tick_tx = self.tick_tx.clone();
             let storage_name = name.clone();
+            let rs_id = replica_set_id.clone();
             let watch_path = mount_path.clone();
             let watcher_cancel = cancel.clone();
 
             tokio::spawn(async move {
                 if let Err(e) =
-                    run_storage_watcher(&watch_path, &storage_name, tick_tx, watcher_cancel).await
+                    run_storage_watcher(&watch_path, &storage_name, &rs_id, tick_tx, watcher_cancel)
+                        .await
                 {
                     warn!(
                         storage = %storage_name,
@@ -141,7 +148,7 @@ impl StorageWatcherSet {
 
         // Stop watchers for departed storages
         let current_ids: std::collections::HashSet<&String> =
-            current_storages.iter().map(|(id, _, _)| id).collect();
+            current_storages.iter().map(|(id, _, _, _)| id).collect();
 
         let departed: Vec<String> = watchers
             .keys()
@@ -169,6 +176,7 @@ impl StorageWatcherSet {
 async fn run_storage_watcher(
     mount_path: &Path,
     storage_name: &str,
+    replica_set_id: &str,
     tick_tx: broadcast::Sender<StorageTick>,
     cancel: CancellationToken,
 ) -> Result<()> {
@@ -240,6 +248,7 @@ async fn run_storage_watcher(
                 flush_changelog_batch(
                     mount_path,
                     storage_name,
+                    replica_set_id,
                     &batch,
                     &tick_tx,
                 ).await;
@@ -292,6 +301,7 @@ fn spawn_notify_watcher(
 async fn flush_changelog_batch(
     mount_path: &Path,
     storage_name: &str,
+    replica_set_id: &str,
     batch: &[(PathBuf, ChangelogOp)],
     tick_tx: &broadcast::Sender<StorageTick>,
 ) {
@@ -366,6 +376,7 @@ async fn flush_changelog_batch(
         let tick = StorageTick {
             cursor: last_cursor,
             storage: storage_name.to_string(),
+            replica_set_id: replica_set_id.to_string(),
             creates,
             modifies,
             deletes,

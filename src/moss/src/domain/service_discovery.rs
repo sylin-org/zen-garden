@@ -796,8 +796,8 @@ fn sort_found_services(services: &mut [FoundService], criteria: &ServiceSearchCr
                 _ => {}
             }
 
-            let a_orch = a.category == "orchestrator";
-            let b_orch = b.category == "orchestrator";
+            let a_orch = a.category == garden_common::constants::CATEGORY_ORCHESTRATOR;
+            let b_orch = b.category == garden_common::constants::CATEGORY_ORCHESTRATOR;
 
             // Secondary: orchestrators before data services
             match (a_orch, b_orch) {

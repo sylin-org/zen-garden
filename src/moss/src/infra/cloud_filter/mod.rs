@@ -33,7 +33,7 @@ use tracing::{debug, info, warn};
 
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
-use garden_common::storage::StorageTick;
+use garden_common::storage::{StorageChanged, StorageTick};
 
 use self::provider::ZenGardenProvider;
 
@@ -50,6 +50,7 @@ pub async fn start(
     registry: GardenRegistry,
     stone_id: String,
     tick_tx: tokio::sync::broadcast::Sender<StorageTick>,
+    storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
     local_endpoint: Arc<RwLock<String>>,
     shutdown_token: CancellationToken,
 ) -> Result<()> {
@@ -113,6 +114,7 @@ pub async fn start(
             volumes,
             registry,
             &sync_root_path,
+            storage_changed_rx,
             watcher_token,
         )
         .await;
@@ -135,23 +137,28 @@ pub fn unregister() -> Result<()> {
 /// Watches `Volumes` + `GardenRegistry` for changes and creates/removes
 /// placeholder directories under the sync root.
 ///
-/// Polls every 10 seconds.  Uses `placeholders::create_storage_placeholder`
-/// (with valid timestamps) for additions.
+/// Event-driven (STORAGE-0013): reacts immediately to `StorageChanged` events.
+/// Falls back to a 60s heartbeat poll for resilience (registry changes from
+/// remote stones don't emit local StorageChanged events).
 async fn storage_watcher(
     volumes: Volumes,
     registry: GardenRegistry,
     sync_root_path: &Path,
+    mut storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
     shutdown_token: CancellationToken,
 ) {
     // Seed `known` from existing placeholder directories so we detect and
     // remove stale entries from previous sessions on the first reconcile pass.
     let mut known = scan_existing_placeholders(sync_root_path).await;
-    let poll_interval = tokio::time::Duration::from_secs(10);
+    let heartbeat = tokio::time::Duration::from_secs(60);
 
     debug!(
         existing = known.len(),
-        "storage watcher started (poll every 10s)"
+        "storage watcher started (event-driven + 60s heartbeat)"
     );
+
+    // Run initial reconciliation immediately
+    reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known).await;
 
     loop {
         tokio::select! {
@@ -159,35 +166,60 @@ async fn storage_watcher(
                 debug!("storage watcher shutting down");
                 break;
             }
-            _ = tokio::time::sleep(poll_interval) => {
-                let current = collect_storage_names(&volumes, &registry).await;
-
-                if current == known {
-                    debug!(total = current.len(), "no storage changes");
-                    continue;
+            result = storage_changed_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        debug!(event = ?event, "storage watcher: event received");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        debug!(skipped = n, "storage watcher: lagged, reconciling");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        debug!("storage watcher: channel closed");
+                        break;
+                    }
                 }
-
-                let added: Vec<_> = current.difference(&known).cloned().collect();
-                let removed: Vec<_> = known.difference(&current).cloned().collect();
-
-                for name in &added {
-                    placeholders::create_storage_placeholder(sync_root_path, name);
-                }
-                if !added.is_empty() {
-                    info!(storages = ?added, "new storages visible in Explorer");
-                }
-
-                for name in &removed {
-                    placeholders::remove_storage_placeholder(sync_root_path, name).await;
-                }
-                if !removed.is_empty() {
-                    info!(storages = ?removed, "storages removed from Explorer");
-                }
-
-                known = current;
+                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known).await;
+            }
+            _ = tokio::time::sleep(heartbeat) => {
+                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known).await;
             }
         }
     }
+}
+
+/// Reconcile placeholder directories with current storage names.
+async fn reconcile_placeholders(
+    volumes: &Volumes,
+    registry: &GardenRegistry,
+    sync_root_path: &Path,
+    known: &mut HashSet<String>,
+) {
+    let current = collect_storage_names(volumes, registry).await;
+
+    if current == *known {
+        debug!(total = current.len(), "no storage changes");
+        return;
+    }
+
+    let added: Vec<_> = current.difference(known).cloned().collect();
+    let removed: Vec<_> = known.difference(&current).cloned().collect();
+
+    for name in &added {
+        placeholders::create_storage_placeholder(sync_root_path, name);
+    }
+    if !added.is_empty() {
+        info!(storages = ?added, "new storages visible in Explorer");
+    }
+
+    for name in &removed {
+        placeholders::remove_storage_placeholder(sync_root_path, name).await;
+    }
+    if !removed.is_empty() {
+        info!(storages = ?removed, "storages removed from Explorer");
+    }
+
+    *known = current;
 }
 
 /// Scan existing subdirectories under the sync root to seed `known`.
@@ -217,7 +249,7 @@ async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
     names
 }
 
-/// Collect the set of all storage names (local managed + remote registry).
+/// Collect the set of all storage replica set names (local managed + remote registry).
 async fn collect_storage_names(volumes: &Volumes, registry: &GardenRegistry) -> HashSet<String> {
     let mut names = HashSet::new();
 
@@ -225,7 +257,12 @@ async fn collect_storage_names(volumes: &Volumes, registry: &GardenRegistry) -> 
         let map = volumes.read().await;
         for vol in map.values() {
             if let Some(ref mgmt) = vol.management {
-                names.insert(mgmt.name.clone());
+                let rs_name = if mgmt.replica_set_name.is_empty() {
+                    garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                } else {
+                    mgmt.replica_set_name.clone()
+                };
+                names.insert(rs_name);
             }
         }
     }

@@ -242,25 +242,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         }
     }
 
-    // If any role changed, update local beacon cache and broadcast to network
-    // so other stones see the resolved roles (not default Primary).
+    // If any role changed, emit domain event — beacon subscriber reacts.
     if any_changed {
-        let endpoint = state.self_entry.read().await.address.http_base();
-        let roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
-        state.refresh_local_tools_projection().await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &state.stone_id,
-            &state.stone_name,
-            &endpoint,
-            &state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = ?e, "Failed to broadcast beacon after role change");
-        }
+        state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
     }
 
     Ok(())
@@ -405,13 +389,79 @@ fn find_remote_primary_with_pin(
         let sm = entry.tool.storage.as_ref();
         let is_primary = sm
             .and_then(|s| s.role.as_deref())
-            .is_some_and(|r| r.eq_ignore_ascii_case("primary"));
+            .is_some_and(|r| r.eq_ignore_ascii_case(garden_common::constants::ROLE_PRIMARY));
         if is_primary {
             let pin_id = sm.and_then(|s| s.pin_id.clone());
             return Some((entry.tool.stone.id.clone(), entry.tool.tool.id.clone(), pin_id));
         }
     }
     None
+}
+
+// ============================================================================
+// Beacon subscriber (STORAGE-0013)
+// ============================================================================
+
+/// Background task that broadcasts storage beacons in reaction to
+/// `StorageChanged` domain events.
+///
+/// Replaces the old pattern of manually spawning beacon broadcasts from
+/// each API handler / task. The task subscribes to the `storage_changed_tx`
+/// channel and calls `state.broadcast_storage_beacon()` on every event.
+///
+/// Debounces: coalesces rapid events (e.g. release-all emitting per-volume
+/// Removed + a final Reclassified) by waiting 200ms of quiet before
+/// broadcasting.
+pub async fn storage_beacon_subscriber(state: AppState, token: CancellationToken) {
+    let mut rx = state.subscribe_storage_changed();
+    let debounce = std::time::Duration::from_millis(200);
+
+    info!("Storage beacon subscriber started (STORAGE-0013)");
+
+    loop {
+        // Wait for the first event
+        let got_event = tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(_) => true,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        debug!(missed = n, "Beacon subscriber lagged — broadcasting");
+                        true
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        debug!("Beacon subscriber: channel closed");
+                        return;
+                    }
+                }
+            }
+            _ = token.cancelled() => {
+                info!("Storage beacon subscriber shutting down");
+                return;
+            }
+        };
+
+        if !got_event {
+            continue;
+        }
+
+        // Debounce: drain any additional events within the window
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(_) => continue, // more events, keep draining
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    }
+                }
+                _ = tokio::time::sleep(debounce) => break, // quiet period expired
+                _ = token.cancelled() => return,
+            }
+        }
+
+        // Broadcast the beacon
+        state.broadcast_storage_beacon().await;
+    }
 }
 
 // ============================================================================
@@ -610,8 +660,8 @@ mod tests {
             fqid: name.to_string(),
             tool: ToolIdentity {
                 name: String::new(),
-                tool_type: "seed-bank".to_string(),
-                category: "storage".to_string(),
+                tool_type: garden_common::constants::TOOL_TYPE_SEED_BANK.to_string(),
+                category: garden_common::constants::CATEGORY_STORAGE.to_string(),
                 id: bank_id.to_string(),
                 tags: Vec::new(),
             },
@@ -621,9 +671,9 @@ mod tests {
                 endpoint: format!("http://{}.local:7185", stone_id),
             },
             service: ServiceInfo {
-                status: "running".to_string(),
+                status: garden_common::constants::SERVICE_RUNNING.to_string(),
                 ready: true,
-                protocol: "storage".to_string(),
+                protocol: garden_common::constants::PROTOCOL_STORAGE.to_string(),
                 uris: Vec::new(),
                 hostname: None,
                 ip: None,
@@ -632,14 +682,16 @@ mod tests {
             },
             capabilities: Vec::new(),
             storage: Some(StorageMetadata {
+                replica_set_id: String::new(),
+                replica_set_name: String::new(),
                 role: Some(role.to_string().to_ascii_lowercase()),
                 capacity_bytes: 1_000_000_000,
                 used_bytes: 0,
-                visibility: "open".to_string(),
+                visibility: garden_common::constants::VISIBILITY_OPEN.to_string(),
                 encrypted: false,
                 pin_id: pin_id.map(|s| s.to_string()),
-                protocols: vec!["storage".to_string()],
-                roles: vec!["seed-bank".to_string()],
+                protocols: vec![garden_common::constants::PROTOCOL_STORAGE.to_string()],
+                roles: vec![garden_common::constants::ROLE_SEED_BANK.to_string()],
             }),
         }
     }

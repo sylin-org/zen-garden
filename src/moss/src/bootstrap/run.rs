@@ -695,6 +695,12 @@ pub async fn run(
         // mutating on-disk state (e.g. writing a manifest). The volume watcher
         // loop consumes the rx side and triggers a full reconcile.
         volume_rescan_tx: volume_rescan_tx.clone(),
+        // Storage domain events (STORAGE-0013) — event-driven notification channel.
+        // Subscribers react to changes by pulling fresh state from AppState.
+        storage_changed_tx: {
+            let (tx, _) = tokio::sync::broadcast::channel(64);
+            tx
+        },
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -1381,6 +1387,21 @@ pub async fn run(
         tracing::info!("Seed bank orchestration task started (STORAGE-0006)");
     }
 
+    // Phase 17.8b: Storage beacon subscriber (STORAGE-0013)
+    // Reacts to StorageChanged domain events by broadcasting beacons.
+    // Replaces manual beacon spawns from individual handlers.
+    {
+        let beacon_state = state.clone();
+        let beacon_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            crate::tasks::storage_orchestration::storage_beacon_subscriber(
+                beacon_state, beacon_token,
+            )
+            .await;
+        });
+        tracing::info!("Storage beacon subscriber started (STORAGE-0013)");
+    }
+
     // Phase 17.9: Seed bank storage tick aggregator (STORAGE-0006 Phase 4f)
     // Quantizes raw per-write ticks into per-seed-bank aggregated ticks
     // (2s quiet threshold / 10s deadline cap).
@@ -1438,6 +1459,7 @@ pub async fn run(
             state.registry.clone(),
             state.stone_id.clone(),
             state.storage_tick_tx.clone(),
+            state.subscribe_storage_changed(),
             cf_endpoint,
             shutdown_token.child_token(),
         )
@@ -1449,7 +1471,7 @@ pub async fn run(
         }
     }
 
-    // Phase 17.9d: Filesystem watcher (STORAGE-0009 Phase 5)
+    // Phase 17.9d: Filesystem watcher (STORAGE-0009 Phase 5, event-driven per STORAGE-0013)
     // Detects external writes to managed storage mounts and records changelog
     // entries so replication stays coherent.
     {
@@ -1461,20 +1483,34 @@ pub async fn run(
         // Initial reconciliation — start watchers for already-mounted storages
         watcher_set.reconcile().await;
 
-        // Periodic reconciliation — pick up new/removed storages
+        // Event-driven + heartbeat reconciliation — react to StorageChanged
+        // events immediately, with a 60s fallback heartbeat.
         let watcher_token = shutdown_token.child_token();
+        let mut storage_rx = state.subscribe_storage_changed();
         tokio::spawn(async move {
-            let interval = tokio::time::Duration::from_secs(30);
+            let heartbeat = tokio::time::Duration::from_secs(60);
             loop {
                 tokio::select! {
                     _ = watcher_token.cancelled() => break,
-                    _ = tokio::time::sleep(interval) => {
+                    result = storage_rx.recv() => {
+                        match result {
+                            Ok(event) => {
+                                tracing::debug!(event = ?event, "fs watcher: storage event");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::debug!(skipped = n, "fs watcher: lagged, reconciling");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                        watcher_set.reconcile().await;
+                    }
+                    _ = tokio::time::sleep(heartbeat) => {
                         watcher_set.reconcile().await;
                     }
                 }
             }
         });
-        tracing::info!("Filesystem watcher started (STORAGE-0009 Phase 5)");
+        tracing::info!("Filesystem watcher started (event-driven, STORAGE-0013)");
     }
 
     // Initialize tools projection from restored offerings + local seed-banks.

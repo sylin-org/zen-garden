@@ -8,7 +8,6 @@ use crate::domain::service_discovery::{self, FoundService};
 use crate::domain::storage::VolumeHealth;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
-use garden_common::storage::DEFAULT_PUBLIC_STORAGE_NAME;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
 use std::collections::BTreeSet;
 
@@ -42,13 +41,21 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 
     for vol in &managed_vols {
         let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
-        let canonical = canonical_storage_name(&mgmt.name);
         let (status, ready) = volume_health_to_readiness(&vol.health);
         let visibility_str = mgmt.visibility.to_string();
 
+        // fqid = replica set display name (used for grouping replicas and Explorer folders).
+        // Users see replica set names, not individual volume names.
+        // The stable GUID lives in StorageMetadata.replica_set_id.
+        let fqid = if mgmt.replica_set_name.is_empty() {
+            garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
+        } else {
+            mgmt.replica_set_name.clone()
+        };
+
         // Local storages always support s3 + storage protocols
-        let protocols = vec!["s3".to_string(), "storage".to_string()];
-        let protocol = "s3".to_string();
+        let protocols = vec![garden_common::constants::PROTOCOL_S3.to_string(), garden_common::constants::PROTOCOL_STORAGE.to_string()];
+        let protocol = garden_common::constants::PROTOCOL_S3.to_string();
 
         let mut uris = Vec::new();
         uris.push(format!(
@@ -66,11 +73,11 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
             .collect();
 
         tools.push(GardenTool {
-            fqid: canonical.clone(),
+            fqid,
             tool: ToolIdentity {
-                name: String::new(),
-                tool_type: "seed-bank".to_string(),
-                category: "storage".to_string(),
+                name: mgmt.name.clone(),
+                tool_type: garden_common::constants::TOOL_TYPE_SEED_BANK.to_string(),
+                category: garden_common::constants::CATEGORY_STORAGE.to_string(),
                 id: mgmt.id.clone(),
                 tags: Vec::new(),
             },
@@ -91,6 +98,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
             },
             capabilities: Vec::new(),
             storage: Some(garden_common::tools::StorageMetadata {
+                replica_set_id: mgmt.replica_set_id.clone(),
+                replica_set_name: mgmt.replica_set_name.clone(),
                 role: Some(mgmt.role.to_string().to_ascii_lowercase()),
                 capacity_bytes: vol.capacity_bytes,
                 used_bytes: vol.used_bytes,
@@ -201,14 +210,6 @@ fn volume_health_to_readiness(health: &VolumeHealth) -> (&'static str, bool) {
     }
 }
 
-fn canonical_storage_name(name: &str) -> String {
-    if name.eq_ignore_ascii_case(DEFAULT_PUBLIC_STORAGE_NAME) {
-        "default".to_string()
-    } else {
-        name.trim().to_ascii_lowercase()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,14 +240,5 @@ mod tests {
         let fqn = parse_fqn_for_fqid("mongodb:prod", "mongodb");
         assert_eq!(fqn.fqn(), "mongodb::prod");
         assert_eq!(fqn.instance, Some("prod".to_string()));
-    }
-
-    #[test]
-    fn canonical_seed_bank() {
-        assert_eq!(
-            canonical_storage_name(DEFAULT_PUBLIC_STORAGE_NAME),
-            "default"
-        );
-        assert_eq!(canonical_storage_name("custom-bank"), "custom-bank");
     }
 }

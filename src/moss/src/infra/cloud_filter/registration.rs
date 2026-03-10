@@ -29,7 +29,7 @@ const SYNC_ROOT_FOLDER: &str = "Zen Garden";
 const ICON_RESOURCE_FALLBACK: &str = "%SystemRoot%\\system32\\imageres.dll,3";
 
 /// Provider version string.  Bump to force re-registration on upgrade.
-pub const PROVIDER_VERSION: &str = "2.0";
+pub const PROVIDER_VERSION: &str = "2.2";
 
 // ============================================================================
 // Public API

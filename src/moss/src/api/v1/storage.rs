@@ -40,7 +40,7 @@ use garden_common::storage::{
     AddStorageRequest, AddStorageResponse, CandidatesResponse, DeviceState, MediumAction,
     MediumInfo, MediumPartitionInfo, RenameStorageRequest, SetRolesRequest, SetVisibilityRequest,
     StorageDetectedInfo, StorageInfo, StorageManifest, StorageVisibility,
-    DEFAULT_PRIVATE_STORAGE_NAME,
+    DEFAULT_REPLICA_SET_DISPLAY,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -100,10 +100,19 @@ pub struct StorageOverview {
 /// Info about a remote seed bank in the garden
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GardenBankInfo {
-    /// Unique seed bank ID
+    /// Unique device ID (GUIDv7)
     pub id: String,
-    /// Human-readable name
+    /// Replica set display name (user-facing identity)
     pub name: String,
+    /// Individual volume/device name
+    #[serde(default)]
+    pub volume_name: String,
+    /// Replica set ID (STORAGE-0013)
+    #[serde(default)]
+    pub replica_set_id: String,
+    /// Replica set display name (STORAGE-0013)
+    #[serde(default)]
+    pub replica_set_name: String,
     /// Stone ID hosting this bank
     pub stone_id: String,
     /// Stone name hosting this bank
@@ -267,7 +276,7 @@ pub async fn storage_overview_v1(
                 .unwrap_or(garden_common::storage::StorageRole::Primary)
         } else {
             match sm.and_then(|s| s.role.as_deref()) {
-                Some("dormant") => garden_common::storage::StorageRole::Dormant,
+                Some(garden_common::constants::ROLE_DORMANT) => garden_common::storage::StorageRole::Dormant,
                 _ => garden_common::storage::StorageRole::Primary,
             }
         };
@@ -280,11 +289,14 @@ pub async fn storage_overview_v1(
         garden_banks.push(GardenBankInfo {
             id: entry.tool.tool.id.clone(),
             name: entry.tool.fqid.clone(),
+            volume_name: entry.tool.tool.name.clone(),
+            replica_set_id: sm.map(|s| s.replica_set_id.clone()).unwrap_or_default(),
+            replica_set_name: sm.map(|s| s.replica_set_name.clone()).unwrap_or_default(),
             stone_id: entry.tool.stone.id.clone(),
             stone_name: entry.tool.stone.name.clone(),
             endpoint: entry.tool.stone.endpoint.clone(),
             is_local,
-            visibility: sm.map(|s| s.visibility.clone()).unwrap_or_else(|| "open".to_string()),
+            visibility: sm.map(|s| s.visibility.clone()).unwrap_or_else(|| garden_common::constants::VISIBILITY_OPEN.to_string()),
             health: entry.tool.service.status.clone(),
             capacity_bytes: sm.map(|s| s.capacity_bytes).unwrap_or(0),
             used_bytes: sm.map(|s| s.used_bytes).unwrap_or(0),
@@ -541,36 +553,30 @@ pub async fn release_bank_v1(
     }
 
     // STORAGE-0011: Remove management from the released volume
-    {
+    // Capture identity before clearing management.
+    let (device_id, replica_set_id) = {
         let mut map = state.volumes.write().await;
+        let ids = map.values().find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name)
+        }).and_then(|v| {
+            let mgmt = v.management.as_ref()?;
+            Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
+        }).unwrap_or_default();
+
         if let Some(vol) = map.values_mut().find(|v| {
             v.management.as_ref().is_some_and(|m| m.name == name)
         }) {
             vol.management = None;
             debug!(name = %name, "Cleared management from released volume");
         }
-    }
+        ids
+    };
 
-    // STORAGE-0003: Update local storage cache AND broadcast beacon
-    // TOOLS-0003: Refresh registry + broadcast storage beacon
-    let tools_state = state.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon");
-        }
-    });
+    // STORAGE-0013: Emit domain event — beacon subscriber reacts automatically
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Removed {
+        device_id,
+        replica_set_id,
+    }).await;
 
     info!(name = %name, "Bank released");
     Ok(Json(ApiResponse::new(ReleaseResponse {
@@ -584,7 +590,10 @@ pub async fn release_bank_v1(
 // PATCH /api/v1/stone/storage/banks/:name/rename - Rename Bank
 // ============================================================================
 
-/// Rename a seed bank
+/// Rename a storage replica set.
+///
+/// The `name` path parameter matches on `replica_set_name` (the user-facing identity).
+/// Updates all local volumes that belong to this replica set.
 pub async fn rename_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -599,71 +608,82 @@ pub async fn rename_bank_v1(
         ));
     }
 
-    let mount_path = {
+    // Find all local volumes matching this replica set name
+    let mount_paths: Vec<String> = {
         let map = state.volumes.read().await;
-        let vol = map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
-        vol.mount_path.to_string_lossy().to_string()
+        map.values()
+            .filter(|v| {
+                v.management.as_ref().is_some_and(|m| {
+                    let display = if m.replica_set_name.is_empty() {
+                        DEFAULT_REPLICA_SET_DISPLAY
+                    } else {
+                        &m.replica_set_name
+                    };
+                    display == name
+                })
+            })
+            .map(|v| v.mount_path.to_string_lossy().to_string())
+            .collect()
     };
 
-    // Renaming into an existing name is allowed — joins a replica group (STORAGE-0006)
-
-    // Update manifest on device
-    update_manifest_name(&mount_path, &request.new_name)
-        .await
-        .map_err(|e| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "RENAME_FAILED",
-                &e.to_string(),
-            )
-        })?;
-
-    // Sync name to volume management
-    {
-        let mut map = state.volumes.write().await;
-        if let Some(vol) = map.values_mut().find(|v| {
-            v.management.as_ref().is_some_and(|m| m.name == name)
-        }) {
-            if let Some(ref mut mgmt) = vol.management {
-                mgmt.name = request.new_name.clone();
-            }
-        }
+    if mount_paths.is_empty() {
+        return Err(err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)));
     }
 
-    // Re-read updated info from volumes
+    // Update manifest on each device in the replica set
+    for mp in &mount_paths {
+        update_manifest_replica_set_name(mp, &request.new_name)
+            .await
+            .map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "RENAME_FAILED",
+                    &e.to_string(),
+                )
+            })?;
+    }
+
+    // Sync replica_set_name to volume management and capture replica_set_id
+    let replica_set_id = {
+        let mut map = state.volumes.write().await;
+        let mut rsid = String::new();
+        for vol in map.values_mut() {
+            let matches = vol.management.as_ref().is_some_and(|m| {
+                let display = if m.replica_set_name.is_empty() {
+                    DEFAULT_REPLICA_SET_DISPLAY
+                } else {
+                    &m.replica_set_name
+                };
+                display == name
+            });
+            if matches {
+                if let Some(ref mut mgmt) = vol.management {
+                    rsid = mgmt.replica_set_id.clone();
+                    mgmt.replica_set_name = request.new_name.clone();
+                    mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
+                }
+            }
+        }
+        rsid
+    };
+
+    // Re-read updated info from volumes (return first matching volume's info)
     let updated = {
         let map = state.volumes.read().await;
         map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == request.new_name))
+            .find(|v| v.management.as_ref().is_some_and(|m| m.replica_set_name == request.new_name))
             .and_then(|v| v.to_storage_info())
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after rename"))?
     };
 
-    info!(old_name = %name, new_name = %request.new_name, "Bank renamed");
+    info!(old_name = %name, new_name = %request.new_name, volumes = mount_paths.len(), "Replica set renamed");
 
-    let tools_state = state.clone();
-    let nudge = state.orchestration_nudge.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon after rename");
-        }
-        // Nudge orchestration so role resolution happens immediately
-        nudge.notify_one();
-    });
+    // STORAGE-0013: Emit domain event — beacon subscriber + orchestration react
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Renamed {
+        replica_set_id,
+        new_name: request.new_name.clone(),
+    }).await;
+    state.orchestration_nudge.notify_one();
 
     Ok(Json(ApiResponse::new(updated.clone())))
 }
@@ -824,7 +844,7 @@ pub async fn add_storage_v1(
         // Determine name
         let name = request.name.clone().unwrap_or_else(|| {
             if request.encrypted {
-                DEFAULT_PRIVATE_STORAGE_NAME.to_string()
+                DEFAULT_REPLICA_SET_DISPLAY.to_string()
             } else {
                 generate_storage_name()
             }
@@ -855,7 +875,6 @@ pub async fn add_storage_v1(
             let encrypted = request.encrypted;
             let roles = request.roles.clone();
             let stone_name = state.stone_name.clone();
-            let api_port = state.api_port;
             let pulse_tx = state.pulse_tx.clone();
             let tools_state = state.clone();
             let guard_device = target.to_string();
@@ -868,19 +887,10 @@ pub async fn add_storage_v1(
                     encrypted, &roles, &stone_name, pulse_tx.clone(),
                 ).await {
                     Ok(()) => {
-                        tools_state.refresh_local_tools_projection().await;
-                        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-                        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-                        if let Err(e) = crate::infra::storage::broadcast_beacon(
-                            &tools_state.stone_id,
-                            &tools_state.stone_name,
-                            &format!("http://{}:{}", stone_name, api_port),
-                            &tools_state.volumes,
-                            Some(&roles),
-                            Some(&pins),
-                        ).await {
-                            warn!(error = %e, "Failed to broadcast beacon after format");
-                        }
+                        // STORAGE-0013: Emit domain event — beacon subscriber reacts
+                        tools_state.emit_storage_changed(
+                            garden_common::storage::StorageChanged::Reclassified,
+                        ).await;
                     }
                     Err(e) => {
                         tracing::error!(
@@ -1040,21 +1050,11 @@ async fn add_at_path(
     // notification, emit pulses, and broadcast the beacon.
     state.request_volume_rescan();
 
-    // Refresh tools + broadcast beacon
-    state.refresh_local_tools_projection().await;
-    {
-        let roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &state.stone_id, &state.stone_name,
-            &format!("http://{}:{}", state.stone_name, state.api_port),
-            &state.volumes,
-            Some(&roles),
-            Some(&pins),
-        ).await {
-            warn!(error = %e, "Failed to broadcast beacon after add");
-        }
-    }
+    // STORAGE-0013: Emit domain event — beacon subscriber reacts
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Added {
+        device_id: manifest.id.clone(),
+        replica_set_id: manifest.replica_set_id.clone(),
+    }).await;
 
     let storages = crate::domain::storage::name_id_pairs(&state.volumes).await;
     if let Err(e) = crate::infra::storage::refresh_signpost(
@@ -1323,25 +1323,8 @@ pub async fn set_visibility_v1(
 
     info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
 
-    // STORAGE-0003: Refresh tools AND broadcast beacon
-    let tools_state = state.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon after visibility change");
-        }
-    });
+    // STORAGE-0013: Emit domain event — beacon subscriber reacts
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
 
     Ok((StatusCode::OK, Json(updated.clone())))
 }
@@ -1373,7 +1356,8 @@ async fn update_manifest_roles(mount_path: &str, roles: &[String]) -> anyhow::Re
     write_manifest_atomic(&manifest_path, &manifest).await
 }
 
-async fn update_manifest_name(mount_path: &str, new_name: &str) -> anyhow::Result<()> {
+/// Update the replica set display name in the on-disk manifest.
+pub(crate) async fn update_manifest_replica_set_name(mount_path: &str, new_name: &str) -> anyhow::Result<()> {
     use anyhow::Context;
     let manifest_path = std::path::Path::new(mount_path).join(".zen-garden/manifest.json");
     let content = tokio::fs::read_to_string(&manifest_path)
@@ -1381,7 +1365,8 @@ async fn update_manifest_name(mount_path: &str, new_name: &str) -> anyhow::Resul
         .context("Failed to read manifest")?;
     let mut manifest: garden_common::storage::StorageManifest =
         serde_json::from_str(&content).context("Failed to parse manifest")?;
-    manifest.name = new_name.to_string();
+    manifest.replica_set_name = new_name.to_string();
+    manifest.replica_set_name_updated_at = Some(chrono::Utc::now());
     write_manifest_atomic(&manifest_path, &manifest).await
 }
 
@@ -1482,25 +1467,8 @@ pub async fn set_roles_v1(
 
     info!(name = %name, roles = ?request.roles, "Bank roles updated");
 
-    // Refresh tools + broadcast beacon
-    let tools_state = state.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon after roles change");
-        }
-    });
+    // STORAGE-0013: Emit domain event — beacon subscriber reacts
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
 
     Ok(Json(ApiResponse::new(updated.clone())))
 }
@@ -1582,24 +1550,8 @@ pub async fn release_all_seed_banks_v1(
         }
     }
 
-    let tools_state = state.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon after release-all");
-        }
-    });
+    // STORAGE-0013: Emit domain event — beacon subscriber reacts
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
 
     info!(count = results.len(), "All seed banks released");
     Ok((StatusCode::OK, Json(results)))
@@ -1670,27 +1622,22 @@ pub async fn pin_bank_v1(
         })?
     };
 
-    // Re-broadcast beacon so other stones see the pin
-    let tools_state = state.clone();
-    let nudge = state.orchestration_nudge.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon after pin");
-        }
-        nudge.notify_one();
-    });
+    // STORAGE-0013: Emit pin change event. Capture identity from volumes.
+    let (device_id, replica_set_id) = {
+        let map = state.volumes.read().await;
+        map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .and_then(|v| {
+                let mgmt = v.management.as_ref()?;
+                Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
+            })
+            .unwrap_or_default()
+    };
+    state.emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
+        device_id,
+        replica_set_id,
+    }).await;
+    state.orchestration_nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
@@ -1738,27 +1685,22 @@ pub async fn unpin_bank_v1(
         }
     };
 
-    // Re-broadcast beacon
-    let tools_state = state.clone();
-    let nudge = state.orchestration_nudge.clone();
-    tokio::spawn(async move {
-        tools_state.refresh_local_tools_projection().await;
-        let roles = crate::domain::storage::roles_snapshot(&tools_state.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&tools_state.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &tools_state.stone_id,
-            &tools_state.stone_name,
-            &tools_state.self_entry.read().await.address.http_base(),
-            &tools_state.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            warn!(error = %e, "Failed to broadcast storage beacon after unpin");
-        }
-        nudge.notify_one();
-    });
+    // STORAGE-0013: Emit pin change event
+    let (device_id, replica_set_id) = {
+        let map = state.volumes.read().await;
+        map.values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .and_then(|v| {
+                let mgmt = v.management.as_ref()?;
+                Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
+            })
+            .unwrap_or_default()
+    };
+    state.emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
+        device_id,
+        replica_set_id,
+    }).await;
+    state.orchestration_nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),

@@ -792,26 +792,10 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
                     "Mount persistence: recovered disappeared mounts"
                 );
 
-                // TOOLS-0003: Refresh registry + broadcast storage beacon
-                state_persistence.refresh_local_tools_projection().await;
-                let endpoint = state_persistence.self_entry.read().await.address.http_base();
-                let roles = crate::domain::storage::roles_snapshot(&state_persistence.volumes).await;
-                let pins = crate::domain::storage::pins_snapshot(&state_persistence.volumes).await;
-                if let Err(e) = crate::infra::storage::broadcast_beacon(
-                    &state_persistence.stone_id,
-                    &state_persistence.stone_name,
-                    &endpoint,
-                    &state_persistence.volumes,
-                    Some(&roles),
-                    Some(&pins),
-                )
-                .await
-                {
-                    tracing::debug!(
-                        error = %e,
-                        "Failed to broadcast storage beacon after mount recovery"
-                    );
-                }
+                // STORAGE-0013: Emit domain event — beacon subscriber reacts
+                state_persistence.emit_storage_changed(
+                    garden_common::storage::StorageChanged::Reclassified,
+                ).await;
             }
         }
     });
@@ -853,26 +837,9 @@ pub fn start_seedbank_resilient_mount_system(state: AppState, token: Cancellatio
             // STORAGE-0011: health tick all volumes (~10s)
             crate::domain::storage::health_tick_all(&state_hotplug.volumes).await;
 
-            // TOOLS-0003: Refresh registry + broadcast storage beacon
+            // STORAGE-0013: Periodic beacon heartbeat (tools projection + beacon)
             state_hotplug.refresh_local_tools_projection().await;
-            let endpoint = state_hotplug.self_entry.read().await.address.http_base();
-            let roles = crate::domain::storage::roles_snapshot(&state_hotplug.volumes).await;
-            let pins = crate::domain::storage::pins_snapshot(&state_hotplug.volumes).await;
-            if let Err(e) = crate::infra::storage::broadcast_beacon(
-                &state_hotplug.stone_id,
-                &state_hotplug.stone_name,
-                &endpoint,
-                &state_hotplug.volumes,
-                Some(&roles),
-                Some(&pins),
-            )
-            .await
-            {
-                tracing::trace!(
-                    error = %e,
-                    "Failed to broadcast storage beacon during hot-plug scan"
-                );
-            }
+            state_hotplug.broadcast_storage_beacon().await;
         }
     });
 }
@@ -904,26 +871,9 @@ fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationTo
             // STORAGE-0011: health tick all volumes (~10s)
             crate::domain::storage::health_tick_all(&state.volumes).await;
 
-            // TOOLS-0003: Refresh registry + broadcast storage beacon
+            // STORAGE-0013: Periodic beacon heartbeat (tools projection + beacon)
             state.refresh_local_tools_projection().await;
-            let endpoint = state.self_entry.read().await.address.http_base();
-            let roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
-            let pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
-            if let Err(e) = crate::infra::storage::broadcast_beacon(
-                &state.stone_id,
-                &state.stone_name,
-                &endpoint,
-                &state.volumes,
-                Some(&roles),
-                Some(&pins),
-            )
-            .await
-            {
-                tracing::trace!(
-                    error = %e,
-                    "Failed to broadcast storage beacon during hot-plug scan"
-                );
-            }
+            state.broadcast_storage_beacon().await;
         }
     });
 }

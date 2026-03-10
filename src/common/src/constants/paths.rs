@@ -284,6 +284,22 @@ pub fn storage_objects_dir(mount_path: &str) -> String {
 }
 
 // ========================================================================
+// Internal path detection (STORAGE-0013)
+// ========================================================================
+
+/// Check whether a relative path falls inside the `.zen-garden/` dotfolder
+/// (Zen Garden bookkeeping) or other internal metadata paths that should be
+/// excluded from user-facing file listings and replication content views.
+///
+/// Accepts forward-slash or backslash separators.
+pub fn is_internal_path(rel_path: &str) -> bool {
+    let normalized = rel_path.replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    lower == STORAGE_DOTFOLDER
+        || lower.starts_with(&format!("{}/", STORAGE_DOTFOLDER))
+}
+
+// ========================================================================
 // Audit Log Paths
 // ========================================================================
 

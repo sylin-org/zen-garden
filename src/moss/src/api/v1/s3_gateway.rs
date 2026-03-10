@@ -35,7 +35,7 @@ use tracing::{debug, warn};
 use crate::domain::storage_service::StorageRoute;
 use crate::AppState;
 use garden_common::constants::headers::HEADER_SEED_BANK;
-use garden_common::storage::DEFAULT_PUBLIC_STORAGE_NAME;
+use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
 
 // ============================================================================
 // Constants
@@ -221,7 +221,7 @@ pub async fn put_object(
     }
 
     let selected = get_storage_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_STORAGE_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
     let svc = state.storage_service();
     let route = match svc.resolve_write(&selected).await {
@@ -258,7 +258,7 @@ pub async fn put_object(
         }
         StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_STORAGE_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -301,7 +301,7 @@ pub async fn get_object(
     }
 
     let selected = get_storage_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_STORAGE_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
     let svc = state.storage_service();
     let route = match svc.resolve_read(&selected).await {
@@ -341,7 +341,7 @@ pub async fn get_object(
         }
         StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_STORAGE_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -383,7 +383,7 @@ pub async fn head_object(
     }
 
     let selected = get_storage_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_STORAGE_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
     let svc = state.storage_service();
     let route = match svc.resolve_read(&selected).await {
@@ -423,7 +423,7 @@ pub async fn head_object(
         }
         StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_STORAGE_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -459,7 +459,7 @@ pub async fn delete_object(
     }
 
     let selected = get_storage_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_STORAGE_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
     let svc = state.storage_service();
     let route = match svc.resolve_write(&selected).await {
@@ -490,7 +490,7 @@ pub async fn delete_object(
         }
         StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_STORAGE_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -517,7 +517,7 @@ pub async fn list_buckets(
     headers: HeaderMap,
 ) -> Response {
     let selected = get_storage_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_STORAGE_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
     let svc = state.storage_service();
     let route = match svc.resolve_read(&selected).await {
@@ -550,7 +550,7 @@ pub async fn list_buckets(
         }
         StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_STORAGE_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
@@ -598,7 +598,7 @@ pub async fn list_objects(
     };
 
     let selected = get_storage_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_STORAGE_NAME.to_string());
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
     let svc = state.storage_service();
     let route = match svc.resolve_read(&selected).await {
@@ -661,7 +661,7 @@ pub async fn list_objects(
                 query_params.push(("marker".to_string(), marker.clone()));
             }
             query_params.push(("max-keys".to_string(), max_keys.to_string()));
-            if selected != DEFAULT_PUBLIC_STORAGE_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query_params.push(("seed-bank".to_string(), selected));
             }
 

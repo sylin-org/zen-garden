@@ -23,7 +23,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use garden_common::storage::{
-    StorageInfo, StorageManifest, StorageRole, StorageSummary, StorageVisibility,
+    short_id_from_guid, StorageAccess, StorageAnnouncement, StorageInfo, StorageManifest,
+    StorageRole, StorageSummary, StorageVisibility, DEFAULT_REPLICA_SET_DISPLAY,
 };
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -57,8 +58,8 @@ impl VolumeHealth {
 impl std::fmt::Display for VolumeHealth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Healthy => write!(f, "healthy"),
-            Self::Degraded(r) => write!(f, "degraded: {}", r),
+            Self::Healthy => write!(f, "{}", garden_common::constants::HEALTH_HEALTHY),
+            Self::Degraded(r) => write!(f, "{}: {}", garden_common::constants::HEALTH_DEGRADED, r),
             Self::Unmounted => write!(f, "unmounted"),
             Self::Lost => write!(f, "lost"),
         }
@@ -82,14 +83,27 @@ pub struct PinState {
 /// Domain state for a volume that Zen Garden manages.
 ///
 /// Present when the volume has a valid `.zen-garden/manifest.json`.
+///
+/// ## Identity (STORAGE-0013)
+///
+/// Two-level: device (`id`/`name`) + replica set (`replica_set_id`/`replica_set_name`).
 #[derive(Debug, Clone)]
 pub struct Management {
     /// Unique GUIDv7 per physical device.
     pub id: String,
     /// First 8 hex chars of `id`.
     pub short_id: String,
-    /// Logical storage name (FQN). Shared across replicas.
+    /// Device display name (sugar). User-renamable.
     pub name: String,
+
+    // --- Replica set identity (STORAGE-0013) ---
+    /// Replica set ID (GUIDv7). Groups devices that replicate the same content.
+    pub replica_set_id: String,
+    /// Replica set display name (sugar). Empty = default set ("storage").
+    pub replica_set_name: String,
+    /// Timestamp of last replica set rename. For catch-up on reconnect.
+    pub replica_set_name_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+
     /// Whether content is encrypted.
     pub encrypted: bool,
     /// Whether this device was not originally created on this stone.
@@ -214,12 +228,15 @@ impl Volume {
             None => None,
         };
 
-        let short_id = StorageInfo::short_id(&manifest.id);
+        let short_id = short_id_from_guid(&manifest.id);
 
         self.management = Some(Management {
             id: manifest.id.clone(),
             short_id,
             name: manifest.name.clone(),
+            replica_set_id: manifest.replica_set_id.clone(),
+            replica_set_name: manifest.replica_set_name.clone(),
+            replica_set_name_updated_at: manifest.replica_set_name_updated_at,
             encrypted: manifest.encrypted,
             roaming,
             origin_stone: manifest.origin_stone.clone(),
@@ -363,21 +380,50 @@ impl Volume {
     }
 
     // ========================================================================
-    // Projections for API / beacon compatibility
+    // Projections (STORAGE-0013)
     // ========================================================================
 
-    /// Project to `StorageInfo` (for API responses and beacon construction).
+    /// Project to `StorageAnnouncement` — the canonical wire type for beacons,
+    /// registry storage, and API responses.
+    pub fn to_announcement(&self) -> Option<StorageAnnouncement> {
+        let mgmt = self.management.as_ref()?;
+        Some(StorageAnnouncement {
+            id: mgmt.id.clone(),
+            name: mgmt.name.clone(),
+            replica_set_id: mgmt.replica_set_id.clone(),
+            replica_set_name: mgmt.replica_set_name.clone(),
+            replica_set_name_updated_at: mgmt.replica_set_name_updated_at,
+            role: mgmt.role,
+            protocols: vec![garden_common::constants::PROTOCOL_STORAGE.to_string(), garden_common::constants::PROTOCOL_S3.to_string()],
+            access: StorageAccess::Direct,
+            visibility: mgmt.visibility.to_string(),
+            health: if self.online && self.health.is_usable() {
+                garden_common::constants::HEALTH_HEALTHY.to_string()
+            } else {
+                garden_common::constants::HEALTH_DEGRADED.to_string()
+            },
+            capacity_bytes: self.capacity_bytes,
+            used_bytes: self.used_bytes,
+            encrypted: mgmt.encrypted,
+            pin_id: mgmt.pin.as_ref().map(|p| p.pin_id.clone()),
+            roles: mgmt.roles.clone(),
+        })
+    }
+
+    /// Project to `StorageInfo` for API responses.
     pub fn to_storage_info(&self) -> Option<StorageInfo> {
         let mgmt = self.management.as_ref()?;
         Some(StorageInfo::new(
             mgmt.id.clone(),
             mgmt.name.clone(),
+            mgmt.replica_set_id.clone(),
+            mgmt.replica_set_name.clone(),
             self.path.clone(),
             self.mount_path.to_string_lossy().to_string(),
             self.capacity_bytes,
             self.used_bytes,
             mgmt.visibility,
-            false, // btrfs detection not needed here
+            false,
             mgmt.origin_stone.clone(),
             mgmt.created_at,
             mgmt.roaming,
@@ -389,14 +435,9 @@ impl Volume {
 
     /// Build a `StorageSummary` for CLI display.
     pub fn to_summary(&self, stone_name: Option<&str>) -> Option<StorageSummary> {
-        let mgmt = self.management.as_ref()?;
-        let info = self.to_storage_info()?;
-        Some(StorageSummary::from_info(
-            &info,
-            mgmt.role,
-            mgmt.pin.is_some(),
-            stone_name,
-        ))
+        let ann = self.to_announcement()?;
+        let sn = stone_name.unwrap_or("local");
+        Some(StorageSummary::from_announcement(&ann, sn))
     }
 }
 
@@ -737,25 +778,35 @@ pub async fn find_by_id(volumes: &Volumes, id: &str) -> Option<Volume> {
         .cloned()
 }
 
-/// Snapshot of roles keyed by storage name — for beacon/broadcast callers.
+/// Snapshot of roles keyed by replica set display name — for beacon/broadcast callers.
 pub async fn roles_snapshot(volumes: &Volumes) -> HashMap<String, StorageRole> {
     let map = volumes.read().await;
     map.values()
         .filter_map(|v| {
-            v.management
-                .as_ref()
-                .map(|m| (m.name.clone(), m.role))
+            v.management.as_ref().map(|m| {
+                let key = if m.replica_set_name.is_empty() {
+                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                } else {
+                    m.replica_set_name.clone()
+                };
+                (key, m.role)
+            })
         })
         .collect()
 }
 
-/// Snapshot of pins keyed by storage name — for beacon/broadcast callers.
+/// Snapshot of pins keyed by replica set display name — for beacon/broadcast callers.
 pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
     let map = volumes.read().await;
     map.values()
         .filter_map(|v| {
             v.management.as_ref().and_then(|m| {
-                m.pin.as_ref().map(|p| (m.name.clone(), p.pin_id.clone()))
+                let key = if m.replica_set_name.is_empty() {
+                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                } else {
+                    m.replica_set_name.clone()
+                };
+                m.pin.as_ref().map(|p| (key, p.pin_id.clone()))
             })
         })
         .collect()

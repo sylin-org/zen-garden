@@ -89,8 +89,34 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
         }
     }
 
+    // STORAGE-0013: Subscribe to StorageChanged for immediate candidates refresh.
+    // Without this, candidates notification waits up to 30s for the next disk tick.
+    let mut storage_rx = state.subscribe_storage_changed();
+
     loop {
         tokio::select! {
+            // STORAGE-0013: React immediately to storage mutations for candidates
+            result = storage_rx.recv() => {
+                match result {
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let count = {
+                            let map = state.volumes.read().await;
+                            map.values()
+                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .count()
+                        };
+                        state.notifications.set_if(
+                            NOTIF_SOURCE_CANDIDATES,
+                            NotificationTag::Opportunity,
+                            count > 0,
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // Channel closed — stop reacting but keep collecting metrics
+                    }
+                }
+            }
+
             _ = fast_interval.tick() => {
                 // Update CPU, memory, uptime (fast - in-memory kernel data)
                 match get_fast_metrics() {

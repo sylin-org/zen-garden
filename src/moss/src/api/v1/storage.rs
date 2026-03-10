@@ -46,7 +46,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
-use crate::infra::storage::{analyze_device, layout, ContentStore};
+use crate::domain::storage::analyze_device;
+use crate::infra::storage::{layout, ContentStore};
 use crate::infra::{DomainPulse, PulseEvent};
 use crate::{error_response, AppState};
 use garden_common::presence::event_types;
@@ -520,18 +521,8 @@ pub async fn release_bank_v1(
         vol.mount_path.to_string_lossy().to_string()
     };
 
-    // STORAGE-0006: Remove from MountTracker BEFORE unmount to prevent
-    // persistence task re-mounting the device we're releasing.
     #[cfg(target_os = "linux")]
-    {
-        let mut tracker = state.mount_tracker.write().await;
-        if tracker.remove(&_mount_path).is_some() {
-            debug!(mount_path = %_mount_path, "Removed from mount tracker before release");
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    unmount_device(&_mount_path).await.map_err(|e| {
+    crate::infra::storage::platform::unmount(&_mount_path).await.map_err(|e| {
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "UNMOUNT_FAILED",
@@ -547,10 +538,6 @@ pub async fn release_bank_v1(
         Some(serde_json::json!({ "name": name })),
     );
     let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
-
-    if let Err(e) = garden_common::console::print_storage_released_ribbon(&name) {
-        warn!("Failed to print released ribbon: {}", e);
-    }
 
     // STORAGE-0011: Remove management from the released volume
     // Capture identity before clearing management.
@@ -571,6 +558,11 @@ pub async fn release_bank_v1(
         }
         ids
     };
+
+    // Emit ribbon event before Removed (name still meaningful at this point)
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Released {
+        name: name.clone(),
+    }).await;
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts automatically
     state.emit_storage_changed(garden_common::storage::StorageChanged::Removed {
@@ -887,7 +879,13 @@ pub async fn add_storage_v1(
                     encrypted, &roles, &stone_name, pulse_tx.clone(),
                 ).await {
                     Ok(()) => {
-                        // STORAGE-0013: Emit domain event — beacon subscriber reacts
+                        tools_state.emit_storage_changed(
+                            garden_common::storage::StorageChanged::Connected {
+                                name: name_clone.clone(),
+                                roles: roles.clone(),
+                                used_bytes: 0,
+                            },
+                        ).await;
                         tools_state.emit_storage_changed(
                             garden_common::storage::StorageChanged::Reclassified,
                         ).await;
@@ -1056,6 +1054,12 @@ async fn add_at_path(
         replica_set_id: manifest.replica_set_id.clone(),
     }).await;
 
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Connected {
+        name: manifest.name.clone(),
+        roles: manifest.roles.clone(),
+        used_bytes: 0,
+    }).await;
+
     let storages = crate::domain::storage::name_id_pairs(&state.volumes).await;
     if let Err(e) = crate::infra::storage::refresh_signpost(
         &state.stone_name, state.api_port, &storages,
@@ -1169,12 +1173,6 @@ async fn run_format_and_add(
         Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
     );
     let _ = pulse_tx.send(PulseEvent::Domain(pulse));
-
-    if let Err(e) = garden_common::console::print_storage_connected_ribbon(
-        name, &manifest.roles, 0,
-    ) {
-        warn!("Failed to print connected ribbon: {}", e);
-    }
 
     info!(name, "Storage add completed");
     Ok(())
@@ -1395,24 +1393,6 @@ async fn write_manifest_atomic(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-async fn unmount_device(mount_path: &str) -> anyhow::Result<()> {
-    use anyhow::Context;
-    let _ = tokio::process::Command::new("sync").output().await;
-    let output = tokio::process::Command::new("sudo")
-        .args(["umount", mount_path])
-        .output()
-        .await
-        .context("Failed to run umount")?;
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Unmount failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(())
-}
-
 // ============================================================================
 // PATCH /api/v1/stone/storage/banks/:name/roles - Set Roles
 // ============================================================================
@@ -1495,19 +1475,9 @@ pub async fn release_all_seed_banks_v1(
     let mut results = Vec::new();
 
     for (name, _mount_path) in &managed {
-        // STORAGE-0006: Remove from MountTracker BEFORE unmount to prevent
-        // persistence task re-mounting the device we're releasing.
         #[cfg(target_os = "linux")]
         {
-            let mut tracker = state.mount_tracker.write().await;
-            if tracker.remove(_mount_path.as_str()).is_some() {
-                debug!(mount_path = %_mount_path, "Removed from mount tracker before release-all");
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            match unmount_device(_mount_path).await {
+            match crate::infra::storage::platform::unmount(_mount_path).await {
                 Ok(_) => {
                     results.push(ReleaseResponse {
                         released: true,

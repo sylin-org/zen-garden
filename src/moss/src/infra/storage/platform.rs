@@ -271,6 +271,210 @@ pub fn scan_media() -> Vec<MediumSnapshot> {
     }
 }
 
+/// Mount a block device at the given path.
+///
+/// Linux: `sudo mount <device> <mount_path>` with timeout.
+/// Windows: Not supported (volumes are auto-assigned drive letters by the OS).
+pub async fn mount_device(device: &str, mount_path: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::mount_device(device, mount_path).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (device, mount_path);
+        anyhow::bail!("mount_device not supported on this platform")
+    }
+}
+
+/// Unmount a filesystem at the given mount path.
+///
+/// Linux: `sudo umount <mount_path>` with timeout.
+/// Windows: Not supported.
+pub async fn unmount(mount_path: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::unmount(mount_path).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = mount_path;
+        anyhow::bail!("unmount not supported on this platform")
+    }
+}
+
+/// Lazy unmount — detach the filesystem immediately, clean up references later.
+///
+/// Linux: `sudo umount -l <mount_path>` with timeout.
+/// Useful for NAS mounts that may hang on a dead server.
+pub async fn unmount_lazy(mount_path: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::unmount_lazy(mount_path).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = mount_path;
+        anyhow::bail!("unmount_lazy not supported on this platform")
+    }
+}
+
+/// Temp-mount a device read-only, read `.zen-garden/manifest.json`, unmount.
+///
+/// Returns `None` if the device has no manifest (not a managed storage).
+/// The temp mount point is cleaned up even on error.
+pub async fn probe_device_manifest(
+    device: &str,
+) -> anyhow::Result<Option<garden_common::storage::StorageManifest>> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::probe_device_manifest(device).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device;
+        Ok(None)
+    }
+}
+
+/// Check whether a specific block device is currently mounted.
+///
+/// Linux: reads `/proc/mounts`. Windows: always false.
+pub fn is_device_mounted(device: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        linux::is_device_mounted(device)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device;
+        false
+    }
+}
+
+/// Check whether a path is a mount point (has a filesystem mounted on it).
+///
+/// Linux: reads `/proc/mounts`. Windows: always false.
+pub fn is_mount_point(path: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        linux::is_mount_point(path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Return the device currently mounted at `mount_path`, if any.
+///
+/// Linux: reads `/proc/mounts`. Windows: returns None.
+pub fn device_at_mount_point(mount_path: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::device_at_mount_point(mount_path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = mount_path;
+        None
+    }
+}
+
+/// Get the mount point for a device, if it's currently mounted.
+///
+/// Linux: reads `/proc/mounts`. Windows: returns None.
+pub fn mount_point_for_device(device: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::mount_point_for_device(device)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device;
+        None
+    }
+}
+
+/// Get the capacity of a block device in bytes.
+///
+/// Linux: reads `/sys/class/block/{dev}/size`. Other platforms: returns 0.
+pub fn device_capacity(device_path: &str) -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        linux::capacity_from_sysfs(device_path).unwrap_or(0)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device_path;
+        0
+    }
+}
+
+/// Get the filesystem label of a block device.
+///
+/// Linux: runs `lsblk -no LABEL`. Other platforms: returns None.
+pub fn device_label(device_path: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::label_from_lsblk(device_path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device_path;
+        None
+    }
+}
+
+/// Probe a block device to determine its state (filesystem type, contents).
+///
+/// Linux: uses `blkid` to detect filesystem, optionally temp-mounts to inspect
+/// contents, validates `.zen-garden/` manifests.
+/// Other platforms: returns `HasData` (cannot probe block devices).
+pub fn probe_device_state(
+    device_path: &str,
+    mount_path: Option<&str>,
+) -> anyhow::Result<garden_common::storage::DeviceState> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::probe_device_state(device_path, mount_path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (device_path, mount_path);
+        Ok(garden_common::storage::DeviceState::HasData)
+    }
+}
+
+/// An unmounted removable device that could potentially be a managed storage.
+#[derive(Debug, Clone)]
+pub struct UnmountedDevice {
+    /// Device path (e.g., `/dev/sdb1`).
+    pub device: String,
+    /// Device name (e.g., `sdb1`).
+    pub name: String,
+    /// Capacity in bytes (from sysfs).
+    pub capacity_bytes: u64,
+    /// Filesystem label if available.
+    pub label: Option<String>,
+}
+
+/// List unmounted removable devices that could potentially be managed storage.
+///
+/// Linux: scans `/sys/block` for removable devices with unmounted partitions.
+/// Windows: returns empty (Windows auto-assigns drive letters).
+pub fn list_unmounted_removable() -> Vec<UnmountedDevice> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::list_unmounted_removable()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Vec::new()
+    }
+}
+
 /// Check whether a path is on a removable device.
 pub fn is_removable(path: &str) -> bool {
     #[cfg(target_os = "linux")]
@@ -590,7 +794,7 @@ mod linux {
             .collect()
     }
 
-    fn capacity_from_sysfs(device_path: &str) -> Option<u64> {
+    pub(super) fn capacity_from_sysfs(device_path: &str) -> Option<u64> {
         let device_name = Path::new(device_path)
             .file_name()
             .and_then(|n| n.to_str())?;
@@ -600,7 +804,7 @@ mod linux {
         Some(sectors * 512)
     }
 
-    fn label_from_lsblk(device_path: &str) -> Option<String> {
+    pub(super) fn label_from_lsblk(device_path: &str) -> Option<String> {
         let output = super::super::subprocess::run_command_timed_sync(
             "lsblk",
             &["-no", "LABEL", device_path],
@@ -619,6 +823,392 @@ mod linux {
     }
 
     use anyhow::Context;
+
+    // ========================================================================
+    // Device state probing
+    // ========================================================================
+
+    /// Probe a block device to determine its state.
+    ///
+    /// Runs `blkid` to detect filesystem presence. If a filesystem is found and
+    /// the device is mounted, inspects the mount contents. If not mounted,
+    /// temp-mounts read-only to inspect, then cleans up.
+    pub fn probe_device_state(
+        device_path: &str,
+        mount_path: Option<&str>,
+    ) -> anyhow::Result<garden_common::storage::DeviceState> {
+        use super::super::subprocess::run_command_timed_sync;
+        use garden_common::constants::timeouts;
+        use garden_common::storage::DeviceState;
+
+        let query_timeout = timeouts::subprocess_query_timeout();
+        let mount_timeout = timeouts::subprocess_mount_timeout();
+
+        let output = run_command_timed_sync(
+            "blkid",
+            &["-o", "value", "-s", "TYPE", device_path],
+            query_timeout,
+        )
+        .context("Failed to run blkid")?;
+
+        if !output.status.success() || output.stdout.is_empty() {
+            let output = run_command_timed_sync("blkid", &["-p", device_path], query_timeout)
+                .context("Failed to run blkid -p")?;
+
+            if output.stdout.is_empty() {
+                return Ok(DeviceState::Unpartitioned);
+            }
+            return Ok(DeviceState::Unformatted);
+        }
+
+        // Has filesystem — check contents if mounted
+        if let Some(mount) = mount_path {
+            return check_mount_contents(mount);
+        }
+
+        // Not mounted — try to mount temporarily to inspect
+        let temp_mount = format!("/tmp/zen-garden-inspect-{}", std::process::id());
+
+        let _ = run_command_timed_sync("sudo", &["mkdir", "-p", &temp_mount], mount_timeout);
+
+        if Path::new(&temp_mount).exists() {
+            let mount_result = run_command_timed_sync(
+                "sudo",
+                &["mount", "-o", "ro", device_path, &temp_mount],
+                mount_timeout,
+            );
+
+            if let Ok(output) = mount_result {
+                if output.status.success() {
+                    let result = check_mount_contents(&temp_mount);
+
+                    let _ =
+                        run_command_timed_sync("sudo", &["umount", &temp_mount], mount_timeout);
+                    let _ =
+                        run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
+
+                    return result;
+                }
+            }
+            let _ = run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
+        }
+
+        Ok(DeviceState::Unformatted)
+    }
+
+    /// Check contents of a mounted filesystem to classify device state.
+    fn check_mount_contents(
+        mount_path: &str,
+    ) -> anyhow::Result<garden_common::storage::DeviceState> {
+        use garden_common::storage::DeviceState;
+
+        let mount_dir = Path::new(mount_path);
+
+        let zen_dir = mount_dir.join(".zen-garden");
+        if zen_dir.exists() {
+            if crate::domain::storage::validate_manifest(&zen_dir).is_ok() {
+                return Ok(DeviceState::Prepared);
+            } else {
+                tracing::debug!("Corrupt or incomplete manifest at {:?}", zen_dir);
+                return Ok(DeviceState::HasData);
+            }
+        }
+
+        let has_visible_files = std::fs::read_dir(mount_dir)
+            .map(|entries| {
+                entries.filter_map(|e| e.ok()).any(|e| {
+                    let name = e.file_name();
+                    let name_str = name.to_string_lossy();
+                    !name_str.starts_with('.')
+                        && name_str != "System Volume Information"
+                        && name_str != "$RECYCLE.BIN"
+                })
+            })
+            .unwrap_or(false);
+
+        if has_visible_files {
+            return Ok(DeviceState::HasData);
+        }
+
+        Ok(DeviceState::Empty)
+    }
+
+    // ========================================================================
+    // Mount / unmount / probe operations
+    // ========================================================================
+
+    pub async fn mount_device(device: &str, mount_path: &str) -> anyhow::Result<()> {
+        use super::super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
+
+        tokio::fs::create_dir_all(mount_path).await?;
+
+        let output =
+            run_sudo_timed_quiet(&["mount", device, mount_path], timeouts::subprocess_mount_timeout())
+                .await
+                .context("mount command failed or timed out")?;
+
+        if output.status.success() {
+            tracing::info!(device = %device, mount = %mount_path, "Mounted device");
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("mount {} -> {} failed: {}", device, mount_path, stderr.trim())
+        }
+    }
+
+    pub async fn unmount(mount_path: &str) -> anyhow::Result<()> {
+        use super::super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
+
+        let output =
+            run_sudo_timed_quiet(&["umount", mount_path], timeouts::subprocess_mount_timeout())
+                .await
+                .context("umount command failed or timed out")?;
+
+        if output.status.success() {
+            tracing::info!(mount = %mount_path, "Unmounted");
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("umount {} failed: {}", mount_path, stderr.trim())
+        }
+    }
+
+    pub async fn unmount_lazy(mount_path: &str) -> anyhow::Result<()> {
+        use super::super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
+
+        let output = run_sudo_timed_quiet(
+            &["umount", "-l", mount_path],
+            timeouts::subprocess_mount_timeout(),
+        )
+        .await
+        .context("umount -l command failed or timed out")?;
+
+        if output.status.success() {
+            tracing::info!(mount = %mount_path, "Lazy-unmounted");
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("umount -l {} failed: {}", mount_path, stderr.trim())
+        }
+    }
+
+    pub async fn probe_device_manifest(
+        device: &str,
+    ) -> anyhow::Result<Option<garden_common::storage::StorageManifest>> {
+        use super::super::subprocess::run_sudo_timed_quiet;
+        use garden_common::constants::timeouts;
+
+        let mount_timeout = timeouts::subprocess_mount_timeout();
+        let temp_mount = format!(
+            "/tmp/zen-garden-probe-{}-{}",
+            std::process::id(),
+            device.replace('/', "_")
+        );
+
+        // Create temp mount point
+        let _ = run_sudo_timed_quiet(&["mkdir", "-p", &temp_mount], mount_timeout).await;
+
+        // Try to mount read-only
+        let mount_result =
+            run_sudo_timed_quiet(&["mount", "-o", "ro", device, &temp_mount], mount_timeout).await;
+
+        let manifest = if let Ok(output) = mount_result {
+            if output.status.success() {
+                let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
+                let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await
+                {
+                    match serde_json::from_str::<garden_common::storage::StorageManifest>(&content) {
+                        Ok(m) => {
+                            debug!(device = %device, name = %m.name, id = %m.id, "Probed manifest");
+                            Some(m)
+                        }
+                        Err(e) => {
+                            warn!(device = %device, error = %e, "Found manifest but failed to parse");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Unmount
+                let _ = run_sudo_timed_quiet(&["umount", &temp_mount], mount_timeout).await;
+                manifest
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Cleanup temp mount point
+        let _ = run_sudo_timed_quiet(&["rmdir", &temp_mount], mount_timeout).await;
+        Ok(manifest)
+    }
+
+    pub fn is_device_mounted(device: &str) -> bool {
+        if let Ok(mounts) = std::fs::read_to_string("/proc/mounts") {
+            for line in mounts.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if !parts.is_empty() && parts[0] == device {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn is_mount_point(path: &str) -> bool {
+        if let Ok(mounts) = std::fs::read_to_string("/proc/mounts") {
+            for line in mounts.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 && parts[1] == path {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Return the device currently mounted at `mount_path`, or `None`.
+    pub fn device_at_mount_point(mount_path: &str) -> Option<String> {
+        let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 && parts[1] == mount_path {
+                return Some(parts[0].to_string());
+            }
+        }
+        None
+    }
+
+    pub fn mount_point_for_device(device: &str) -> Option<String> {
+        let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if !parts.is_empty() && parts[0] == device && parts.len() >= 2 {
+                return Some(parts[1].to_string());
+            }
+        }
+        None
+    }
+
+    pub fn list_unmounted_removable() -> Vec<super::UnmountedDevice> {
+        use super::super::subprocess::run_command_timed_sync;
+
+        let mut results = Vec::new();
+
+        // Get all currently mounted devices
+        let mounted_devices: std::collections::HashSet<String> =
+            std::fs::read_to_string("/proc/mounts")
+                .map(|content| {
+                    content
+                        .lines()
+                        .filter_map(|line| line.split_whitespace().next())
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+        let sys_block = Path::new("/sys/block");
+        let entries = match std::fs::read_dir(sys_block) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(error = %e, "Failed to read /sys/block");
+                return results;
+            }
+        };
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            let device_name = entry.file_name();
+            let device_name_str = device_name.to_string_lossy();
+
+            // Only real disk devices
+            if !device_name_str.starts_with("sd") && !device_name_str.starts_with("nvme") {
+                continue;
+            }
+
+            let device_path = format!("/dev/{}", device_name_str);
+
+            if !is_removable(&device_path) {
+                continue;
+            }
+
+            // Find partitions
+            let device_sys_path = entry.path();
+            let mut found_partitions = false;
+            if let Ok(contents) = std::fs::read_dir(&device_sys_path) {
+                for part_entry in contents.filter_map(|e| e.ok()) {
+                    let part_name = part_entry.file_name();
+                    let part_name_str = part_name.to_string_lossy();
+
+                    if part_name_str.starts_with(&*device_name_str)
+                        && part_name_str != device_name_str
+                    {
+                        found_partitions = true;
+
+                        let part_path = format!("/dev/{}", part_name_str);
+
+                        if mounted_devices.contains(&part_path) {
+                            continue;
+                        }
+
+                        // Check if it has a filesystem
+                        let has_fs = run_command_timed_sync(
+                            "blkid",
+                            &["-o", "value", "-s", "TYPE", &part_path],
+                            std::time::Duration::from_secs(5),
+                        )
+                        .map(|o| o.status.success() && !o.stdout.is_empty())
+                        .unwrap_or(false);
+
+                        if !has_fs {
+                            continue;
+                        }
+
+                        let capacity = capacity_from_sysfs(&part_path).unwrap_or(0);
+                        let label = label_from_lsblk(&part_path);
+
+                        results.push(super::UnmountedDevice {
+                            device: part_path,
+                            name: part_name_str.to_string(),
+                            capacity_bytes: capacity,
+                            label,
+                        });
+                    }
+                }
+            }
+
+            // Check whole-disk only when the device has no partition table
+            if !found_partitions && !mounted_devices.contains(&device_path) {
+                let has_fs = run_command_timed_sync(
+                    "blkid",
+                    &["-o", "value", "-s", "TYPE", &device_path],
+                    std::time::Duration::from_secs(5),
+                )
+                .map(|o| o.status.success() && !o.stdout.is_empty())
+                .unwrap_or(false);
+
+                if has_fs {
+                    let capacity = capacity_from_sysfs(&device_path).unwrap_or(0);
+                    let label = label_from_lsblk(&device_path);
+
+                    results.push(super::UnmountedDevice {
+                        device: device_path,
+                        name: device_name_str.to_string(),
+                        capacity_bytes: capacity,
+                        label,
+                    });
+                }
+            }
+        }
+
+        debug!(count = results.len(), "Unmounted removable devices found");
+        results
+    }
 
     /// Scan physical storage media via `lsblk --json`.
     pub fn scan_media() -> Vec<MediumSnapshot> {

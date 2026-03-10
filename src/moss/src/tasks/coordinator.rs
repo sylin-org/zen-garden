@@ -742,140 +742,96 @@ pub async fn start_lantern_registration(
 /// This is a comprehensive, self-healing mount system with two background tasks:
 ///
 /// 1. **Mount Persistence Task** (every 5 seconds):
-///    - Verifies all tracked mounts are still active
-///    - Automatically re-mounts devices that have unexpectedly become unmounted
-///    - Handles race conditions with udisks2 or other system processes
-///    - Continues retrying indefinitely (devices can come back)
+///    - Auto-mounts unmounted managed devices (manifest-based discovery)
+///    - Health-ticks all volumes (capacity, liveness)
+///    - Broadcasts storage beacon for garden-wide awareness
 ///
-/// 2. **Hot-plug Detection Task** (every 10 seconds):
-///    - Scans for new zen-seed devices that may have been plugged in
-///    - Auto-mounts unmounted devices
-///    - Updates storage cache and broadcasts beacon
-///
-/// Both tasks share a MountTracker to maintain state about expected mounts.
-#[cfg(target_os = "linux")]
-pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
-    use crate::infra::storage::StorageRegistry;
-
-    // Use the mount tracker from AppState (shared with release handler — STORAGE-0006)
-    let tracker = state.mount_tracker.clone();
-    let tracker_persistence = tracker.clone();
-    let tracker_hotplug = tracker.clone();
-
-    let state_persistence = state.clone();
-    let state_hotplug = state;
-    let token_persistence = token.child_token();
-    let token_hotplug = token.child_token();
-
-    // Task 1: Mount persistence verification (every 5 seconds)
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-        interval.tick().await; // Skip first immediate tick
-
-        tracing::info!("Seed bank mount persistence task started (5s interval)");
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = token_persistence.cancelled() => {
-                    tracing::debug!("Seed bank mount persistence shutting down (MOSS-0004)");
-                    break;
-                }
-            }
-
-            // Verify and recover any mounts that disappeared
-            let recovered = StorageRegistry::verify_and_recover_mounts(&tracker_persistence).await;
-
-            if recovered > 0 {
-                tracing::info!(
-                    recovered = recovered,
-                    "Mount persistence: recovered disappeared mounts"
-                );
-
-                // STORAGE-0013: Emit domain event — beacon subscriber reacts
-                state_persistence.emit_storage_changed(
-                    garden_common::storage::StorageChanged::Reclassified,
-                ).await;
-            }
-        }
-    });
-
-    // Task 2: Hot-plug detection (every 10 seconds)
+/// Unified across all platforms (STORAGE-0011). No separate MountTracker.
+pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         interval.tick().await; // Skip first immediate tick
 
-        tracing::info!("Seed bank hot-plug detection task started (10s interval)");
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = token_hotplug.cancelled() => {
-                    tracing::debug!("Seed bank hot-plug detection shutting down (MOSS-0004)");
-                    break;
-                }
-            }
-
-            // Scan triggers auto-mount for any new zen-seed devices
-            // Use the tracker so new mounts are monitored for persistence
-            // Pass event_bus to emit storage.detected events for Companions
-            match StorageRegistry::auto_mount_seed_banks_with_tracker(
-                Some(&tracker_hotplug),
-                Some(&state_hotplug.event_bus),
-            )
-            .await
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::trace!(
-                        error = %e,
-                        "Hot-plug auto-mount scan failed"
-                    );
-                }
-            }
-
-            // STORAGE-0011: health tick all volumes (~10s)
-            crate::domain::storage::health_tick_all(&state_hotplug.volumes).await;
-
-            // STORAGE-0013: Periodic beacon heartbeat (tools projection + beacon)
-            state_hotplug.refresh_local_tools_projection().await;
-            state_hotplug.broadcast_storage_beacon().await;
-        }
-    });
-}
-
-/// Start seed bank hot-plug detection task (non-Linux fallback)
-///
-/// On non-Linux platforms, just runs the basic scan without mount tracking.
-#[cfg(not(target_os = "linux"))]
-pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
-    start_seedbank_hotplug_detection_basic(state, token);
-}
-
-/// Basic hot-plug detection without mount tracking (used on non-Linux)
-#[cfg(not(target_os = "linux"))]
-fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationToken) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
-        interval.tick().await; // Skip first immediate tick
+        tracing::info!("Storage lifecycle task started (10s interval)");
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
                 _ = token.cancelled() => {
-                    tracing::debug!("Seed bank hot-plug detection shutting down (MOSS-0004)");
+                    tracing::debug!("Storage lifecycle shutting down");
                     break;
                 }
             }
 
-            // STORAGE-0011: health tick all volumes (~10s)
+            // Auto-mount any unmounted managed devices (replaces legacy auto_mount_seed_banks)
+            let connected = crate::domain::storage::auto_mount_unmounted(&state.volumes).await;
+            if !connected.is_empty() {
+                for event in connected {
+                    state.emit_storage_changed(event).await;
+                }
+                state.emit_storage_changed(
+                    garden_common::storage::StorageChanged::Reclassified,
+                ).await;
+            }
+
+            // Health tick all volumes (~10s)
             crate::domain::storage::health_tick_all(&state.volumes).await;
 
-            // STORAGE-0013: Periodic beacon heartbeat (tools projection + beacon)
+            // Periodic beacon heartbeat (tools projection + beacon)
             state.refresh_local_tools_projection().await;
             state.broadcast_storage_beacon().await;
         }
     });
+}
+
+/// Subscribe to `StorageChanged` and render storage ribbons to the physical console.
+///
+/// Linux-only: ribbons target `/dev/tty1` (physical stone display). On other
+/// platforms the event variants are still emitted — this task simply does not
+/// start, so no output is produced.
+///
+/// Single callsite for all storage ribbon rendering — no other code calls
+/// `print_storage_*_ribbon` directly.
+#[cfg(target_os = "linux")]
+pub fn start_storage_console_task(
+    rx: tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged>,
+    token: CancellationToken,
+) {
+    use garden_common::storage::StorageChanged;
+
+    tokio::spawn(async move {
+        let mut rx = rx;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => break,
+                result = rx.recv() => match result {
+                    Ok(StorageChanged::Connected { name, roles, used_bytes }) => {
+                        if let Err(e) = garden_common::console::print_storage_connected_ribbon(
+                            &name, &roles, used_bytes,
+                        ) {
+                            tracing::warn!("storage ribbon: {e}");
+                        }
+                    }
+                    Ok(StorageChanged::Released { name }) => {
+                        if let Err(e) = garden_common::console::print_storage_released_ribbon(&name) {
+                            tracing::warn!("storage ribbon: {e}");
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                },
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn start_storage_console_task(
+    _rx: tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged>,
+    _token: CancellationToken,
+) {
+    // Ribbons are a Linux TTY1 feature — no-op on other platforms.
 }
 
 /// Start all background tasks
@@ -900,8 +856,11 @@ pub async fn start_all_background_tasks(
         token.child_token(),
     );
 
-    // Start resilient seed bank mount system (STORAGE-0004: mount persistence + hot-plug)
-    start_seedbank_resilient_mount_system(state.clone(), token.child_token());
+    // Start unified storage lifecycle (STORAGE-0011: auto-mount, health, beacon)
+    start_storage_lifecycle(state.clone(), token.child_token());
+
+    // Start storage console task — sole renderer of storage ribbons
+    start_storage_console_task(state.subscribe_storage_changed(), token.child_token());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(

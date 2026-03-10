@@ -19,12 +19,14 @@
 //! [`Volumes`] is the single collection, keyed by device path.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use garden_common::storage::{
-    short_id_from_guid, StorageAccess, StorageAnnouncement, StorageInfo, StorageManifest,
-    StorageRole, StorageSummary, StorageVisibility, DEFAULT_REPLICA_SET_DISPLAY,
+    short_id_from_guid, DeviceState, StorageAccess, StorageAnnouncement, StorageDetectedInfo,
+    StorageInfo, StorageManifest, StorageRole, StorageSummary, StorageVisibility,
+    DEFAULT_REPLICA_SET_DISPLAY,
 };
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -385,8 +387,15 @@ impl Volume {
 
     /// Project to `StorageAnnouncement` — the canonical wire type for beacons,
     /// registry storage, and API responses.
+    ///
+    /// Returns `None` for unmanaged or offline volumes. A stone only advertises
+    /// storage it can actually serve — other replicas in the set are advertised
+    /// by the stones that host them.
     pub fn to_announcement(&self) -> Option<StorageAnnouncement> {
         let mgmt = self.management.as_ref()?;
+        if !self.online {
+            return None;
+        }
         Some(StorageAnnouncement {
             id: mgmt.id.clone(),
             name: mgmt.name.clone(),
@@ -397,7 +406,7 @@ impl Volume {
             protocols: vec![garden_common::constants::PROTOCOL_STORAGE.to_string(), garden_common::constants::PROTOCOL_S3.to_string()],
             access: StorageAccess::Direct,
             visibility: mgmt.visibility.to_string(),
-            health: if self.online && self.health.is_usable() {
+            health: if self.health.is_usable() {
                 garden_common::constants::HEALTH_HEALTHY.to_string()
             } else {
                 garden_common::constants::HEALTH_DEGRADED.to_string()
@@ -411,8 +420,13 @@ impl Volume {
     }
 
     /// Project to `StorageInfo` for API responses.
+    ///
+    /// Returns `None` for unmanaged or offline volumes.
     pub fn to_storage_info(&self) -> Option<StorageInfo> {
         let mgmt = self.management.as_ref()?;
+        if !self.online {
+            return None;
+        }
         Some(StorageInfo::new(
             mgmt.id.clone(),
             mgmt.name.clone(),
@@ -427,7 +441,7 @@ impl Volume {
             mgmt.origin_stone.clone(),
             mgmt.created_at,
             mgmt.roaming,
-            self.online && self.health.is_usable(),
+            self.health.is_usable(),
             mgmt.encrypted,
             mgmt.roles.clone(),
         ))
@@ -591,6 +605,12 @@ pub fn new_volumes() -> Volumes {
 /// 1. New snapshots → classify and insert
 /// 2. Existing snapshots → update capacity/online
 /// 3. Missing snapshots → mark offline or remove
+///
+/// ## Manifest-based identity (STORAGE-0011)
+///
+/// When a device reappears at a different path (e.g., `/dev/sdb1` → `/dev/sdc1`),
+/// the old entry is removed and replaced by the new one, preserving the management
+/// state by matching on the manifest ID (GUIDv7) instead of the device path.
 pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
     let current_paths: std::collections::HashSet<&str> =
         snapshots.iter().map(|s| s.path.as_str()).collect();
@@ -603,6 +623,7 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
             // Update from latest snapshot
             vol.capacity_bytes = snap.capacity_bytes;
             vol.label = snap.label.clone();
+            vol.mount_path = PathBuf::from(&snap.mount_path);
             vol.online = true;
             if vol.health == VolumeHealth::Lost || vol.health == VolumeHealth::Unmounted {
                 vol.health = VolumeHealth::Healthy;
@@ -622,7 +643,33 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
 
             if vol.is_managed() {
                 let name = vol.display_name().to_string();
-                info!(path = %snap.path, name = %name, "Managed volume registered");
+                let manifest_id = vol.management.as_ref().map(|m| m.id.as_str()).unwrap_or("");
+
+                // Manifest-based dedup: check if a stale entry exists for this
+                // same physical device under a different device path.
+                let stale_key = map
+                    .iter()
+                    .find(|(k, v)| {
+                        *k != &snap.path
+                            && v.management
+                                .as_ref()
+                                .map(|m| m.id.as_str() == manifest_id)
+                                .unwrap_or(false)
+                    })
+                    .map(|(k, _)| k.clone());
+
+                if let Some(old_key) = stale_key {
+                    info!(
+                        old_path = %old_key,
+                        new_path = %snap.path,
+                        name = %name,
+                        id = %manifest_id,
+                        "Volume re-keyed (device path changed)"
+                    );
+                    map.remove(&old_key);
+                } else {
+                    info!(path = %snap.path, name = %name, "Managed volume registered");
+                }
             } else {
                 debug!(path = %snap.path, "Unmanaged volume registered");
             }
@@ -650,6 +697,9 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
 }
 
 /// Ingest a single volume event (from the watcher).
+///
+/// Uses manifest-based identity dedup: if a managed volume appears at a new
+/// device path, the old (offline) entry is removed and replaced.
 pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
     match event {
         platform::VolumeEvent::Appeared(snap) => {
@@ -663,7 +713,33 @@ pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
 
                 let mut map = volumes.write().await;
                 if vol.is_managed() {
-                    info!(path = %snap.path, name = %vol.display_name(), "Managed volume appeared");
+                    let name = vol.display_name().to_string();
+                    let manifest_id =
+                        vol.management.as_ref().map(|m| m.id.as_str()).unwrap_or("");
+
+                    // Manifest-based dedup
+                    let stale_key = map
+                        .iter()
+                        .find(|(k, v)| {
+                            *k != &snap.path
+                                && v.management
+                                    .as_ref()
+                                    .map(|m| m.id.as_str() == manifest_id)
+                                    .unwrap_or(false)
+                        })
+                        .map(|(k, _)| k.clone());
+
+                    if let Some(old_key) = stale_key {
+                        info!(
+                            old_path = %old_key,
+                            new_path = %snap.path,
+                            name = %name,
+                            "Volume re-keyed on appear (device path changed)"
+                        );
+                        map.remove(&old_key);
+                    } else {
+                        info!(path = %snap.path, name = %name, "Managed volume appeared");
+                    }
                 } else {
                     debug!(path = %snap.path, "Unmanaged volume appeared");
                 }
@@ -674,6 +750,7 @@ pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
                     vol.online = true;
                     vol.health = VolumeHealth::Healthy;
                     vol.capacity_bytes = snap.capacity_bytes;
+                    vol.mount_path = PathBuf::from(&snap.mount_path);
                     info!(path = %snap.path, name = %vol.display_name(), "Volume came back online");
                 }
             }
@@ -687,6 +764,109 @@ pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
             }
         }
     }
+}
+
+/// Auto-mount unmounted removable devices that have a Zen Garden manifest.
+///
+/// This replaces the legacy `auto_mount_seed_banks_with_tracker()`. The flow:
+/// 1. List unmounted removable devices (from platform adapter)
+/// 2. Probe each for `.zen-garden/manifest.json`
+/// 3. Mount to the canonical path derived from the manifest
+/// 4. Reconcile into the Volumes map
+///
+/// Returns the number of devices successfully auto-mounted.
+pub async fn auto_mount_unmounted(
+    volumes: &Volumes,
+) -> Vec<garden_common::storage::StorageChanged> {
+    let unmounted = platform::list_unmounted_removable();
+    if unmounted.is_empty() {
+        return vec![];
+    }
+
+    debug!(count = unmounted.len(), "Checking unmounted removable devices for manifests");
+
+    let data_dir = garden_common::constants::paths::data_dir();
+    let mut events = Vec::new();
+
+    for device in &unmounted {
+        // Probe for manifest
+        let manifest = match platform::probe_device_manifest(&device.device).await {
+            Ok(Some(m)) => m,
+            Ok(None) => continue, // not managed
+            Err(e) => {
+                warn!(device = %device.device, error = %e, "Failed to probe device");
+                continue;
+            }
+        };
+
+        // Derive canonical mount path
+        let mount_path = manifest.derive_mount_path(&data_dir);
+
+        // Skip if already correctly mounted; replace stale FUSE mounts
+        if platform::is_mount_point(&mount_path) {
+            let mounted_device = platform::device_at_mount_point(&mount_path);
+            if mounted_device.as_deref() == Some(&device.device) {
+                debug!(mount = %mount_path, "Device already mounted at canonical path, skipping");
+                continue;
+            }
+            // A different (stale) device occupies the mount point — evict it
+            warn!(
+                mount = %mount_path,
+                stale_device = ?mounted_device,
+                new_device = %device.device,
+                "Stale mount at canonical path — replacing"
+            );
+            if let Err(e) = platform::unmount_lazy(&mount_path).await {
+                warn!(
+                    mount = %mount_path,
+                    error = %e,
+                    "Failed to remove stale mount, skipping"
+                );
+                continue;
+            }
+        }
+
+        // Mount
+        info!(
+            device = %device.device,
+            mount = %mount_path,
+            name = %manifest.name,
+            id = %manifest.id,
+            "Auto-mounting managed storage"
+        );
+
+        if let Err(e) = platform::mount_device(&device.device, &mount_path).await {
+            warn!(
+                device = %device.device,
+                mount = %mount_path,
+                error = %e,
+                "Failed to auto-mount"
+            );
+            continue;
+        }
+
+        // Build snapshot and reconcile into Volumes
+        let snap = VolumeSnapshot {
+            path: device.device.clone(),
+            mount_path: mount_path.clone(),
+            label: device.label.clone(),
+            capacity_bytes: device.capacity_bytes,
+            removable: true,
+        };
+        // Use ingest_event which handles manifest-based dedup
+        ingest_event(volumes, platform::VolumeEvent::Appeared(snap)).await;
+
+        events.push(garden_common::storage::StorageChanged::Connected {
+            name: manifest.name.clone(),
+            roles: manifest.roles.clone(),
+            used_bytes: 0,
+        });
+    }
+
+    if !events.is_empty() {
+        info!(count = events.len(), "Auto-mounted managed storage devices");
+    }
+    events
 }
 
 /// Run health ticks on all volumes.
@@ -825,6 +1005,95 @@ pub async fn name_id_pairs(volumes: &Volumes) -> Vec<(String, String)> {
 }
 
 // ============================================================================
+// Device analysis (for `storage add` eligibility)
+// ============================================================================
+
+/// Check if a mount path is in an allowed location for managed storage.
+pub fn is_allowed_mount(mount_path: &str) -> bool {
+    mount_path.starts_with("/mnt/")
+        || mount_path.starts_with("/media/")
+        || mount_path.starts_with("/run/media/")
+        || mount_path.starts_with("/var/lib/zen-garden/mounts/")
+        || mount_path.starts_with("/var/lib/garden-moss/mounts/")
+}
+
+/// Validate a `.zen-garden/` manifest directory and return the parsed manifest.
+pub fn validate_manifest(zen_dir: &Path) -> Result<StorageManifest> {
+    let manifest_path = zen_dir.join("manifest.json");
+
+    if !manifest_path.exists() {
+        anyhow::bail!("Manifest file does not exist");
+    }
+
+    let content =
+        std::fs::read_to_string(&manifest_path).context("Failed to read manifest file")?;
+
+    let manifest: StorageManifest =
+        serde_json::from_str(&content).context("Manifest JSON is corrupt or incomplete")?;
+
+    if manifest.id.is_empty() {
+        anyhow::bail!("Manifest missing id field");
+    }
+    if manifest.name.is_empty() {
+        anyhow::bail!("Manifest missing name field");
+    }
+    if manifest.origin_stone.is_empty() {
+        anyhow::bail!("Manifest missing origin_stone field");
+    }
+
+    if !zen_dir.join("blobs").exists() {
+        anyhow::bail!("Missing blobs directory");
+    }
+    if !zen_dir.join("journal").exists() {
+        anyhow::bail!("Missing journal directory");
+    }
+
+    Ok(manifest)
+}
+
+/// Analyze a block device and return full eligibility information.
+///
+/// Composes platform queries (removable, capacity, label, mount) with domain
+/// rules (allowed mount paths, device state) into a single result.
+pub fn analyze_device(device_path: &str) -> Result<StorageDetectedInfo> {
+    let removable = platform::is_removable(device_path);
+    let capacity_bytes = platform::device_capacity(device_path);
+    let label = platform::device_label(device_path);
+    let mount_path = platform::mount_point_for_device(device_path);
+
+    let state = platform::probe_device_state(device_path, mount_path.as_deref())
+        .unwrap_or(DeviceState::HasData);
+
+    let mut eligible = state.is_eligible();
+    let mut ineligible_reason = None;
+
+    if !removable {
+        eligible = false;
+        ineligible_reason = Some("Device is not removable".to_string());
+    } else if let Some(ref mount) = mount_path {
+        if !is_allowed_mount(mount) {
+            eligible = false;
+            ineligible_reason = Some(format!("Mount path {} is not in allowed location", mount));
+        }
+    }
+
+    if !state.is_eligible() && ineligible_reason.is_none() {
+        ineligible_reason = Some(format!("Device state is {}", state));
+    }
+
+    Ok(StorageDetectedInfo {
+        device: device_path.to_string(),
+        mount_path,
+        label,
+        capacity_bytes,
+        state,
+        eligible,
+        removable,
+        ineligible_reason,
+    })
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -910,5 +1179,14 @@ mod tests {
         let volumes = new_volumes();
         let map = volumes.read().await;
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_allowed_mount_paths() {
+        assert!(is_allowed_mount("/mnt/usb"));
+        assert!(is_allowed_mount("/media/user/USB"));
+        assert!(is_allowed_mount("/run/media/user/USB"));
+        assert!(!is_allowed_mount("/home/user/usb"));
+        assert!(!is_allowed_mount("/var/lib/data"));
     }
 }

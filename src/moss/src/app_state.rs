@@ -14,7 +14,7 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::Client;
-use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
+use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry, Storage};
 use crate::infra::{
     stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
     NurturingStore, PulseEvent,
@@ -233,6 +233,13 @@ pub struct AppState {
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 
+
+    /// Storage domain context (ARCH-0004).
+    ///
+    /// Groups all storage runtime state: orchestration channels, volume
+    /// and media collections, backing stores, and the domain event channel.
+    /// Flat fields are being migrated here incrementally — see ARCH-0004.
+    pub storage: Arc<Storage>,
 
     /// Storage replication tick channel — **raw** (STORAGE-0006 Phase 4)
     /// Primary seed-bank stores emit `StorageTick` on every write/delete.

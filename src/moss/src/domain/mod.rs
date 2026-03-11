@@ -71,7 +71,8 @@ pub use offerings::{
 pub use reconciliation::{reconcile_services, ReconciliationResult};
 pub use registry::Registry;
 pub use storage::{
-    new_media, new_volumes, Management, Media, Medium, Volume, VolumeHealth, Volumes,
+    new_media, new_volumes, Management, Media, Medium, Orchestration, Storage, Volume,
+    VolumeHealth, Volumes,
 };
 pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 pub use service_discovery::{

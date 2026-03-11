@@ -617,6 +617,23 @@ pub async fn run(
         infra::HarvestStore::default_store(),
     ));
 
+    // Storage channels (ARCH-0004) — created here so they can be shared between
+    // state.storage (domain context) and the flat AppState fields being migrated.
+    let (storage_tick_tx, _) =
+        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
+    let (storage_agg_tx, _) =
+        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
+    let (storage_changed_tx, _) =
+        tokio::sync::broadcast::channel::<garden_common::storage::StorageChanged>(64);
+    let nourishment_map = Arc::new(RwLock::new(
+        HashMap::<String, tokio::sync::broadcast::Sender<String>>::new(),
+    ));
+    let media = crate::domain::storage::new_media();
+
+    // Pre-clone for storage context (values are moved into flat fields earlier in the literal)
+    let harvest_for_storage = Arc::clone(&harvest_store);
+    let nurturing_for_storage = Arc::clone(&nurturing_store);
+
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
     let election_service_placeholder =
@@ -676,32 +693,30 @@ pub async fn run(
         log: log.clone(),
         // Subsystem readiness (network_ready managed by Network)
         subsystems: subsystems.clone(),
-        // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
-        storage_tick: {
-            let (tx, _) = tokio::sync::broadcast::channel(64);
-            tx
-        },
-        // Storage tick channel — aggregated (STORAGE-0006 Phase 4f)
-        storage_agg: {
-            let (tx, _) = tokio::sync::broadcast::channel(64);
-            tx
-        },
-        // Orchestration nudge — immediate role re-evaluation trigger
+        // Storage domain context (ARCH-0004) — groups all storage runtime state.
+        // Flat fields below are being migrated here incrementally.
+        storage: Arc::new(crate::domain::Storage {
+            orchestration: crate::domain::storage::Orchestration {
+                tick: storage_tick_tx.clone(),
+                agg: storage_agg_tx.clone(),
+                nudge: orchestration_nudge.clone(),
+                rescan: volume_rescan.clone(),
+            },
+            volumes: volumes.clone(),
+            media: media.clone(),
+            changed: storage_changed_tx.clone(),
+            harvest: harvest_for_storage,
+            nurturing: nurturing_for_storage,
+            nourishment: nourishment_map.clone(),
+        }),
+        // Flat storage fields — migrating to state.storage.* (ARCH-0004)
+        storage_tick: storage_tick_tx,
+        storage_agg: storage_agg_tx,
         orchestration_nudge: orchestration_nudge.clone(),
-        // Unified volume collection (STORAGE-0011)
         volumes: volumes.clone(),
-        // Physical media (STORAGE-0011) — host-only, for candidate discovery
-        media: crate::domain::new_media(),
-        // Volume rescan signal (STORAGE-0011) — API handlers poke this after
-        // mutating on-disk state (e.g. writing a manifest). The volume watcher
-        // loop consumes the rx side and triggers a full reconcile.
+        media,
         volume_rescan: volume_rescan.clone(),
-        // Storage domain events (STORAGE-0013) — event-driven notification channel.
-        // Subscribers react to changes by pulling fresh state from AppState.
-        storage_changed: {
-            let (tx, _) = tokio::sync::broadcast::channel(64);
-            tx
-        },
+        storage_changed: storage_changed_tx,
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists

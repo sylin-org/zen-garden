@@ -35,6 +35,65 @@ use crate::infra::storage::platform::{self, VolumeSnapshot};
 use crate::infra::storage::ContentStore;
 
 // ============================================================================
+// Storage domain context (ARCH-0004)
+// ============================================================================
+
+/// Orchestration channels and signals for the storage domain.
+///
+/// Groups the three background-task communication primitives so they
+/// are namespaced under `storage.orchestration.*` rather than scattered
+/// as flat fields on `AppState`.
+#[derive(Clone)]
+pub struct Orchestration {
+    /// Raw per-write tick channel (high frequency, internal only).
+    /// Consumed by the aggregator task; not for downstream subscribers.
+    pub tick: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+
+    /// Quantized aggregated tick (2 s quiet / 10 s deadline cap).
+    /// Subscribers: SSE stream, replication task.
+    pub agg: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+
+    /// Wakes the orchestration loop immediately (skip the 3 s tick wait).
+    /// Fired on beacon arrival, rename, pin/unpin.
+    pub nudge: Arc<tokio::sync::Notify>,
+
+    /// Requests a full volume reconcile from the watcher loop.
+    /// Sent by API handlers after on-disk manifest mutations.
+    pub rescan: tokio::sync::mpsc::Sender<()>,
+}
+
+/// Runtime aggregate for all storage state on this stone (ARCH-0004).
+///
+/// Held as `AppState.storage: Arc<Storage>`. Groups domain collections,
+/// orchestration channels, backing stores, and the domain event channel.
+///
+/// Field path: `state.storage.*`
+#[derive(Clone)]
+pub struct Storage {
+    /// Background-task communication channels and signals.
+    pub orchestration: Orchestration,
+
+    /// Unified volume collection — keyed by device path.
+    pub volumes: Volumes,
+
+    /// Physical storage media — keyed by OS device ID.
+    pub media: Media,
+
+    /// Storage domain event channel (STORAGE-0013).
+    /// Emitted on add, remove, rename, role change, health change, rescan.
+    pub changed: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
+
+    /// Harvest store (backup manifests and archives).
+    pub harvest: Arc<crate::infra::HarvestStore>,
+
+    /// Nurturing store (A/B local backup slots).
+    pub nurturing: Arc<crate::infra::NurturingStore>,
+
+    /// Nourishment job SSE channels — keyed by job ID.
+    pub nourishment: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
+}
+
+// ============================================================================
 // Volume health
 // ============================================================================
 

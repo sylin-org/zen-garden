@@ -65,9 +65,74 @@ Within each wave, changes are applied in a fixed sequence:
 | f | Typed domain error enums | Domain logic only; application boundaries keep `anyhow` |
 | g | `FromRef` + `#[must_use]` | Axum handlers; enforces minimal dependency surfaces |
 
-### moss Sub-Waves
+### Wave 0 — garden-build-utils
 
-`garden-moss` is ~8 000 lines across three layers. Its Wave 6 is divided:
+Build-time helper only (proc macros, build script utilities). No runtime types, no domain state. Pass `a` only: rename any `Context`/`Manager` type suffixes. Expected to be a single small commit.
+
+### Wave 1 — garden-common
+
+The root everyone depends on. Changes here cascade to all other crates, so they must be complete and stable before Wave 2 begins.
+
+Primary targets:
+- **Introduce newtypes** for all domain identifiers currently typed as primitives: `StoneId(String)`, `StoneName(String)`, `VolumeName(String)`, `CompanionId(String)`, `JobId(String)`. Each gets `#[repr(transparent)]`, `From<String>`, `Display`, and serde passthrough.
+- **Channel naming audit** across any shared channel types — remove `_tx`/`_rx` from any long-lived struct fields in shared types.
+- **Shared error enums** — introduce `thiserror`-based enums for error kinds that cross crate boundaries (e.g. nourishment errors, discovery errors). Application-boundary types keep `anyhow`.
+
+Waves 2–6 consume these newtypes as they swap out raw `String` parameters.
+
+### Wave 2 — garden-companion-sdk
+
+Provides the `CommandHandler` trait and companion HTTP server scaffolding.
+
+Primary targets:
+- `shutdown_tx: watch::Sender<bool>` in `server.rs` → rename to `shutdown` (type declares direction)
+- `CommandHandler` is a trait name — the suffix is acceptable for traits; no change needed
+- Local variable naming: shadow `connection` and `context` clones rather than `_clone` suffixes
+- Adopt `CompanionId` newtype from Wave 1
+
+### Wave 3 — garden-lantern
+
+Service registry daemon. Small codebase, limited debt.
+
+Primary targets:
+- `AppState` type name: acceptable (it is the application root); no rename needed
+- `sse_tx: broadcast::Sender<SseEvent>` → rename to `sse` (type declares it is a sender)
+- Any `String`-typed stone or service identifiers → adopt newtypes from Wave 1
+
+**garden-probe**: Diagnostic/health probe. Passes `a` only. Minimal expected violations.
+
+### Wave 4 — garden-cricket, garden-firefly
+
+Companion binaries. Use the companion SDK from Wave 2.
+
+**garden-cricket** primary targets:
+- `CricketEventHandler` type name: drop the `Handler` suffix → `CricketEvents` or `CricketInput`
+- `tune_manager` field: `Manager` suffix implies architectural role — rename to domain concept (e.g. `playlist`)
+- Audit for `_clone` variable patterns; shadow instead
+
+**garden-firefly** primary targets:
+- `has_seed_bank: bool` and `has_services: bool` in `AnimationContext` — two related booleans encoding a 4-state machine. Replace with:
+  ```rust
+  pub enum StoneRole { Bare, WithSeedBank, WithServices, Full }
+  ```
+- `AnimationContext` type name: drop the `Context` suffix → `Animation` (position in hierarchy provides context)
+- `_for_retry` / `_for_shutdown` local variable suffixes in `main.rs` — shadow the original binding within a scoped block instead
+- Adopt `StoneName` newtype from Wave 1 in `AnimationContext`
+
+### Wave 5 — garden-rake
+
+CLI client. Generally cleaner than moss; primary debt is in connection state and command routing.
+
+Primary targets:
+- Audit `context.rs` state struct — already relatively clean; verify no `Context`/`State` suffixes remain
+- Command dispatch: verify handlers declare minimal state rather than a full connection bag
+- Adopt `StoneId`, `StoneName`, `VolumeName` newtypes from Wave 1 across all API call sites
+- Any `_clone` local variable patterns → shadow
+- Error handling: CLI boundary is `anyhow` (correct); verify no `anyhow::anyhow!` inside domain logic if any exists
+
+### Wave 6 — garden-moss
+
+~8 000 lines across three layers. Split into sub-waves:
 
 ```
 6a  moss/domain/         Pure logic — no infra deps; start here
@@ -78,7 +143,28 @@ Within each wave, changes are applied in a fixed sequence:
 6e  bootstrap/run.rs     Declarative pipeline replacing the sequential God function
 ```
 
-Step 6c is intentionally a single large commit. A partially-restructured `AppState` leaves the codebase in an inconsistent state that is harder to reason about and harder to build on than either the old form or the new form. The commit boundary is the atomic unit of architectural change.
+**6a — domain layer**: Apply passes `a`–`f`. No infra imports means changes are self-contained. Typed error enums for storage, security, discovery, and offerings domains.
+
+**6b — infra layer**: Apply passes `a`–`e`. Infra types (Docker client wrappers, platform adapters) renamed; any local `_clone` shadows fixed.
+
+**6c — AppState restructure**: The highest-risk step; intentionally one commit. Introduce 8 domain context structs (`Storage`, `Security`, `Companions`, `Presence`, `Discovery`, `Identity`, `Infra`, `Offerings`), migrate all 64 flat fields into them, add `FromRef` impls for all handler dependencies, update every handler. A partially-restructured `AppState` is worse than either the old or new form — the commit is the atomic unit of change.
+
+The 8 target structs and their current flat-field mappings:
+
+| Domain struct | Current flat fields |
+|---|---|
+| `Storage` | `storage_tick_tx`, `storage_agg_tx`, `storage_changed_tx`, `orchestration_nudge`, `volumes`, `storage_health`, … |
+| `Security` | `pond_active`, `pond_ceremony_host`, `https_started`, `ca_cert`, … |
+| `Companions` | `companions`, `companion_ports`, … |
+| `Presence` | `presence_*` fields |
+| `Discovery` | `topology`, `discovered_stones`, … |
+| `Identity` | `stone_id`, `stone_name`, `stone_host`, … |
+| `Infra` | `docker`, `runtime`, … |
+| `Offerings` | `manifests`, `taxonomy`, … |
+
+**6d — api layer**: Handler cleanup after 6c. Each handler's `State(...)` extractor now names its actual dependency (`State(storage): State<Arc<Storage>>`) rather than the full `AppState`. Pass `g`.
+
+**6e — bootstrap/run.rs**: Replace the ~2 100-line sequential God function with a declarative startup pipeline. Each domain context gains an `init()` and `start(token)` method. `run.rs` becomes an orchestration sequence of named stages, ~200 lines.
 
 ### Additive-Then-Prune
 

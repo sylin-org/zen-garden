@@ -251,11 +251,6 @@ pub struct AppState {
     /// Subscribers: SSE `/api/v1/stone/storage/stream`, replication task.
     pub storage_agg: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 
-    /// Orchestration nudge — wakes the seed-bank orchestration loop immediately.
-    /// Fired when a storage beacon arrives, or after rename/pin/unpin, so role
-    /// resolution doesn't have to wait for the next 3-second tick.
-    pub orchestration_nudge: Arc<tokio::sync::Notify>,
-
     /// Unified volume collection (STORAGE-0011) — keyed by device path.
     ///
     /// Single source of truth for all local storage volumes (Spaces).

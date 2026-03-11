@@ -712,7 +712,6 @@ pub async fn run(
         // Flat storage fields — migrating to state.storage.* (ARCH-0004)
         storage_tick: storage_tick_tx,
         storage_agg: storage_agg_tx,
-        orchestration_nudge: orchestration_nudge.clone(),
         volumes: volumes.clone(),
         media,
         volume_rescan: volume_rescan.clone(),

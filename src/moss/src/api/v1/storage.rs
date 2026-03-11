@@ -675,7 +675,7 @@ pub async fn rename_bank_v1(
         replica_set_id,
         new_name: request.new_name.clone(),
     }).await;
-    state.orchestration_nudge.notify_one();
+    state.storage.orchestration.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(updated.clone())))
 }
@@ -1607,7 +1607,7 @@ pub async fn pin_bank_v1(
         device_id,
         replica_set_id,
     }).await;
-    state.orchestration_nudge.notify_one();
+    state.storage.orchestration.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
@@ -1670,7 +1670,7 @@ pub async fn unpin_bank_v1(
         device_id,
         replica_set_id,
     }).await;
-    state.orchestration_nudge.notify_one();
+    state.storage.orchestration.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
